@@ -113,6 +113,7 @@ import {
 	register_internal_transfer,
 	reservar_reception,
 } from './inventory-reception-flow.ts';
+import { lookup_cobranza, sync_cobranza_sources } from './cobranza-lookup-flow.ts';
 import {
 	authorize_invoice_request,
 	cancel_invoice_request,
@@ -4978,9 +4979,12 @@ async function cobranza_cancel(ctx: Ctx) {
 }
 
 async function cobranza_lookup(ctx: Ctx) {
-	const q = ctx.url.searchParams.get('termino') ?? ctx.url.searchParams.get('folio') ?? '';
-	const { rows } = await ctx.store.find_many('cobranza', { q, take: 20 });
-	return ok(rows, 'Cobranza');
+	const reference =
+		ctx.url.searchParams.get('reference') ??
+		ctx.url.searchParams.get('folio') ??
+		ctx.url.searchParams.get('termino') ??
+		'';
+	return lookup_cobranza(ctx.store, ctx.actor, reference);
 }
 
 async function cobranza_config_text(ctx: Ctx, ref: string, env_name: string) {
@@ -5021,12 +5025,14 @@ async function cobranza_recompute(ctx: Ctx, charge_id: string) {
 	const total = Number(charge.total_amount ?? 0);
 	const balance = Math.max(total - paid_amount, 0);
 	const status = balance <= 0 ? 'PAGADO' : paid_amount > 0 ? 'PARCIAL' : 'PENDIENTE';
-	return ctx.store.update('cobranza', charge_id, {
+	const updated = await ctx.store.update('cobranza', charge_id, {
 		paid_amount,
 		balance,
 		status,
 		estado: status.toLowerCase(),
 	});
+	await sync_cobranza_sources(ctx.store, updated ?? { ...charge, paid_amount, balance, status });
+	return updated;
 }
 
 async function apply_online_payment(
