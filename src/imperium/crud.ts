@@ -38,6 +38,12 @@ import {
 import { decorate_product, prepare_product_write } from './products-flow.ts';
 import { decorate_vehicle, prepare_vehicle_write } from './vehicle-flow.ts';
 import { is_citizen_report_resource, prepare_citizen_report_write } from './citizen-report-flow.ts';
+import { is_asociacion_resource, prepare_asociacion_write } from './asociaciones-flow.ts';
+import {
+	apply_incidencia_list_where,
+	is_incidencia_resource,
+	prepare_incidencia_write,
+} from './registro-incidencias-flow.ts';
 import {
 	dashboard_access,
 	dashboard_can_manage,
@@ -245,6 +251,9 @@ export async function handle_crud(
 			if (!uid) throw new Error('No se pudo resolver el usuario actual');
 			q.where.owner_user = uid;
 		}
+		if (is_incidencia_resource(resource)) {
+			q.where = apply_incidencia_list_where(q.where);
+		}
 		const where = strip_root_parent_where(q.where);
 		const scope = await record_rule_scope(store, actor, resource, method);
 		const found = await store.find_many(resource, {
@@ -383,6 +392,12 @@ export async function handle_crud(
 		if (is_view_preset_resource(resource)) {
 			incoming = prepare_view_preset_create(incoming, actor);
 		}
+		if (is_asociacion_resource(resource)) {
+			incoming = prepare_asociacion_write(incoming, null, true);
+		}
+		if (is_incidencia_resource(resource)) {
+			incoming = prepare_incidencia_write(incoming, true);
+		}
 		const doc = await before_create(store, resource, incoming, actor);
 		const created = await store.insert(resource, doc);
 		await link_attachments_to_record(store, resource, created);
@@ -431,7 +446,11 @@ export async function handle_crud(
 														? 'Tablero creado'
 														: is_view_preset_resource(resource)
 															? 'Configuración creada'
-															: 'Ruta creada';
+															: is_asociacion_resource(resource)
+																? 'Asociación registrada correctamente'
+																: is_incidencia_resource(resource)
+																	? 'Incidencia registrada'
+																	: 'Ruta creada';
 		return json(
 			resource,
 			notice ? { ...ok([populated], message), user_pin_notice: notice } : ok([populated], message),
@@ -505,6 +524,12 @@ export async function handle_crud(
 			}
 			b = prepare_dashboard_write(b, actor, access, false);
 		}
+		if (is_asociacion_resource(resource)) {
+			b = prepare_asociacion_write(b, previous, false);
+		}
+		if (is_incidencia_resource(resource)) {
+			b = prepare_incidencia_write(b, false);
+		}
 		const updated = await store.update(resource, id, b);
 		if (updated) await link_attachments_to_record(store, resource, updated);
 		if (!updated) return json(resource, fail('No encontrado', 404).body, 404);
@@ -546,7 +571,9 @@ export async function handle_crud(
 											? 'Tarea de proyecto actualizada correctamente'
 											: is_personal_task_resource(resource)
 												? 'Tarea personal actualizada correctamente'
-												: 'Actualizado correctamente',
+												: is_incidencia_resource(resource)
+													? 'Incidencia actualizada correctamente'
+													: 'Actualizado correctamente',
 			),
 		);
 	}
@@ -602,6 +629,12 @@ export async function handle_crud(
 			}
 			patched = prepare_dashboard_write(patched, actor, access, false);
 		}
+		if (is_asociacion_resource(resource)) {
+			patched = prepare_asociacion_write(patched, previous, false);
+		}
+		if (is_incidencia_resource(resource)) {
+			patched = prepare_incidencia_write(patched, false);
+		}
 		const updated = await store.update(resource, segs[0]!, patched);
 		if (updated) await link_attachments_to_record(store, resource, updated);
 		if (!updated) return json(resource, fail('No encontrado', 404).body, 404);
@@ -643,7 +676,9 @@ export async function handle_crud(
 											? 'Tarea de proyecto actualizada correctamente'
 											: is_personal_task_resource(resource)
 												? 'Tarea personal actualizada correctamente'
-												: 'Actualizado correctamente',
+												: is_incidencia_resource(resource)
+													? 'Incidencia actualizada correctamente'
+													: 'Actualizado correctamente',
 			),
 		);
 	}

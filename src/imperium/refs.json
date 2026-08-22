@@ -57,6 +57,15 @@
     "lista-asistencia": {
       "registro_incidencia_id": "RegistroIncidencias"
     },
+    "registro-incidencias": {
+      "alumno_id": "Alumnos",
+      "grupo_id": "Grupo",
+      "registro_asistencia_id": "RegistroAsistencias",
+      "lista_asistencia_id": "ListaAsistencia",
+      "materia_id": "Materias",
+      "grado_escolar_id": "GradosEscolares",
+      "escuela_id": "Escuelas"
+    },
     "citizen-report": {
       "borough": "Boroughs",
       "delegado": "Employee",
@@ -372,6 +381,14 @@
     "sku": "sku",
     "font-awesome-icon-catalog": "font-awesome-icon-catalog",
     "fontawesomeiconcatalog": "font-awesome-icon-catalog",
-    "FontAwesomeIconCatalog": "font-awesome-icon-catalog"
+    "FontAwesomeIconCatalog": "font-awesome-icon-catalog",
+    "Alumnos": "alumnos",
+    "Grupo": "grupo",
+    "RegistroAsistencias": "registro-asistencias",
+    "ListaAsistencia": "lista-asistencia",
+    "Materias": "materias",
+    "GradosEscolares": "grados-escolares",
+    "Escuelas": "escuelas",
+    "RegistroIncidencias": "registro-incidencias"
   }
 }
