@@ -2,7 +2,13 @@
  * Enruta el contrato HTTP original de Imperium sobre SQL.
  */
 import extra from './extra-routes.json';
-import { handle_auth, current_user, ensure_session_table } from './auth.ts';
+import {
+	assert_http_access,
+	current_user,
+	ensure_session_table,
+	handle_auth,
+	is_public_extra_action,
+} from './auth.ts';
 import { handle_crud } from './crud.ts';
 import { handle_action } from './actions.ts';
 import { handle_mcp_agent, seed_mcp_access } from './mcp-agent.ts';
@@ -100,6 +106,12 @@ async function dispatch(
 			const actor = await current_user(sql, req);
 			try {
 				const extra_hit = match_extra(hit.resource, req.method, hit.rest);
+				if (!is_public_extra_action(extra_hit?.action)) {
+					await assert_http_access(store, actor, hit.resource, req.method, {
+						extra: Boolean(extra_hit),
+						action: extra_hit?.action,
+					});
+				}
 				if (extra_hit) {
 					const res = await handle_action(
 						store,

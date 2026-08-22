@@ -10,7 +10,13 @@ import {
 	send_password_reset_email,
 } from './email.ts';
 import { find_user_by_reset_token, generate_password_reset } from './password-reset.ts';
-import { load_record_rules_by_model } from './record-rules.ts';
+import {
+	access_flag,
+	build_model_denied_message,
+	load_record_rules_by_model,
+	record_rule_lookup_keys,
+	type RecordRuleOperationFlag,
+} from './record-rules.ts';
 
 const COOKIE = 'connect.sid';
 const SECRET = process.env.SESSION_SECRET ?? 'imperium-modular-dev-session';
@@ -324,7 +330,7 @@ export async function build_access(store: ImperiumStore, user: ImperiumDoc) {
 		if (groups.length) return belongs;
 		return !gid && !access_right_ids_assigned_to_any_group.has(rid);
 	});
-	const models = [...new Set(mine.filter((r) => r.allow_read).map((r) => String(r.model_id)))];
+	const models = [...new Set(mine.filter((r) => access_flag(r.allow_read)).map((r) => String(r.model_id)))];
 	const permissions_by_model: Record<string, Record<string, boolean>> = {};
 	for (const r of mine) {
 		const mid = String(r.model_id ?? '');
@@ -335,10 +341,10 @@ export async function build_access(store: ImperiumStore, user: ImperiumDoc) {
 			allow_update: false,
 			allow_delete: false,
 		};
-		cur.allow_read ||= Boolean(r.allow_read);
-		cur.allow_create ||= Boolean(r.allow_create);
-		cur.allow_update ||= Boolean(r.allow_update);
-		cur.allow_delete ||= Boolean(r.allow_delete);
+		cur.allow_read ||= access_flag(r.allow_read);
+		cur.allow_create ||= access_flag(r.allow_create);
+		cur.allow_update ||= access_flag(r.allow_update);
+		cur.allow_delete ||= access_flag(r.allow_delete);
 		permissions_by_model[mid] = cur;
 	}
 	return {
@@ -357,6 +363,127 @@ export async function build_access(store: ImperiumStore, user: ImperiumDoc) {
 		model: '',
 		method: 'Leer',
 	};
+}
+
+const PUBLIC_EXTRA_ACTIONS = new Set([
+	'read_public_metadata',
+	'create_public_ticket',
+	'public_catalog',
+	'public_checkout',
+	'public_session',
+	'public_contrato',
+	'public_url',
+	'stripe_webhook',
+	'mitec_webhook',
+	'receive_interinstance_message',
+	'receive_interinstance_ticket',
+]);
+
+const READ_EXTRA_ACTIONS = new Set([
+	'widget_data',
+	'ai_query',
+	'generate_pdf',
+	'generate_full_report_pdf',
+	'validate_template',
+	'process_preview',
+	'print_pdf_direct',
+	'parse_document',
+	'generate_close_report',
+]);
+
+export class HttpAuthRequiredError extends Error {
+	status = 401;
+	code = 'not_authenticated';
+	constructor(message = 'No estás autenticado') {
+		super(message);
+		this.name = 'HttpAuthRequiredError';
+	}
+}
+
+export class HttpAccessDeniedError extends Error {
+	status = 403;
+	code = 'access_denied';
+	constructor(message: string) {
+		super(message);
+		this.name = 'HttpAccessDeniedError';
+	}
+}
+
+export function is_public_extra_action(action?: string): boolean {
+	return Boolean(action && PUBLIC_EXTRA_ACTIONS.has(action));
+}
+
+function crud_flag(method: string): RecordRuleOperationFlag {
+	const m = method.toUpperCase();
+	if (m === 'POST') return 'allow_create';
+	if (m === 'PUT' || m === 'PATCH') return 'allow_update';
+	if (m === 'DELETE') return 'allow_delete';
+	return 'allow_read';
+}
+
+function extra_flag(method: string, action: string): RecordRuleOperationFlag {
+	const m = method.toUpperCase();
+	if (m === 'GET' || m === 'HEAD' || READ_EXTRA_ACTIONS.has(action)) return 'allow_read';
+	if (m === 'DELETE') return 'allow_delete';
+	if (
+		action.startsWith('create_') ||
+		action.startsWith('from_') ||
+		action.startsWith('generate_from') ||
+		action.startsWith('seed_')
+	) {
+		return 'allow_create';
+	}
+	if (m === 'POST' || m === 'PUT' || m === 'PATCH') return 'allow_update';
+	return 'allow_read';
+}
+
+function flag_http_method(flag: RecordRuleOperationFlag): string {
+	if (flag === 'allow_create') return 'POST';
+	if (flag === 'allow_update') return 'PUT';
+	if (flag === 'allow_delete') return 'DELETE';
+	return 'GET';
+}
+
+function permissions_for_resource(
+	access: Awaited<ReturnType<typeof build_access>>,
+	resource: string,
+): { perms?: Record<string, boolean>; model: string } {
+	const keys = record_rule_lookup_keys(resource);
+	for (const key of keys) {
+		const hit = access.permissions_by_model?.[key];
+		if (hit) return { perms: hit, model: key };
+	}
+	const collapsed = resource.replace(/-/g, '').toLowerCase();
+	for (const [model, perms] of Object.entries(access.permissions_by_model ?? {})) {
+		if (model.replace(/[^A-Za-z0-9]/g, '').toLowerCase() === collapsed) {
+			return { perms, model };
+		}
+	}
+	return { model: keys[1] ?? resource };
+}
+
+export async function assert_http_access(
+	store: ImperiumStore,
+	actor: ImperiumDoc | null,
+	resource: string,
+	method: string,
+	opts: { action?: string; extra?: boolean } = {},
+): Promise<void> {
+	if (opts.extra && is_public_extra_action(opts.action)) return;
+	if (!actor) throw new HttpAuthRequiredError();
+	const access = await build_access(store, actor);
+	if (access.has_full_access) return;
+	const canonical = store.has(resource) ? store.loc(resource).resource : resource;
+	const flag = opts.extra && opts.action ? extra_flag(method, opts.action) : crud_flag(method);
+	const { perms, model } = permissions_for_resource(access, canonical);
+	if (perms?.[flag]) return;
+	throw new HttpAccessDeniedError(
+		build_model_denied_message(
+			flag_http_method(flag),
+			model,
+			access.user_group_names ?? [],
+		),
+	);
 }
 
 async function build_menus(store: ImperiumStore, access: Awaited<ReturnType<typeof build_access>>) {

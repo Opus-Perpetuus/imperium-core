@@ -10,6 +10,14 @@ function qident(name: string): string {
 	return `"${name.replace(/"/g, '""')}"`;
 }
 
+export function access_flag(value: unknown): boolean {
+	if (value === true || value === 1) return true;
+	if (value === false || value === 0 || value == null) return false;
+	const raw = String(value).replace(/^"+|"+$/g, '').trim().toLowerCase();
+	if (!raw) return false;
+	return !['0', 'false', 'off', 'no'].includes(raw);
+}
+
 export type RecordRuleOperationFlag =
 	| 'allow_read'
 	| 'allow_create'
@@ -237,7 +245,7 @@ export function build_record_rule_match(
 	operation: RecordRuleOperationFlag,
 	ctx: RecordRuleContext,
 ): RecordRuleMatchResult {
-	const applicable = (rules ?? []).filter((rule) => rule && Boolean(rule[operation]));
+	const applicable = (rules ?? []).filter((rule) => rule && access_flag(rule[operation]));
 	if (!applicable.length) return { match: null, applicable_rules: [] };
 	const applicable_rules: RuleRef[] = applicable.map((rule) => ({
 		rule_name: String(rule.name ?? ''),
@@ -281,6 +289,25 @@ const CRUD_VERB: Record<string, string> = {
 	PATCH: 'modificar',
 	DELETE: 'eliminar',
 };
+
+export function operation_verb(method: string): string {
+	return CRUD_VERB[method] ?? String(method).toLowerCase();
+}
+
+export function build_model_denied_message(
+	method: string,
+	model: string,
+	group_names: string[],
+): string {
+	const operacion = operation_verb(method);
+	if (!group_names || group_names.length === 0) {
+		return `No perteneces a ningún grupo con permiso de ${operacion} sobre ${model}.`;
+	}
+	return (
+		`No puedes ${operacion} registros de ${model}: ninguno de tus ` +
+		`grupos (${group_names.join(', ')}) lo concede en Permisos de acceso.`
+	);
+}
 
 export function build_record_denied_message(
 	method: string,
