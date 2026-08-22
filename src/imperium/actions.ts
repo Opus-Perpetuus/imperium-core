@@ -23,6 +23,7 @@ import { calcular_importe } from './agua-importe.ts';
 import { looks_like_canonical, serialize_cfdi_to_xml, type CfdiCanonical } from './cfdi-xml.ts';
 import { create_cfdi_from_invoice_request } from './cfdi-from-invoice.ts';
 import { create_cfdi_from_payroll_receipt } from './cfdi-from-payroll.ts';
+import { create_cfdi_from_purchase_order } from './cfdi-from-purchase.ts';
 import { seal_canonical_with_csd } from './cfdi-seal.ts';
 import { extract_structured, generate_text } from './ai-extraction.ts';
 import { get_pdf_direct_target, send_pdf } from './pdf-direct.ts';
@@ -189,7 +190,7 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'cfdi-document:from_payroll_receipt':
 			return create_cfdi_from_payroll_receipt(ctx);
 		case 'cfdi-document:from_purchase_order':
-			return cfdi_from(ctx, 'purchase-order', ctx.params.purchaseOrderId, 'purchase');
+			return create_cfdi_from_purchase_order(ctx);
 		case 'cfdi-document:validate_document':
 			return cfdi_validate(ctx);
 		case 'cfdi-document:stamp_document':
@@ -803,23 +804,6 @@ async function catalog_search(ctx: Ctx) {
 		take: 50,
 	});
 	return ok(rows, 'Búsqueda de catálogo', total);
-}
-
-async function cfdi_from(ctx: Ctx, source: string, id: string | undefined, kind: string) {
-	if (!id) throw new Error('Se necesita el documento origen');
-	const src = await ctx.store.find_id(source, id);
-	if (!src) throw new Error('No se encontró el documento origen');
-	const created = await ctx.store.insert('cfdi-document', {
-		name: `CFDI ${src.name ?? id}`,
-		description: `Generado desde ${source}`,
-		status: 'draft',
-		estado: 'draft',
-		origen: source,
-		origen_id: id,
-		tipo: kind,
-		payload_canonico: src,
-	});
-	return ok([created], 'Documento CFDI generado');
 }
 
 async function cfdi_validate(ctx: Ctx) {

@@ -25,6 +25,7 @@ import {
 	prepare_purchase_order_create,
 	prepare_purchase_order_update,
 } from './purchase-order-flow.ts';
+import { sync_inbound_supplier_invoice } from './cfdi-from-purchase.ts';
 import {
 	notify_ticketing_rooms,
 	prepare_ticketing_turn_create,
@@ -296,6 +297,7 @@ export async function handle_crud(
 		const notice = await after_create(store, resource, created, actor);
 		if (resource === 'pedidos') await after_pedido_mutate(store, 'create', created);
 		if (resource === 'ticketing-system-turn') await notify_ticketing_rooms(store);
+		if (resource === 'purchase-order') await sync_inbound_supplier_invoice(store, created);
 		let result = created;
 		if (resource === 'delivery-package') {
 			await after_delivery_package_mutate(store, String(created.pedido ?? ''));
@@ -366,6 +368,7 @@ export async function handle_crud(
 		if (updated) await link_attachments_to_record(store, resource, updated);
 		if (!updated) return json(resource, fail('No encontrado', 404).body, 404);
 		if (resource === 'pedidos') await after_pedido_mutate(store, 'update', updated, previous);
+		if (resource === 'purchase-order') await sync_inbound_supplier_invoice(store, updated);
 		if (resource === 'delivery-package') {
 			await after_delivery_package_mutate(
 				store,
@@ -420,6 +423,7 @@ export async function handle_crud(
 		if (updated) await link_attachments_to_record(store, resource, updated);
 		if (!updated) return json(resource, fail('No encontrado', 404).body, 404);
 		if (resource === 'pedidos') await after_pedido_mutate(store, 'update', updated, previous);
+		if (resource === 'purchase-order') await sync_inbound_supplier_invoice(store, updated);
 		if (resource === 'delivery-package') {
 			await after_delivery_package_mutate(
 				store,
