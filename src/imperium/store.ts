@@ -260,14 +260,15 @@ export class ImperiumStore {
 		return `${qident(pg_schema_name(loc.technical_id))}.${qident(loc.table)}`;
 	}
 
-	flatten(row: Record<string, unknown> | null): ImperiumDoc | null {
+	flatten(row: Record<string, unknown> | null, resource?: string): ImperiumDoc | null {
 		if (!row) return null;
 		const parsed = { ...row };
-		for (const k of Object.keys(parsed)) {
-			if ((k === 'payload' || k === 'custom_data' || typeof parsed[k] === 'string') &&
-				(k === 'payload' || k === 'custom_data')) {
-				parsed[k] = as_object(parsed[k]);
-			}
+		const jsons = resource
+			? this.json_cols(resource)
+			: new Set(['payload', 'custom_data']);
+		for (const k of jsons) {
+			if (!(k in parsed)) continue;
+			parsed[k] = parse_json_cell(parsed[k]);
 		}
 		return to_imperium(parsed);
 	}
@@ -341,7 +342,7 @@ export class ImperiumStore {
 			`SELECT * FROM ${qt}${where}${order} LIMIT ${take} OFFSET ${skip}`,
 			params,
 		);
-		const flattened = rows.map((r) => this.flatten(r as Record<string, unknown>)!);
+		const flattened = rows.map((r) => this.flatten(r as Record<string, unknown>, resource)!);
 		const populated =
 			opts.populate === false ? flattened : await this.populate_docs(resource, flattened);
 		return {
@@ -358,7 +359,7 @@ export class ImperiumStore {
 			`SELECT * FROM ${this.qt(resource)} WHERE id = $1 LIMIT 1`,
 			[id],
 		);
-		return this.flatten((rows[0] as Record<string, unknown>) ?? null);
+		return this.flatten((rows[0] as Record<string, unknown>) ?? null, resource);
 	}
 
 	async find_where(
@@ -390,7 +391,7 @@ export class ImperiumStore {
 			`INSERT INTO ${qt} (${keys.map(qident).join(', ')}) VALUES (${keys.map((_, i) => `$${i + 1}`).join(', ')}) RETURNING *`,
 			values,
 		);
-		return this.flatten(inserted[0] as Record<string, unknown>)!;
+		return this.flatten(inserted[0] as Record<string, unknown>, resource)!;
 	}
 
 	async update(
@@ -419,7 +420,7 @@ export class ImperiumStore {
 			`UPDATE ${this.qt(resource)} SET ${set} WHERE id = $${keys.length + 1} RETURNING *`,
 			values,
 		);
-		return this.flatten((updated[0] as Record<string, unknown>) ?? null);
+		return this.flatten((updated[0] as Record<string, unknown>) ?? null, resource);
 	}
 
 	async remove(resource: string, id: string): Promise<ImperiumDoc | null> {
@@ -854,6 +855,17 @@ export class ImperiumStore {
 				recent_activity: export_sheet('Actividad Reciente (7 días)', 'line'),
 			},
 		};
+	}
+}
+
+function parse_json_cell(value: unknown): unknown {
+	if (typeof value !== 'string') return value;
+	const trimmed = value.trim();
+	if (!(trimmed.startsWith('{') || trimmed.startsWith('['))) return value;
+	try {
+		return JSON.parse(trimmed);
+	} catch {
+		return value;
 	}
 }
 
