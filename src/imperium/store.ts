@@ -44,6 +44,7 @@ export const RESOURCE_ALIASES: Record<string, string> = {
 	proyectos: 'planeacion-proyectos',
 	'mis-tareas': 'planeacion-mis-tareas',
 	'proyectos-task': 'planeacion-proyectos-task',
+	usuario: 'user',
 };
 
 type RefBook = {
@@ -152,6 +153,7 @@ export class ImperiumStore {
 				'cobranza-payment',
 				'module-management-reference',
 				'font-awesome-icon-catalog',
+				'mcp-user-token',
 			];
 			for (const resource of orphans) {
 				if (this.locs.has(resource)) continue;
@@ -169,6 +171,8 @@ export class ImperiumStore {
 			}
 			const icons = this.locs.get('font-awesome-icon-catalog');
 			if (icons) icons.collection = '__font_awesome_icon_catalog';
+			const tokens = this.locs.get('mcp-user-token');
+			if (tokens) tokens.collection = 'mcp_user_tokens';
 		}
 	}
 
@@ -346,6 +350,7 @@ export class ImperiumStore {
 			'cobranza-payment',
 			'module-management-reference',
 			'font-awesome-icon-catalog',
+			'mcp-user-token',
 		]) {
 			if (!this.locs.has(resource)) continue;
 			const qt = this.qt(resource);

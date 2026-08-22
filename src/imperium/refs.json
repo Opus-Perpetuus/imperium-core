@@ -159,6 +159,8 @@
     "attachment-management": "attachment-management",
     "attachmentmanagement": "attachment-management",
     "user": "user",
+    "User": "user",
+    "usuario": "user",
     "user-group": "user-group",
     "usergroup": "user-group",
     "zpl-management": "zpl-management",

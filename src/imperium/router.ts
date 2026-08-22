@@ -5,6 +5,7 @@ import extra from './extra-routes.json';
 import { handle_auth, current_user, ensure_session_table } from './auth.ts';
 import { handle_crud } from './crud.ts';
 import { handle_action } from './actions.ts';
+import { handle_mcp_agent, seed_mcp_access } from './mcp-agent.ts';
 import { serve_media } from './media.ts';
 import { ImperiumStore, load_catalog_path } from './store.ts';
 import { fail } from './envelope.ts';
@@ -26,6 +27,7 @@ export function create_imperium_layer(sql: Bun.SQL) {
 		ready ??= (async () => {
 			await ensure_session_table(sql);
 			await store.ensure_defaults();
+			await seed_mcp_access(store);
 		})();
 		return ready;
 	};
@@ -54,6 +56,22 @@ export function create_imperium_layer(sql: Bun.SQL) {
 				const auth_url = new URL(req.url);
 				auth_url.pathname = path;
 				return add_cors(req, await handle_auth(store, sql, req, auth_url));
+			}
+			if (path === '/mcp-agent' || path.startsWith('/mcp-agent/')) {
+				const mcp_url = new URL(req.url);
+				mcp_url.pathname = path;
+				try {
+					return add_cors(req, await handle_mcp_agent(store, sql, req, mcp_url));
+				} catch (err) {
+					const e = err as Error & { status?: number; code?: string };
+					return add_cors(
+						req,
+						Response.json(
+							{ ok: false, error: e.code ?? 'error', message: e.message },
+							{ status: e.status ?? 400 },
+						),
+					);
+				}
 			}
 			if (req.method === 'OPTIONS' && looks_imperium(path, store)) {
 				return add_cors(req, new Response(null, { status: 204 }));
@@ -115,6 +133,7 @@ function looks_imperium(path: string, store: ImperiumStore): boolean {
 	const p = strip_api_prefix(path);
 	if (p === '/auth' || p.startsWith('/auth/')) return true;
 	if (p === '/media' || p.startsWith('/media/')) return true;
+	if (p === '/mcp-agent' || p.startsWith('/mcp-agent/')) return true;
 	return split_resource(p, store) != null;
 }
 

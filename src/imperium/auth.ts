@@ -272,7 +272,7 @@ function with_cookie(res: Response, sid: string, clear = false): Response {
 export async function build_access(store: ImperiumStore, user: ImperiumDoc) {
 	const is_admin = user._ref === SEED_ADMIN_REF;
 	if (is_admin) {
-		const models = [...new Set(store.all_locs.map((l) => l.resource))];
+		const models = [...new Set([...store.all_locs.map((l) => l.resource), 'McpAgent'])];
 		return {
 			access_granted: true,
 			has_full_access: true,
