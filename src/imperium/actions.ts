@@ -449,8 +449,9 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'reports:get_first_record':
 			return report_first(ctx);
 		case 'reports:get_model_fields':
+			return report_fields(ctx, false);
 		case 'reports:get_model_fields_detailed':
-			return report_fields(ctx);
+			return report_fields(ctx, true);
 		case 'reports:get_model_records':
 			return report_records(ctx);
 		case 'reports:get_model_record_by_id':
@@ -4107,22 +4108,212 @@ async function report_first(ctx: Ctx) {
 	return ok(rows, 'Primer registro');
 }
 
-async function report_fields(ctx: Ctx) {
-	const model = ctx.params.modelName ?? ctx.params.model_identifier ?? '';
-	const resource = resolve_model(ctx, model);
-	const loc = ctx.store.loc(resource);
-	const fields = [
-		{ path: 'name', type: 'string', label: 'Nombre' },
-		{ path: 'description', type: 'string', label: 'Descripción' },
-		{ path: 'is_active', type: 'boolean', label: 'Activo' },
-		{ path: '_ref', type: 'string', label: 'Ref' },
-		...loc.columns.map((c) => ({
-			path: c.name,
-			type: c.pg === 'json' ? 'object' : c.pg === 'boolean' ? 'boolean' : c.pg === 'number' ? 'number' : 'string',
-			label: c.name,
-		})),
+const REPORT_SYSTEM_PATHS = new Set([
+	'_id',
+	'id',
+	'__v',
+	'createdAt',
+	'updatedAt',
+	'created_at',
+	'updated_at',
+	'search_field',
+	'_ref',
+	'_name',
+	'ref',
+	'payload',
+	'custom_data',
+]);
+
+function is_report_system_path(path: string) {
+	if (!path) return true;
+	if (path.startsWith('_')) return true;
+	return REPORT_SYSTEM_PATHS.has(path);
+}
+
+function report_pg_type(pg?: string) {
+	if (pg === 'boolean') return 'Boolean';
+	if (pg === 'number') return 'Number';
+	if (pg === 'json') return 'Mixed';
+	return 'String';
+}
+
+function report_related_candidates(ctx: Ctx, model_name: string) {
+	const target = ctx.store.resource_for_model(model_name);
+	const base = [
+		{ field_name: 'name', field_type: 'String', is_required: false },
+		{ field_name: 'description', field_type: 'String', is_required: false },
+		{ field_name: 'is_active', field_type: 'Boolean', is_required: false },
 	];
-	return ok([fields], 'Campos del modelo');
+	if (!target || !ctx.store.has(target)) return base;
+	const seen = new Set(base.map((f) => f.field_name));
+	for (const col of ctx.store.loc(target).columns) {
+		if (is_report_system_path(col.name) || seen.has(col.name)) continue;
+		seen.add(col.name);
+		base.push({
+			field_name: col.name,
+			field_type: report_pg_type(col.pg),
+			is_required: false,
+		});
+	}
+	return base;
+}
+
+function report_json_item_fields(value: unknown) {
+	const item = Array.isArray(value) ? value[0] : value;
+	if (!item || typeof item !== 'object') return [];
+	const obj = as_object(item);
+	const related: Array<{ field_name: string; field_type: string; is_required: boolean }> = [];
+	for (const [key, raw] of Object.entries(obj)) {
+		if (is_report_system_path(key)) continue;
+		const kind =
+			typeof raw === 'number'
+				? 'Number'
+				: typeof raw === 'boolean'
+					? 'Boolean'
+					: Array.isArray(raw)
+						? 'Array'
+						: raw && typeof raw === 'object'
+							? 'ObjectID'
+							: 'String';
+		related.push({ field_name: key, field_type: kind, is_required: false });
+	}
+	const product_key = related.find((f) =>
+		['product', 'producto', 'product_id', 'producto_id'].includes(f.field_name),
+	);
+	if (product_key) {
+		for (const nested of ['name', 'codigo', 'description', 'descripcion']) {
+			related.push({
+				field_name: `${product_key.field_name}.${nested}`,
+				field_type: 'String',
+				is_required: false,
+			});
+		}
+	}
+	return related;
+}
+
+async function build_report_field_metadata(ctx: Ctx, resource: string) {
+	const loc = ctx.store.loc(resource);
+	const refs = ctx.store.field_refs(resource);
+	const sample = (await ctx.store.find_many(resource, { take: 1, populate: false })).rows[0] ?? {};
+	const fields: Array<{
+		field_name: string;
+		field_type: string;
+		is_required: boolean;
+		is_reference: boolean;
+		reference_model: string | null;
+		is_array: boolean;
+		related_fields: Array<{ field_name: string; field_type: string; is_required: boolean }>;
+	}> = [];
+	const seen = new Set<string>();
+	const push = (field: (typeof fields)[number]) => {
+		if (seen.has(field.field_name) || is_report_system_path(field.field_name)) return;
+		seen.add(field.field_name);
+		fields.push(field);
+	};
+	push({
+		field_name: 'name',
+		field_type: 'String',
+		is_required: true,
+		is_reference: false,
+		reference_model: null,
+		is_array: false,
+		related_fields: [],
+	});
+	push({
+		field_name: 'description',
+		field_type: 'String',
+		is_required: false,
+		is_reference: false,
+		reference_model: null,
+		is_array: false,
+		related_fields: [],
+	});
+	push({
+		field_name: 'is_active',
+		field_type: 'Boolean',
+		is_required: false,
+		is_reference: false,
+		reference_model: null,
+		is_array: false,
+		related_fields: [],
+	});
+	for (const col of loc.columns) {
+		const reference_model = refs[col.name] ?? null;
+		const sample_value = sample[col.name];
+		const is_array = Array.isArray(sample_value) || col.pg === 'json';
+		push({
+			field_name: col.name,
+			field_type: reference_model ? 'ObjectID' : is_array && Array.isArray(sample_value) ? 'Array' : report_pg_type(col.pg),
+			is_required: false,
+			is_reference: Boolean(reference_model),
+			reference_model,
+			is_array: Boolean(is_array && !reference_model),
+			related_fields: reference_model
+				? report_related_candidates(ctx, reference_model)
+				: is_array
+					? report_json_item_fields(sample_value)
+					: [],
+		});
+	}
+	for (const [field_name, reference_model] of Object.entries(refs)) {
+		push({
+			field_name,
+			field_type: 'ObjectID',
+			is_required: false,
+			is_reference: true,
+			reference_model,
+			is_array: false,
+			related_fields: report_related_candidates(ctx, reference_model),
+		});
+	}
+	for (const [field_name, raw] of Object.entries(sample)) {
+		if (seen.has(field_name) || is_report_system_path(field_name)) continue;
+		const reference_model = refs[field_name] ?? null;
+		const is_array = Array.isArray(raw);
+		push({
+			field_name,
+			field_type: reference_model
+				? 'ObjectID'
+				: is_array
+					? 'Array'
+					: typeof raw === 'number'
+						? 'Number'
+						: typeof raw === 'boolean'
+							? 'Boolean'
+							: raw && typeof raw === 'object'
+								? 'Mixed'
+								: 'String',
+			is_required: false,
+			is_reference: Boolean(reference_model),
+			reference_model,
+			is_array,
+			related_fields: reference_model
+				? report_related_candidates(ctx, reference_model)
+				: is_array
+					? report_json_item_fields(raw)
+					: [],
+		});
+	}
+	return fields;
+}
+
+async function report_fields(ctx: Ctx, detailed: boolean) {
+	const model =
+		ctx.params.model_identifier ?? ctx.params.modelName ?? ctx.params.model_name ?? '';
+	try {
+		const resource = resolve_model(ctx, model);
+		const fields = await build_report_field_metadata(ctx, resource);
+		if (!detailed) {
+			return ok(
+				fields.map((field) => field.field_name),
+				'Campos del modelo obtenidos correctamente',
+			);
+		}
+		return ok(fields, 'Campos del modelo obtenidos correctamente');
+	} catch {
+		return ok([], `Error obteniendo campos del modelo ${model}`);
+	}
 }
 
 async function report_records(ctx: Ctx) {
