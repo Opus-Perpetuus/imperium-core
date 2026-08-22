@@ -3,7 +3,7 @@
  * Mismo contrato que `CfdiDocumentService.create_from_payroll_receipt`.
  */
 import { as_object, ok, type ImperiumDoc } from './envelope.ts';
-import { validate_canonical } from './cfdi-from-invoice.ts';
+import { has_cfdi_errors, run_cfdi_validation } from './cfdi-validator.ts';
 import { looks_like_canonical, serialize_cfdi_to_xml } from './cfdi-xml.ts';
 import { stamp_with_pac } from './pac.ts';
 import { payroll_payload_to_canonical } from './payroll-payload-to-canonical.ts';
@@ -124,8 +124,8 @@ export async function create_cfdi_from_payroll_receipt(ctx: CfdiFromPayrollCtx) 
 		}
 	}
 
-	const issues = validate_canonical(canonical);
-	const status = issues.some((item) => item.severity === 'error') ? 'invalid' : 'valid';
+	const issues = await run_cfdi_validation(ctx.store, canonical);
+	const status = has_cfdi_errors(issues) ? 'invalid' : 'valid';
 	canonical.meta = {
 		...(canonical.meta ?? {}),
 		source: 'payroll_receipt',

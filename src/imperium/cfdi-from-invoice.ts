@@ -8,23 +8,14 @@ import {
 	type CfdiBuilderProductMapEntry,
 } from './cfdi-builder.ts';
 import { as_array, as_object, ok, type ImperiumDoc } from './envelope.ts';
-import type { CfdiCanonical } from './cfdi-xml.ts';
 import type { ImperiumStore } from './store.ts';
+import { has_cfdi_errors, run_cfdi_validation } from './cfdi-validator.ts';
 
 export type CfdiFromInvoiceCtx = {
 	store: ImperiumStore;
 	params: Record<string, string>;
 	body: Record<string, unknown>;
 };
-
-type ValidationIssue = {
-	code: string;
-	path: string;
-	severity: 'error' | 'warning';
-	message: string;
-};
-
-const RFC_GENERIC = new Set(['XAXX010101000', 'XEXX010101000']);
 
 function text(value: unknown): string {
 	return String(value ?? '').trim();
@@ -34,85 +25,6 @@ function ref_id(value: unknown): string {
 	if (value == null) return '';
 	if (typeof value === 'object') return text((value as { _id?: unknown })._id);
 	return text(value);
-}
-
-function is_rfc(rfc: string): boolean {
-	const value = rfc.trim().toUpperCase();
-	if (RFC_GENERIC.has(value)) return true;
-	return /^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$/.test(value);
-}
-
-function issue(code: string, path: string, message: string): ValidationIssue {
-	return { code, path, severity: 'error', message };
-}
-
-export function validate_canonical(doc: CfdiCanonical): ValidationIssue[] {
-	const issues: ValidationIssue[] = [];
-	if (doc.version !== '4.0') {
-		issues.push(issue('CFDI_E001', 'version', `Version debe ser "4.0", recibido "${doc.version}"`));
-	}
-	const c = doc.comprobante;
-	if (!c?.fecha) issues.push(issue('CFDI_E010', 'comprobante.fecha', 'Fecha de emisión requerida'));
-	if (!c?.moneda) issues.push(issue('CFDI_E011', 'comprobante.moneda', 'Moneda requerida'));
-	if (!c?.tipo_de_comprobante) {
-		issues.push(issue('CFDI_E012', 'comprobante.tipo_de_comprobante', 'TipoDeComprobante requerido'));
-	}
-	if (!c?.exportacion) {
-		issues.push(issue('CFDI_E013', 'comprobante.exportacion', 'Exportacion requerida'));
-	}
-	if (!c?.lugar_expedicion || !/^\d{5}$/.test(c.lugar_expedicion)) {
-		issues.push(
-			issue('CFDI_E014', 'comprobante.lugar_expedicion', 'LugarExpedicion debe ser un código postal de 5 dígitos'),
-		);
-	}
-	if (!is_rfc(doc.emisor?.rfc ?? '')) {
-		issues.push(issue('CFDI_E020', 'emisor.rfc', 'RFC del emisor inválido'));
-	}
-	if (!text(doc.emisor?.nombre)) {
-		issues.push(issue('CFDI_E021', 'emisor.nombre', 'Nombre del emisor requerido'));
-	}
-	if (!text(doc.emisor?.regimen_fiscal)) {
-		issues.push(issue('CFDI_E022', 'emisor.regimen_fiscal', 'Régimen fiscal del emisor requerido'));
-	}
-	if (!is_rfc(doc.receptor?.rfc ?? '')) {
-		issues.push(issue('CFDI_E030', 'receptor.rfc', 'RFC del receptor inválido'));
-	}
-	if (!text(doc.receptor?.nombre)) {
-		issues.push(issue('CFDI_E031', 'receptor.nombre', 'Nombre del receptor requerido'));
-	}
-	if (!/^\d{5}$/.test(doc.receptor?.domicilio_fiscal_receptor ?? '')) {
-		issues.push(
-			issue(
-				'CFDI_E032',
-				'receptor.domicilio_fiscal_receptor',
-				'Domicilio fiscal del receptor debe ser un código postal de 5 dígitos',
-			),
-		);
-	}
-	if (!text(doc.receptor?.regimen_fiscal_receptor)) {
-		issues.push(issue('CFDI_E033', 'receptor.regimen_fiscal_receptor', 'Régimen fiscal del receptor requerido'));
-	}
-	if (!text(doc.receptor?.uso_cfdi)) {
-		issues.push(issue('CFDI_E034', 'receptor.uso_cfdi', 'UsoCFDI requerido'));
-	}
-	if (!doc.conceptos?.length) {
-		issues.push(issue('CFDI_E040', 'conceptos', 'El comprobante requiere al menos un concepto'));
-	}
-	for (const [index, line] of (doc.conceptos ?? []).entries()) {
-		if (!text(line.clave_prod_serv)) {
-			issues.push(issue('CFDI_E041', `conceptos[${index}].clave_prod_serv`, 'ClaveProdServ requerida'));
-		}
-		if (!text(line.clave_unidad)) {
-			issues.push(issue('CFDI_E042', `conceptos[${index}].clave_unidad`, 'ClaveUnidad requerida'));
-		}
-		if (!text(line.descripcion)) {
-			issues.push(issue('CFDI_E043', `conceptos[${index}].descripcion`, 'Descripción del concepto requerida'));
-		}
-		if (!(Number(line.cantidad) > 0)) {
-			issues.push(issue('CFDI_E044', `conceptos[${index}].cantidad`, 'Cantidad debe ser mayor a cero'));
-		}
-	}
-	return issues;
 }
 
 async function load_issuer(store: ImperiumStore, issuer_profile_id?: string): Promise<ImperiumDoc> {
@@ -259,8 +171,8 @@ export async function create_cfdi_from_invoice_request(ctx: CfdiFromInvoiceCtx) 
 	}
 
 	const canonical = build_cfdi_from_invoice_request_data(builder_input);
-	const issues = validate_canonical(canonical);
-	const status = issues.some((item) => item.severity === 'error') ? 'invalid' : 'valid';
+	const issues = await run_cfdi_validation(ctx.store, canonical);
+	const status = has_cfdi_errors(issues) ? 'invalid' : 'valid';
 	canonical.meta = {
 		...(canonical.meta ?? {}),
 		source: 'invoice_request',

@@ -21,6 +21,7 @@ import {
 import { AguaMssqlService } from './agua-mssql.ts';
 import { calcular_importe } from './agua-importe.ts';
 import { looks_like_canonical, serialize_cfdi_to_xml, type CfdiCanonical } from './cfdi-xml.ts';
+import { has_cfdi_errors, run_cfdi_validation } from './cfdi-validator.ts';
 import { create_cfdi_from_invoice_request } from './cfdi-from-invoice.ts';
 import { create_cfdi_from_payroll_receipt } from './cfdi-from-payroll.ts';
 import { create_cfdi_from_purchase_order } from './cfdi-from-purchase.ts';
@@ -808,21 +809,35 @@ async function catalog_search(ctx: Ctx) {
 
 async function cfdi_validate(ctx: Ctx) {
 	const doc = await need(ctx, 'cfdi-document', ctx.params.id);
-	const payload = as_object(doc.payload_canonico ?? doc);
-	const errors: string[] = [];
-	if (!payload.emisor && !doc.emisor) errors.push('Falta emisor');
-	if (!payload.receptor && !doc.receptor) errors.push('Falta receptor');
-	const valid = errors.length === 0;
-	const status = valid ? 'valid' : 'invalid';
+	const canonical = as_object(doc.canonical ?? doc.payload_canonico);
+	if (!looks_like_canonical(canonical)) {
+		throw new Error('El documento no tiene un payload canónico para validar.');
+	}
+	const issues = await run_cfdi_validation(ctx.store, canonical);
+	const status = has_cfdi_errors(issues) ? 'invalid' : 'valid';
+	const next_canonical = {
+		...canonical,
+		meta: {
+			...(canonical.meta ?? {}),
+			validation: { status, errors: issues },
+		},
+	};
 	const updated = await ctx.store.update('cfdi-document', String(doc._id), {
 		status,
 		estado: status,
-		validado: valid,
-		errores_validacion: errors,
+		validado: status === 'valid',
+		canonical: next_canonical,
+		payload_canonico: next_canonical,
+		validation_issues: issues,
+		errores_validacion: issues,
 		fecha_validacion: now(),
 	});
-	if (!valid) throw new Error(errors.join('; '));
-	return ok([updated], 'Documento validado');
+	return ok(
+		[updated],
+		status === 'valid'
+			? 'Documento CFDI válido según las reglas actuales'
+			: 'Documento CFDI con errores o advertencias de validación',
+	);
 }
 
 async function cfdi_stamp(ctx: Ctx) {
