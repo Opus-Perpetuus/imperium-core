@@ -17,6 +17,7 @@ import { ImperiumStore, load_catalog_path } from './store.ts';
 import { fail } from './envelope.ts';
 import { PinChallengeError } from './user-pin.ts';
 import { bind_debug_store, debug_error, persist_request_log } from './debug-request-log.ts';
+import { run_with_history_context } from './history.ts';
 
 type ExtraRoute = {
 	resource: string;
@@ -107,6 +108,14 @@ async function dispatch(
 			if (!hit) return null;
 			const actor = await current_user(sql, req);
 			try {
+				return await run_with_history_context(
+					{
+						actor,
+						method: req.method,
+						path,
+						user_agent: req.headers.get('user-agent') ?? undefined,
+					},
+					async () => {
 				const extra_hit = match_extra(hit.resource, req.method, hit.rest);
 				if (!is_public_extra_action(extra_hit?.action)) {
 					await assert_http_access(store, actor, hit.resource, req.method, {
@@ -132,6 +141,8 @@ async function dispatch(
 				return add_cors(
 					req,
 					Response.json(fail('not found', 404).body, { status: 404 }),
+				);
+					},
 				);
 			} catch (err) {
 				if (err instanceof PinChallengeError) {

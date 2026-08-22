@@ -406,6 +406,9 @@ const SESSION_SCOPED_EXTRAS = new Set([
 	'view-config-preset:available',
 	'view-config-preset:baseline',
 	'interface-restriction:runtime_read',
+	'document-change-history:read_history',
+	'document-change-history:read_history_by_id',
+	'document-change-history:create_comment',
 	'user-pin:verify',
 	'tickets:read_my_tickets',
 	'tickets:create_internal_ticket',
@@ -507,6 +510,28 @@ function permissions_for_resource(
 		}
 	}
 	return { model: keys[1] ?? resource };
+}
+
+/**
+ * Permiso de Leer sobre el modelo del documento (no sobre document-change-history).
+ * Replica validate_read_access del original.
+ */
+export async function assert_target_model_read(
+	store: ImperiumStore,
+	actor: ImperiumDoc | null,
+	model_or_resource: string,
+): Promise<string> {
+	if (!actor) throw new HttpAuthRequiredError();
+	const access = await build_access(store, actor);
+	const canonical = store.has(model_or_resource)
+		? store.loc(model_or_resource).resource
+		: model_or_resource;
+	if (access.has_full_access) return canonical;
+	const { perms, model } = permissions_for_resource(access, canonical);
+	if (perms?.allow_read) return model;
+	throw new HttpAccessDeniedError(
+		build_model_denied_message('GET', model, access.user_group_names ?? []),
+	);
 }
 
 export async function assert_http_access(

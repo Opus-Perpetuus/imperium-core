@@ -16,6 +16,7 @@ import { SearchEngine, search_text_from_doc } from './search-engine.ts';
 import { mongo_match_to_sql } from './record-rules.ts';
 import { products_inventory_cost } from './products-flow.ts';
 import { vehicle_by_status } from './vehicle-flow.ts';
+import { record_document_history } from './history.ts';
 
 export type ExtraCol = {
 	name: string;
@@ -649,6 +650,7 @@ export class ImperiumStore {
 		);
 		const created = this.flatten(inserted[0] as Record<string, unknown>, resource)!;
 		await this.sync_search(resource, created);
+		await record_document_history(this, resource, null, created).catch(() => undefined);
 		return created;
 	}
 
@@ -680,6 +682,7 @@ export class ImperiumStore {
 		);
 		const saved = this.flatten((updated[0] as Record<string, unknown>) ?? null, resource);
 		if (saved) await this.sync_search(resource, saved);
+		if (saved) await record_document_history(this, resource, existing, saved).catch(() => undefined);
 		return saved;
 	}
 

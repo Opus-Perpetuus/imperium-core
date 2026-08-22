@@ -63,7 +63,8 @@ import {
 	notification_update_read,
 	register_comment_mentions,
 } from './notifications.ts';
-import { build_access } from './auth.ts';
+import { assert_target_model_read, build_access } from './auth.ts';
+import { history_row_matches, resolve_history_model } from './history.ts';
 import {
 	normalize_state_values,
 	resolve_spurious_options,
@@ -314,7 +315,7 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'document-change-history:read_history':
 			return read_history(ctx);
 		case 'document-change-history:read_history_by_id':
-			return one(ctx, 'document-change-history', ctx.params.id);
+			return read_history_by_id(ctx);
 		case 'documentation-page:read_all':
 			return documentation_read_all(ctx);
 		case 'documentation-page:get_structure':
@@ -1757,6 +1758,11 @@ async function create_history_comment(ctx: Ctx) {
 		throw new Error('Se requiere collection_name o model_name para registrar el comentario.');
 	}
 	if (!comment_text) throw new Error('Debes escribir un comentario antes de guardarlo.');
+	const canonical = resolve_history_model(ctx.store, model_name, collection_name);
+	if (!canonical) {
+		throw new Error('No se pudo resolver el modelo del historial solicitado.');
+	}
+	await assert_target_model_read(ctx.store, ctx.actor, canonical);
 	const created = await ctx.store.insert('document-change-history', {
 		name: 'comentario',
 		entryType: 'comment',
@@ -1764,9 +1770,9 @@ async function create_history_comment(ctx: Ctx) {
 		commentText: comment_text,
 		actionName: 'Comentario',
 		actionDescription: comment_text,
-		model: model_name,
-		modelName: model_name,
-		collectionName: collection_name || model_name,
+		model: canonical,
+		modelName: canonical,
+		collectionName: collection_name || canonical,
 		documentId: document_id,
 		record_id: document_id,
 		operationType: 'comment',
@@ -1806,6 +1812,11 @@ async function read_history(ctx: Ctx) {
 	if (!collection_name && !model_name) {
 		throw new Error('Se requiere collection_name o model_name para consultar el historial.');
 	}
+	const canonical = resolve_history_model(ctx.store, model_name, collection_name);
+	if (!canonical) {
+		throw new Error('No se pudo resolver el modelo del historial solicitado.');
+	}
+	await assert_target_model_read(ctx.store, ctx.actor, canonical);
 	const legacy_size = Number(ctx.url.searchParams.get('size') ?? 0);
 	const limite = Math.min(
 		50,
@@ -1817,15 +1828,7 @@ async function read_history(ctx: Ctx) {
 		include_inactive: true,
 	});
 	const matched = rows
-		.filter((row) => {
-			const same_doc =
-				String(row.documentId ?? row.document_id ?? row.record_id ?? '') === document_id;
-			if (!same_doc) return false;
-			if (model_name) {
-				return String(row.modelName ?? row.model_name ?? row.model ?? '') === model_name;
-			}
-			return String(row.collectionName ?? row.collection_name ?? '') === collection_name;
-		})
+		.filter((row) => history_row_matches(ctx.store, row, document_id, canonical))
 		.sort((a, b) => created_ms(b) - created_ms(a));
 	const page = matched.slice(desde, desde + limite);
 	return ok(
@@ -1838,6 +1841,25 @@ async function read_history(ctx: Ctx) {
 function created_ms(doc: ImperiumDoc): number {
 	const t = new Date(String(doc.createdAt ?? doc.created_at ?? '')).getTime();
 	return Number.isFinite(t) ? t : 0;
+}
+
+async function read_history_by_id(ctx: Ctx) {
+	const history_id = String(ctx.params.id ?? '').trim();
+	if (!history_id) throw new Error('Debes indicar el historial que deseas consultar.');
+	const record = await ctx.store.find_id('document-change-history', history_id);
+	if (!record) {
+		return ok([], 'Registro de historial no encontrado', 0);
+	}
+	const canonical = resolve_history_model(
+		ctx.store,
+		String(record.modelName ?? record.model_name ?? record.model ?? ''),
+		String(record.collectionName ?? record.collection_name ?? ''),
+	);
+	if (!canonical) {
+		throw new Error('No se pudo resolver el modelo del historial solicitado.');
+	}
+	await assert_target_model_read(ctx.store, ctx.actor, canonical);
+	return ok([record], 'Registro de historial obtenido correctamente');
 }
 
 async function documentation_adjacent(ctx: Ctx) {
