@@ -26,6 +26,11 @@
     "vehicle": {
       "chofer": "Employee"
     },
+    "pos-session": {
+      "cashier": "Employee",
+      "branch_office": "Branchoffice",
+      "created_by": "User"
+    },
     "tags": {
       "created_by": "User"
     },
@@ -338,6 +343,7 @@
     "ticketing-system-priority": "ticketing-system-priority",
     "ticketingsystempriority": "ticketing-system-priority",
     "Employee": "employee",
+    "Branchoffice": "branchoffice",
     "vehicle": "vehicle",
     "purchase-order": "purchase-order",
     "purchaseorder": "purchase-order",

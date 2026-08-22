@@ -982,5 +982,113 @@
     "method": "post",
     "path": "/challenge/:id",
     "action": "challenge"
+  },
+  {
+    "resource": "payments",
+    "method": "get",
+    "path": "/catalog",
+    "action": "public_catalog"
+  },
+  {
+    "resource": "payments",
+    "method": "post",
+    "path": "/checkout",
+    "action": "public_checkout"
+  },
+  {
+    "resource": "payments",
+    "method": "get",
+    "path": "/session",
+    "action": "public_session"
+  },
+  {
+    "resource": "payments",
+    "method": "post",
+    "path": "/webhook/stripe",
+    "action": "stripe_webhook"
+  },
+  {
+    "resource": "agua",
+    "method": "get",
+    "path": "/publico/contrato",
+    "action": "public_contrato"
+  },
+  {
+    "resource": "agua",
+    "method": "get",
+    "path": "/publico/url",
+    "action": "public_url"
+  },
+  {
+    "resource": "agua",
+    "method": "get",
+    "path": "/sync/estado",
+    "action": "sync_estado"
+  },
+  {
+    "resource": "agua",
+    "method": "post",
+    "path": "/sync/catalogos",
+    "action": "sync_catalogos"
+  },
+  {
+    "resource": "agua",
+    "method": "post",
+    "path": "/sync/contratos",
+    "action": "sync_contratos"
+  },
+  {
+    "resource": "agua",
+    "method": "post",
+    "path": "/sync/rutas/:idLecturista",
+    "action": "sync_rutas"
+  },
+  {
+    "resource": "agua",
+    "method": "post",
+    "path": "/sync/tarifas/:idLecturista",
+    "action": "sync_tarifas"
+  },
+  {
+    "resource": "agua",
+    "method": "post",
+    "path": "/sync/lectura/:id",
+    "action": "push_lectura"
+  },
+  {
+    "resource": "agua",
+    "method": "post",
+    "path": "/sync/lecturas-lote",
+    "action": "push_lecturas_lote"
+  },
+  {
+    "resource": "agua",
+    "method": "get",
+    "path": "/campo/contratos",
+    "action": "campo_contratos"
+  },
+  {
+    "resource": "agua",
+    "method": "post",
+    "path": "/periodo/archivar",
+    "action": "archivar_periodo"
+  },
+  {
+    "resource": "agua",
+    "method": "get",
+    "path": "/metricas",
+    "action": "metricas"
+  },
+  {
+    "resource": "agua",
+    "method": "get",
+    "path": "/reportes/:tipo",
+    "action": "reportes"
+  },
+  {
+    "resource": "agua",
+    "method": "get",
+    "path": "/print-mode",
+    "action": "print_mode"
   }
 ]

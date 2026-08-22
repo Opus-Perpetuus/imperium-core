@@ -409,6 +409,41 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			}, 'Infracción impugnada');
 		case 'attachment-management:view':
 			return attachment_view(ctx);
+		case 'payments:public_catalog':
+			return payments_catalog(ctx);
+		case 'payments:public_checkout':
+			return payments_checkout(ctx);
+		case 'payments:public_session':
+			return payments_session(ctx);
+		case 'payments:stripe_webhook':
+			return payments_webhook(ctx);
+		case 'agua:public_contrato':
+			return agua_public_contrato(ctx);
+		case 'agua:public_url':
+			return agua_public_url(ctx);
+		case 'agua:sync_estado':
+			return ok([{ enabled: false }], 'Sincronización MSSQL no configurada en el núcleo SQL');
+		case 'agua:sync_catalogos':
+		case 'agua:sync_contratos':
+		case 'agua:sync_rutas':
+		case 'agua:sync_tarifas':
+			return ok([], 'Sin origen MSSQL: use los registros migrados en SQL');
+		case 'agua:push_lectura':
+			return agua_push_lectura(ctx);
+		case 'agua:push_lecturas_lote':
+			return agua_push_lecturas_lote(ctx);
+		case 'agua:campo_contratos':
+			return list_where(ctx, 'contrato', {
+				estado: String(ctx.url.searchParams.get('estado') ?? ''),
+			});
+		case 'agua:archivar_periodo':
+			return agua_archivar_periodo(ctx);
+		case 'agua:metricas':
+			return agua_metricas(ctx);
+		case 'agua:reportes':
+			return agua_reportes(ctx);
+		case 'agua:print_mode':
+			return agua_print_mode(ctx);
 		default:
 			return generic_action(ctx);
 	}
@@ -1690,4 +1725,210 @@ async function need(ctx: Ctx, resource: string, id?: string) {
 	const doc = await ctx.store.find_id(resource, id);
 	if (!doc || doc.is_active === false) throw new Error('No se encontró el documento');
 	return doc;
+}
+
+async function payments_catalog(ctx: Ctx) {
+	const disabled = new Set<string>();
+	if (ctx.store.has('module-management')) {
+		const { rows } = await ctx.store.find_many('module-management', {
+			take: 500,
+			include_inactive: true,
+		});
+		for (const row of rows) {
+			if (row.is_enable === false || row.is_active === false) {
+				disabled.add(String(row.model_id ?? row.name ?? ''));
+			}
+		}
+	}
+	const cfdi_on = !disabled.has('CfdiDocument') && ctx.store.has('cfdi-document');
+	const services = [
+		{
+			slug: 'generico',
+			title: 'Pago de prueba',
+			description: 'Cargo libre para validar el portal de pagos.',
+			kind: 'one_time',
+			required_model_id: null as string | null,
+			lookup_label: null as string | null,
+			billable: true,
+		},
+		{
+			slug: 'agua',
+			title: 'Agua potable',
+			description: 'Consulta el contrato y paga el saldo pendiente.',
+			kind: 'one_time',
+			required_model_id: 'Agua',
+			lookup_label: 'Número de contrato',
+			billable: true,
+		},
+		{
+			slug: 'infracciones',
+			title: 'Infracciones',
+			description: 'Paga un cargo de infracción con su folio o placas.',
+			kind: 'one_time',
+			required_model_id: 'Cobranza',
+			lookup_label: 'Folio o placas',
+			billable: true,
+		},
+	];
+	const data = services
+		.filter((s) => !s.required_model_id || !disabled.has(s.required_model_id))
+		.map((s) => ({
+			slug: s.slug,
+			title: s.title,
+			description: s.description,
+			kind: s.kind,
+			lookup_label: s.lookup_label,
+			invoice_available: Boolean(s.billable && cfdi_on),
+		}));
+	return ok(data, 'ok');
+}
+
+async function payments_checkout(ctx: Ctx) {
+	const slug = String(ctx.body.service_slug ?? '');
+	if (!slug) throw new Error('Servicio de pago no encontrado.');
+	const amount = Number(ctx.body.amount ?? 0);
+	const created = await ctx.store.insert('payments', {
+		name: `Pago ${slug}`,
+		service_slug: slug,
+		amount,
+		status: 'pendiente',
+		provider: 'local-dev',
+		currency: 'MXN',
+		external_ref: ctx.body.lookup ?? '',
+		lookup: ctx.body.lookup ?? '',
+		email: ctx.body.email ?? '',
+		invoice: ctx.body.invoice ?? false,
+	});
+	const origin = ctx.req.headers.get('origin') ?? '';
+	return ok(
+		[{ url: `${origin}/pagos/resultado?session_id=${created._id}`, session_id: created._id }],
+		'Checkout creado',
+	);
+}
+
+async function payments_session(ctx: Ctx) {
+	const id = String(ctx.url.searchParams.get('session_id') ?? ctx.params.session_id ?? '');
+	const doc = id ? await ctx.store.find_id('payments', id) : null;
+	if (!doc) return ok([], 'Sesión no encontrada');
+	return ok(
+		[{ status: String(doc.status ?? doc.estado ?? 'pendiente'), service_slug: doc.service_slug }],
+		'Sesión de pago',
+	);
+}
+
+async function payments_webhook(ctx: Ctx) {
+	const id = String(ctx.body.session_id ?? ctx.body.id ?? '');
+	if (!id) return ok([], 'Webhook recibido');
+	const updated = await ctx.store.update('payments', id, {
+		status: 'pagado',
+		estado: 'pagado',
+		fecha_pago: now(),
+	});
+	return ok(updated ? [updated] : [], 'Webhook aplicado');
+}
+
+async function agua_public_contrato(ctx: Ctx) {
+	const numero = String(ctx.url.searchParams.get('numero') ?? '').trim();
+	if (!numero) throw new Error('Falta el número de contrato');
+	const hit =
+		(await ctx.store.find_where('contrato', { contrato: numero })) ??
+		(await ctx.store.find_where('contrato', { name: numero }));
+	return ok(hit ? [hit] : [], hit ? 'Contrato encontrado' : 'Contrato no encontrado');
+}
+
+async function agua_public_url(ctx: Ctx) {
+	const doc = await ctx.store.find_where('configuration', {
+		ref: 'configuration-agua-public-url',
+	});
+	return ok([{ url: String(doc?.value ?? '') }], 'URL pública de consulta');
+}
+
+async function agua_push_lectura(ctx: Ctx) {
+	const created = await ctx.store.insert('lectura', {
+		name: String(ctx.body.name ?? ctx.body.contrato ?? 'Lectura'),
+		...ctx.body,
+		fecha: now(),
+	});
+	return ok([created], 'Lectura registrada');
+}
+
+async function agua_push_lecturas_lote(ctx: Ctx) {
+	const lecturas = as_array(ctx.body.lecturas);
+	const created = [];
+	for (const raw of lecturas) {
+		const row = as_object(raw);
+		created.push(
+			await ctx.store.insert('lectura', {
+				name: String(row.name ?? row.contrato ?? 'Lectura'),
+				...row,
+				fecha: now(),
+			}),
+		);
+	}
+	return ok(created, `${created.length} lecturas registradas`);
+}
+
+async function agua_archivar_periodo(ctx: Ctx) {
+	const { rows } = await ctx.store.find_many('periodo', { take: 50 });
+	const actual = rows.find((r) => String(r.estado) === 'vigente' || r.actual === true) ?? rows[0];
+	if (!actual) throw new Error('No hay periodo para archivar');
+	const updated = await ctx.store.update('periodo', String(actual._id), {
+		estado: 'archivado',
+		fecha_archivo: now(),
+	});
+	return ok([updated], 'Periodo archivado');
+}
+
+async function agua_metricas(ctx: Ctx) {
+	const contratos = ctx.store.has('contrato')
+		? await ctx.store.find_many('contrato', { take: 5000 })
+		: { rows: [], total: 0 };
+	const lecturas = ctx.store.has('lectura')
+		? await ctx.store.find_many('lectura', { take: 5000 })
+		: { rows: [], total: 0 };
+	const tomados = contratos.rows.filter((c) =>
+		['tomado', 'asignado'].includes(String(c.estado ?? '')),
+	).length;
+	const pendientes = contratos.rows.filter((c) =>
+		['pendiente', ''].includes(String(c.estado ?? '')),
+	).length;
+	const importe = lecturas.rows.reduce((s, l) => s + Number(l.importe ?? 0), 0);
+	return ok(
+		[
+			{
+				total_contratos: contratos.total,
+				contratos_tomados: tomados,
+				contratos_pendientes: pendientes,
+				avance_porcentaje: contratos.total
+					? Math.round((tomados / contratos.total) * 100)
+					: 0,
+				total_lecturas: lecturas.total,
+				importe_total: importe,
+				vigencia_actual: null,
+				periodo_actual: null,
+			},
+		],
+		'Métricas de agua',
+	);
+}
+
+async function agua_reportes(ctx: Ctx) {
+	const tipo = ctx.params.tipo ?? 'pendientes';
+	if (tipo === 'pendientes') {
+		return list_where(ctx, 'contrato', { estado: 'pendiente' });
+	}
+	if (tipo === 'anormales') {
+		return list_where(ctx, 'lectura', { anormal: true });
+	}
+	const { rows } = await ctx.store.find_many('lectura', { take: 2000 });
+	const total = rows.reduce((s, l) => s + Number(l.importe ?? 0), 0);
+	return ok([{ tipo, total, lecturas: rows.length }], 'Reporte de importe');
+}
+
+async function agua_print_mode(ctx: Ctx) {
+	const doc = await ctx.store.find_where('configuration', {
+		ref: 'configuration-agua-print-mode',
+	});
+	const mode = String(doc?.value ?? 'escpos');
+	return ok([{ mode }], 'Modo de impresión');
 }
