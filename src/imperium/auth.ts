@@ -384,6 +384,31 @@ const PUBLIC_EXTRA_ACTIONS = new Set([
 	'receive_interinstance_ticket',
 ]);
 
+/** Extras del original que solo exigen sesión (el handler acota al usuario). */
+const SESSION_SCOPED_EXTRAS = new Set([
+	'notifications:read_my_summary',
+	'notifications:read_my_notifications',
+	'notifications:read_my_mentions',
+	'notifications:create_toast_digest',
+	'notifications:mark_all_as_read',
+	'notifications:update_read_status',
+	'notifications:apply_action',
+	'notifications:clear_my_notifications',
+	'notifications:delete_notification',
+	'user-settings:get',
+	'user-settings:upsert',
+	'user-settings:set_global_default_theme',
+	'user-settings:save_table_config',
+	'user-settings:list_custom_themes',
+	'user-settings:create_custom_theme',
+	'user-settings:update_custom_theme',
+	'user-settings:delete_custom_theme',
+]);
+
+function is_session_scoped_extra(resource?: string, action?: string) {
+	return Boolean(resource && action && SESSION_SCOPED_EXTRAS.has(`${resource}:${action}`));
+}
+
 const READ_EXTRA_ACTIONS = new Set([
 	'widget_data',
 	'ai_query',
@@ -476,6 +501,7 @@ export async function assert_http_access(
 ): Promise<void> {
 	if (opts.extra && is_public_extra_action(opts.action)) return;
 	if (!actor) throw new HttpAuthRequiredError();
+	if (opts.extra && is_session_scoped_extra(resource, opts.action)) return;
 	const access = await build_access(store, actor);
 	if (access.has_full_access) return;
 	const canonical = store.has(resource) ? store.loc(resource).resource : resource;
