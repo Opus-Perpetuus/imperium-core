@@ -46,7 +46,7 @@ function issue(code: string, path: string, message: string): ValidationIssue {
 	return { code, path, severity: 'error', message };
 }
 
-function validate_canonical(doc: CfdiCanonical): ValidationIssue[] {
+export function validate_canonical(doc: CfdiCanonical): ValidationIssue[] {
 	const issues: ValidationIssue[] = [];
 	if (doc.version !== '4.0') {
 		issues.push(issue('CFDI_E001', 'version', `Version debe ser "4.0", recibido "${doc.version}"`));

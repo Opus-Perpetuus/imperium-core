@@ -77,6 +77,7 @@ export type CfdiCanonical = {
 		json_revision?: number;
 	};
 	complemento?: {
+		nomina?: Record<string, unknown>;
 		timbre_fiscal_digital?: {
 			version?: string;
 			uuid?: string;
