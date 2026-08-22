@@ -107,6 +107,11 @@ import {
 	mark_invoice_request,
 	send_invoice_to_commercial,
 } from './invoice-request-flow.ts';
+import {
+	end_attending_turn as end_ticketing_turn,
+	notify_turn as notify_ticketing_turn,
+	take_next_turn as take_ticketing_turn,
+} from './ticketing-turn-flow.ts';
 
 type Ctx = {
 	store: ImperiumStore;
@@ -5235,104 +5240,23 @@ function as_id_list(value: unknown): string[] {
 }
 
 async function take_next_turn(ctx: Ctx) {
-	const box_id = String(ctx.body.box_config_id ?? ctx.body.box ?? ctx.body.caja ?? '').trim();
-	if (!box_id) throw new Error('Se necesita una caja para tomar el siguiente turno');
-	const box = await ctx.store.find_id('ticketing-system-box-config', box_id);
-	if (!box) throw new Error('No se encontró la configuración de la caja');
-	const allowed_services = as_id_list(box.allowed_services);
-	const allowed_types = as_id_list(box.allowed_customer_types);
-	const pending = await ctx.store.find_many('ticketing-system-turn', {
-		where: { status: 'pendiente' },
-		take: 10000,
-	});
-	const waiting = pending.rows.length
-		? pending.rows
-		: (
-				await ctx.store.find_many('ticketing-system-turn', {
-					where: { estado: 'pendiente' },
-					take: 10000,
-				})
-			).rows;
-	if (!waiting.length) throw new Error('Sin turnos a la espera');
-	const matching = waiting.filter((turn) => {
-		const services = as_id_list(turn.services);
-		const type_id = ref_id(turn.customer_type);
-		const services_ok = services.every((id) => allowed_services.includes(id));
-		const type_ok = allowed_types.includes(type_id);
-		return services_ok && type_ok;
-	});
-	if (!matching.length) {
-		const missing_services = new Set<string>();
-		const missing_types = new Set<string>();
-		for (const turn of waiting) {
-			for (const id of as_id_list(turn.services)) {
-				if (!allowed_services.includes(id)) missing_services.add(id);
-			}
-			const type_id = ref_id(turn.customer_type);
-			if (!allowed_types.includes(type_id)) {
-				missing_types.add(type_id || 'tipo desconocido');
-			}
-		}
-		const services_list = [...missing_services].join(', ');
-		const types_list = [...missing_types].join(', ');
-		if (missing_services.size && missing_types.size) {
-			throw new Error(
-				`Los turnos disponibles requieren que la caja tenga el servicio '${services_list}' y el tipo de usuario '${types_list}' configurado. No fue posible tomar un turno.`,
-			);
-		}
-		if (missing_services.size) {
-			throw new Error(
-				`Los turnos disponibles requieren que la caja tenga el servicio '${services_list}' configurado. No fue posible tomar un turno.`,
-			);
-		}
-		throw new Error(
-			`Los turnos disponibles requieren que la caja tenga el tipo de usuario '${types_list}' configurado. No fue posible tomar un turno.`,
-		);
-	}
-	matching.sort((a, b) => {
-		const pa = Number(a.priority_level ?? 0);
-		const pb = Number(b.priority_level ?? 0);
-		if (pb !== pa) return pb - pa;
-		return (
-			new Date(String(a.createdAt ?? a.created_at ?? 0)).getTime() -
-			new Date(String(b.createdAt ?? b.created_at ?? 0)).getTime()
-		);
-	});
-	const next = matching[0];
-	const updated = await ctx.store.update('ticketing-system-turn', String(next._id), {
-		status: 'en_atencion',
-		estado: 'en_atencion',
-		assigned_box: box_id,
-		fecha_inicio: now(),
-		time_box: [now()],
-		atendido_por: actor_name(ctx),
-	});
-	return ok([updated], 'Turno tomado', waiting.length);
+	const taken = await take_ticketing_turn(
+		ctx.store,
+		String(ctx.body.box_config_id ?? ctx.body.box ?? ctx.body.caja ?? ''),
+	);
+	return ok([taken.turn], 'Turno tomado', taken.waiting);
 }
 
 async function notify_turn(ctx: Ctx) {
-	const id = String(ctx.body.turn_id ?? ctx.body.id ?? ctx.body._id ?? '');
-	if (!id) throw new Error('Se necesita un id de turno para notificar');
-	const doc = await need(ctx, 'ticketing-system-turn', id);
+	const doc = await notify_ticketing_turn(ctx.store, ctx.body.turn_id ?? ctx.body.id ?? ctx.body._id);
 	return ok([doc], 'Turno notificado');
 }
 
 async function end_attending_turn(ctx: Ctx) {
-	const id = String(ctx.body.turn_id ?? ctx.body.id ?? ctx.body._id ?? '');
-	if (!id) throw new Error('Se necesita un id de turno para finalizar');
-	const doc = await need(ctx, 'ticketing-system-turn', id);
-	const time = as_array(doc.time);
-	const time_box = as_array(doc.time_box);
-	const time_attending = as_array(doc.time_attending);
-	const stamp = now();
-	const updated = await ctx.store.update('ticketing-system-turn', id, {
-		status: 'completado',
-		estado: 'completado',
-		time: [...time, stamp],
-		time_box: [...time_box, stamp],
-		time_attending: [...time_attending, stamp],
-		fecha_fin: stamp,
-	});
+	const updated = await end_ticketing_turn(
+		ctx.store,
+		ctx.body.turn_id ?? ctx.body.id ?? ctx.body._id,
+	);
 	return ok([updated], 'Turno finalizado');
 }
 

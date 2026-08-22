@@ -25,6 +25,10 @@ import {
 	prepare_purchase_order_create,
 	prepare_purchase_order_update,
 } from './purchase-order-flow.ts';
+import {
+	notify_ticketing_rooms,
+	prepare_ticketing_turn_create,
+} from './ticketing-turn-flow.ts';
 import { build_access } from './auth.ts';
 import { is_seed_admin } from './group-access.ts';
 import {
@@ -264,6 +268,9 @@ export async function handle_crud(
 		if (resource === 'purchase-order') {
 			incoming = await prepare_purchase_order_create(store, incoming);
 		}
+		if (resource === 'ticketing-system-turn') {
+			incoming = await prepare_ticketing_turn_create(store, incoming);
+		}
 		if (resource === 'pos-tickets') {
 			await assert_pos_pin(
 				store,
@@ -279,6 +286,7 @@ export async function handle_crud(
 		await maybe_register_mentions(store, actor, resource, created);
 		const notice = await after_create(store, resource, created, actor);
 		if (resource === 'pedidos') await after_pedido_mutate(store, 'create', created);
+		if (resource === 'ticketing-system-turn') await notify_ticketing_rooms(store);
 		let result = created;
 		if (resource === 'delivery-package') {
 			await after_delivery_package_mutate(store, String(created.pedido ?? ''));
