@@ -35,6 +35,8 @@ import {
 	prepare_pos_session_update,
 	prepare_pos_ticket_create,
 } from './pos-session-flow.ts';
+import { decorate_product, prepare_product_write } from './products-flow.ts';
+import { decorate_vehicle, prepare_vehicle_write } from './vehicle-flow.ts';
 import { build_access } from './auth.ts';
 import { is_seed_admin } from './group-access.ts';
 import {
@@ -116,14 +118,15 @@ export async function handle_crud(
 			ids,
 			mongo_match: scope.match,
 		});
+		const decorated = decorate_rows(resource, rows);
 		const keys = new Set<string>();
-		for (const r of rows) for (const k of Object.keys(r)) keys.add(k);
+		for (const r of decorated) for (const k of Object.keys(r)) keys.add(k);
 		const cols = [...keys]
 			.filter((k) => k !== 'payload' && !USER_SECRET_KEYS.has(k))
 			.slice(0, 40);
 		const lines = [
 			cols.join(','),
-			...rows.map((r) =>
+			...decorated.map((r) =>
 				cols
 					.map((c) => csv(r[c]))
 					.join(','),
@@ -145,7 +148,7 @@ export async function handle_crud(
 			skip: Number(b.desde ?? 0),
 			include_inactive: true,
 		});
-		return json(resource, ok(rows, 'Consulta masiva', total));
+		return json(resource, ok(decorate_rows(resource, rows), 'Consulta masiva', total));
 	}
 	if (method === 'PUT' && segs[0] === 'batch' && segs.length === 1) {
 		const b = await body();
@@ -203,9 +206,10 @@ export async function handle_crud(
 			where: Object.keys(q.where).length ? q.where : undefined,
 			mongo_match: scope.match,
 		});
+		const decorated = decorate_rows(resource, rows);
 		return json(resource, {
-			...ok(rows, 'Ruta encontrada', total),
-			tipo_de_instancia: instance_type(store, resource, rows),
+			...ok(decorated, 'Ruta encontrada', total),
+			tipo_de_instancia: instance_type(store, resource, decorated),
 			module_info: { name: resource, model: resource, model_id: resource },
 		});
 	}
@@ -223,7 +227,10 @@ export async function handle_crud(
 		if (!doc) return json(resource, fail('No encontrado', 404).body, 404);
 		const scope = await record_rule_scope(store, actor, resource, method);
 		await assert_id_in_scope(store, resource, segs[0]!, scope, method);
-		const [populated] = await store.populate_docs(resource, [doc]);
+		const [populated] = decorate_rows(
+			resource,
+			await store.populate_docs(resource, [doc]),
+		);
 		return json(
 			resource,
 			ok(
@@ -232,7 +239,9 @@ export async function handle_crud(
 					? 'Bulto encontrado'
 					: resource === 'delivery-return'
 						? 'Devolución encontrada'
-						: 'Ruta encontrada',
+						: resource === 'vehicle'
+							? 'Vehículo encontrado'
+							: 'Ruta encontrada',
 			),
 		);
 	}
@@ -272,6 +281,12 @@ export async function handle_crud(
 				actor,
 			);
 		}
+		if (resource === 'products') {
+			incoming = await prepare_product_write(store, incoming);
+		}
+		if (resource === 'vehicle') {
+			incoming = await prepare_vehicle_write(store, incoming);
+		}
 		const doc = await before_create(store, resource, incoming, actor);
 		const created = await store.insert(resource, doc);
 		await link_attachments_to_record(store, resource, created);
@@ -285,7 +300,7 @@ export async function handle_crud(
 			await after_delivery_package_mutate(store, String(created.pedido ?? ''));
 			result = (await store.find_id(resource, String(created._id))) ?? created;
 		}
-		const [populated] = await store.populate_docs(resource, [result]);
+		const [populated] = decorate_rows(resource, await store.populate_docs(resource, [result]));
 		const message =
 			resource === 'pos-session'
 				? 'Sesión creada'
@@ -299,7 +314,9 @@ export async function handle_crud(
 							? 'Devolución creada correctamente'
 							: resource === 'purchase-order'
 								? 'Orden de compra creada correctamente'
-								: 'Ruta creada';
+								: resource === 'vehicle'
+									? 'Vehículo creado correctamente'
+									: 'Ruta creada';
 		return json(
 			resource,
 			notice ? { ...ok([populated], message), user_pin_notice: notice } : ok([populated], message),
@@ -346,6 +363,12 @@ export async function handle_crud(
 		if (resource === 'pos-session') {
 			b = await prepare_pos_session_update(store, b, previous, actor);
 		}
+		if (resource === 'products') {
+			b = await prepare_product_write(store, b);
+		}
+		if (resource === 'vehicle') {
+			b = await prepare_vehicle_write(store, b, previous);
+		}
 		const updated = await store.update(resource, id, b);
 		if (updated) await link_attachments_to_record(store, resource, updated);
 		if (!updated) return json(resource, fail('No encontrado', 404).body, 404);
@@ -359,7 +382,7 @@ export async function handle_crud(
 			);
 		}
 		await maybe_register_mentions(store, actor, resource, updated, previous);
-		const [populated] = await store.populate_docs(resource, [updated]);
+		const [populated] = decorate_rows(resource, await store.populate_docs(resource, [updated]));
 		return json(
 			resource,
 			ok(
@@ -372,7 +395,9 @@ export async function handle_crud(
 							? 'Devolución actualizada correctamente'
 							: resource === 'purchase-order'
 								? 'Orden de compra actualizada correctamente'
-								: 'Actualizado correctamente',
+								: resource === 'vehicle'
+									? 'Vehículo actualizado correctamente'
+									: 'Actualizado correctamente',
 			),
 		);
 	}
@@ -401,6 +426,12 @@ export async function handle_crud(
 		if (resource === 'purchase-order') {
 			patched = await prepare_purchase_order_update(patched, previous);
 		}
+		if (resource === 'products') {
+			patched = await prepare_product_write(store, patched);
+		}
+		if (resource === 'vehicle') {
+			patched = await prepare_vehicle_write(store, patched, previous);
+		}
 		const updated = await store.update(resource, segs[0]!, patched);
 		if (updated) await link_attachments_to_record(store, resource, updated);
 		if (!updated) return json(resource, fail('No encontrado', 404).body, 404);
@@ -414,10 +445,11 @@ export async function handle_crud(
 			);
 		}
 		await maybe_register_mentions(store, actor, resource, updated, previous);
+		const [decorated] = decorate_rows(resource, [updated]);
 		return json(
 			resource,
 			ok(
-				[updated],
+				[decorated],
 				resource === 'pedidos'
 					? 'Pedido actualizado'
 					: resource === 'delivery-package'
@@ -426,11 +458,19 @@ export async function handle_crud(
 							? 'Devolución actualizada correctamente'
 							: resource === 'purchase-order'
 								? 'Orden de compra actualizada correctamente'
-								: 'Actualizado correctamente',
+								: resource === 'vehicle'
+									? 'Vehículo actualizado correctamente'
+									: 'Actualizado correctamente',
 			),
 		);
 	}
 	return null;
+}
+
+function decorate_rows(resource: string, rows: ImperiumDoc[]): ImperiumDoc[] {
+	if (resource === 'products') return rows.map(decorate_product);
+	if (resource === 'vehicle') return rows.map(decorate_vehicle);
+	return rows;
 }
 
 function instance_type(

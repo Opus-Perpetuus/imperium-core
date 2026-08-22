@@ -14,6 +14,8 @@ import {
 } from './envelope.ts';
 import { SearchEngine, search_text_from_doc } from './search-engine.ts';
 import { mongo_match_to_sql } from './record-rules.ts';
+import { products_inventory_cost } from './products-flow.ts';
+import { vehicle_by_status } from './vehicle-flow.ts';
 
 export type ExtraCol = {
 	name: string;
@@ -794,6 +796,13 @@ export class ImperiumStore {
 		const active_records = r.active_records ?? 0;
 		const inactive_records = r.inactive_records ?? 0;
 		const recent_records_30d = r.recent_records ?? 0;
+		const domain: Record<string, unknown> = {};
+		if (resource === 'products') {
+			domain.total_costo_existencias = await products_inventory_cost(this, mongo_match);
+		}
+		if (resource === 'vehicle') {
+			domain.by_status = await vehicle_by_status(this, mongo_match);
+		}
 		return {
 			model_name: resource,
 			total_records,
@@ -808,6 +817,7 @@ export class ImperiumStore {
 				inactive_records: { label: 'Inactivos', value: inactive_records },
 				recent_records_30d: { label: 'Últimos 30 días', value: recent_records_30d },
 			},
+			...domain,
 		};
 	}
 
