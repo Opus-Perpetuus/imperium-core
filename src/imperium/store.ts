@@ -154,6 +154,20 @@ export class ImperiumStore {
 		}
 	}
 
+	async ensure_defaults(): Promise<void> {
+		await this.ensure_orphan_tables();
+		if (this.has('branchoffice')) {
+			const { total } = await this.find_many('branchoffice', { take: 1, include_inactive: true });
+			if (!total) {
+				await this.insert('branchoffice', {
+					name: 'Matriz',
+					_ref: 'branchoffice-matriz-0',
+					description: 'Sucursal predeterminada',
+				});
+			}
+		}
+	}
+
 	async ensure_orphan_tables(): Promise<void> {
 		for (const resource of [
 			'messages',
@@ -322,6 +336,7 @@ export class ImperiumStore {
 			where,
 			take: 1,
 			include_inactive: true,
+			populate: false,
 		});
 		return rows[0] ?? null;
 	}

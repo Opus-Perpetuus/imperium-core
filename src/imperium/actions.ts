@@ -2,6 +2,7 @@
  * Acciones custom de Imperium, portadas a documentos SQL.
  * Cada handler replica la transición / efecto del service original.
  */
+import { existsSync } from 'node:fs';
 import { as_array, as_object, fail, ok, type ImperiumDoc } from './envelope.ts';
 import { read_imperium_body } from './body.ts';
 import type { ImperiumStore } from './store.ts';
@@ -1228,11 +1229,30 @@ async function pos_next_consecutive(ctx: Ctx) {
 
 async function pos_last_closure(ctx: Ctx) {
 	const branch = ctx.params.branch_office_id;
-	const { rows } = await ctx.store.find_many('pos-session', { take: 200, include_inactive: true });
+	const { rows } = await ctx.store.find_many('pos-session', {
+		take: 200,
+		include_inactive: true,
+		populate: false,
+	});
+	const office_id = (value: unknown) => {
+		if (value && typeof value === 'object') {
+			return String((value as { _id?: unknown })._id ?? '');
+		}
+		return String(value ?? '');
+	};
 	const closed = rows
-		.filter((r) => String(r.branch_office ?? r.sucursal ?? '') === branch)
-		.filter((r) => String(r.estado) === 'cerrada' || r.fecha_cierre)
-		.sort((a, b) => String(b.fecha_cierre ?? '').localeCompare(String(a.fecha_cierre ?? '')));
+		.filter((r) => office_id(r.branch_office ?? r.sucursal) === branch)
+		.filter(
+			(r) =>
+				['cerrada', 'CLOSED', 'cerrada'].includes(String(r.status ?? r.estado ?? '')) ||
+				r.closing_date ||
+				r.fecha_cierre,
+		)
+		.sort((a, b) =>
+			String(b.closing_date ?? b.fecha_cierre ?? '').localeCompare(
+				String(a.closing_date ?? a.fecha_cierre ?? ''),
+			),
+		);
 	const last = closed[0];
 	return ok(
 		[{ found: Boolean(last), session_id: last?._id ?? null, fecha_cierre: last?.fecha_cierre ?? null, folio: last?.name }],
@@ -1250,15 +1270,22 @@ async function pos_runtime(ctx: Ctx) {
 
 async function pos_report(ctx: Ctx, tipo: string) {
 	const session = await need(ctx, 'pos-session', ctx.params.id);
-	const orders = ctx.store.has('pos-order')
-		? (await ctx.store.find_many('pos-order', { where: { session: String(session._id) }, take: 2000 })).rows
+	const tickets = ctx.store.has('pos-tickets')
+		? (
+				await ctx.store.find_many('pos-tickets', {
+					where: { pos_session: String(session._id) },
+					take: 2000,
+					populate: false,
+				})
+			).rows
 		: as_array(session.ordenes).map(as_object);
-	const total = orders.reduce((s, o) => s + Number(o.total ?? o.importe ?? 0), 0);
+	const total = tickets.reduce((s, o) => s + Number(o.subtotal ?? o.total ?? o.importe ?? 0), 0);
 	const report = {
 		tipo,
 		session_id: session._id,
 		fecha: now(),
-		ordenes: orders.length,
+		ordenes: tickets.length,
+		tickets: tickets.length,
 		total,
 		session,
 	};
@@ -1458,12 +1485,46 @@ async function report_pdf(ctx: Ctx) {
 		String(ctx.body.htmlContent ?? ctx.body.html ?? ctx.body.template ?? '<html><body>{{name}}</body></html>'),
 		as_object(ctx.body.record ?? ctx.body.data ?? ctx.body),
 	);
+	const chrome = [
+		process.env.PUPPETEER_EXECUTABLE_PATH,
+		process.env.CHROME_PATH,
+		`${process.env.HOME ?? ''}/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome`,
+		'/usr/bin/chromium',
+		'/usr/bin/google-chrome',
+	].find((p) => Boolean(p) && existsSync(p!));
+	if (chrome) {
+		try {
+			const stamp = crypto.randomUUID();
+			const html_path = `/tmp/imperium-pdf-${stamp}.html`;
+			const pdf_path = `/tmp/imperium-pdf-${stamp}.pdf`;
+			await Bun.write(html_path, html);
+			const proc = Bun.spawn(
+				[
+					chrome,
+					'--headless=new',
+					'--disable-gpu',
+					'--no-sandbox',
+					`--print-to-pdf=${pdf_path}`,
+					`file://${html_path}`,
+				],
+				{ stdout: 'ignore', stderr: 'pipe' },
+			);
+			const code = await proc.exited;
+			if (code === 0 && existsSync(pdf_path)) {
+				const pdf = await Bun.file(pdf_path).arrayBuffer();
+				return new Response(pdf, { headers: { 'content-type': 'application/pdf' } });
+			}
+		} catch {
+			/* fallback */
+		}
+	}
 	try {
 		const puppeteer = await import('puppeteer').catch(() => null);
 		if (puppeteer) {
 			const browser = await puppeteer.default.launch({
 				headless: true,
-				args: ['--no-sandbox'],
+				executablePath: chrome,
+				args: ['--no-sandbox', '--disable-gpu'],
 			});
 			const page = await browser.newPage();
 			await page.setContent(html, { waitUntil: 'networkidle0' });

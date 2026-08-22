@@ -24,7 +24,7 @@ export function create_imperium_layer(sql: Bun.SQL) {
 	const boot = () => {
 		ready ??= (async () => {
 			await ensure_session_table(sql);
-			await store.ensure_orphan_tables();
+			await store.ensure_defaults();
 		})();
 		return ready;
 	};
@@ -75,7 +75,7 @@ export function create_imperium_layer(sql: Bun.SQL) {
 					);
 					return add_cors(req, res);
 				}
-				const crud = await handle_crud(store, req, url, hit.resource, hit.rest);
+				const crud = await handle_crud(store, req, url, hit.resource, hit.rest, actor);
 				if (crud) return add_cors(req, crud);
 				return add_cors(
 					req,
