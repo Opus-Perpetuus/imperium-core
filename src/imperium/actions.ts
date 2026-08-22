@@ -63,6 +63,7 @@ import {
 	save_status_config,
 } from './status-options.ts';
 import {
+	activate_module,
 	delete_mock_data,
 	force_recreate_data,
 	generate_mock_data,
@@ -290,7 +291,7 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'module-management:recreate_indexes':
 			return recreate_indexes(ctx);
 		case 'module-management:activate_module':
-			return patch_doc(ctx, 'module-management', ctx.params.id, { is_enable: true }, 'Módulo activado exitosamente');
+			return activate_module(ctx);
 		case 'module-management:deactivate_module':
 			return patch_doc(ctx, 'module-management', ctx.params.id, { is_enable: false }, 'Operación completada exitosamente');
 		case 'module-management:force_recreate_data':

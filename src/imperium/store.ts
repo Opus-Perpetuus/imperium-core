@@ -149,6 +149,7 @@ export class ImperiumStore {
 				'document-change-history',
 				'interactive-manual',
 				'cobranza-payment',
+				'module-management-reference',
 			];
 			for (const resource of orphans) {
 				if (this.locs.has(resource)) continue;
@@ -213,6 +214,7 @@ export class ImperiumStore {
 			'document-change-history',
 			'interactive-manual',
 			'cobranza-payment',
+			'module-management-reference',
 		]) {
 			if (!this.locs.has(resource)) continue;
 			const qt = this.qt(resource);
@@ -498,6 +500,7 @@ export class ImperiumStore {
 		if (direct && this.has(direct)) return direct;
 		const kebab = model.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase();
 		if (this.has(kebab)) return kebab;
+		if (this.has(`${kebab}s`)) return `${kebab}s`;
 		if (this.has(model.toLowerCase())) return model.toLowerCase();
 		if (model === 'Employee' && this.has('employee')) return 'employee';
 		return null;
