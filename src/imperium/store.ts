@@ -2,8 +2,8 @@
  * Almacén de documentos Imperium sobre los schemas SQL de los súbditos.
  * Un recurso canónico (products, pedidos) aunque el menú lo repita.
  */
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { pg_schema_name } from '@opus-perpetuus/imperium-core-kit';
 import {
 	as_array,
@@ -151,6 +151,7 @@ export class ImperiumStore {
 				'interactive-manual',
 				'cobranza-payment',
 				'module-management-reference',
+				'font-awesome-icon-catalog',
 			];
 			for (const resource of orphans) {
 				if (this.locs.has(resource)) continue;
@@ -166,11 +167,14 @@ export class ImperiumStore {
 				this.all_locs.push(loc);
 				this.locs.set(resource, loc);
 			}
+			const icons = this.locs.get('font-awesome-icon-catalog');
+			if (icons) icons.collection = '__font_awesome_icon_catalog';
 		}
 	}
 
 	async ensure_defaults(): Promise<void> {
 		await this.ensure_orphan_tables();
+		await this.seed_font_awesome_catalog();
 		if (this.has('branchoffice')) {
 			const { total } = await this.find_many('branchoffice', { take: 1, include_inactive: true });
 			if (!total) {
@@ -243,6 +247,92 @@ export class ImperiumStore {
 		}
 	}
 
+	async seed_font_awesome_catalog(): Promise<void> {
+		if (!this.has('font-awesome-icon-catalog')) return;
+		const catalog_env = process.env.CATALOG_PATH;
+		const backend_src = catalog_env
+			? join(dirname(catalog_env), '../backend/src')
+			: join(import.meta.dir, '../../../../backend/src');
+		const file = join(
+			backend_src,
+			'components/font-awesome-icon-catalog/data/font-awesome-icons.data.json',
+		);
+		if (!existsSync(file)) return;
+		const catalog = JSON.parse(readFileSync(file, 'utf8')) as Array<{
+			slug: string;
+			name: string;
+			icon: string;
+			prefix: string;
+			style: string;
+			search_terms?: string[];
+		}>;
+		const existing = await this.find_many('font-awesome-icon-catalog', {
+			take: 1,
+			include_inactive: true,
+		});
+		if (existing.total === catalog.length && existing.rows[0]?.icon) return;
+		const qt = this.qt('font-awesome-icon-catalog');
+		await this.sql.unsafe(`DELETE FROM ${qt}`);
+		const now = new Date().toISOString();
+		for (let i = 0; i < catalog.length; i += 150) {
+			const chunk = catalog.slice(i, i + 150);
+			const params: unknown[] = [];
+			const values = chunk.map((entry) => {
+				const search_field = [
+					entry.name,
+					entry.slug,
+					entry.icon,
+					...(entry.search_terms ?? []),
+				]
+					.join(' ')
+					.toLowerCase();
+				const id = crypto.randomUUID().replace(/-/g, '').slice(0, 24);
+				params.push(
+					id,
+					entry.name,
+					'',
+					true,
+					entry.slug,
+					search_field,
+					JSON.stringify({
+						icon: entry.icon,
+						slug: entry.slug,
+						prefix: entry.prefix,
+						style: entry.style,
+						search_terms: entry.search_terms ?? [],
+					}),
+					now,
+					now,
+				);
+				const start = params.length - 8;
+				return `($${start},$${start + 1},$${start + 2},$${start + 3},$${start + 4},$${start + 5},$${start + 6}::jsonb,$${start + 7},$${start + 8})`;
+			});
+			await this.sql.unsafe(
+				`INSERT INTO ${qt} (id, name, description, is_active, ref, search_field, payload, created_at, updated_at)
+         VALUES ${values.join(', ')}`,
+				params,
+			);
+		}
+		if (await SearchEngine.ensure_available()) {
+			const { rows } = await this.find_many('font-awesome-icon-catalog', {
+				take: 5000,
+				include_inactive: true,
+				populate: false,
+			});
+			await SearchEngine.clear_index('__font_awesome_icon_catalog');
+			for (let i = 0; i < rows.length; i += 200) {
+				await SearchEngine.index_documents(
+					'__font_awesome_icon_catalog',
+					rows.slice(i, i + 200).map((doc) => ({
+						id: String(doc._id),
+						search_text: search_text_from_doc(doc),
+					})),
+				);
+			}
+		}
+		console.log(`[icons] Catálogo Font Awesome sembrado: ${catalog.length} íconos`);
+	}
+
 	async ensure_orphan_tables(): Promise<void> {
 		for (const resource of [
 			'messages',
@@ -255,6 +345,7 @@ export class ImperiumStore {
 			'interactive-manual',
 			'cobranza-payment',
 			'module-management-reference',
+			'font-awesome-icon-catalog',
 		]) {
 			if (!this.locs.has(resource)) continue;
 			const qt = this.qt(resource);
@@ -344,12 +435,15 @@ export class ImperiumStore {
 		const params: unknown[] = [];
 		const clauses: string[] = [];
 		if (!opts.include_inactive) clauses.push(`is_active IS DISTINCT FROM false`);
-		if (opts.q && SearchEngine.is_enabled()) {
+		if (opts.q && SearchEngine.is_enabled() && resource !== 'font-awesome-icon-catalog') {
 			const ids = await SearchEngine.search_ids(loc.collection, opts.q);
 			if (ids !== null) {
-				const wanted = opts.ids?.length ? ids.filter((id) => opts.ids!.includes(id)) : ids;
-				if (!wanted.length) return { rows: [], total: 0 };
-				opts = { ...opts, q: '', ids: wanted };
+				const empty_index = !ids.length && (await SearchEngine.index_is_empty(loc.collection));
+				if (!empty_index) {
+					const wanted = opts.ids?.length ? ids.filter((id) => opts.ids!.includes(id)) : ids;
+					if (!wanted.length) return { rows: [], total: 0 };
+					opts = { ...opts, q: '', ids: wanted };
+				}
 			}
 		}
 		if (opts.ids?.length) {
