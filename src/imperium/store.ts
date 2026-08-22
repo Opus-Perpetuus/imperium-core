@@ -400,6 +400,51 @@ export class ImperiumStore {
 		return `${qident(pg_schema_name(loc.technical_id))}.${qident(loc.table)}`;
 	}
 
+	/**
+	 * Siguiente valor del tracker `__auto_increment_control` (columna
+	 * `current_sequence`). Si el recurso tiene la columna, siembra desde el MAX
+	 * ya persistido para no reiniciar tras una migración.
+	 */
+	async next_auto_increment(
+		model_name: string,
+		increment_field: string,
+		opts: { resource?: string } = {},
+	): Promise<number> {
+		let floor = 0;
+		const resource = opts.resource;
+		if (resource && this.has(resource) && this.column_names(resource).has(increment_field)) {
+			const col = qident(increment_field);
+			const rows = await this.sql.unsafe(
+				`SELECT MAX(CASE WHEN ${col}::text ~ '^[0-9]+(\\.[0-9]+)?$' THEN ${col}::numeric ELSE NULL END) AS m FROM ${this.qt(resource)}`,
+			);
+			floor = Number(rows[0]?.m ?? 0) || 0;
+		}
+		if (!this.has('auto-increment-control')) return floor + 1;
+		const qt = this.qt('auto-increment-control');
+		const now = new Date().toISOString();
+		const updated = await this.sql.unsafe(
+			`UPDATE ${qt}
+			 SET current_sequence = GREATEST(COALESCE(current_sequence, 0), $1) + 1,
+			     updated_at = $2
+			 WHERE increment_field = $3
+			   AND (model_name = $4 OR name = $5)
+			 RETURNING id, current_sequence`,
+			[floor, now, increment_field, model_name, `${model_name}.${increment_field}`],
+		);
+		const row = updated[0] as { id?: string; current_sequence?: number } | undefined;
+		if (row?.current_sequence == null) return floor + 1;
+		const next = Number(row.current_sequence);
+		if (row.id) {
+			await this.update('auto-increment-control', String(row.id), {
+				current_sequence: next,
+				current: next,
+				valor: next,
+				current_real_value: next,
+			});
+		}
+		return next;
+	}
+
 	flatten(row: Record<string, unknown> | null, resource?: string): ImperiumDoc | null {
 		if (!row) return null;
 		const parsed = { ...row };

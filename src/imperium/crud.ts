@@ -7,6 +7,11 @@ import type { ImperiumStore } from './store.ts';
 import { assert_pos_pin, maybe_create_pos_session_pin } from './user-pin.ts';
 import { register_document_mentions } from './notifications.ts';
 import { apply_uploads, link_attachments_to_record } from './uploads.ts';
+import {
+	after_pedido_mutate,
+	prepare_pedido_create,
+	prepare_pedido_update,
+} from './pedidos-flow.ts';
 
 export async function handle_crud(
 	store: ImperiumStore,
@@ -115,7 +120,11 @@ export async function handle_crud(
 	if (method === 'DELETE' && segs[0] === 'id' && segs[1] && segs.length === 2) {
 		const deleted = await store.remove(resource, segs[1]);
 		if (!deleted) return json(resource, fail('No encontrado', 404).body, 404);
-		return json(resource, ok([deleted], 'Eliminado correctamente'));
+		if (resource === 'pedidos') await after_pedido_mutate(store, 'delete', deleted);
+		return json(
+			resource,
+			ok([deleted], resource === 'pedidos' ? 'Pedido eliminado' : 'Eliminado correctamente'),
+		);
 	}
 	if (method === 'GET' && segs.length === 0) {
 		const q = query_list(url);
@@ -145,13 +154,16 @@ export async function handle_crud(
 		return json(resource, ok([populated], 'Ruta encontrada'));
 	}
 	if (method === 'POST' && segs.length === 0) {
-		const incoming = await prepare_user_write(
+		let incoming = await prepare_user_write(
 			resource,
 			await apply_uploads(store, resource, await body(), actor, {
 				method: 'POST',
 			}),
 			true,
 		);
+		if (resource === 'pedidos') {
+			incoming = await prepare_pedido_create(store, incoming, actor);
+		}
 		if (resource === 'pos-tickets') {
 			await assert_pos_pin(
 				store,
@@ -166,8 +178,14 @@ export async function handle_crud(
 		await link_attachments_to_record(store, resource, created);
 		await maybe_register_mentions(store, actor, resource, created);
 		const notice = await after_create(store, resource, created, actor);
+		if (resource === 'pedidos') await after_pedido_mutate(store, 'create', created);
 		const [populated] = await store.populate_docs(resource, [created]);
-		const message = resource === 'pos-tickets' ? 'Ticket creado' : 'Ruta creada';
+		const message =
+			resource === 'pos-tickets'
+				? 'Ticket creado'
+				: resource === 'pedidos'
+					? 'Pedido creado'
+					: 'Ruta creada';
 		return json(
 			resource,
 			notice ? { ...ok([populated], message), user_pin_notice: notice } : ok([populated], message),
@@ -188,7 +206,7 @@ export async function handle_crud(
 			);
 		}
 		const previous = await store.find_id(resource, id);
-		const b = await prepare_user_write(
+		let b = await prepare_user_write(
 			resource,
 			await apply_uploads(store, resource, raw, actor, {
 				method: 'PUT',
@@ -197,16 +215,23 @@ export async function handle_crud(
 			}),
 			false,
 		);
+		if (resource === 'pedidos') {
+			b = await prepare_pedido_update(store, b, actor, previous);
+		}
 		const updated = await store.update(resource, id, b);
 		if (updated) await link_attachments_to_record(store, resource, updated);
 		if (!updated) return json(resource, fail('No encontrado', 404).body, 404);
+		if (resource === 'pedidos') await after_pedido_mutate(store, 'update', updated, previous);
 		await maybe_register_mentions(store, actor, resource, updated, previous);
 		const [populated] = await store.populate_docs(resource, [updated]);
-		return json(resource, ok([populated], 'Actualizado correctamente'));
+		return json(
+			resource,
+			ok([populated], resource === 'pedidos' ? 'Pedido actualizado' : 'Actualizado correctamente'),
+		);
 	}
 	if (method === 'PATCH' && segs.length === 1) {
 		const previous = await store.find_id(resource, segs[0]!);
-		const patched = await prepare_user_write(
+		let patched = await prepare_user_write(
 			resource,
 			await apply_uploads(store, resource, await body(), actor, {
 				method: 'PATCH',
@@ -215,11 +240,18 @@ export async function handle_crud(
 			}),
 			false,
 		);
+		if (resource === 'pedidos') {
+			patched = await prepare_pedido_update(store, patched, actor, previous);
+		}
 		const updated = await store.update(resource, segs[0]!, patched);
 		if (updated) await link_attachments_to_record(store, resource, updated);
 		if (!updated) return json(resource, fail('No encontrado', 404).body, 404);
+		if (resource === 'pedidos') await after_pedido_mutate(store, 'update', updated, previous);
 		await maybe_register_mentions(store, actor, resource, updated, previous);
-		return json(resource, ok([updated], 'Actualizado correctamente'));
+		return json(
+			resource,
+			ok([updated], resource === 'pedidos' ? 'Pedido actualizado' : 'Actualizado correctamente'),
+		);
 	}
 	return null;
 }

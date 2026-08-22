@@ -74,7 +74,14 @@ import {
 	recreate_indexes,
 } from './module-data.ts';
 import { is_upload, persist_upload_as_attachment } from './uploads.ts';
-import { broadcast_event, emit_messages_refresh } from './socket-stub.ts';
+import { emit_messages_refresh } from './socket-stub.ts';
+import {
+	GROUP_REF_ALMACEN,
+	GROUP_REF_SURTIDORES,
+	actor_group_refs,
+	is_seed_admin,
+} from './group-access.ts';
+import { emit_pedidos_updated, prepare_pedido_create } from './pedidos-flow.ts';
 
 type Ctx = {
 	store: ImperiumStore;
@@ -3678,19 +3685,22 @@ async function pedidos_sync_offline(ctx: Ctx) {
 			const estado = PEDIDO_ESTADOS.has(String(pedido.estado))
 				? String(pedido.estado)
 				: 'confirmado';
+			const prepared = await prepare_pedido_create(
+				ctx.store,
+				{
+					name: String(pedido.name ?? pedido.folio ?? `Pedido ${offline_uuid.slice(0, 8)}`),
+					articulos: Array.isArray(pedido.articulos) ? pedido.articulos : [],
+					contacto: pedido.contacto,
+					observaciones: pedido.observaciones ?? '',
+					listaDePreciosId: pedido.listaDePreciosId,
+					folio: pedido.folio ?? '',
+					ubicacion: pedido.ubicacion,
+					estado,
+				},
+				ctx.actor,
+			);
 			const created = await ctx.store.insert('pedidos', {
-				name: String(pedido.name ?? pedido.folio ?? `Pedido ${offline_uuid.slice(0, 8)}`),
-				articulos: Array.isArray(pedido.articulos) ? pedido.articulos : [],
-				contacto: pedido.contacto,
-				usuario: actor_id(ctx) || pedido.usuario,
-				observaciones: pedido.observaciones ?? '',
-				listaDePreciosId: pedido.listaDePreciosId,
-				total: pedido.total ?? 0,
-				iva: pedido.iva ?? 0,
-				importe: pedido.importe ?? 0,
-				folio: pedido.folio ?? '',
-				ubicacion: pedido.ubicacion,
-				estado,
+				...prepared,
 				sincronizado: true,
 				offline_uuid,
 				is_active: true,
@@ -3743,14 +3753,6 @@ async function lista_de_precios_sync_offline(ctx: Ctx) {
 	return Response.json({ listasDePrecios });
 }
 
-const SEED_ADMIN_REF = 'user-menu-management-0';
-const GROUP_REF_ALMACEN = 'user-group-almacen';
-const GROUP_REF_SURTIDORES = 'user-group-surtidores';
-
-function is_seed_admin(ctx: Ctx) {
-	return String(ctx.actor?._ref ?? ctx.actor?.ref ?? '') === SEED_ADMIN_REF;
-}
-
 function session_employee_id(ctx: Ctx) {
 	const raw = ctx.actor?.employee;
 	if (raw == null || raw === '') return '';
@@ -3758,27 +3760,9 @@ function session_employee_id(ctx: Ctx) {
 	return String(raw).trim();
 }
 
-async function actor_group_refs(ctx: Ctx): Promise<string[]> {
-	if (!ctx.store.has('user-group')) return [];
-	const uid = actor_id(ctx);
-	if (!uid) return [];
-	const { rows } = await ctx.store.find_many('user-group', {
-		take: 500,
-		include_inactive: false,
-	});
-	return rows
-		.filter((group) => id_list(group.user_ids).includes(uid))
-		.map((group) => String(group._ref ?? group.ref ?? ''))
-		.filter(Boolean);
-}
-
-function emit_pedidos_updated() {
-	broadcast_event('update', { action: 'pedidos_updated', data: [] });
-}
-
 async function reclamar_surtir(ctx: Ctx) {
-	if (!is_seed_admin(ctx)) {
-		const refs = await actor_group_refs(ctx);
+	if (!is_seed_admin(ctx.actor)) {
+		const refs = await actor_group_refs(ctx.store, ctx.actor);
 		if (!refs.includes(GROUP_REF_ALMACEN) && !refs.includes(GROUP_REF_SURTIDORES)) {
 			throw new Error('No tienes permiso para reclamar pedidos para surtir.');
 		}
@@ -3817,8 +3801,8 @@ async function reclamar_surtir(ctx: Ctx) {
 	if (assigned && assigned !== employee_id) {
 		throw new Error('Este pedido ya está asignado a otro empleado.');
 	}
-	if (!is_seed_admin(ctx)) {
-		const refs = await actor_group_refs(ctx);
+	if (!is_seed_admin(ctx.actor)) {
+		const refs = await actor_group_refs(ctx.store, ctx.actor);
 		if (!refs.includes(GROUP_REF_ALMACEN) && !refs.includes(GROUP_REF_SURTIDORES)) {
 			throw new Error(
 				'No tienes permiso para cambiar el pedido de "por_surtir" a "surtiendo". Esta acción está reservada al grupo correspondiente.',
