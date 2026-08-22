@@ -17,6 +17,7 @@ import {
 	record_rule_lookup_keys,
 	type RecordRuleOperationFlag,
 } from './record-rules.ts';
+import { debug_error, debug_info } from './debug-request-log.ts';
 
 const COOKIE = 'connect.sid';
 const SECRET = process.env.SESSION_SECRET ?? 'imperium-modular-dev-session';
@@ -67,6 +68,9 @@ export async function handle_auth(
 			? await verify_password(password, hash)
 			: await dummy_verify();
 		if (!ok_pw || !user || user.is_active === false) {
+			if (user && user.is_active === false) {
+				debug_error('Usuario no encontrado o inactivo');
+			}
 			return Response.json(
 				{ message: 'Usuario o contraseña incorrectos', error: 'Usuario o contraseña incorrectos' },
 				{ status: 401 },
@@ -74,6 +78,7 @@ export async function handle_auth(
 		}
 		const safe = public_user(user);
 		const session = await create_session(sql, safe);
+		debug_info('Sesión guardada correctamente');
 		const access_rights = await build_access(store, safe);
 		const menus = await build_menus(store, access_rights);
 		return with_cookie(

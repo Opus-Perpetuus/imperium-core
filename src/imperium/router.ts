@@ -16,7 +16,7 @@ import { serve_media } from './media.ts';
 import { ImperiumStore, load_catalog_path } from './store.ts';
 import { fail } from './envelope.ts';
 import { PinChallengeError } from './user-pin.ts';
-import { persist_request_log } from './debug-request-log.ts';
+import { bind_debug_store, debug_error, persist_request_log } from './debug-request-log.ts';
 
 type ExtraRoute = {
 	resource: string;
@@ -32,6 +32,7 @@ export function create_imperium_layer(sql: Bun.SQL) {
 	let ready: Promise<void> | null = null;
 	const boot = () => {
 		ready ??= (async () => {
+			bind_debug_store(store);
 			await ensure_session_table(sql);
 			await store.ensure_defaults();
 			await seed_mcp_access(store);
@@ -89,6 +90,7 @@ async function dispatch(
 					return add_cors(req, await handle_mcp_agent(store, sql, req, mcp_url));
 				} catch (err) {
 					const e = err as Error & { status?: number; code?: string };
+					debug_error(e.message ?? String(err));
 					return add_cors(
 						req,
 						Response.json(
@@ -150,6 +152,7 @@ async function dispatch(
 				const e = err as Error & { status?: number; code?: string };
 				const message = e.message ?? String(err);
 				const status = e.status ?? 400;
+				debug_error(message);
 				return add_cors(
 					req,
 					Response.json(fail(message, status, e.code ? { code: e.code } : undefined).body, {
