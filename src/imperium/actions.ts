@@ -10,7 +10,7 @@ import { query_list, read_imperium_body } from './body.ts';
 import { qident, type ImperiumStore } from './store.ts';
 import { SearchEngine, search_text_from_doc } from './search-engine.ts';
 import { assert_pos_pin, verify_user_pin } from './user-pin.ts';
-import { stamp_with_pac } from './pac.ts';
+import { pac_provider, stamp_with_pac } from './pac.ts';
 import {
 	composed_codigo_from_path,
 	expand_path_to_tree_lines,
@@ -852,61 +852,141 @@ async function cfdi_validate(ctx: Ctx) {
 	);
 }
 
+async function sync_cfdi_source_stamp(
+	store: ImperiumStore,
+	doc: ImperiumDoc,
+	status: 'stamped' | 'stamp_error',
+	stamp?: { uuid?: string },
+) {
+	const source_id = String(doc.source_id ?? doc.origen_id ?? '');
+	if (!source_id) return;
+	const origen = String(doc.origen ?? '');
+	const source_type =
+		String(doc.source_type ?? '').trim() ||
+		(origen === 'invoice-request' ? 'invoice_request' : '') ||
+		(origen === 'payroll-receipt' ? 'payroll_receipt' : '');
+	if (source_type === 'invoice_request' && store.has('invoice-request')) {
+		await store.update(
+			'invoice-request',
+			source_id,
+			status === 'stamped'
+				? {
+						cfdi_document_id: doc._id,
+						cfdi_document_status: 'stamped',
+						cfdi_document_name: doc.name,
+					}
+				: { cfdi_document_status: 'stamp_error' },
+		);
+	}
+	if (source_type === 'payroll_receipt' && store.has('payroll-receipt')) {
+		await store.update(
+			'payroll-receipt',
+			source_id,
+			status === 'stamped'
+				? {
+						cfdi_document_id: String(doc._id),
+						uuid_fiscal: stamp?.uuid,
+						estado: 'stamped',
+					}
+				: { estado: 'stamp_error' },
+		);
+	}
+}
+
 async function cfdi_stamp(ctx: Ctx) {
 	const doc = await need(ctx, 'cfdi-document', ctx.params.id);
-	if (doc.validado === false || doc.status === 'invalid') {
-		throw new Error('El CFDI tiene errores de validación; corrígelos antes de timbrar.');
-	}
 	const canonical = as_object(doc.canonical ?? doc.payload_canonico);
-	if (!Object.keys(canonical).length) {
+	if (!looks_like_canonical(canonical)) {
 		throw new Error('El documento no tiene payload canónico para timbrar.');
 	}
-	let working = { ...canonical } as Record<string, unknown>;
-	if (looks_like_canonical(working)) {
-		const private_key_pem = String(ctx.body.private_key_pem ?? '').trim();
-		if (private_key_pem) {
-			const comprobante = { ...as_object(working.comprobante) };
-			const { sello } = seal_canonical_with_csd(
-				working as CfdiCanonical,
-				private_key_pem,
-				String(ctx.body.passphrase ?? '') || undefined,
-			);
-			comprobante.sello = sello;
-			if (ctx.body.no_certificado) comprobante.no_certificado = String(ctx.body.no_certificado);
-			if (ctx.body.certificado) comprobante.certificado = String(ctx.body.certificado);
-			working = { ...working, comprobante };
-		}
+	const issues = await run_cfdi_validation(ctx.store, canonical);
+	if (has_cfdi_errors(issues)) {
+		await ctx.store.update('cfdi-document', String(doc._id), {
+			status: 'invalid',
+			estado: 'invalid',
+			validado: false,
+			validation_issues: issues,
+			errores_validacion: issues,
+		});
+		throw new Error('El CFDI tiene errores de validación; corrígelos antes de timbrar.');
 	}
-	let xml = String(doc.xml ?? working.xml ?? '');
-	if (!xml.trim() && looks_like_canonical(working)) {
-		xml = serialize_cfdi_to_xml(working as CfdiCanonical);
+
+	let working = {
+		...canonical,
+		comprobante: { ...as_object(canonical.comprobante) },
+	} as Record<string, unknown>;
+	const private_key_pem = String(ctx.body.private_key_pem ?? '').trim();
+	if (private_key_pem) {
+		const comprobante = { ...as_object(working.comprobante) };
+		const { sello } = seal_canonical_with_csd(
+			working as CfdiCanonical,
+			private_key_pem,
+			String(ctx.body.passphrase ?? '') || undefined,
+		);
+		comprobante.sello = sello;
+		if (ctx.body.no_certificado) comprobante.no_certificado = String(ctx.body.no_certificado);
+		if (ctx.body.certificado) comprobante.certificado = String(ctx.body.certificado);
+		working = { ...working, comprobante };
 	}
+
+	const xml = serialize_cfdi_to_xml(working as CfdiCanonical);
 	await ctx.store.update('cfdi-document', String(doc._id), {
 		status: 'stamping',
 		estado: 'stamping',
 	});
 	try {
 		const stamp = await stamp_with_pac(xml);
+		const provider = pac_provider() || 'mock';
+		const comprobante = as_object(working.comprobante);
+		const stamped_canonical = {
+			...working,
+			complemento: {
+				...as_object(working.complemento),
+				timbre_fiscal_digital: {
+					version: '1.1',
+					uuid: stamp.uuid,
+					fecha_timbrado: stamp.fecha_timbrado,
+					rfc_prov_certif: stamp.rfc_prov_certif ?? provider,
+					sello_cfd: comprobante.sello ?? '',
+					no_certificado_sat: stamp.no_certificado_sat ?? '',
+					sello_sat: stamp.sello_sat ?? '',
+				},
+			},
+			meta: {
+				...as_object(working.meta),
+				validation: { status: 'stamped', errors: [] },
+			},
+		};
 		const updated = await ctx.store.update('cfdi-document', String(doc._id), {
 			status: 'stamped',
 			estado: 'stamped',
-			canonical: working,
-			payload_canonico: working,
+			validado: true,
+			canonical: stamped_canonical,
+			payload_canonico: stamped_canonical,
 			uuid: stamp.uuid,
 			fecha_timbrado: stamp.fecha_timbrado,
 			xml: stamp.xml_timbrado,
 			xml_timbrado: stamp.xml_timbrado,
-			pac: String(process.env.CFDI_PAC_PROVIDER ?? 'mock').toLowerCase(),
+			pac: String(provider).toLowerCase(),
 			rfc_prov_certif: stamp.rfc_prov_certif,
 			no_certificado_sat: stamp.no_certificado_sat,
 			sello_sat: stamp.sello_sat,
+			validation_issues: [],
+			errores_validacion: [],
 		});
-		return ok([updated], 'Documento timbrado');
+		await sync_cfdi_source_stamp(
+			ctx.store,
+			{ ...doc, ...(updated ?? {}), name: updated?.name ?? doc.name },
+			'stamped',
+			stamp,
+		);
+		return ok([updated], `CFDI timbrado (${provider}): ${stamp.uuid}`);
 	} catch (err) {
 		await ctx.store.update('cfdi-document', String(doc._id), {
 			status: 'stamp_error',
 			estado: 'stamp_error',
 		});
+		await sync_cfdi_source_stamp(ctx.store, doc, 'stamp_error');
 		throw err;
 	}
 }
