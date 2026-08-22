@@ -9,18 +9,22 @@ export async function read_imperium_body(
 	const ctype = req.headers.get('content-type') ?? '';
 	if (ctype.includes('multipart/form-data') || ctype.includes('application/x-www-form-urlencoded')) {
 		const form = await req.formData();
+		const files: Record<string, unknown> = {};
+		for (const [k, v] of form.entries()) {
+			if (typeof v !== 'string') files[k] = v;
+		}
 		const packed = form.get('imperium-sic__data__');
 		if (typeof packed === 'string' && packed.trim()) {
 			try {
 				const parsed = JSON.parse(packed);
 				if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-					return parsed as Record<string, unknown>;
+					return { ...(parsed as Record<string, unknown>), ...files };
 				}
 			} catch {
 				/* fall through */
 			}
 		}
-		const out: Record<string, unknown> = {};
+		const out: Record<string, unknown> = { ...files };
 		for (const [k, v] of form.entries()) {
 			if (typeof v === 'string') out[k] = v;
 		}

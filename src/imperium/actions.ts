@@ -329,7 +329,7 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'tickets:read_received_interinstance_tickets':
 			return list_where(ctx, 'tickets', { origen: 'interinstance' });
 		case 'tickets:update_ticket':
-			return patch_doc(ctx, 'tickets', ctx.params.id, ctx.body, 'Ticket actualizado');
+			return update_ticket(ctx);
 		case 'tickets:read_my_tickets':
 			return list_where(ctx, 'tickets', { created_by: String(ctx.actor?._id ?? '') });
 		case 'user:recovery_link':
@@ -372,9 +372,7 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'medical-file:read_pending':
 			return medical_pending(ctx);
 		case 'medical-file:read_for_doctor':
-			return list_where(ctx, 'medical-file', {
-				doctor: String(ctx.actor?._id ?? ctx.url.searchParams.get('doctor') ?? ''),
-			});
+			return medical_for_doctor(ctx);
 		case 'ticketing-system-turn:take_next_turn':
 			return take_next_turn(ctx);
 		case 'ticketing-system-turn:notify_turn':
@@ -923,15 +921,27 @@ async function logistics_event(ctx: Ctx) {
 		}
 		const ticket = String(ctx.body.delivery_ticket_reference ?? '').trim();
 		if (!ticket) throw new Error('Debes capturar el ticket o referencia de entrega');
+		if (!actor_id(ctx)) {
+			throw new Error(
+				'No se pudo identificar al usuario autenticado para guardar la firma',
+			);
+		}
+		const attachment_id = await save_delivery_signature(ctx, String(doc._id));
 		patch.estado = 'entregado';
 		patch.delivered_at = occurred_at;
 		patch.loaded_at = doc.loaded_at ?? occurred_at;
 		patch.delivery_ticket_reference = ticket;
-		if (ctx.body.delivery_signature_attachment_id) {
-			patch.delivery_signature_attachment_id = ctx.body.delivery_signature_attachment_id;
-		}
+		patch.delivery_signature_attachment_id = attachment_id;
 		if (ctx.body.delivery_coordinates) {
 			patch.delivery_coordinates = ctx.body.delivery_coordinates;
+		}
+		if (ctx.body.delivery_distance_m != null) {
+			patch.delivery_distance_m = Number(ctx.body.delivery_distance_m);
+		}
+		if (ctx.body.delivery_within_geofence != null) {
+			patch.delivery_within_geofence =
+				ctx.body.delivery_within_geofence === true ||
+				ctx.body.delivery_within_geofence === 'true';
 		}
 	} else {
 		throw new Error('El tipo de evento logístico no es válido');
@@ -2493,13 +2503,75 @@ async function field_values(ctx: Ctx, resource: string, field: string) {
 }
 
 async function create_ticket(ctx: Ctx) {
+	const title = String(ctx.body.title ?? ctx.body.subject ?? ctx.body.name ?? 'Ticket');
+	const assigned = String(ctx.body.assigned_user_id ?? ctx.body.assignedUserId ?? '').trim();
 	const created = await ctx.store.insert('tickets', {
-		name: String(ctx.body.subject ?? ctx.body.name ?? 'Ticket'),
 		...ctx.body,
-		estado: ctx.body.estado ?? 'abierto',
+		name: title,
+		title,
+		status: ctx.body.status ?? 'open',
+		estado: ctx.body.estado ?? ctx.body.status ?? 'open',
+		sourceType: ctx.body.sourceType ?? infer_ticket_source(ctx.action),
+		assignedUserId: assigned || undefined,
+		assigned_user_id: assigned || undefined,
 		created_by: actor_id(ctx),
 	});
 	return ok([created], 'Ticket creado');
+}
+
+function infer_ticket_source(action: string) {
+	if (action.includes('public')) return 'public';
+	if (action.includes('error')) return 'error';
+	if (action.includes('log')) return 'log';
+	if (action.includes('interinstance')) return 'interinstance';
+	return 'internal';
+}
+
+async function update_ticket(ctx: Ctx) {
+	const assigned = String(ctx.body.assigned_user_id ?? ctx.body.assignedUserId ?? '').trim();
+	const patch: ImperiumDoc = { ...ctx.body };
+	delete patch.signature;
+	if (assigned) {
+		patch.assignedUserId = assigned;
+		patch.assigned_user_id = assigned;
+	}
+	if (ctx.body.status) {
+		patch.status = ctx.body.status;
+		patch.estado = ctx.body.status;
+	}
+	if (ctx.body.title) {
+		patch.title = ctx.body.title;
+		patch.name = ctx.body.title;
+	}
+	return patch_doc(ctx, 'tickets', ctx.params.id, patch, 'Ticket actualizado');
+}
+
+async function save_delivery_signature(ctx: Ctx, package_id: string): Promise<string> {
+	const existing = String(ctx.body.delivery_signature_attachment_id ?? '').trim();
+	if (existing) return existing;
+	const file = ctx.body.signature;
+	if (!file || typeof file !== 'object' || typeof (file as Blob).arrayBuffer !== 'function') {
+		throw new Error('Debes capturar la firma de recibido');
+	}
+	const blob = file as File;
+	const bytes = Buffer.from(await blob.arrayBuffer());
+	if (!bytes.length) throw new Error('Debes capturar la firma de recibido');
+	const name = String(blob.name || `${package_id}.png`);
+	const mime = String(blob.type || 'image/png');
+	const created = await ctx.store.insert('attachment-management', {
+		name,
+		name_stored: name,
+		mimetype: mime,
+		mime,
+		file_ext: name.includes('.') ? name.split('.').pop() : 'png',
+		size_in_kb: String(Math.max(1, Math.round(bytes.length / 1024))),
+		related_model: 'delivery-package',
+		related_record_id: package_id,
+		field: 'signature',
+		created_by_id: actor_id(ctx),
+		base64: bytes.toString('base64'),
+	});
+	return String(created._id);
 }
 
 async function user_recovery(ctx: Ctx) {
@@ -2801,6 +2873,19 @@ async function mark_attendance(ctx: Ctx) {
 		patch.registro_incidencia_id = incident._id;
 	}
 	return patch_doc(ctx, 'lista-asistencia', String(entry._id), patch, 'Asistencia actualizada correctamente');
+}
+
+async function medical_for_doctor(ctx: Ctx) {
+	const by_status = await ctx.store.find_many('medical-file', {
+		where: { status: { in: ['pendiente', 'en_consulta'] } },
+		take: 500,
+	});
+	if (by_status.rows.length) return ok(by_status.rows, 'Expedientes del médico', by_status.total);
+	const by_estado = await ctx.store.find_many('medical-file', {
+		where: { estado: { in: ['pendiente', 'en_consulta'] } },
+		take: 500,
+	});
+	return ok(by_estado.rows, 'Expedientes del médico', by_estado.total);
 }
 
 async function medical_pending(ctx: Ctx) {
