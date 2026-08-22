@@ -8,6 +8,14 @@ import { as_array, as_object, fail, ok, type ImperiumDoc } from './envelope.ts';
 import { read_imperium_body } from './body.ts';
 import type { ImperiumStore } from './store.ts';
 import { assert_pos_pin, verify_user_pin } from './user-pin.ts';
+import { stamp_with_pac } from './pac.ts';
+import {
+	composed_codigo_from_path,
+	expand_path_to_tree_lines,
+	extract_path_from_row,
+	normalize_alias_map,
+	sanitize_location_segment,
+} from './location-path.ts';
 
 type Ctx = {
 	store: ImperiumStore;
@@ -617,29 +625,6 @@ async function cfdi_validate(ctx: Ctx) {
 	return ok([updated], 'Documento validado');
 }
 
-function pac_provider() {
-	return String(process.env.CFDI_PAC_PROVIDER ?? 'noop').trim().toLowerCase();
-}
-
-function inject_tfd(xml: string, stamp: { uuid: string; fecha: string; sello_sat: string; no_cert: string; sello_cfd: string }) {
-	const tfd =
-		`<tfd:TimbreFiscalDigital xmlns:tfd="http://www.sat.gob.mx/TimbreFiscalDigital" ` +
-		`Version="1.1" UUID="${stamp.uuid}" FechaTimbrado="${stamp.fecha}" ` +
-		`RfcProvCertif="MOCK010101AAA" SelloCFD="${stamp.sello_cfd}" ` +
-		`NoCertificadoSAT="${stamp.no_cert}" SelloSAT="${stamp.sello_sat}"/>`;
-	if (xml.includes('TimbreFiscalDigital')) return xml;
-	if (xml.includes('</cfdi:Complemento>')) {
-		return xml.replace('</cfdi:Complemento>', `${tfd}</cfdi:Complemento>`);
-	}
-	if (xml.includes('</cfdi:Comprobante>')) {
-		return xml.replace(
-			'</cfdi:Comprobante>',
-			`<cfdi:Complemento>${tfd}</cfdi:Complemento></cfdi:Comprobante>`,
-		);
-	}
-	return `${xml}${tfd}`;
-}
-
 async function cfdi_stamp(ctx: Ctx) {
 	const doc = await need(ctx, 'cfdi-document', ctx.params.id);
 	if (doc.validado === false || doc.status === 'invalid') {
@@ -654,44 +639,28 @@ async function cfdi_stamp(ctx: Ctx) {
 		status: 'stamping',
 		estado: 'stamping',
 	});
-	const provider = pac_provider();
-	if (!provider || provider === 'noop' || provider === 'none') {
+	try {
+		const stamp = await stamp_with_pac(xml);
+		const updated = await ctx.store.update('cfdi-document', String(doc._id), {
+			status: 'stamped',
+			estado: 'stamped',
+			uuid: stamp.uuid,
+			fecha_timbrado: stamp.fecha_timbrado,
+			xml: stamp.xml_timbrado,
+			xml_timbrado: stamp.xml_timbrado,
+			pac: String(process.env.CFDI_PAC_PROVIDER ?? 'mock').toLowerCase(),
+			rfc_prov_certif: stamp.rfc_prov_certif,
+			no_certificado_sat: stamp.no_certificado_sat,
+			sello_sat: stamp.sello_sat,
+		});
+		return ok([updated], 'Documento timbrado');
+	} catch (err) {
 		await ctx.store.update('cfdi-document', String(doc._id), {
 			status: 'stamp_error',
 			estado: 'stamp_error',
 		});
-		throw new Error(
-			'PAC no configurado: no se puede timbrar. Configure un adaptador de PAC (set_cfdi_pac_adapter) o use solo exportación XML/JSON.',
-		);
+		throw err;
 	}
-	if (provider !== 'mock' && provider !== 'demo' && provider !== 'test') {
-		await ctx.store.update('cfdi-document', String(doc._id), {
-			status: 'stamp_error',
-			estado: 'stamp_error',
-		});
-		throw new Error(
-			`CFDI_PAC_PROVIDER desconocido: "${provider}". Use noop | mock | sw_sapien | finkok | facturama.`,
-		);
-	}
-	const source_xml = xml || `<?xml version="1.0"?><cfdi:Comprobante/>`;
-	const uuid = crypto.randomUUID();
-	const fecha = now();
-	const sello_sat = Buffer.from(`sat|${uuid}`).toString('base64');
-	const sello_cfd = source_xml.match(/\sSello="([^"]+)"/)?.[1] ?? Buffer.from(`cfd|${uuid}`).toString('base64');
-	const no_cert = '30001000000400002495';
-	const xml_timbrado = inject_tfd(source_xml, { uuid, fecha, sello_sat, no_cert, sello_cfd });
-	const updated = await ctx.store.update('cfdi-document', String(doc._id), {
-		status: 'stamped',
-		estado: 'stamped',
-		uuid,
-		fecha_timbrado: fecha,
-		xml: xml_timbrado,
-		xml_timbrado,
-		pac: 'mock',
-		rfc_prov_certif: 'MOCK010101AAA',
-		no_certificado_sat: no_cert,
-	});
-	return ok([updated], 'Documento timbrado');
 }
 
 async function cfdi_export(ctx: Ctx, kind: 'xml' | 'json') {
@@ -1196,44 +1165,147 @@ async function widget_data(ctx: Ctx) {
 	);
 }
 
+async function find_location_by_codigo(ctx: Ctx, codigo: string) {
+	if (!codigo || !ctx.store.has('inventory-internal-location')) return null;
+	return (
+		(
+			await ctx.store.find_many('inventory-internal-location', {
+				where: { codigo },
+				take: 1,
+				include_inactive: true,
+			})
+		).rows[0] ?? null
+	);
+}
+
+async function upsert_location_line(
+	ctx: Ctx,
+	line: {
+		name: string;
+		segmento_codigo: string;
+		parent_codigo?: string;
+		permite_almacenaje?: boolean;
+	},
+	dry_run: boolean,
+) {
+	const segmento = sanitize_location_segment(line.segmento_codigo || line.name);
+	const parent = sanitize_location_segment(line.parent_codigo ?? '');
+	const codigo = parent ? `${parent}${segmento}` : segmento;
+	const existing = await find_location_by_codigo(ctx, codigo);
+	if (existing) {
+		if (!dry_run) {
+			await ctx.store.update('inventory-internal-location', String(existing._id), {
+				name: line.name || existing.name,
+				permite_almacenaje: line.permite_almacenaje ?? existing.permite_almacenaje,
+			});
+		}
+		return { codigo, accion: 'exists' as const, id: existing._id };
+	}
+	if (!dry_run) {
+		const created = await ctx.store.insert('inventory-internal-location', {
+			name: line.name || codigo,
+			codigo,
+			segmento_codigo: segmento,
+			parent: parent || null,
+			parent_codigo: parent || null,
+			permite_almacenaje: line.permite_almacenaje !== false,
+			tipo: 'interna',
+		});
+		return { codigo, accion: 'create' as const, id: created._id };
+	}
+	return { codigo, accion: 'create' as const, id: null };
+}
+
+async function ensure_location_path(
+	ctx: Ctx,
+	path: string,
+	root: string,
+	dry_run: boolean,
+	fila: number,
+) {
+	const lines = expand_path_to_tree_lines(path, {
+		root_parent_codigo: root,
+		fila,
+	});
+	const creadas: string[] = [];
+	const ya_existian: string[] = [];
+	const preview: ImperiumDoc[] = [];
+	if (!(await find_location_by_codigo(ctx, root)) && root) {
+		const root_row = await upsert_location_line(
+			ctx,
+			{ name: root, segmento_codigo: root, permite_almacenaje: false },
+			dry_run,
+		);
+		preview.push({ ...root_row, path: root });
+		if (root_row.accion === 'create') creadas.push(root_row.codigo);
+		else ya_existian.push(root_row.codigo);
+	}
+	let leaf = root;
+	for (const line of lines) {
+		const row = await upsert_location_line(ctx, line, dry_run);
+		preview.push({ ...row, path });
+		if (row.accion === 'create') creadas.push(row.codigo);
+		else ya_existian.push(row.codigo);
+		leaf = row.codigo;
+	}
+	return { leaf_codigo: lines.length ? leaf : composed_codigo_from_path(path, root) || root, creadas, ya_existian, preview };
+}
+
 async function import_location_tree(ctx: Ctx) {
 	const dry_run = Boolean(ctx.body.dry_run);
-	const lineas = as_array(ctx.body.lineas ?? ctx.body.tree ?? ctx.body.nodos);
-	if (!lineas.length) {
+	const root = sanitize_location_segment(ctx.body.root_parent_codigo ?? 'ALMACEN') || 'ALMACEN';
+	const raw_lines = as_array(ctx.body.lineas ?? ctx.body.tree ?? ctx.body.nodos);
+	if (!raw_lines.length) {
 		throw new Error(
 			"Debes enviar lineas[] con name+segmento_codigo o ubicacion_path (ej. 'Zona 1 / Zona 1-A')",
 		);
 	}
-	const preview: ImperiumDoc[] = [];
-	const created: ImperiumDoc[] = [];
-	const errores: ImperiumDoc[] = [];
-	for (const raw of lineas) {
+	const expanded: Array<{
+		name: string;
+		segmento_codigo: string;
+		parent_codigo?: string;
+		permite_almacenaje?: boolean;
+	}> = [];
+	for (const raw of raw_lines) {
 		const n = as_object(raw);
+		const path = extract_path_from_row(n);
+		if (path && !String(n.segmento_codigo ?? '').trim()) {
+			expanded.push(
+				...expand_path_to_tree_lines(path, { root_parent_codigo: root }),
+			);
+			continue;
+		}
 		const name = String(n.name ?? n.nombre ?? '').trim();
 		const codigo = String(n.segmento_codigo ?? n.codigo ?? name).trim();
-		if (!name && !codigo) {
+		if (!name && !codigo) continue;
+		expanded.push({
+			name: name || codigo,
+			segmento_codigo: codigo,
+			parent_codigo: String(n.parent_codigo ?? root),
+			permite_almacenaje: n.permite_almacenaje !== false,
+		});
+	}
+	const preview: ImperiumDoc[] = [];
+	const creadas: string[] = [];
+	const actualizadas: string[] = [];
+	const errores: ImperiumDoc[] = [];
+	for (const line of expanded) {
+		if (!sanitize_location_segment(line.segmento_codigo || line.name)) {
 			errores.push({ mensaje: 'Fila sin name ni segmento_codigo' });
 			continue;
 		}
-		const row: ImperiumDoc = {
-			name: name || codigo,
-			segmento_codigo: codigo,
-			parent_id: n.parent_id,
-			parent_codigo: n.parent_codigo,
-			...n,
-		};
-		preview.push({ ...row, accion: 'create', codigo });
-		if (!dry_run) {
-			created.push(await ctx.store.insert('inventory-internal-location', row));
-		}
+		const row = await upsert_location_line(ctx, line, dry_run);
+		preview.push(row);
+		if (row.accion === 'create') creadas.push(row.codigo);
+		else actualizadas.push(row.codigo);
 	}
 	const summary = {
 		dry_run,
-		total_filas: lineas.length,
-		creadas: dry_run ? preview.length : created.length,
-		actualizadas: 0,
-		codigos_creados: preview.map((p) => String(p.codigo ?? p.segmento_codigo ?? '')),
-		codigos_actualizados: [] as string[],
+		total_filas: raw_lines.length,
+		creadas: creadas.length,
+		actualizadas: actualizadas.length,
+		codigos_creados: creadas,
+		codigos_actualizados: actualizadas,
 		errores,
 		preview: dry_run ? preview : undefined,
 	};
@@ -1241,7 +1313,7 @@ async function import_location_tree(ctx: Ctx) {
 		[summary],
 		dry_run
 			? `Simulación árbol: ${preview.length} fila(s) OK, ${errores.length} error(es)`
-			: `Árbol importado: ${created.length} creada(s), 0 actualizada(s), ${errores.length} error(es)`,
+			: `Árbol importado: ${creadas.length} creada(s), ${actualizadas.length} actualizada(s), ${errores.length} error(es)`,
 	);
 }
 
@@ -1288,21 +1360,41 @@ async function adjust_quant(ctx: Ctx, producto: string, ubicacion: string, delta
 async function import_apertura(ctx: Ctx) {
 	const dry_run = Boolean(ctx.body.dry_run);
 	const modo = String(ctx.body.modo ?? 'set') === 'delta' ? 'delta' : 'set';
-	const lineas = as_array(ctx.body.lineas);
+	const crear_ubicaciones =
+		ctx.body.crear_ubicaciones === undefined ? true : Boolean(ctx.body.crear_ubicaciones);
+	const root = sanitize_location_segment(ctx.body.root_parent_codigo ?? 'ALMACEN') || 'ALMACEN';
+	const alias_map = normalize_alias_map(ctx.body.alias_map);
+	const lineas = Array.isArray(ctx.body)
+		? ctx.body
+		: as_array(ctx.body.lineas);
 	if (!lineas.length) {
 		throw new Error(
 			'Debes enviar lineas[] con producto_codigo, ubicación (codigo o path) y cantidad',
 		);
 	}
+	if (lineas.length > 500) {
+		throw new Error(
+			'Máximo 500 líneas por request. Usa el wizard de apertura (lotes de 100)',
+		);
+	}
 	const errores: ImperiumDoc[] = [];
 	const preview: ImperiumDoc[] = [];
 	const applied: ImperiumDoc[] = [];
+	const ubicaciones_creadas: string[] = [];
 	for (let i = 0; i < lineas.length; i++) {
 		const row = as_object(lineas[i]);
 		const fila = Number(row.fila ?? i + 2);
-		const cantidad = Number(row.cantidad ?? row.qty ?? 0);
-		if (!Number.isFinite(cantidad)) {
-			errores.push({ fila, mensaje: 'Cantidad inválida', raw: row });
+		const raw_qty = row.cantidad ?? row.qty;
+		const cantidad =
+			raw_qty === undefined || raw_qty === null || raw_qty === '' ? 1 : Number(raw_qty);
+		if (!Number.isFinite(cantidad) || cantidad < 0) {
+			errores.push({
+				fila,
+				mensaje: Number.isFinite(cantidad)
+					? 'La cantidad no puede ser negativa (usa modo delta con signo o set absoluto ≥ 0)'
+					: `Cantidad inválida: ${String(raw_qty)}`,
+				raw: row,
+			});
 			continue;
 		}
 		let prod: ImperiumDoc | null = null;
@@ -1318,9 +1410,39 @@ async function import_apertura(ctx: Ctx) {
 			errores.push({ fila, mensaje: 'Falta producto o producto_codigo', raw: row });
 			continue;
 		}
-		const ubicacion = String(row.ubicacion ?? row.ubicacion_codigo ?? '').trim();
+		let ubicacion = String(row.ubicacion_codigo ?? '').trim().toUpperCase();
+		const alias = String(row.ubicacion_alias ?? '').trim();
+		if (!ubicacion && alias) {
+			ubicacion = alias_map.get(alias) || alias_map.get(alias.toUpperCase()) || '';
+		}
+		const path = extract_path_from_row(row);
+		if (!ubicacion && path) {
+			ubicacion = composed_codigo_from_path(path, root);
+			if (crear_ubicaciones) {
+				const ensured = await ensure_location_path(ctx, path, root, dry_run, fila);
+				ubicacion = ensured.leaf_codigo;
+				ubicaciones_creadas.push(...ensured.creadas);
+			}
+		} else if (!ubicacion) {
+			ubicacion = String(row.ubicacion ?? '').trim();
+		}
 		if (!ubicacion) {
-			errores.push({ fila, mensaje: 'Falta ubicación', raw: row });
+			errores.push({
+				fila,
+				mensaje: alias
+					? `No se pudo resolver el alias de ubicación "${alias}" (revisa alias_map, ubicacion_path o ubicacion_codigo)`
+					: "Falta ubicacion_codigo, ubicacion_path (ej. 'Zona 1 / Bin A') o columnas zona/subzona",
+				raw: row,
+			});
+			continue;
+		}
+		const loc = await find_location_by_codigo(ctx, ubicacion);
+		if (!loc && !crear_ubicaciones && !dry_run) {
+			errores.push({
+				fila,
+				mensaje: `Ubicación no encontrada (${ubicacion}). Activa crear_ubicaciones o importa el árbol antes`,
+				raw: row,
+			});
 			continue;
 		}
 		const current = ctx.store.has('inventory-stock-quant')
@@ -1362,6 +1484,7 @@ async function import_apertura(ctx: Ctx) {
 				aplicados: dry_run ? 0 : applied.length,
 				errores,
 				preview,
+				ubicaciones_creadas: [...new Set(ubicaciones_creadas)],
 				ok: errores.length === 0,
 			},
 		],
