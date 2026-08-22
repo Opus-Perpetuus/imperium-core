@@ -21,6 +21,7 @@ import {
 import { AguaMssqlService } from './agua-mssql.ts';
 import { calcular_importe } from './agua-importe.ts';
 import { looks_like_canonical, serialize_cfdi_to_xml, type CfdiCanonical } from './cfdi-xml.ts';
+import { create_cfdi_from_invoice_request } from './cfdi-from-invoice.ts';
 import { seal_canonical_with_csd } from './cfdi-seal.ts';
 import { extract_structured, generate_text } from './ai-extraction.ts';
 import { get_pdf_direct_target, send_pdf } from './pdf-direct.ts';
@@ -183,7 +184,7 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'cfdi-catalog:seed_samples':
 			return catalog_seed_samples(ctx);
 		case 'cfdi-document:from_invoice_request':
-			return cfdi_from(ctx, 'invoice-request', ctx.params.invoiceRequestId, 'invoice');
+			return create_cfdi_from_invoice_request(ctx);
 		case 'cfdi-document:from_payroll_receipt':
 			return cfdi_from(ctx, 'payroll-receipt', ctx.params.payrollReceiptId, 'payroll');
 		case 'cfdi-document:from_purchase_order':

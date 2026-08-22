@@ -28,8 +28,18 @@ export type CfdiConcepto = {
 	};
 };
 
+export type CfdiPerfilEmision = 'comercial' | 'dpa_gobierno';
+
+export type CfdiImpuestosTotales = {
+	total_impuestos_trasladados?: number;
+	total_impuestos_retenidos?: number;
+	traslados?: CfdiImpuestoDetalle[];
+	retenciones?: Array<{ impuesto: string; importe: number }>;
+};
+
 export type CfdiCanonical = {
 	version: string;
+	perfil_emision?: CfdiPerfilEmision;
 	comprobante: {
 		serie?: string;
 		folio?: string;
@@ -59,11 +69,12 @@ export type CfdiCanonical = {
 		num_reg_id_trib?: string;
 	};
 	conceptos: CfdiConcepto[];
-	impuestos?: {
-		total_impuestos_trasladados?: number;
-		total_impuestos_retenidos?: number;
-		traslados?: CfdiImpuestoDetalle[];
-		retenciones?: Array<{ impuesto: string; importe: number }>;
+	impuestos?: CfdiImpuestosTotales;
+	meta?: {
+		source?: string;
+		source_id?: string;
+		validation?: { status: string; errors: unknown[] };
+		json_revision?: number;
 	};
 	complemento?: {
 		timbre_fiscal_digital?: {
