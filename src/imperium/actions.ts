@@ -82,6 +82,10 @@ import {
 	is_seed_admin,
 } from './group-access.ts';
 import { emit_pedidos_updated, prepare_pedido_create } from './pedidos-flow.ts';
+import {
+	compute_picking_route,
+	generate_replenishment_for_order,
+} from './inventory-picking.ts';
 
 type Ctx = {
 	store: ImperiumStore;
@@ -2816,8 +2820,16 @@ async function apply_stock_in(
 }
 
 async function picking_route(ctx: Ctx) {
-	const { rows } = await ctx.store.find_many('inventory-stock-quant', { take: 1000 });
-	return ok(rows, 'Ruta de picking');
+	const producto = String(ctx.url.searchParams.get('producto') ?? ctx.body.producto ?? '').trim();
+	const cantidad = Number(ctx.url.searchParams.get('cantidad') ?? ctx.body.cantidad ?? 0);
+	if (!producto || !/^[a-f0-9]{24}$/i.test(producto)) {
+		throw new Error('Debes indicar un producto válido');
+	}
+	if (!(cantidad > 0)) {
+		throw new Error('Debes indicar una cantidad mayor a cero');
+	}
+	const ruta = await compute_picking_route(ctx.store, producto, cantidad);
+	return ok([ruta], 'Ruta de surtimiento calculada');
 }
 
 async function stock_consistency(ctx: Ctx) {
@@ -4104,31 +4116,8 @@ async function po_register_invoice(ctx: Ctx) {
 }
 
 async function po_replenish(ctx: Ctx) {
-	const pedido = await need(ctx, 'pedidos', ctx.params.pedido_id);
-	const items = as_array(pedido.articulos ?? pedido.items).map(as_object);
-	const existing = (await ctx.store.find_many('purchase-order', {
-		where: { tipo_origen: 'reabasto' },
-		take: 20,
-	})).rows.find((r) => String(r.estado) === 'borrador');
-	const articulos = items.map((a) => ({
-		producto: a.producto ?? a.product_id,
-		producto_nombre: a.nombre ?? a.producto_nombre,
-		cantidad: Number(a.faltante ?? a.cantidad ?? 0),
-		cantidad_recibida: 0,
-		costo_unitario: Number(a.costo ?? 0),
-	}));
-	if (existing) {
-		const merged = [...as_array(existing.articulos).map(as_object), ...articulos];
-		return patch_doc(ctx, 'purchase-order', String(existing._id), { articulos: merged }, 'Reabasto acumulado');
-	}
-	const created = await ctx.store.insert('purchase-order', {
-		name: `Reabasto ${pedido.name}`,
-		estado: 'borrador',
-		tipo_origen: 'reabasto',
-		pedido_origen: pedido._id,
-		articulos,
-	});
-	return ok([created], 'Orden de reabasto creada');
+	const result = await generate_replenishment_for_order(ctx.store, String(ctx.params.pedido_id ?? ''));
+	return ok([result], 'Reabasto automático actualizado');
 }
 
 async function report_first(ctx: Ctx) {
