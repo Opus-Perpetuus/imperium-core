@@ -112,6 +112,13 @@ import {
 	notify_turn as notify_ticketing_turn,
 	take_next_turn as take_ticketing_turn,
 } from './ticketing-turn-flow.ts';
+import {
+	build_last_closure_reference,
+	cancel_pos_session_patch,
+	conclude_pos_session_patch,
+	is_pos_session_open,
+	preview_pos_consecutive,
+} from './pos-session-flow.ts';
 
 type Ctx = {
 	store: ImperiumStore;
@@ -3784,43 +3791,17 @@ async function reclamar_surtir(ctx: Ctx) {
 }
 
 async function pos_next_consecutive(ctx: Ctx) {
-	const preview = await preview_counter({
-		...ctx,
-		params: { model_name: 'PosSession', increment_field: 'consecutivo' },
-	} as Ctx);
-	return preview;
+	const next_consecutive = await preview_pos_consecutive(ctx.store);
+	return ok([{ next_consecutive, next_sequence: next_consecutive }], 'Siguiente consecutivo obtenido correctamente');
 }
 
 async function pos_last_closure(ctx: Ctx) {
-	const branch = ctx.params.branch_office_id;
-	const { rows } = await ctx.store.find_many('pos-session', {
-		take: 200,
-		include_inactive: true,
-		populate: false,
-	});
-	const office_id = (value: unknown) => {
-		if (value && typeof value === 'object') {
-			return String((value as { _id?: unknown })._id ?? '');
-		}
-		return String(value ?? '');
-	};
-	const closed = rows
-		.filter((r) => office_id(r.branch_office ?? r.sucursal) === branch)
-		.filter(
-			(r) =>
-				['cerrada', 'CLOSED', 'cerrada'].includes(String(r.status ?? r.estado ?? '')) ||
-				r.closing_date ||
-				r.fecha_cierre,
-		)
-		.sort((a, b) =>
-			String(b.closing_date ?? b.fecha_cierre ?? '').localeCompare(
-				String(a.closing_date ?? a.fecha_cierre ?? ''),
-			),
-		);
-	const last = closed[0];
+	const reference = await build_last_closure_reference(ctx.store, ctx.params.branch_office_id);
 	return ok(
-		[{ found: Boolean(last), session_id: last?._id ?? null, fecha_cierre: last?.fecha_cierre ?? null, folio: last?.name }],
-		last ? 'Referencia del último cierre obtenida correctamente' : 'No existe una sesión cerrada previa',
+		[reference],
+		reference.found
+			? 'Referencia del último cierre obtenida correctamente'
+			: 'No existe una sesión cerrada previa en la sucursal indicada',
 	);
 }
 
@@ -3843,6 +3824,9 @@ async function pos_report(ctx: Ctx, tipo: string) {
 		ctx.actor,
 	);
 	const session = await need(ctx, 'pos-session', ctx.params.id);
+	if (tipo === 'cierre' && !is_pos_session_open(session)) {
+		throw new Error('Solo se puede generar el cierre para sesiones abiertas');
+	}
 	const tickets = ctx.store.has('pos-tickets')
 		? (
 				await ctx.store.find_many('pos-tickets', {
@@ -3924,15 +3908,11 @@ async function pos_conclude(ctx: Ctx) {
 		throw new Error('Solo se puede concluir el cierre para sesiones abiertas');
 	}
 	await pos_report(ctx, 'cierre');
-	const closed_at = now();
-	const updated = await ctx.store.update('pos-session', String(session._id), {
-		status: 'cerrada',
-		estado: 'cerrada',
-		on_use: false,
-		closing_date: closed_at,
-		fecha_cierre: closed_at,
-		cierre: ctx.body,
-	});
+	const updated = await ctx.store.update(
+		'pos-session',
+		String(session._id),
+		conclude_pos_session_patch(session),
+	);
 	return ok([updated], 'Cierre de caja concluido correctamente');
 }
 
@@ -3948,19 +3928,13 @@ async function pos_cancel(ctx: Ctx) {
 	if (!is_pos_session_open(session)) {
 		throw new Error('Solo se pueden cancelar sesiones abiertas');
 	}
-	const closed_at = now();
-	return patch_doc(ctx, 'pos-session', String(session._id), {
-		status: 'cancelada',
-		estado: 'cancelada',
-		on_use: false,
-		closing_date: closed_at,
-		fecha_cancelacion: closed_at,
-	}, 'Sesión cancelada correctamente.');
-}
-
-function is_pos_session_open(doc: ImperiumDoc) {
-	const raw = String(doc.status ?? doc.estado ?? '').trim().toLowerCase();
-	return raw === 'abierta' || raw === 'open';
+	return patch_doc(
+		ctx,
+		'pos-session',
+		String(session._id),
+		cancel_pos_session_patch(session),
+		'Sesión cancelada correctamente',
+	);
 }
 
 async function po_approve(ctx: Ctx) {

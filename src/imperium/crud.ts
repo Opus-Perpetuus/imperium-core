@@ -29,6 +29,11 @@ import {
 	notify_ticketing_rooms,
 	prepare_ticketing_turn_create,
 } from './ticketing-turn-flow.ts';
+import {
+	prepare_pos_session_create,
+	prepare_pos_session_update,
+	prepare_pos_ticket_create,
+} from './pos-session-flow.ts';
 import { build_access } from './auth.ts';
 import { is_seed_admin } from './group-access.ts';
 import {
@@ -271,7 +276,11 @@ export async function handle_crud(
 		if (resource === 'ticketing-system-turn') {
 			incoming = await prepare_ticketing_turn_create(store, incoming);
 		}
+		if (resource === 'pos-session') {
+			incoming = await prepare_pos_session_create(store, incoming, actor);
+		}
 		if (resource === 'pos-tickets') {
+			incoming = await prepare_pos_ticket_create(store, incoming, actor);
 			await assert_pos_pin(
 				store,
 				req,
@@ -294,7 +303,9 @@ export async function handle_crud(
 		}
 		const [populated] = await store.populate_docs(resource, [result]);
 		const message =
-			resource === 'pos-tickets'
+			resource === 'pos-session'
+				? 'Sesión creada'
+				: resource === 'pos-tickets'
 				? 'Ticket creado'
 				: resource === 'pedidos'
 					? 'Pedido creado'
@@ -347,6 +358,9 @@ export async function handle_crud(
 		}
 		if (resource === 'purchase-order') {
 			b = await prepare_purchase_order_update(b, previous);
+		}
+		if (resource === 'pos-session') {
+			b = await prepare_pos_session_update(store, b, previous, actor);
 		}
 		const updated = await store.update(resource, id, b);
 		if (updated) await link_attachments_to_record(store, resource, updated);
@@ -522,10 +536,6 @@ function csv(v: unknown): string {
 	return s;
 }
 
-function actor_id(actor: ImperiumDoc | null): string {
-	return String(actor?._id ?? actor?.id ?? '').trim();
-}
-
 async function maybe_register_mentions(
 	store: ImperiumStore,
 	actor: ImperiumDoc | null,
@@ -548,39 +558,6 @@ async function before_create(
 	doc: ImperiumDoc,
 	actor: ImperiumDoc | null,
 ): Promise<ImperiumDoc> {
-	if (resource === 'pos-session') {
-		const uid = actor_id(actor);
-		const opening = doc.opening_date ?? new Date().toISOString();
-		const history = as_array(doc.usage_history);
-		if (uid && !history.some((h) => !as_object(h).ended_at)) {
-			history.push({
-				started_at: opening,
-				used_by_user: uid,
-				cashier: doc.cashier ?? null,
-				cashier_name: doc.cashier_name ?? '',
-			});
-		}
-		return {
-			...doc,
-			status: doc.status ?? 'abierta',
-			state: doc.state ?? 'abierta',
-			on_use: doc.on_use !== false,
-			opening_date: opening,
-			created_by: doc.created_by ?? uid,
-			usage_history: history,
-			name: doc.name || `Sesión ${new Date().toISOString().slice(0, 16)}`,
-		};
-	}
-	if (resource === 'pos-tickets') {
-		await assert_pos_session_for_ticket(store, doc, actor);
-		const ticket_type = String(doc.ticket_type ?? 'VENTA').trim().toUpperCase() || 'VENTA';
-		return {
-			...doc,
-			ticket_type,
-			state: doc.state ?? 'CONFIRMADO',
-			name: doc.name || `Ticket ${doc.ticket_sequence ?? ''}`.trim(),
-		};
-	}
 	return doc;
 }
 
@@ -607,38 +584,3 @@ async function after_create(
 	}
 }
 
-async function assert_pos_session_for_ticket(
-	store: ImperiumStore,
-	doc: ImperiumDoc,
-	actor: ImperiumDoc | null,
-): Promise<void> {
-	const session_id = String(doc.pos_session ?? '').trim();
-	if (!session_id) {
-		throw new Error('Se requiere el id de la sesión POS para generar el ticket');
-	}
-	const current_user_id = actor_id(actor);
-	if (!current_user_id) {
-		throw new Error('No se pudo validar el usuario que intenta generar el ticket');
-	}
-	const session = await store.find_id('pos-session', session_id);
-	if (!session) throw new Error('La sesión POS especificada no existe');
-	if (session.is_active === false) {
-		throw new Error('No se puede generar el ticket porque la sesión POS está inactiva');
-	}
-	const status = String(session.status ?? session.state ?? '').toLowerCase();
-	if (status && !['abierta', 'open', 'abierta'].includes(status)) {
-		throw new Error('No se puede generar el ticket porque la sesión POS no está abierta');
-	}
-	if (session.on_use === false) {
-		throw new Error('No se puede generar el ticket porque la sesión POS no está en uso');
-	}
-	const history = as_array(session.usage_history).map(as_object);
-	const active = [...history].reverse().find((e) => !e.ended_at);
-	const usage_user = String(active?.used_by_user ?? '').trim();
-	const created_by = String(session.created_by ?? '').trim();
-	if (created_by && created_by !== current_user_id && usage_user && usage_user !== current_user_id) {
-		throw new Error(
-			'No se puede generar el ticket porque la sesión POS no pertenece al usuario actual',
-		);
-	}
-}
