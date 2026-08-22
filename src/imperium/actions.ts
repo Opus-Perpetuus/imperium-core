@@ -18,7 +18,8 @@ import {
 } from './location-path.ts';
 import { AguaMssqlService } from './agua-mssql.ts';
 import { calcular_importe } from './agua-importe.ts';
-import { looks_like_canonical, serialize_cfdi_to_xml } from './cfdi-xml.ts';
+import { looks_like_canonical, serialize_cfdi_to_xml, type CfdiCanonical } from './cfdi-xml.ts';
+import { seal_canonical_with_csd } from './cfdi-seal.ts';
 
 type Ctx = {
 	store: ImperiumStore;
@@ -95,7 +96,7 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'auto-increment-control:normalize_counters':
 			return normalize_counters(ctx);
 		case 'configuration:ai_generate_text':
-			return ok([{ text: String(ctx.body.prompt ?? '') }], 'IA no configurada: se devuelve el prompt');
+			return ai_generate_text(ctx);
 		case 'custom-pattern-increment-sequence-parts:get_by_counter_config':
 			return list_where(ctx, 'custom-pattern-increment-sequence-parts', {
 				counter_config_id: ctx.params.counter_config_id,
@@ -301,7 +302,7 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'purchase-order:replenish_from_order':
 			return po_replenish(ctx);
 		case 'purchase-order:parse_document':
-			return ok([{ articulos: as_array(ctx.body.articulos) }], 'Documento analizado correctamente');
+			return purchase_order_parse_document(ctx);
 		case 'reports:get_first_record':
 			return report_first(ctx);
 		case 'reports:get_model_fields':
@@ -638,9 +639,25 @@ async function cfdi_stamp(ctx: Ctx) {
 	if (!Object.keys(canonical).length) {
 		throw new Error('El documento no tiene payload canónico para timbrar.');
 	}
-	let xml = String(doc.xml ?? canonical.xml ?? '');
-	if (!xml.trim() && looks_like_canonical(canonical)) {
-		xml = serialize_cfdi_to_xml(canonical);
+	let working = { ...canonical } as Record<string, unknown>;
+	if (looks_like_canonical(working)) {
+		const private_key_pem = String(ctx.body.private_key_pem ?? '').trim();
+		if (private_key_pem) {
+			const comprobante = { ...as_object(working.comprobante) };
+			const { sello } = seal_canonical_with_csd(
+				working as CfdiCanonical,
+				private_key_pem,
+				String(ctx.body.passphrase ?? '') || undefined,
+			);
+			comprobante.sello = sello;
+			if (ctx.body.no_certificado) comprobante.no_certificado = String(ctx.body.no_certificado);
+			if (ctx.body.certificado) comprobante.certificado = String(ctx.body.certificado);
+			working = { ...working, comprobante };
+		}
+	}
+	let xml = String(doc.xml ?? working.xml ?? '');
+	if (!xml.trim() && looks_like_canonical(working)) {
+		xml = serialize_cfdi_to_xml(working as CfdiCanonical);
 	}
 	await ctx.store.update('cfdi-document', String(doc._id), {
 		status: 'stamping',
@@ -651,6 +668,8 @@ async function cfdi_stamp(ctx: Ctx) {
 		const updated = await ctx.store.update('cfdi-document', String(doc._id), {
 			status: 'stamped',
 			estado: 'stamped',
+			canonical: working,
+			payload_canonico: working,
 			uuid: stamp.uuid,
 			fecha_timbrado: stamp.fecha_timbrado,
 			xml: stamp.xml_timbrado,
@@ -712,6 +731,39 @@ async function cfdi_export(ctx: Ctx, kind: 'xml' | 'json') {
 		});
 	}
 	return ok([{ json: canonical, filename: `cfdi_${doc._id}.json` }], 'JSON CFDI generado correctamente');
+}
+
+async function ai_config_text(ctx: Ctx, ref: string) {
+	return cfg_text((await ctx.store.find_where('configuration', { ref }))?.value);
+}
+
+async function ai_generate_text(ctx: Ctx) {
+	const provider = (await ai_config_text(ctx, 'configuration-ai-extraction-provider')) || 'opencode';
+	if (provider.toLowerCase() === 'anthropic') {
+		const key = await ai_config_text(ctx, 'configuration-ai-extraction-anthropic-api-key');
+		if (!key) {
+			throw new Error(
+				'Configura la API key de Anthropic (configuration-ai-extraction-anthropic-api-key).',
+			);
+		}
+	} else {
+		const key = await ai_config_text(ctx, 'configuration-ai-extraction-opencode-api-key');
+		if (!key) {
+			throw new Error(
+				'Configura la API key de opencode (configuration-ai-extraction-opencode-api-key).',
+			);
+		}
+	}
+	throw new Error('Motor de IA no disponible en el núcleo');
+}
+
+async function purchase_order_parse_document(ctx: Ctx) {
+	const content_base64 = String(ctx.body.content_base64 ?? '').trim();
+	if (!content_base64) {
+		throw new Error('Se necesita el contenido del documento (base64)');
+	}
+	await ai_generate_text(ctx);
+	return ok([], 'Documento analizado correctamente');
 }
 
 async function increment_counter(ctx: Ctx) {
