@@ -869,3 +869,144 @@ export async function register_document_mentions(
 	}
 	await persist_mentions(store, records, notifications);
 }
+
+function settings_user_id(row: ImperiumDoc): string {
+	const raw = row.user_id ?? row.user;
+	if (raw && typeof raw === 'object' && raw !== null && '_id' in raw) {
+		return String((raw as { _id: unknown })._id ?? '');
+	}
+	return String(raw ?? '');
+}
+
+function flag_on(value: unknown): boolean {
+	return value === true || value === 'true' || value === 1;
+}
+
+function record_label_of(doc: ImperiumDoc | null): string {
+	if (!doc) return '';
+	for (const key of ['name', 'title', 'titulo', 'folio', 'codigo', 'code', 'email']) {
+		const text = String(doc[key] ?? '').trim();
+		if (text) return text;
+	}
+	return '';
+}
+
+/**
+ * Aviso a quien se suscribió al documento, a su autor o a sus etiquetas.
+ * Mismo tipo `document-subscription-match` que el original.
+ */
+export async function notify_document_subscription_event(
+	store: ImperiumStore,
+	input: {
+		history_id?: string;
+		actor?: ImperiumDoc | null;
+		collection_name: string;
+		model_name: string;
+		document_id: string;
+		was_new: boolean;
+		current_document?: ImperiumDoc | null;
+		module_label?: string;
+	},
+) {
+	if (!store.has('user-settings') || !store.has('notifications')) return;
+	if (!input.document_id) return;
+	const event_kind = input.was_new ? 'create' : 'update';
+	const event_flag = input.was_new ? 'notify_on_create' : 'notify_on_update';
+	const actor_id_value = String(input.actor?._id ?? '');
+	const { rows } = await store.find_many('user-settings', {
+		take: 2000,
+		include_inactive: false,
+	});
+	const current = as_object(input.current_document);
+	const tags = as_array(current.tags ?? current.etiquetas).map((tag) =>
+		tag && typeof tag === 'object' && tag !== null
+			? String((tag as { _id?: unknown; name?: unknown })._id ?? (tag as { name?: unknown }).name ?? '')
+			: String(tag ?? ''),
+	);
+	const recipients = new Map<string, string[]>();
+	for (const row of rows) {
+		const recipient = settings_user_id(row);
+		if (!recipient) continue;
+		const subs = as_object(row.subscriptions);
+		const reasons: string[] = [];
+		if (event_kind === 'update') {
+			const hit = as_array(subs.document_subscriptions).find((item) => {
+				const sub = as_object(item);
+				return (
+					flag_on(sub.notify_on_update) &&
+					String(sub.document_id ?? '') === input.document_id &&
+					String(sub.collection_name ?? '') === input.collection_name
+				);
+			});
+			if (hit) reasons.push('documento específico');
+		}
+		if (actor_id_value) {
+			const hit = as_array(subs.user_subscriptions).find((item) => {
+				const sub = as_object(item);
+				return flag_on(sub[event_flag]) && String(sub.user_id ?? '') === actor_id_value;
+			});
+			if (hit) {
+				reasons.push(
+					`usuario ${String(as_object(hit).user_name ?? input.actor?.name ?? '').trim()}`,
+				);
+			}
+		}
+		for (const item of as_array(subs.tag_subscriptions)) {
+			const sub = as_object(item);
+			if (!flag_on(sub[event_flag])) continue;
+			const tag_id = String(sub.tag_id ?? '');
+			const tag_name = String(sub.tag_name ?? sub.tag_name_normalized ?? '');
+			if (tags.some((tag) => tag && (tag === tag_id || tag.toLowerCase() === tag_name.toLowerCase()))) {
+				reasons.push(`etiqueta ${tag_name || tag_id}`);
+			}
+		}
+		if (reasons.length) recipients.set(recipient, reasons);
+	}
+	if (!recipients.size) return;
+	const label = input.module_label || input.model_name || 'registro';
+	const record = record_label_of(input.current_document ?? null);
+	const actor_label_text =
+		String(input.actor?.name ?? input.actor?.email ?? '').trim() || 'Sistema';
+	const title_prefix =
+		actor_label_text === 'Sistema'
+			? event_kind === 'create'
+				? 'Se creó'
+				: 'Se actualizó'
+			: event_kind === 'create'
+				? `${actor_label_text} creó`
+				: `${actor_label_text} actualizó`;
+	const quoted = record && record !== label ? ` "${record}"` : '';
+	for (const [recipient, reasons] of recipients) {
+		await insert_notification(store, {
+			recipientId: recipient,
+			recipient: recipient,
+			type: 'document-subscription-match',
+			title: `${title_prefix} ${label}${quoted}`,
+			message: `Coincide con tus suscripciones por ${reasons.join(', ')}.`,
+			description:
+				event_kind === 'create'
+					? 'Nuevo documento detectado por una suscripción global.'
+					: 'Actualización detectada por una suscripción global.',
+			actor: {
+				_id: input.actor?._id,
+				name: input.actor?.name,
+				email: input.actor?.email,
+			},
+			source: {
+				kind: 'document-subscription',
+				action: event_kind,
+				modelName: input.model_name,
+				collectionName: input.collection_name,
+				documentId: input.document_id,
+				historyId: input.history_id,
+				entityLabel: record || label,
+			},
+			payload: {
+				event_kind,
+				matched_document: reasons.includes('documento específico'),
+				history_id: input.history_id,
+			},
+			isRead: false,
+		});
+	}
+}

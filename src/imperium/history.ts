@@ -4,6 +4,7 @@
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { as_object, type ImperiumDoc } from './envelope.ts';
+import { notify_document_subscription_event } from './notifications.ts';
 
 export type HistoryCapableStore = {
 	has(resource: string): boolean;
@@ -26,6 +27,7 @@ const SKIP_RESOURCES = new Set([
 	'debug-log',
 	'mentions',
 	'auth',
+	'notifications',
 ]);
 
 const IGNORE_KEYS = new Set([
@@ -180,10 +182,11 @@ export async function record_document_history(
 	const changes = diff_docs(before, after);
 	if (!changes.length) return;
 	const operation = !before ? 'save' : after?.is_active === false && before.is_active !== false ? 'deleteOne' : 'save';
-	await store.insert('document-change-history', {
+	const collection_name = loc?.collection ?? canonical;
+	const created = await store.insert('document-change-history', {
 		name: action_name(loc?.name ?? canonical, before, after),
 		entryType: 'change',
-		collectionName: loc?.collection ?? canonical,
+		collectionName: collection_name,
 		modelName: canonical,
 		documentId: document_id,
 		record_id: document_id,
@@ -208,4 +211,14 @@ export async function record_document_history(
 		},
 		created_by: ctx.actor?._id,
 	});
+	await notify_document_subscription_event(store as never, {
+		history_id: String(created._id ?? ''),
+		actor: ctx.actor,
+		collection_name,
+		model_name: canonical,
+		document_id,
+		was_new: !before,
+		current_document: after,
+		module_label: loc?.name ?? canonical,
+	}).catch(() => undefined);
 }
