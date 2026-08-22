@@ -38,7 +38,7 @@ import {
 import { decorate_product, prepare_product_write } from './products-flow.ts';
 import { decorate_vehicle, prepare_vehicle_write } from './vehicle-flow.ts';
 import { is_citizen_report_resource, prepare_citizen_report_write } from './citizen-report-flow.ts';
-import { assert_report_template_write } from './reports-flow.ts';
+import { apply_report_list_where, assert_report_template_write } from './reports-flow.ts';
 import { is_asociacion_resource, prepare_asociacion_write } from './asociaciones-flow.ts';
 import {
 	apply_incidencia_list_where,
@@ -254,6 +254,9 @@ export async function handle_crud(
 		}
 		if (is_incidencia_resource(resource)) {
 			q.where = apply_incidencia_list_where(q.where);
+		}
+		if (resource === 'reports') {
+			q.where = apply_report_list_where(store, q.where);
 		}
 		const where = strip_root_parent_where(q.where);
 		const scope = await record_rule_scope(store, actor, resource, method);

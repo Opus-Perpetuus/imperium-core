@@ -22,6 +22,56 @@ export type ReportFieldLike = {
 	related_fields?: Array<{ field_name: string }>;
 };
 
+function to_kebab_model(raw: string) {
+	return raw
+		.replace(/^\/+/, '')
+		.replace(/Model$/, '')
+		.replace(/([a-z])([A-Z])/g, '$1-$2')
+		.toLowerCase();
+}
+
+function to_pascal_model(kebab: string) {
+	return kebab
+		.split(/[-_]/)
+		.filter(Boolean)
+		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+		.join('');
+}
+
+/** El front pide kebab; el original guarda el modelName Mongoose. */
+export function expand_related_model_aliases(
+	store: ImperiumStore,
+	raw: string,
+): string[] {
+	const value = String(raw ?? '').trim();
+	if (!value) return [];
+	const aliases = new Set<string>([value]);
+	const kebab = to_kebab_model(value);
+	aliases.add(kebab);
+	aliases.add(kebab.replace(/-/g, ''));
+	aliases.add(to_pascal_model(kebab));
+	const resolved =
+		store.resource_for_model(value) ??
+		store.resource_for_model(to_pascal_model(kebab)) ??
+		(store.has(kebab) ? kebab : null);
+	if (resolved) {
+		aliases.add(resolved);
+		aliases.add(to_pascal_model(resolved));
+	}
+	return [...aliases];
+}
+
+export function apply_report_list_where(
+	store: ImperiumStore,
+	where: Record<string, unknown>,
+): Record<string, unknown> {
+	const raw = where.related_model;
+	if (typeof raw !== 'string' || !raw.trim()) return where;
+	const aliases = expand_related_model_aliases(store, raw);
+	if (aliases.length <= 1) return where;
+	return { ...where, related_model: { in: aliases } };
+}
+
 export function extract_placeholders(template: string): string[] {
 	if (!template) return [];
 	const found = [...template.matchAll(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g)].map(
