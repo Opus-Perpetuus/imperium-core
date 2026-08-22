@@ -24,10 +24,27 @@ export type ModuleLoc = {
 	columns: ExtraCol[];
 };
 
-const PREFER_OWNER: Record<string, string> = {
+export type SubjectInfo = {
+	slug: string;
+	name: string;
+	path: string;
+	menu_ref: string;
+	modules: Array<{ resource: string; path: string; menu_ref: string; name: string }>;
+};
+
+export const PREFER_OWNER: Record<string, string> = {
 	products: 'almacen',
 	pedidos: 'ventas',
 };
+
+type RefBook = {
+	fields: Record<string, Record<string, string>>;
+	models: Record<string, string>;
+};
+
+const REFS: RefBook = JSON.parse(
+	readFileSync(join(import.meta.dir, 'refs.json'), 'utf8'),
+) as RefBook;
 
 const GENERAL = new Set([
 	'id',
@@ -52,6 +69,7 @@ export function qident(name: string): string {
 export class ImperiumStore {
 	readonly locs = new Map<string, ModuleLoc>();
 	readonly all_locs: ModuleLoc[] = [];
+	readonly subjects: SubjectInfo[] = [];
 
 	constructor(
 		private readonly sql: Bun.SQL,
@@ -60,17 +78,34 @@ export class ImperiumStore {
 		const catalog = JSON.parse(readFileSync(catalog_path, 'utf8')) as {
 			subjects: Array<{
 				slug: string;
+				name?: string;
+				path?: string;
+				menu_ref?: string;
 				technical_id: string;
 				modules?: Array<{
 					resource: string;
 					table: string;
 					collection: string;
 					name: string;
+					path?: string;
+					menu_ref?: string;
 					columns?: ExtraCol[];
 				}>;
 			}>;
 		};
 		for (const s of catalog.subjects) {
+			this.subjects.push({
+				slug: s.slug,
+				name: s.name ?? s.slug,
+				path: s.path ?? '',
+				menu_ref: s.menu_ref ?? `${s.slug}-menu-root`,
+				modules: (s.modules ?? []).map((m) => ({
+					resource: m.resource,
+					path: m.path ?? `/${m.resource}`,
+					menu_ref: m.menu_ref ?? '',
+					name: m.name,
+				})),
+			});
 			for (const m of s.modules ?? []) {
 				const loc: ModuleLoc = {
 					slug: s.slug,
@@ -190,7 +225,7 @@ export class ImperiumStore {
 		return to_imperium(parsed);
 	}
 
-	async find_many(
+		async find_many(
 		resource: string,
 		opts: {
 			q?: string;
@@ -200,6 +235,7 @@ export class ImperiumStore {
 			include_inactive?: boolean;
 			where?: Record<string, unknown>;
 			ids?: string[];
+			populate?: boolean;
 		} = {},
 	): Promise<{ rows: ImperiumDoc[]; total: number }> {
 		const loc = this.loc(resource);
@@ -209,8 +245,10 @@ export class ImperiumStore {
 		const clauses: string[] = [];
 		if (!opts.include_inactive) clauses.push(`is_active IS DISTINCT FROM false`);
 		if (opts.ids?.length) {
-			params.push(opts.ids);
-			clauses.push(`id = ANY($${params.length})`);
+			const start = params.length + 1;
+			params.push(...opts.ids);
+			const marks = opts.ids.map((_, i) => `$${start + i}`).join(', ');
+			clauses.push(`id IN (${marks})`);
 		}
 		if (opts.where) {
 			for (const [raw_key, v] of Object.entries(opts.where)) {
@@ -256,8 +294,11 @@ export class ImperiumStore {
 			`SELECT * FROM ${qt}${where}${order} LIMIT ${take} OFFSET ${skip}`,
 			params,
 		);
+		const flattened = rows.map((r) => this.flatten(r as Record<string, unknown>)!);
+		const populated =
+			opts.populate === false ? flattened : await this.populate_docs(resource, flattened);
 		return {
-			rows: rows.map((r) => this.flatten(r as Record<string, unknown>)!),
+			rows: populated,
 			total,
 		};
 	}
@@ -337,6 +378,58 @@ export class ImperiumStore {
 		return this.update(resource, id, { is_active: false });
 	}
 
+	async populate_docs(resource: string, docs: ImperiumDoc[]): Promise<ImperiumDoc[]> {
+		const field_map = REFS.fields[resource];
+		if (!field_map || !docs.length) return docs;
+		const needed = new Map<string, Set<string>>();
+		for (const [field, model] of Object.entries(field_map)) {
+			const target = this.resource_for_model(model);
+			if (!target) continue;
+			for (const doc of docs) {
+				const id = ref_id(doc[field]);
+				if (!id) continue;
+				if (!needed.has(target)) needed.set(target, new Set());
+				needed.get(target)!.add(id);
+			}
+		}
+		const loaded = new Map<string, Map<string, ImperiumDoc>>();
+		for (const [target, ids] of needed) {
+			const { rows } = await this.find_many(target, {
+				ids: [...ids],
+				take: ids.size,
+				include_inactive: true,
+				populate: false,
+			});
+			loaded.set(target, new Map(rows.map((r) => [String(r._id), r])));
+		}
+		return docs.map((doc) => {
+			const out = { ...doc };
+			for (const [field, model] of Object.entries(field_map)) {
+				const target = this.resource_for_model(model);
+				const id = ref_id(doc[field]);
+				if (!id) {
+					out[field] = { _id: null, name: '' };
+					continue;
+				}
+				const hit = target ? loaded.get(target)?.get(id) : undefined;
+				out[field] = hit
+					? { _id: hit._id, name: hit.name ?? '', description: hit.description ?? '' }
+					: { _id: id, name: '' };
+			}
+			return out;
+		});
+	}
+
+	resource_for_model(model: string): string | null {
+		const direct = REFS.models[model] ?? REFS.models[model.toLowerCase()];
+		if (direct && this.has(direct)) return direct;
+		const kebab = model.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase();
+		if (this.has(kebab)) return kebab;
+		if (this.has(model.toLowerCase())) return model.toLowerCase();
+		if (model === 'Employee' && this.has('employee')) return 'employee';
+		return null;
+	}
+
 	async distinct(resource: string, field: string, q = ''): Promise<unknown[]> {
 		const cols = this.column_names(resource);
 		const qt = this.qt(resource);
@@ -388,6 +481,15 @@ export class ImperiumStore {
 			},
 		};
 	}
+}
+
+function ref_id(value: unknown): string {
+	if (value == null || value === '') return '';
+	if (typeof value === 'object' && !Array.isArray(value)) {
+		const o = value as Record<string, unknown>;
+		return String(o._id ?? o.id ?? '').trim();
+	}
+	return String(value).trim();
 }
 
 function cell(v: unknown, json: boolean): unknown {

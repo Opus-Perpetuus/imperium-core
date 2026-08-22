@@ -3,7 +3,7 @@
  */
 import { as_array, as_object, ok, type ImperiumDoc } from './envelope.ts';
 import { read_imperium_body } from './body.ts';
-import type { ImperiumStore } from './store.ts';
+import { PREFER_OWNER, type ImperiumStore } from './store.ts';
 
 const COOKIE = 'connect.sid';
 const SECRET = process.env.SESSION_SECRET ?? 'imperium-modular-dev-session';
@@ -331,8 +331,9 @@ async function build_menus(store: ImperiumStore, access: Awaited<ReturnType<type
 	const { rows } = await store.find_many('menu-management', {
 		take: 5000,
 		include_inactive: false,
+		populate: false,
 	});
-	if (access.has_full_access) return rows.sort(by_order);
+	if (access.has_full_access) return reshape_subject_menus(store, rows).sort(by_order);
 	const models = new Set(access.models.map(String));
 	const assigned = new Set(access.menu_ids.map(String));
 	let filtered = rows.filter((m) => {
@@ -361,11 +362,112 @@ async function build_menus(store: ImperiumStore, access: Awaited<ReturnType<type
 			return !model || !disabled.has(model);
 		});
 	}
-	return filtered.sort(by_order);
+	return reshape_subject_menus(store, filtered).sort(by_order);
 }
 
 function by_order(a: ImperiumDoc, b: ImperiumDoc) {
 	return Number(a.order ?? 100) - Number(b.order ?? 100);
+}
+
+const SUBJECT_ICONS: Record<string, string> = {
+	almacen: 'fa-warehouse',
+	ventas: 'fa-chart-line',
+	configuracion: 'fa-cog',
+	rh: 'fa-users',
+	reportes: 'fa-chart-bar',
+	logistica: 'fa-truck',
+	pos: 'fa-store',
+	'control-municipal': 'fa-landmark',
+	'control-emergencias': 'fa-ambulance',
+	'control-escolar': 'fa-graduation-cap',
+	'control-hospitalario': 'fa-hospital',
+	turnos: 'fa-id-card',
+	planeacion: 'fa-clipboard-list',
+	pagos: 'fa-credit-card',
+	'facturacion-electronica': 'fa-file-invoice',
+	'tableros-dinamicos': 'fa-chart-pie',
+	vehiculos: 'fa-truck',
+	'dispositivos-fisicos': 'fa-desktop',
+	'configuraciones-de-vista': 'fa-table-columns',
+};
+
+function reshape_subject_menus(store: ImperiumStore, rows: ImperiumDoc[]): ImperiumDoc[] {
+	const menus = rows.map((r) => ({ ...r }));
+	const by_ref = new Map(menus.map((m) => [String(m._ref ?? ''), m]));
+	const root_ids = new Set<string>();
+	const norm = (p: unknown) => String(p ?? '').replace(/\/+$/, '');
+
+	store.subjects.forEach((sub, i) => {
+		let root = by_ref.get(sub.menu_ref);
+		if (!root) {
+			root = menus.find((m) => !m.parent_id && String(m.name) === sub.name);
+		}
+		if (!root) {
+			const id = `subject-root-${sub.slug}`;
+			root = {
+				_id: id,
+				id,
+				name: sub.name,
+				path: sub.path || '',
+				parent_id: null,
+				_ref: sub.menu_ref,
+				icon: SUBJECT_ICONS[sub.slug] ?? 'fa-cube',
+				order: (i + 1) * 10,
+				is_active: true,
+				model: '',
+			};
+			menus.push(root);
+			by_ref.set(sub.menu_ref, root);
+		} else {
+			root.parent_id = null;
+			root.name = sub.name;
+			if (!root.icon) root.icon = SUBJECT_ICONS[sub.slug] ?? 'fa-cube';
+			const order = Number(root.order);
+			if (!Number.isFinite(order) || order === 0) root.order = (i + 1) * 10;
+		}
+		root_ids.add(String(root._id));
+
+		for (const mod of sub.modules) {
+			const prefer = PREFER_OWNER[mod.resource];
+			if (prefer && prefer !== sub.slug) continue;
+			let found = false;
+			for (const m of menus) {
+				if (String(m._id) === String(root._id)) continue;
+				const hit =
+					(mod.menu_ref && String(m._ref ?? '') === mod.menu_ref) ||
+					(mod.path && norm(m.path) === norm(mod.path));
+				if (!hit) continue;
+				m.parent_id = root._id;
+				found = true;
+			}
+			if (!found && mod.path && norm(mod.path) !== norm(root.path)) {
+				const id = `subject-mod-${sub.slug}-${mod.resource}`;
+				menus.push({
+					_id: id,
+					id,
+					name: mod.name,
+					path: mod.path,
+					parent_id: root._id,
+					_ref: mod.menu_ref || id,
+					icon: 'fa-circle',
+					order: 10,
+					is_active: true,
+					model: '',
+				});
+			}
+		}
+	});
+
+	const sibling = new Set<string>();
+	return menus.filter((m) => {
+		if (!m.parent_id) return root_ids.has(String(m._id));
+		const path = norm(m.path);
+		if (!path) return true;
+		const key = `${m.parent_id}::${path}`;
+		if (sibling.has(key)) return false;
+		sibling.add(key);
+		return true;
+	});
 }
 
 const BRANDING_REFS = [

@@ -1,0 +1,351 @@
+{
+  "fields": {
+    "products": {
+      "ubicacion_preferida": "InventoryInternalLocation"
+    },
+    "inventory-internal-location": {
+      "parent": "InventoryInternalLocation"
+    },
+    "pedidos": {
+      "contacto": "Contacto",
+      "usuario": "User",
+      "listaDePreciosId": "ListaDePrecios",
+      "assigned_employee": "Employee",
+      "invoice_request_id": "InvoiceRequest"
+    },
+    "pedidos-surtir": {
+      "contacto": "Contacto",
+      "usuario": "User",
+      "listaDePreciosId": "ListaDePrecios",
+      "assigned_employee": "Employee",
+      "invoice_request_id": "InvoiceRequest"
+    },
+    "user": {
+      "employee": "Employee"
+    },
+    "vehicle": {
+      "chofer": "Employee"
+    },
+    "tags": {
+      "created_by": "User"
+    },
+    "menu-management": {
+      "parent_id": "MenuManagement"
+    },
+    "custom-pattern-condition": {
+      "part_id": "CustomPatternIncrementSequenceParts"
+    },
+    "custom-pattern-increment-sequence-parts": {
+      "counter_config_id": "AutoIncrementControl"
+    },
+    "branchoffice": {
+      "listaDePrecios": "ListaDePrecios"
+    },
+    "medical-file": {
+      "paciente_id": "Patient",
+      "medico_tratante_id": "Medical"
+    },
+    "kiosk": {
+      "paciente_id": "Patient",
+      "medico_tratante_id": "Medical"
+    },
+    "lista-asistencia": {
+      "registro_incidencia_id": "RegistroIncidencias"
+    },
+    "citizen-report": {
+      "borough": "Boroughs",
+      "delegado": "Employee",
+      "employee_taken_the_report": "Employee",
+      "assinged_to": "Employee",
+      "department": "Departments",
+      "cuadrilla": "Cuadrillas",
+      "jefe_de_cuadrilla": "Employee",
+      "parent_report_id": "CitizenReport",
+      "citizen_report_problem": "CitizenReportProblem",
+      "reporting_medium": "CitizenReportReportingMedium"
+    },
+    "citizen-report-problem": {
+      "department": "Departments"
+    },
+    "violation": {
+      "img_reason_id": "AttachmentManagement",
+      "img_plate_id": "AttachmentManagement",
+      "state_id": "States",
+      "article_id": "ViolationMobilityLaw"
+    },
+    "cfdi-document": {
+      "issuer_profile": "CfdiIssuerProfile",
+      "contacto": "Contacto",
+      "purchase_order": "PurchaseOrder"
+    },
+    "cfdi-issuer-profile": {
+      "branchoffice": "Branchoffice"
+    },
+    "pos-tickets": {
+      "pos_session": "PosSession"
+    },
+    "employee": {
+      "state_id": "States",
+      "country": "Country",
+      "municipality": "Municipality",
+      "boroughs": "Boroughs",
+      "department": "Departments",
+      "branch_office": "Branchoffice"
+    },
+    "payroll-receipt": {
+      "payroll_period": "PayrollPeriod",
+      "employee": "Employee"
+    },
+    "labor-incident": {
+      "payroll_period": "PayrollPeriod"
+    },
+    "payroll-period": {
+      "branch_office": "Branchoffice"
+    },
+    "reports": {
+      "pdf_setting": "ReportsPdfSetting"
+    },
+    "planeacion-mis-tareas": {
+      "parent_task": "MisTareas"
+    },
+    "ticketing-system-turn": {
+      "customer_type": "TicketingSystemCustomerType",
+      "assigned_box": "TicketingSystemBoxConfig"
+    },
+    "ticketing-system-service-type": {
+      "priority_level": "TicketingSystemPriority"
+    },
+    "ticketing-system-customer-type": {
+      "priority_level": "TicketingSystemPriority"
+    },
+    "purchase-order": {
+      "recepcion_pendiente": "InventoryReception"
+    },
+    "invoice-request": {
+      "pedido": "Pedidos",
+      "contacto": "Contacto",
+      "cfdi_document_id": "CfdiDocument"
+    },
+    "contacto": {
+      "listaDePrecios": "ListaDePrecios"
+    }
+  },
+  "models": {
+    "unit-of-measure": "unit-of-measure",
+    "unitofmeasure": "unit-of-measure",
+    "products": "products",
+    "inventory-stock-quant": "inventory-stock-quant",
+    "inventorystockquant": "inventory-stock-quant",
+    "inventory-internal-location": "inventory-internal-location",
+    "inventoryinternallocation": "inventory-internal-location",
+    "inventory-physical-count": "inventory-physical-count",
+    "inventoryphysicalcount": "inventory-physical-count",
+    "inventory-cost-entry": "inventory-cost-entry",
+    "inventorycostentry": "inventory-cost-entry",
+    "inventory-reception": "inventory-reception",
+    "inventoryreception": "inventory-reception",
+    "pedidos": "pedidos",
+    "pedidos-surtir": "pedidos-surtir",
+    "pedidossurtir": "pedidos-surtir",
+    "inventory-movement": "inventory-movement",
+    "inventorymovement": "inventory-movement",
+    "view-config-preset": "view-config-preset",
+    "viewconfigpreset": "view-config-preset",
+    "attachment-management": "attachment-management",
+    "attachmentmanagement": "attachment-management",
+    "user": "user",
+    "user-group": "user-group",
+    "usergroup": "user-group",
+    "zpl-management": "zpl-management",
+    "zplmanagement": "zpl-management",
+    "user-pin": "user-pin",
+    "userpin": "user-pin",
+    "epson-ticket-template": "epson-ticket-template",
+    "epsontickettemplate": "epson-ticket-template",
+    "country": "country",
+    "record-rules": "record-rules",
+    "recordrules": "record-rules",
+    "tags": "tags",
+    "menu-management": "menu-management",
+    "menumanagement": "menu-management",
+    "configuration": "configuration",
+    "interface-restriction": "interface-restriction",
+    "interfacerestriction": "interface-restriction",
+    "access-rights": "access-rights",
+    "accessrights": "access-rights",
+    "module-management": "module-management",
+    "modulemanagement": "module-management",
+    "debug-log": "debug-log",
+    "debuglog": "debug-log",
+    "status-option-control": "status-option-control",
+    "statusoptioncontrol": "status-option-control",
+    "api-keys": "api-keys",
+    "apikeys": "api-keys",
+    "custom-field-control": "custom-field-control",
+    "customfieldcontrol": "custom-field-control",
+    "custom-pattern-condition": "custom-pattern-condition",
+    "custompatterncondition": "custom-pattern-condition",
+    "custom-pattern-increment-sequence-parts": "custom-pattern-increment-sequence-parts",
+    "custompatternincrementsequenceparts": "custom-pattern-increment-sequence-parts",
+    "auto-increment-control": "auto-increment-control",
+    "autoincrementcontrol": "auto-increment-control",
+    "branchoffice": "branchoffice",
+    "model-tracker": "model-tracker",
+    "modeltracker": "model-tracker",
+    "medical-file": "medical-file",
+    "medicalfile": "medical-file",
+    "kiosk": "kiosk",
+    "medical": "medical",
+    "patient": "patient",
+    "asociaciones": "asociaciones",
+    "rescate-animal": "rescate-animal",
+    "rescateanimal": "rescate-animal",
+    "registro-emergencias": "registro-emergencias",
+    "registroemergencias": "registro-emergencias",
+    "servicios-realizados": "servicios-realizados",
+    "serviciosrealizados": "servicios-realizados",
+    "directorio-contactos": "directorio-contactos",
+    "directoriocontactos": "directorio-contactos",
+    "inventario-sanitario": "inventario-sanitario",
+    "inventariosanitario": "inventario-sanitario",
+    "voluntariado": "voluntariado",
+    "despensa-solidaria": "despensa-solidaria",
+    "despensasolidaria": "despensa-solidaria",
+    "registro-incidencias": "registro-incidencias",
+    "registroincidencias": "registro-incidencias",
+    "grupo": "grupo",
+    "registro-asistencias": "registro-asistencias",
+    "registroasistencias": "registro-asistencias",
+    "aulas": "aulas",
+    "alumnos": "alumnos",
+    "horarios": "horarios",
+    "lista-asistencia": "lista-asistencia",
+    "listaasistencia": "lista-asistencia",
+    "escuelas": "escuelas",
+    "grados-escolares": "grados-escolares",
+    "gradosescolares": "grados-escolares",
+    "ciclos-escolares": "ciclos-escolares",
+    "ciclosescolares": "ciclos-escolares",
+    "materias": "materias",
+    "agua": "agua",
+    "agua-reportes": "agua-reportes",
+    "aguareportes": "agua-reportes",
+    "agua-sync": "agua-sync",
+    "aguasync": "agua-sync",
+    "lectura-campo": "lectura-campo",
+    "lecturacampo": "lectura-campo",
+    "lecturista": "lecturista",
+    "impedimento": "impedimento",
+    "periodo": "periodo",
+    "incidencia": "incidencia",
+    "lectura": "lectura",
+    "tarifa": "tarifa",
+    "contrato": "contrato",
+    "ruta": "ruta",
+    "cuadrillas": "cuadrillas",
+    "citizen-report": "citizen-report",
+    "citizenreport": "citizen-report",
+    "citizen-report-reporting-medium": "citizen-report-reporting-medium",
+    "citizenreportreportingmedium": "citizen-report-reporting-medium",
+    "citizen-report-problem": "citizen-report-problem",
+    "citizenreportproblem": "citizen-report-problem",
+    "municipality": "municipality",
+    "boroughs": "boroughs",
+    "states": "states",
+    "violation": "violation",
+    "violation-user-id-type": "violation-user-id-type",
+    "violationuseridtype": "violation-user-id-type",
+    "violation-vehicle-brand": "violation-vehicle-brand",
+    "violationvehiclebrand": "violation-vehicle-brand",
+    "violation-mobility-law": "violation-mobility-law",
+    "violationmobilitylaw": "violation-mobility-law",
+    "violation-vehicle-type": "violation-vehicle-type",
+    "violationvehicletype": "violation-vehicle-type",
+    "violation-payment-method": "violation-payment-method",
+    "violationpaymentmethod": "violation-payment-method",
+    "violation-offender-guarantee": "violation-offender-guarantee",
+    "violationoffenderguarantee": "violation-offender-guarantee",
+    "violation-city-zone": "violation-city-zone",
+    "violationcityzone": "violation-city-zone",
+    "cobranza": "cobranza",
+    "physical-device": "physical-device",
+    "physicaldevice": "physical-device",
+    "cfdi": "cfdi",
+    "cfdi-catalog": "cfdi-catalog",
+    "cfdicatalog": "cfdi-catalog",
+    "cfdi-document": "cfdi-document",
+    "cfdidocument": "cfdi-document",
+    "cfdi-issuer-profile": "cfdi-issuer-profile",
+    "cfdiissuerprofile": "cfdi-issuer-profile",
+    "delivery-return": "delivery-return",
+    "deliveryreturn": "delivery-return",
+    "delivery-package": "delivery-package",
+    "deliverypackage": "delivery-package",
+    "delivery-package-manifiesto": "delivery-package-manifiesto",
+    "deliverypackagemanifiesto": "delivery-package-manifiesto",
+    "reparto": "reparto",
+    "entregas": "entregas",
+    "delivery-route": "delivery-route",
+    "deliveryroute": "delivery-route",
+    "delivery-route-mapa": "delivery-route-mapa",
+    "deliveryroutemapa": "delivery-route-mapa",
+    "pos-session": "pos-session",
+    "possession": "pos-session",
+    "pos": "pos",
+    "pos-order": "pos-order",
+    "posorder": "pos-order",
+    "pos-tickets": "pos-tickets",
+    "postickets": "pos-tickets",
+    "payments": "payments",
+    "departments": "departments",
+    "employee": "employee",
+    "payroll-receipt": "payroll-receipt",
+    "payrollreceipt": "payroll-receipt",
+    "labor-schedule": "labor-schedule",
+    "laborschedule": "labor-schedule",
+    "labor-incident": "labor-incident",
+    "laborincident": "labor-incident",
+    "payroll-period": "payroll-period",
+    "payrollperiod": "payroll-period",
+    "payroll-concept": "payroll-concept",
+    "payrollconcept": "payroll-concept",
+    "reports": "reports",
+    "reports-pdf-setting": "reports-pdf-setting",
+    "reportspdfsetting": "reports-pdf-setting",
+    "tickets": "tickets",
+    "planeacion-proyectos": "planeacion-proyectos",
+    "planeacionproyectos": "planeacion-proyectos",
+    "planeacion-mis-tareas": "planeacion-mis-tareas",
+    "planeacionmistareas": "planeacion-mis-tareas",
+    "planeacion-proyectos-task": "planeacion-proyectos-task",
+    "planeacionproyectostask": "planeacion-proyectos-task",
+    "dynamic-dashboard": "dynamic-dashboard",
+    "dynamicdashboard": "dynamic-dashboard",
+    "ticketing-system-turn": "ticketing-system-turn",
+    "ticketingsystemturn": "ticketing-system-turn",
+    "ticketing-system-consecutive": "ticketing-system-consecutive",
+    "ticketingsystemconsecutive": "ticketing-system-consecutive",
+    "ticketing-system-box-config": "ticketing-system-box-config",
+    "ticketingsystemboxconfig": "ticketing-system-box-config",
+    "news-banner-control": "news-banner-control",
+    "newsbannercontrol": "news-banner-control",
+    "ticketing-system-service-type": "ticketing-system-service-type",
+    "ticketingsystemservicetype": "ticketing-system-service-type",
+    "ticketing-system-customer-type": "ticketing-system-customer-type",
+    "ticketingsystemcustomertype": "ticketing-system-customer-type",
+    "ticketing-system-turn-youtube": "ticketing-system-turn-youtube",
+    "ticketingsystemturnyoutube": "ticketing-system-turn-youtube",
+    "ticketing-system-priority": "ticketing-system-priority",
+    "ticketingsystempriority": "ticketing-system-priority",
+    "Employee": "employee",
+    "vehicle": "vehicle",
+    "purchase-order": "purchase-order",
+    "purchaseorder": "purchase-order",
+    "invoice-request": "invoice-request",
+    "invoicerequest": "invoice-request",
+    "lista-de-precios": "lista-de-precios",
+    "listadeprecios": "lista-de-precios",
+    "contacto": "contacto",
+    "sku": "sku"
+  }
+}
