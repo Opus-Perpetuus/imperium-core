@@ -309,7 +309,7 @@ const server = Bun.serve({
 			});
 		}
 
-		if (path === '/health') {
+		if (path === '/health' || path === '/api/health') {
 			return Response.json({
 				ok: true,
 				unit: 'imperium-core',

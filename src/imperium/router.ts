@@ -33,9 +33,11 @@ export function create_imperium_layer(sql: Bun.SQL) {
 		async handle(req: Request): Promise<Response | null> {
 			await boot();
 			const url = new URL(req.url);
-			const path = url.pathname;
+			const path = strip_api_prefix(url.pathname);
 			if (path === '/auth' || path.startsWith('/auth/')) {
-				return add_cors(req, await handle_auth(store, sql, req, url));
+				const auth_url = new URL(req.url);
+				auth_url.pathname = path;
+				return add_cors(req, await handle_auth(store, sql, req, auth_url));
 			}
 			if (req.method === 'OPTIONS' && looks_imperium(path, store)) {
 				return add_cors(req, new Response(null, { status: 204 }));
@@ -72,9 +74,16 @@ export function create_imperium_layer(sql: Bun.SQL) {
 	};
 }
 
+function strip_api_prefix(path: string): string {
+	if (path === '/api') return '/';
+	if (path.startsWith('/api/')) return path.slice(4) || '/';
+	return path;
+}
+
 function looks_imperium(path: string, store: ImperiumStore): boolean {
-	if (path === '/auth' || path.startsWith('/auth/')) return true;
-	return split_resource(path, store) != null;
+	const p = strip_api_prefix(path);
+	if (p === '/auth' || p.startsWith('/auth/')) return true;
+	return split_resource(p, store) != null;
 }
 
 function split_resource(
