@@ -414,12 +414,12 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'agua:public_url':
 			return agua_public_url(ctx);
 		case 'agua:sync_estado':
-			return ok([{ enabled: false }], 'Sincronización MSSQL no configurada en el núcleo SQL');
+			return agua_sync_estado(ctx);
 		case 'agua:sync_catalogos':
 		case 'agua:sync_contratos':
 		case 'agua:sync_rutas':
 		case 'agua:sync_tarifas':
-			return ok([], 'Sin origen MSSQL: use los registros migrados en SQL');
+			return agua_require_mssql(ctx);
 		case 'agua:push_lectura':
 			return agua_push_lectura(ctx);
 		case 'agua:push_lecturas_lote':
@@ -2281,6 +2281,48 @@ async function agua_print_mode(ctx: Ctx) {
 	const doc = await ctx.store.find_where('configuration', {
 		ref: 'configuration-agua-print-mode',
 	});
-	const mode = String(doc?.value ?? 'escpos');
+	const mode = cfg_text(doc?.value, 'escpos');
 	return ok([{ mode }], 'Modo de impresión');
+}
+
+function cfg_text(value: unknown, fallback = '') {
+	return String(value ?? fallback).replace(/^"+|"+$/g, '') || fallback;
+}
+
+async function agua_is_mssql_enabled(ctx: Ctx) {
+	const doc = await ctx.store.find_where('configuration', {
+		ref: 'configuration-agua-mssql-enabled',
+	});
+	const raw = cfg_text(doc?.value, 'false');
+	return raw === 'true' || raw === '1';
+}
+
+async function agua_sync_estado(ctx: Ctx) {
+	const enabled = await agua_is_mssql_enabled(ctx);
+	return ok(
+		[{ enabled }],
+		enabled ? 'Conexión MSSQL habilitada' : 'Conexión MSSQL deshabilitada',
+	);
+}
+
+async function agua_require_mssql(ctx: Ctx) {
+	if (!(await agua_is_mssql_enabled(ctx))) {
+		throw new Error(
+			'La conexión MSSQL (SIMAPA) está deshabilitada. Actívala en Configuración para sincronizar.',
+		);
+	}
+	const server = cfg_text(
+		(await ctx.store.find_where('configuration', { ref: 'configuration-agua-mssql-server' }))
+			?.value,
+	);
+	const database = cfg_text(
+		(await ctx.store.find_where('configuration', { ref: 'configuration-agua-mssql-database' }))
+			?.value,
+	);
+	if (!server || !database) {
+		throw new Error(
+			'Configuración MSSQL incompleta: define al menos servidor y base de datos.',
+		);
+	}
+	throw new Error('Origen MSSQL no disponible en el núcleo SQL');
 }
