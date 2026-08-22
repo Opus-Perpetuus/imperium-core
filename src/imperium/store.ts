@@ -416,7 +416,11 @@ export class ImperiumStore {
 		if (resource && this.has(resource) && this.column_names(resource).has(increment_field)) {
 			const col = qident(increment_field);
 			const rows = await this.sql.unsafe(
-				`SELECT MAX(CASE WHEN ${col}::text ~ '^[0-9]+(\\.[0-9]+)?$' THEN ${col}::numeric ELSE NULL END) AS m FROM ${this.qt(resource)}`,
+				`SELECT MAX(CASE
+					WHEN ${col}::text ~ '^[0-9]+(\\.[0-9]+)?$' THEN ${col}::numeric
+					WHEN ${col}::text ~ '[0-9]+$' THEN (regexp_match(${col}::text, '([0-9]+)$'))[1]::numeric
+					ELSE NULL
+				END) AS m FROM ${this.qt(resource)}`,
 			);
 			floor = Number(rows[0]?.m ?? 0) || 0;
 		}

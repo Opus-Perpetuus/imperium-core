@@ -86,6 +86,11 @@ import {
 	compute_picking_route,
 	generate_replenishment_for_order,
 } from './inventory-picking.ts';
+import {
+	after_delivery_package_mutate,
+	cancel_delivery_package,
+	list_packages_by_pedido,
+} from './delivery-package-flow.ts';
 
 type Ctx = {
 	store: ImperiumStore;
@@ -190,18 +195,24 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'delivery-package:read_load_manifest':
 			return read_load_manifest(ctx);
 		case 'delivery-package:read_by_pedido':
-			return list_where(ctx, 'delivery-package', { pedido: ctx.params.pedidoId });
+			return read_packages_by_pedido(ctx);
 		case 'delivery-package:read_chofer_queue':
 			return read_chofer_queue(ctx);
 		case 'delivery-package:close_empaque':
 			return close_empaque(ctx);
 		case 'delivery-package:apply_logistics_event':
 			return logistics_event(ctx);
-		case 'delivery-package:cancel_package':
-			return patch_doc(ctx, 'delivery-package', ctx.params.id, {
-				estado: 'cancelado',
-				fecha_cancelacion: now(),
-			}, 'Paquete cancelado');
+		case 'delivery-package:cancel_package': {
+			const cancelled = await cancel_delivery_package(
+				ctx.store,
+				ctx.params.id,
+				String(ctx.body.reason ?? ''),
+			);
+			return ok(
+				[cancelled],
+				'Bulto anulado. Las cantidades quedan disponibles para reempacar.',
+			);
+		}
 		case 'delivery-return:recibir':
 			return patch_doc(ctx, 'delivery-return', ctx.params.id, {
 				estado: 'recibido',
@@ -1407,18 +1418,32 @@ async function logistics_event(ctx: Ctx) {
 		source,
 		actor: actor_name(ctx),
 	});
-	return patch_doc(
-		ctx,
-		'delivery-package',
-		String(doc._id),
-		{
-			...patch,
-			logistics_events: history,
-			ultimo_evento: event_type,
-			fecha_ultimo_evento: occurred_at,
-		},
-		'Evento logístico aplicado',
+	const saved = await ctx.store.update('delivery-package', String(doc._id), {
+		...patch,
+		logistics_events: history,
+		ultimo_evento: event_type,
+		last_logistics_event_type: event_type,
+		fecha_ultimo_evento: occurred_at,
+		last_logistics_event_at: occurred_at,
+	});
+	if (!saved) throw new Error('No se encontró el documento');
+	await after_delivery_package_mutate(ctx.store, ref_id(saved.pedido) || ref_id(doc.pedido));
+	return ok(
+		[saved],
+		event_type === 'load' ? 'Bulto cargado correctamente' : 'Entrega confirmada correctamente',
 	);
+}
+
+async function read_packages_by_pedido(ctx: Ctx) {
+	const flag = String(ctx.url.searchParams.get('include_cancelled') ?? '')
+		.trim()
+		.toLowerCase();
+	const listed = await list_packages_by_pedido(
+		ctx.store,
+		ctx.params.pedidoId,
+		flag === '1' || flag === 'true',
+	);
+	return ok(listed.rows, listed.message, listed.rows.length);
 }
 
 async function optimize_route(ctx: Ctx) {

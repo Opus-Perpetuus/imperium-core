@@ -12,6 +12,11 @@ import {
 	prepare_pedido_create,
 	prepare_pedido_update,
 } from './pedidos-flow.ts';
+import {
+	after_delivery_package_mutate,
+	prepare_delivery_package_create,
+	prepare_delivery_package_update,
+} from './delivery-package-flow.ts';
 import { build_access } from './auth.ts';
 import { is_seed_admin } from './group-access.ts';
 import {
@@ -174,6 +179,9 @@ export async function handle_crud(
 		return json(resource, ok(arr as ImperiumDoc[], 'Campo arreglo'));
 	}
 	if (method === 'DELETE' && segs[0] === 'id' && segs[1] && segs.length === 2) {
+		if (resource === 'delivery-package') {
+			throw new Error('No se eliminan bultos. Usa «Anular bulto» para liberar el empaque.');
+		}
 		const scope = await record_rule_scope(store, actor, resource, method);
 		await assert_id_in_scope(store, resource, segs[1], scope, method);
 		const deleted = await store.remove(resource, segs[1]);
@@ -213,7 +221,10 @@ export async function handle_crud(
 		const scope = await record_rule_scope(store, actor, resource, method);
 		await assert_id_in_scope(store, resource, segs[0]!, scope, method);
 		const [populated] = await store.populate_docs(resource, [doc]);
-		return json(resource, ok([populated], 'Ruta encontrada'));
+		return json(
+			resource,
+			ok([populated], resource === 'delivery-package' ? 'Bulto encontrado' : 'Ruta encontrada'),
+		);
 	}
 	if (method === 'POST' && segs.length === 0) {
 		let incoming = await prepare_user_write(
@@ -225,6 +236,9 @@ export async function handle_crud(
 		);
 		if (resource === 'pedidos') {
 			incoming = await prepare_pedido_create(store, incoming, actor);
+		}
+		if (resource === 'delivery-package') {
+			incoming = await prepare_delivery_package_create(store, incoming);
 		}
 		if (resource === 'pos-tickets') {
 			await assert_pos_pin(
@@ -241,13 +255,20 @@ export async function handle_crud(
 		await maybe_register_mentions(store, actor, resource, created);
 		const notice = await after_create(store, resource, created, actor);
 		if (resource === 'pedidos') await after_pedido_mutate(store, 'create', created);
-		const [populated] = await store.populate_docs(resource, [created]);
+		let result = created;
+		if (resource === 'delivery-package') {
+			await after_delivery_package_mutate(store, String(created.pedido ?? ''));
+			result = (await store.find_id(resource, String(created._id))) ?? created;
+		}
+		const [populated] = await store.populate_docs(resource, [result]);
 		const message =
 			resource === 'pos-tickets'
 				? 'Ticket creado'
 				: resource === 'pedidos'
 					? 'Pedido creado'
-					: 'Ruta creada';
+					: resource === 'delivery-package'
+						? 'Bulto creado correctamente'
+						: 'Ruta creada';
 		return json(
 			resource,
 			notice ? { ...ok([populated], message), user_pin_notice: notice } : ok([populated], message),
@@ -282,15 +303,32 @@ export async function handle_crud(
 		if (resource === 'pedidos') {
 			b = await prepare_pedido_update(store, b, actor, previous);
 		}
+		if (resource === 'delivery-package') {
+			b = await prepare_delivery_package_update(store, b, previous);
+		}
 		const updated = await store.update(resource, id, b);
 		if (updated) await link_attachments_to_record(store, resource, updated);
 		if (!updated) return json(resource, fail('No encontrado', 404).body, 404);
 		if (resource === 'pedidos') await after_pedido_mutate(store, 'update', updated, previous);
+		if (resource === 'delivery-package') {
+			await after_delivery_package_mutate(
+				store,
+				String(previous?.pedido ?? ''),
+				String(updated.pedido ?? ''),
+			);
+		}
 		await maybe_register_mentions(store, actor, resource, updated, previous);
 		const [populated] = await store.populate_docs(resource, [updated]);
 		return json(
 			resource,
-			ok([populated], resource === 'pedidos' ? 'Pedido actualizado' : 'Actualizado correctamente'),
+			ok(
+				[populated],
+				resource === 'pedidos'
+					? 'Pedido actualizado'
+					: resource === 'delivery-package'
+						? 'Bulto actualizado correctamente'
+						: 'Actualizado correctamente',
+			),
 		);
 	}
 	if (method === 'PATCH' && segs.length === 1) {
@@ -309,14 +347,31 @@ export async function handle_crud(
 		if (resource === 'pedidos') {
 			patched = await prepare_pedido_update(store, patched, actor, previous);
 		}
+		if (resource === 'delivery-package') {
+			patched = await prepare_delivery_package_update(store, patched, previous);
+		}
 		const updated = await store.update(resource, segs[0]!, patched);
 		if (updated) await link_attachments_to_record(store, resource, updated);
 		if (!updated) return json(resource, fail('No encontrado', 404).body, 404);
 		if (resource === 'pedidos') await after_pedido_mutate(store, 'update', updated, previous);
+		if (resource === 'delivery-package') {
+			await after_delivery_package_mutate(
+				store,
+				String(previous?.pedido ?? ''),
+				String(updated.pedido ?? ''),
+			);
+		}
 		await maybe_register_mentions(store, actor, resource, updated, previous);
 		return json(
 			resource,
-			ok([updated], resource === 'pedidos' ? 'Pedido actualizado' : 'Actualizado correctamente'),
+			ok(
+				[updated],
+				resource === 'pedidos'
+					? 'Pedido actualizado'
+					: resource === 'delivery-package'
+						? 'Bulto actualizado correctamente'
+						: 'Actualizado correctamente',
+			),
 		);
 	}
 	return null;
