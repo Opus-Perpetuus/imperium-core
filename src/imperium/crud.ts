@@ -28,12 +28,13 @@ export async function handle_crud(
 				: resource === 'citizen-report'
 					? 'Estadísticas de reportes ciudadanos obtenidas correctamente'
 					: 'Estadísticas obtenidas correctamente';
-		return json(ok([stats], message));
+		return json(resource, ok([stats], message));
 	}
 	if (method === 'GET' && segs[0] === 'field-values' && segs[1]) {
 		const { q } = query_list(url);
 		const values = await store.distinct(resource, decodeURIComponent(segs[1]), q);
 		return json(
+			resource,
 			ok(
 				values.map((v) => ({ value: v, label: String(v) })),
 				'Valores de campo',
@@ -51,7 +52,9 @@ export async function handle_crud(
 		});
 		const keys = new Set<string>();
 		for (const r of rows) for (const k of Object.keys(r)) keys.add(k);
-		const cols = [...keys].filter((k) => k !== 'payload').slice(0, 40);
+		const cols = [...keys]
+			.filter((k) => k !== 'payload' && !USER_SECRET_KEYS.has(k))
+			.slice(0, 40);
 		const lines = [
 			cols.join(','),
 			...rows.map((r) =>
@@ -76,7 +79,7 @@ export async function handle_crud(
 			skip: Number(b.desde ?? 0),
 			include_inactive: true,
 		});
-		return json(ok(rows, 'Consulta masiva', total));
+		return json(resource, ok(rows, 'Consulta masiva', total));
 	}
 	if (method === 'PUT' && segs[0] === 'batch' && segs.length === 1) {
 		const b = await body();
@@ -89,26 +92,30 @@ export async function handle_crud(
 			if (key) {
 				const existing = await store.find_id(resource, key);
 				if (existing) {
-					const updated = await store.update(resource, String(existing._id), doc);
+					const updated = await store.update(
+						resource,
+						String(existing._id),
+						await prepare_user_write(resource, doc, false),
+					);
 					if (updated) out.push(updated);
 					continue;
 				}
 			}
-			out.push(await store.insert(resource, doc));
+			out.push(await store.insert(resource, await prepare_user_write(resource, doc, true)));
 		}
-		return json(ok(out, 'Lote aplicado', out.length));
+		return json(resource, ok(out, 'Lote aplicado', out.length));
 	}
 	if (method === 'GET' && segs.length === 3 && segs[1] === 'array') {
 		const doc = await store.find_id(resource, segs[0]!);
-		if (!doc) return json(fail('No encontrado', 404).body, 404);
+		if (!doc) return json(resource, fail('No encontrado', 404).body, 404);
 		const field = decodeURIComponent(segs[2]!);
 		const arr = Array.isArray(doc[field]) ? doc[field] : [];
-		return json(ok(arr as ImperiumDoc[], 'Campo arreglo'));
+		return json(resource, ok(arr as ImperiumDoc[], 'Campo arreglo'));
 	}
 	if (method === 'DELETE' && segs[0] === 'id' && segs[1] && segs.length === 2) {
 		const deleted = await store.remove(resource, segs[1]);
-		if (!deleted) return json(fail('No encontrado', 404).body, 404);
-		return json(ok([deleted], 'Eliminado correctamente'));
+		if (!deleted) return json(resource, fail('No encontrado', 404).body, 404);
+		return json(resource, ok([deleted], 'Eliminado correctamente'));
 	}
 	if (method === 'GET' && segs.length === 0) {
 		const q = query_list(url);
@@ -116,7 +123,7 @@ export async function handle_crud(
 			...q,
 			where: Object.keys(q.where).length ? q.where : undefined,
 		});
-		return json({
+		return json(resource, {
 			...ok(rows, 'Ruta encontrada', total),
 			tipo_de_instancia: instance_type(store, resource, rows),
 			module_info: { name: resource, model: resource, model_id: resource },
@@ -133,14 +140,18 @@ export async function handle_crud(
 			);
 		}
 		const doc = await store.find_id(resource, segs[0]!);
-		if (!doc) return json(fail('No encontrado', 404).body, 404);
+		if (!doc) return json(resource, fail('No encontrado', 404).body, 404);
 		const [populated] = await store.populate_docs(resource, [doc]);
-		return json(ok([populated], 'Ruta encontrada'));
+		return json(resource, ok([populated], 'Ruta encontrada'));
 	}
 	if (method === 'POST' && segs.length === 0) {
-		const incoming = await apply_uploads(store, resource, await body(), actor, {
-			method: 'POST',
-		});
+		const incoming = await prepare_user_write(
+			resource,
+			await apply_uploads(store, resource, await body(), actor, {
+				method: 'POST',
+			}),
+			true,
+		);
 		if (resource === 'pos-tickets') {
 			await assert_pos_pin(
 				store,
@@ -158,6 +169,7 @@ export async function handle_crud(
 		const [populated] = await store.populate_docs(resource, [created]);
 		const message = resource === 'pos-tickets' ? 'Ticket creado' : 'Ruta creada';
 		return json(
+			resource,
 			notice ? { ...ok([populated], message), user_pin_notice: notice } : ok([populated], message),
 			201,
 		);
@@ -165,7 +177,7 @@ export async function handle_crud(
 	if (method === 'PUT' && segs.length === 0) {
 		const raw = await body();
 		const id = String(raw._id ?? raw.id ?? '');
-		if (!id) return json(fail('Se necesita un id para actualizar').body, 400);
+		if (!id) return json(resource, fail('Se necesita un id para actualizar').body, 400);
 		if (resource === 'pos-session') {
 			await assert_pos_pin(
 				store,
@@ -176,30 +188,38 @@ export async function handle_crud(
 			);
 		}
 		const previous = await store.find_id(resource, id);
-		const b = await apply_uploads(store, resource, raw, actor, {
-			method: 'PUT',
-			record_id: id,
-			previous,
-		});
+		const b = await prepare_user_write(
+			resource,
+			await apply_uploads(store, resource, raw, actor, {
+				method: 'PUT',
+				record_id: id,
+				previous,
+			}),
+			false,
+		);
 		const updated = await store.update(resource, id, b);
 		if (updated) await link_attachments_to_record(store, resource, updated);
-		if (!updated) return json(fail('No encontrado', 404).body, 404);
+		if (!updated) return json(resource, fail('No encontrado', 404).body, 404);
 		await maybe_register_mentions(store, actor, resource, updated, previous);
 		const [populated] = await store.populate_docs(resource, [updated]);
-		return json(ok([populated], 'Actualizado correctamente'));
+		return json(resource, ok([populated], 'Actualizado correctamente'));
 	}
 	if (method === 'PATCH' && segs.length === 1) {
 		const previous = await store.find_id(resource, segs[0]!);
-		const patched = await apply_uploads(store, resource, await body(), actor, {
-			method: 'PATCH',
-			record_id: segs[0],
-			previous,
-		});
+		const patched = await prepare_user_write(
+			resource,
+			await apply_uploads(store, resource, await body(), actor, {
+				method: 'PATCH',
+				record_id: segs[0],
+				previous,
+			}),
+			false,
+		);
 		const updated = await store.update(resource, segs[0]!, patched);
 		if (updated) await link_attachments_to_record(store, resource, updated);
-		if (!updated) return json(fail('No encontrado', 404).body, 404);
+		if (!updated) return json(resource, fail('No encontrado', 404).body, 404);
 		await maybe_register_mentions(store, actor, resource, updated, previous);
-		return json(ok([updated], 'Actualizado correctamente'));
+		return json(resource, ok([updated], 'Actualizado correctamente'));
 	}
 	return null;
 }
@@ -220,8 +240,70 @@ function instance_type(
 	return out;
 }
 
-function json(body: unknown, status = 200): Response {
-	return Response.json(body, { status });
+const USER_SECRET_KEYS = new Set([
+	'password',
+	'reset_password_token_hash',
+	'reset_password_expires',
+	'reset_password_kind',
+]);
+const PASSWORD_MIN_LENGTH = 12;
+const PASSWORD_MAX_LENGTH = 1024;
+const PASSWORD_TOO_SHORT_MESSAGE = `La contraseña debe tener al menos ${PASSWORD_MIN_LENGTH} caracteres`;
+const PASSWORD_TOO_LONG_MESSAGE = `La contraseña no puede superar ${PASSWORD_MAX_LENGTH} caracteres`;
+
+function is_user_resource(resource: string) {
+	return resource === 'user' || resource === 'usuario';
+}
+
+function strip_user_secrets(doc: ImperiumDoc): ImperiumDoc {
+	const out = { ...doc };
+	for (const key of USER_SECRET_KEYS) delete out[key];
+	return out;
+}
+
+function sanitize_payload(resource: string, body: unknown): unknown {
+	if (!is_user_resource(resource) || !body || typeof body !== 'object') return body;
+	const payload = body as Record<string, unknown>;
+	if (!Array.isArray(payload.data)) return payload;
+	return {
+		...payload,
+		data: payload.data.map((item) =>
+			item && typeof item === 'object' ? strip_user_secrets(item as ImperiumDoc) : item,
+		),
+	};
+}
+
+async function prepare_user_write(
+	resource: string,
+	doc: ImperiumDoc,
+	require_password: boolean,
+): Promise<ImperiumDoc> {
+	if (!is_user_resource(resource)) return doc;
+	const out: ImperiumDoc = { ...doc };
+	if (typeof out.email === 'string') out.email = out.email.trim().toLowerCase();
+	if (out.password === undefined) {
+		if (require_password) throw new Error(PASSWORD_TOO_SHORT_MESSAGE);
+		return out;
+	}
+	const value = typeof out.password === 'string' ? out.password : '';
+	if (!require_password && value.trim() === '') {
+		delete out.password;
+		return out;
+	}
+	if (value.length < PASSWORD_MIN_LENGTH) throw new Error(PASSWORD_TOO_SHORT_MESSAGE);
+	if (value.length > PASSWORD_MAX_LENGTH) throw new Error(PASSWORD_TOO_LONG_MESSAGE);
+	const argon2 = await import('argon2');
+	out.password = await argon2.hash(value, {
+		type: argon2.argon2id,
+		memoryCost: 2 ** 16,
+		timeCost: 3,
+		parallelism: 1,
+	});
+	return out;
+}
+
+function json(resource: string, body: unknown, status = 200): Response {
+	return Response.json(sanitize_payload(resource, body), { status });
 }
 
 function csv(v: unknown): string {
