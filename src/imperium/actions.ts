@@ -4623,83 +4623,191 @@ async function verify_pin(ctx: Ctx) {
 async function user_settings_doc(ctx: Ctx) {
 	if (!ctx.store.has('user-settings')) return null;
 	const uid = actor_id(ctx);
+	if (!uid) return null;
 	return (
 		(await ctx.store.find_where('user-settings', { user_id: uid })) ??
 		(await ctx.store.find_where('user-settings', { user: uid }))
 	);
 }
 
+function user_settings_defaults(uid: string, theme = 'default'): ImperiumDoc {
+	return {
+		name: 'user-settings',
+		user_id: uid,
+		user: uid,
+		theme,
+		favorite_theme_names: [],
+		backdrop_blur_multiplier: 1,
+		transparency_multiplier: 1,
+		floating_backdrop_blur_enabled: true,
+		floating_backdrop_blur_multiplier: 1,
+		theme_gradient_enabled: true,
+		theme_gradient_animation_enabled: false,
+		low_power_mode: false,
+		compact_mode: false,
+		liquid_glass_enabled: false,
+		liquid_glass_blur: 8,
+		liquid_glass_depth: 0.55,
+		liquid_glass_refraction: 32,
+		mobile_list_mode: 'card',
+		theme_gradient_preference_initialized: true,
+		border_thickness_multiplier: 1,
+		border_contrast_multiplier: 1,
+		border_style: 'solid',
+		corner_radius_multiplier: 1,
+		font_size_multiplier: 1,
+		corner_radius_mode: 'rounded',
+		main_menu_lateral: false,
+		main_menu_lateral_open: false,
+		main_menu_lateral_expanded: false,
+		android_status_bar_background_mode: 'theme-primary',
+		android_status_bar_icon_style: 'auto',
+		android_status_bar_custom_color: '#111827',
+		android_push_notifications_enabled: true,
+		message_toasts_enabled: true,
+		notification_toasts_enabled: true,
+		web_browser_notifications_enabled: false,
+		message_sounds_enabled: true,
+		notification_sounds_enabled: true,
+		message_sound_key: 'default',
+		notification_sound_key: 'default',
+		android_background_activity_enabled: true,
+		android_merge_top_bar: false,
+		android_hide_navigation_bar: false,
+		subscriptions: {
+			tag_subscriptions: [],
+			user_subscriptions: [],
+			document_subscriptions: [],
+		},
+		dashboard_preferences: { default_dashboard_id: '' },
+		module_visibility_preferences: {
+			proyectos: { default_task_view: 'board' },
+			mis_tareas: { show_subtasks_panel: true },
+		},
+	};
+}
+
+async function system_default_theme(ctx: Ctx): Promise<string> {
+	if (!ctx.store.has('configuration')) return 'default';
+	const doc = await ctx.store.find_where('configuration', {
+		_ref: 'configuration-default-theme',
+	});
+	const value = String(doc?.value ?? '').trim();
+	return value || 'default';
+}
+
+async function ensure_user_settings(ctx: Ctx): Promise<ImperiumDoc> {
+	const uid = actor_id(ctx);
+	if (!uid) throw new Error('Se requiere autenticación');
+	if (!ctx.store.has('user-settings')) {
+		return { ...user_settings_defaults(uid, await system_default_theme(ctx)) };
+	}
+	const existing = await user_settings_doc(ctx);
+	const defaults = user_settings_defaults(uid, await system_default_theme(ctx));
+	if (!existing) {
+		return ctx.store.insert('user-settings', defaults);
+	}
+	const patch: ImperiumDoc = {};
+	for (const [key, value] of Object.entries(defaults)) {
+		if (existing[key] === undefined) patch[key] = value;
+	}
+	if (!Object.keys(patch).length) return existing;
+	return (await ctx.store.update('user-settings', String(existing._id), patch)) ?? existing;
+}
+
 async function user_settings_get(ctx: Ctx) {
-	if (!ctx.store.has('user-settings')) return ok([{}], 'Sin ajustes');
-	const doc = await user_settings_doc(ctx);
-	return ok([doc ?? {}], 'Ajustes');
+	const doc = await ensure_user_settings(ctx);
+	return ok([doc], 'Configuración del usuario');
 }
 
 async function custom_themes_list(ctx: Ctx) {
-	if (!ctx.store.has('custom-user-themes')) return ok([], 'Temas');
 	const uid = actor_id(ctx);
+	if (!uid) throw new Error('Se requiere autenticación');
+	if (!ctx.store.has('custom-user-themes')) return ok([], 'Temas personalizados del usuario');
 	const { rows } = await ctx.store.find_many('custom-user-themes', {
-		where: uid ? { user_id: uid } : undefined,
+		where: { user_id: uid },
 		take: 50,
 		include_inactive: false,
 	});
-	return ok(rows, 'Temas');
+	return ok(rows, 'Temas personalizados del usuario');
 }
 
 async function custom_themes_create(ctx: Ctx) {
-	if (!ctx.store.has('custom-user-themes')) return ok([ctx.body], 'Tema');
 	const uid = actor_id(ctx);
+	if (!uid) throw new Error('Se requiere autenticación');
+	if (!ctx.store.has('custom-user-themes')) return ok([ctx.body], 'Tema creado');
+	const { total } = await ctx.store.find_many('custom-user-themes', {
+		where: { user_id: uid },
+		take: 1,
+		include_inactive: true,
+	});
+	if (total >= 50) {
+		throw new Error('Máximo 50 temas personalizados permitidos');
+	}
+	const theme_name = String(ctx.body.theme_name ?? ctx.body.label ?? '').trim();
 	const created = await ctx.store.insert('custom-user-themes', {
-		name: String(ctx.body.theme_name ?? ctx.body.label ?? 'tema'),
-		user_id: uid,
 		...ctx.body,
+		name: theme_name || 'tema',
+		theme_name: theme_name || ctx.body.theme_name,
+		user_id: uid,
 	});
 	return ok([created], 'Tema creado');
 }
 
+async function custom_themes_owned(ctx: Ctx): Promise<ImperiumDoc> {
+	const uid = actor_id(ctx);
+	if (!uid) throw new Error('Se requiere autenticación');
+	const theme = await ctx.store.find_id('custom-user-themes', ctx.params.id);
+	if (!theme || String(theme.user_id ?? '') !== uid) {
+		throw new Error('Tema no encontrado');
+	}
+	return theme;
+}
+
 async function custom_themes_update(ctx: Ctx) {
-	return patch_doc(ctx, 'custom-user-themes', ctx.params.id, ctx.body, 'Tema actualizado');
+	await custom_themes_owned(ctx);
+	const patch = { ...ctx.body };
+	delete patch.user_id;
+	delete patch._id;
+	return patch_doc(ctx, 'custom-user-themes', ctx.params.id, patch, 'Tema actualizado');
 }
 
 async function custom_themes_delete(ctx: Ctx) {
+	await custom_themes_owned(ctx);
 	const deleted = await ctx.store.remove('custom-user-themes', ctx.params.id);
 	if (!deleted) throw new Error('Tema no encontrado');
 	return ok([deleted], 'Tema eliminado');
 }
 
 async function user_settings_upsert(ctx: Ctx) {
-	if (!ctx.store.has('user-settings')) {
-		return ok([ctx.body], 'Ajustes');
-	}
 	const uid = actor_id(ctx);
-	const existing = await user_settings_doc(ctx);
-	if (existing) {
-		return patch_doc(
-			ctx,
-			'user-settings',
-			String(existing._id),
-			{ ...ctx.body, user: uid, user_id: uid },
-			'Ajustes guardados',
-		);
+	if (!uid) throw new Error('Se requiere autenticación');
+	if (!ctx.store.has('user-settings')) {
+		return ok([{ ...ctx.body, user_id: uid }], 'Configuración actualizada');
 	}
-	const created = await ctx.store.insert('user-settings', {
-		name: `settings ${uid}`,
+	const existing = await ensure_user_settings(ctx);
+	const updated = await ctx.store.update('user-settings', String(existing._id), {
+		...ctx.body,
 		user: uid,
 		user_id: uid,
-		...ctx.body,
 	});
-	return ok([created], 'Ajustes guardados');
+	return ok([updated ?? existing], 'Configuración actualizada');
 }
 
 async function user_settings_table_config(ctx: Ctx) {
 	const table_key = String(ctx.body.table_key ?? '').replace(/\./g, '_dot_');
 	if (!table_key) throw new Error('Se requiere table_key como cadena');
-	const existing = (await user_settings_doc(ctx)) ?? {};
+	const existing = await ensure_user_settings(ctx);
 	const table_configs = {
 		...as_object(existing.table_configs),
 		[table_key]: as_object(ctx.body.config),
 	};
-	return user_settings_upsert({ ...ctx, body: { table_configs } });
+	const updated = await ctx.store.update('user-settings', String(existing._id), {
+		table_configs,
+		user: actor_id(ctx),
+		user_id: actor_id(ctx),
+	});
+	return ok([updated ?? existing], 'Configuración de tabla guardada');
 }
 
 async function user_settings_global_theme(ctx: Ctx) {

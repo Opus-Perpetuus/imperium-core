@@ -469,12 +469,12 @@ export class ImperiumStore {
 						return `$${params.length}`;
 					});
 					if (cols.has(k)) clauses.push(`${qident(k)} IN (${marks.join(', ')})`);
-					else clauses.push(`payload ->> ${literal(k)} IN (${marks.join(', ')})`);
+					else clauses.push(payload_field_in_sql(k, marks));
 					continue;
 				}
 				params.push(v);
 				if (cols.has(k)) clauses.push(`${qident(k)} = $${params.length}`);
-				else clauses.push(`payload ->> ${literal(k)} = $${params.length}::text`);
+				else clauses.push(payload_field_eq_sql(k, `$${params.length}`));
 			}
 		}
 		if (opts.q) {
@@ -564,7 +564,7 @@ export class ImperiumStore {
 		const values = keys.map((k) => cell(row[k], jsons.has(k)));
 		const qt = this.qt(resource);
 		const inserted = await this.sql.unsafe(
-			`INSERT INTO ${qt} (${keys.map(qident).join(', ')}) VALUES (${keys.map((_, i) => `$${i + 1}`).join(', ')}) RETURNING *`,
+			`INSERT INTO ${qt} (${keys.map(qident).join(', ')}) VALUES (${keys.map((k, i) => json_placeholder(i + 1, jsons.has(k))).join(', ')}) RETURNING *`,
 			values,
 		);
 		const created = this.flatten(inserted[0] as Record<string, unknown>, resource)!;
@@ -593,7 +593,7 @@ export class ImperiumStore {
 		const keys = Object.keys(row).filter((k) => cols.has(k) && k !== 'id');
 		const values = keys.map((k) => cell(row[k], jsons.has(k)));
 		values.push(id);
-		const set = keys.map((k, i) => `${qident(k)} = $${i + 1}`).join(', ');
+		const set = keys.map((k, i) => `${qident(k)} = ${json_placeholder(i + 1, jsons.has(k))}`).join(', ');
 		const updated = await this.sql.unsafe(
 			`UPDATE ${this.qt(resource)} SET ${set} WHERE id = $${keys.length + 1} RETURNING *`,
 			values,
@@ -1101,9 +1101,28 @@ function ref_id(value: unknown): string {
 	return String(value).trim();
 }
 
+function json_placeholder(index: number, json: boolean): string {
+	return json ? `$${index}::jsonb` : `$${index}`;
+}
+
+/** Campo en payload, incluso si la celda jsonb quedó como string (doble encode). */
+function payload_field_eq_sql(field: string, param: string): string {
+	const key = literal(field);
+	return `(payload ->> ${key} = ${param}::text OR (jsonb_typeof(payload) = 'string' AND ((payload #>> '{}')::jsonb) ->> ${key} = ${param}::text))`;
+}
+
+function payload_field_in_sql(field: string, marks: string[]): string {
+	const key = literal(field);
+	const list = marks.join(', ');
+	return `(payload ->> ${key} IN (${list}) OR (jsonb_typeof(payload) = 'string' AND ((payload #>> '{}')::jsonb) ->> ${key} IN (${list})))`;
+}
+
 function cell(v: unknown, json: boolean): unknown {
 	if (v == null) return null;
-	if (json) return typeof v === 'string' ? v : JSON.stringify(v);
+	if (json) {
+		const parsed = typeof v === 'string' ? parse_json_cell(v) : v;
+		return typeof parsed === 'string' ? parsed : JSON.stringify(parsed);
+	}
 	if (Array.isArray(v) || (typeof v === 'object' && !(v instanceof Date))) {
 		return JSON.stringify(v);
 	}
