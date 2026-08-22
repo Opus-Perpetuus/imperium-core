@@ -500,6 +500,14 @@ const SESSION_SCOPED_EXTRAS = new Set([
 	'invoice-request:link_cfdi_document',
 	'invoice-request:request_cfdi_draft',
 	'invoice-request:cancel_request',
+	'delivery-route:read_route_map',
+	'delivery-route:read_chofer_routes',
+	'delivery-route:optimize_route',
+	'delivery-route:read_driver_location',
+	'delivery-return:recibir',
+	'lista-asistencia:mark_attendance',
+	'cobranza:lookup',
+	'cobranza:checkout',
 ]);
 
 function is_session_scoped_extra(resource?: string, action?: string) {
