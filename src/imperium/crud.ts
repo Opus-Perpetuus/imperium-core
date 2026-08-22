@@ -100,7 +100,11 @@ export async function handle_crud(
 	if (method === 'GET' && segs.length === 0) {
 		const q = query_list(url);
 		const { rows, total } = await store.find_many(resource, q);
-		return json(ok(rows, 'Ruta encontrada', total));
+		return json({
+			...ok(rows, 'Ruta encontrada', total),
+			tipo_de_instancia: instance_type(store, resource, rows),
+			module_info: { name: resource, model: resource, model_id: resource },
+		});
 	}
 	if (method === 'GET' && segs.length === 1) {
 		const doc = await store.find_id(resource, segs[0]!);
@@ -129,6 +133,26 @@ export async function handle_crud(
 		return json(ok([updated], 'Actualizado correctamente'));
 	}
 	return null;
+}
+
+function instance_type(
+	store: ImperiumStore,
+	resource: string,
+	rows: ImperiumDoc[],
+): Record<string, { nombre_encabezado: string; tipo: string }> {
+	const keys = new Set<string>(['_id', 'name', 'description', 'is_active', '_ref']);
+	for (const col of store.loc(resource).columns) keys.add(col.name);
+	for (const row of rows.slice(0, 5)) {
+		for (const k of Object.keys(row)) {
+			if (k === 'payload' || k === 'custom_data' || k === 'id') continue;
+			keys.add(k);
+		}
+	}
+	const out: Record<string, { nombre_encabezado: string; tipo: string }> = {};
+	for (const k of keys) {
+		out[k] = { nombre_encabezado: k.replace(/_/g, ' '), tipo: 'String' };
+	}
+	return out;
 }
 
 function json(body: unknown, status = 200): Response {

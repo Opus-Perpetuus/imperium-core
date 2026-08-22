@@ -882,6 +882,30 @@
     "action": "save_table_config"
   },
   {
+    "resource": "user-settings",
+    "method": "get",
+    "path": "/custom-themes",
+    "action": "list_custom_themes"
+  },
+  {
+    "resource": "user-settings",
+    "method": "post",
+    "path": "/custom-themes",
+    "action": "create_custom_theme"
+  },
+  {
+    "resource": "user-settings",
+    "method": "put",
+    "path": "/custom-themes/:id",
+    "action": "update_custom_theme"
+  },
+  {
+    "resource": "user-settings",
+    "method": "delete",
+    "path": "/custom-themes/:id",
+    "action": "delete_custom_theme"
+  },
+  {
     "resource": "view-config-preset",
     "method": "get",
     "path": "/available",

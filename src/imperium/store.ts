@@ -96,6 +96,7 @@ export class ImperiumStore {
 				'messages',
 				'notifications',
 				'user-settings',
+				'custom-user-themes',
 				'documentation-page',
 				'document-change-history',
 				'interactive-manual',
@@ -123,6 +124,7 @@ export class ImperiumStore {
 			'messages',
 			'notifications',
 			'user-settings',
+			'custom-user-themes',
 			'documentation-page',
 			'document-change-history',
 			'interactive-manual',
@@ -211,8 +213,9 @@ export class ImperiumStore {
 			clauses.push(`id = ANY($${params.length})`);
 		}
 		if (opts.where) {
-			for (const [k, v] of Object.entries(opts.where)) {
+			for (const [raw_key, v] of Object.entries(opts.where)) {
 				if (v === undefined) continue;
+				const k = raw_key === '_ref' ? 'ref' : raw_key;
 				params.push(v);
 				if (cols.has(k)) clauses.push(`${qident(k)} = $${params.length}`);
 				else clauses.push(`payload ->> ${literal(k)} = $${params.length}::text`);

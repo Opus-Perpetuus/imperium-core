@@ -357,9 +357,17 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'user-settings:upsert':
 			return user_settings_upsert(ctx);
 		case 'user-settings:set_global_default_theme':
-			return user_settings_upsert(ctx);
+			return user_settings_global_theme(ctx);
 		case 'user-settings:save_table_config':
-			return user_settings_upsert(ctx);
+			return user_settings_table_config(ctx);
+		case 'user-settings:list_custom_themes':
+			return custom_themes_list(ctx);
+		case 'user-settings:create_custom_theme':
+			return custom_themes_create(ctx);
+		case 'user-settings:update_custom_theme':
+			return custom_themes_update(ctx);
+		case 'user-settings:delete_custom_theme':
+			return custom_themes_delete(ctx);
 		case 'view-config-preset:available':
 		case 'view-config-preset:baseline':
 			return list_resource(ctx, 'view-config-preset');
@@ -1503,11 +1511,51 @@ async function verify_pin(ctx: Ctx) {
 	return ok([{ valid: true }], 'PIN válido');
 }
 
+async function user_settings_doc(ctx: Ctx) {
+	if (!ctx.store.has('user-settings')) return null;
+	const uid = actor_id(ctx);
+	return (
+		(await ctx.store.find_where('user-settings', { user_id: uid })) ??
+		(await ctx.store.find_where('user-settings', { user: uid }))
+	);
+}
+
 async function user_settings_get(ctx: Ctx) {
 	if (!ctx.store.has('user-settings')) return ok([{}], 'Sin ajustes');
-	const uid = actor_id(ctx);
-	const doc = await ctx.store.find_where('user-settings', { user: uid });
+	const doc = await user_settings_doc(ctx);
 	return ok([doc ?? {}], 'Ajustes');
+}
+
+async function custom_themes_list(ctx: Ctx) {
+	if (!ctx.store.has('custom-user-themes')) return ok([], 'Temas');
+	const uid = actor_id(ctx);
+	const { rows } = await ctx.store.find_many('custom-user-themes', {
+		where: uid ? { user_id: uid } : undefined,
+		take: 50,
+		include_inactive: false,
+	});
+	return ok(rows, 'Temas');
+}
+
+async function custom_themes_create(ctx: Ctx) {
+	if (!ctx.store.has('custom-user-themes')) return ok([ctx.body], 'Tema');
+	const uid = actor_id(ctx);
+	const created = await ctx.store.insert('custom-user-themes', {
+		name: String(ctx.body.theme_name ?? ctx.body.label ?? 'tema'),
+		user_id: uid,
+		...ctx.body,
+	});
+	return ok([created], 'Tema creado');
+}
+
+async function custom_themes_update(ctx: Ctx) {
+	return patch_doc(ctx, 'custom-user-themes', ctx.params.id, ctx.body, 'Tema actualizado');
+}
+
+async function custom_themes_delete(ctx: Ctx) {
+	const deleted = await ctx.store.remove('custom-user-themes', ctx.params.id);
+	if (!deleted) throw new Error('Tema no encontrado');
+	return ok([deleted], 'Tema eliminado');
 }
 
 async function user_settings_upsert(ctx: Ctx) {
@@ -1515,12 +1563,64 @@ async function user_settings_upsert(ctx: Ctx) {
 		return ok([ctx.body], 'Ajustes');
 	}
 	const uid = actor_id(ctx);
-	const existing = await ctx.store.find_where('user-settings', { user: uid });
+	const existing = await user_settings_doc(ctx);
 	if (existing) {
-		return patch_doc(ctx, 'user-settings', String(existing._id), { ...ctx.body, user: uid }, 'Ajustes guardados');
+		return patch_doc(
+			ctx,
+			'user-settings',
+			String(existing._id),
+			{ ...ctx.body, user: uid, user_id: uid },
+			'Ajustes guardados',
+		);
 	}
-	const created = await ctx.store.insert('user-settings', { name: `settings ${uid}`, user: uid, ...ctx.body });
+	const created = await ctx.store.insert('user-settings', {
+		name: `settings ${uid}`,
+		user: uid,
+		user_id: uid,
+		...ctx.body,
+	});
 	return ok([created], 'Ajustes guardados');
+}
+
+async function user_settings_table_config(ctx: Ctx) {
+	const table_key = String(ctx.body.table_key ?? '').replace(/\./g, '_dot_');
+	if (!table_key) throw new Error('Se requiere table_key como cadena');
+	const existing = (await user_settings_doc(ctx)) ?? {};
+	const table_configs = {
+		...as_object(existing.table_configs),
+		[table_key]: as_object(ctx.body.config),
+	};
+	return user_settings_upsert({ ...ctx, body: { table_configs } });
+}
+
+async function user_settings_global_theme(ctx: Ctx) {
+	const theme = String(ctx.body.theme ?? 'default').trim() || 'default';
+	if (ctx.store.has('configuration')) {
+		const doc = await ctx.store.find_where('configuration', {
+			_ref: 'configuration-default-theme',
+		});
+		if (doc) {
+			await ctx.store.update('configuration', String(doc._id), { value: theme });
+		} else {
+			await ctx.store.insert('configuration', {
+				name: 'Tema predeterminado',
+				_ref: 'configuration-default-theme',
+				value: theme,
+			});
+		}
+	}
+	let updated_users = 0;
+	if (ctx.body.apply_to_all && ctx.store.has('user-settings')) {
+		const { rows } = await ctx.store.find_many('user-settings', {
+			take: 5000,
+			include_inactive: true,
+		});
+		for (const row of rows) {
+			await ctx.store.update('user-settings', String(row._id), { theme });
+			updated_users++;
+		}
+	}
+	return ok([{ theme, updated_users }], 'Tema predeterminado del sistema guardado');
 }
 
 async function view_assign(ctx: Ctx) {

@@ -12,6 +12,7 @@ import {
 } from '@opus-perpetuus/imperium-core-kit';
 import { handle_service_plane, service_plane_match } from './service-plane.ts';
 import { create_imperium_layer } from './imperium/router.ts';
+import { handle_socket_io } from './imperium/socket-stub.ts';
 
 const PORT = Number(process.env.PORT ?? 3100);
 const DATABASE_URL =
@@ -298,6 +299,9 @@ const server = Bun.serve({
 	async fetch(req) {
 		const url = new URL(req.url);
 		const path = url.pathname;
+
+		const socket = handle_socket_io(req);
+		if (socket) return socket;
 
 		if (
 			(req.method === 'GET' || req.method === 'HEAD') &&

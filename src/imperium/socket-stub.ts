@@ -1,0 +1,141 @@
+/**
+ * Engine.IO v4 + Socket.IO polling en `/api/socket.io`.
+ * El GET se sostiene hasta haber paquete o hasta `pingInterval`; si no, el
+ * cliente reintenta en bucle y el shell Angular se queda en «Cargando».
+ */
+
+type Waiter = {
+	resolve: (packet: string) => void;
+	timer: ReturnType<typeof setTimeout>;
+};
+
+type Session = {
+	id: string;
+	queue: string[];
+	waiting: Waiter | null;
+	expires: number;
+};
+
+const PING_MS = 25_000;
+const sessions = new Map<string, Session>();
+
+export function handle_socket_io(
+	req: Request,
+): Response | Promise<Response> | null {
+	const url = new URL(req.url);
+	if (
+		!url.pathname.startsWith('/api/socket.io') &&
+		url.pathname !== '/socket.io/'
+	) {
+		return null;
+	}
+	const sid = url.searchParams.get('sid') ?? '';
+	const origin = req.headers.get('origin') ?? '*';
+	const headers: Record<string, string> = {
+		'content-type': 'text/plain; charset=UTF-8',
+		'access-control-allow-credentials': 'true',
+		'access-control-allow-origin': origin === '*' ? '*' : origin,
+		'access-control-allow-headers': 'content-type',
+		'cache-control': 'no-store',
+	};
+	if (req.method === 'OPTIONS') {
+		return new Response(null, { status: 204, headers });
+	}
+	if (req.method === 'GET' && !sid) {
+		const id = crypto.randomUUID().replace(/-/g, '');
+		sessions.set(id, { id, queue: [], waiting: null, expires: Date.now() + 120_000 });
+		const open = `0${JSON.stringify({
+			sid: id,
+			upgrades: [],
+			pingInterval: PING_MS,
+			pingTimeout: 20_000,
+			maxPayload: 1_000_000,
+		})}`;
+		return new Response(open, { headers });
+	}
+	const session = sid ? sessions.get(sid) : undefined;
+	if (!session) {
+		return new Response('6', { status: 400, headers });
+	}
+	session.expires = Date.now() + 120_000;
+	if (req.method === 'GET') {
+		return hold_poll(session, headers);
+	}
+	if (req.method === 'POST') {
+		return req.text().then((raw) => {
+			handle_client_packets(session, raw);
+			return new Response('ok', { headers });
+		});
+	}
+	return new Response('ok', { headers });
+}
+
+function hold_poll(
+	session: Session,
+	headers: Record<string, string>,
+): Promise<Response> {
+	if (session.queue.length) {
+		const packet = session.queue.join('\x1e');
+		session.queue = [];
+		return Promise.resolve(new Response(packet, { headers }));
+	}
+	return new Promise((resolve) => {
+		if (session.waiting) {
+			clearTimeout(session.waiting.timer);
+			session.waiting.resolve('2');
+		}
+		const timer = setTimeout(() => {
+			session.waiting = null;
+			resolve(new Response('2', { headers }));
+		}, PING_MS);
+		session.waiting = {
+			timer,
+			resolve: (packet) => {
+				clearTimeout(timer);
+				session.waiting = null;
+				resolve(new Response(packet, { headers }));
+			},
+		};
+	});
+}
+
+function enqueue(session: Session, packet: string) {
+	if (session.waiting) session.waiting.resolve(packet);
+	else session.queue.push(packet);
+}
+
+function handle_client_packets(session: Session, raw: string) {
+	const chunks = raw.split('\x1e').map((s) => s.trim()).filter(Boolean);
+	for (const chunk of chunks.length ? chunks : [raw]) {
+		if (chunk === '2') {
+			enqueue(session, '3');
+			continue;
+		}
+		if (chunk === '3' || chunk === '') continue;
+		if (chunk.startsWith('40')) {
+			enqueue(session, `40${JSON.stringify({ sid: session.id })}`);
+			continue;
+		}
+		if (chunk.startsWith('41')) {
+			sessions.delete(session.id);
+			continue;
+		}
+		if (chunk.startsWith('42')) {
+			// eventos de app: el stub no emite rooms
+			continue;
+		}
+	}
+}
+
+setInterval(() => {
+	const now = Date.now();
+	for (const [id, s] of sessions) {
+		if (s.expires < now) {
+			if (s.waiting) {
+				clearTimeout(s.waiting.timer);
+				s.waiting.resolve('1');
+			}
+			sessions.delete(id);
+		}
+	}
+}, 60_000).unref?.();

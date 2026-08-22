@@ -69,10 +69,80 @@ export async function handle_auth(
 		);
 	}
 
-	if (method === 'POST' && (rest === '/logout' || rest === '/logout/')) {
+	if (
+		method === 'POST' &&
+		(rest === '/logout' || rest === '/logout/' || rest === '/' || rest === '')
+	) {
 		const sid = read_sid(req);
 		if (sid) await destroy_session(sql, sid);
 		return with_cookie(Response.json({ ok: true }), '', true);
+	}
+	if (method === 'DELETE' && (rest === '/' || rest === '')) {
+		const sid = read_sid(req);
+		if (sid) await destroy_session(sql, sid);
+		return with_cookie(Response.json({ ok: true }), '', true);
+	}
+
+	if (method === 'POST' && rest.startsWith('/password-reset/request')) {
+		const body = await read_imperium_body(req);
+		const email = String(body.email ?? '').trim().toLowerCase();
+		const user = email ? await store.find_where('user', { email }) : null;
+		if (user) {
+			const token = crypto.randomUUID();
+			await store.update('user', String(user._id), {
+				recovery_token: token,
+				recovery_expires: new Date(Date.now() + 3600_000).toISOString(),
+			});
+		}
+		return Response.json({
+			message:
+				'Si el correo está registrado, te enviaremos un enlace para recuperar tu contraseña.',
+		});
+	}
+	if (method === 'GET' && rest.startsWith('/password-reset/validate')) {
+		const codigo = String(url.searchParams.get('codigo') ?? '').trim();
+		const user = codigo
+			? await store.find_where('user', { recovery_token: codigo })
+			: null;
+		const exp = user ? Date.parse(String(user.recovery_expires ?? '')) : 0;
+		const valid = Boolean(user && exp > Date.now());
+		return Response.json({
+			valid,
+			type: valid ? 'recovery' : null,
+		});
+	}
+	if (method === 'GET' && rest.startsWith('/branding')) {
+		if (rest.startsWith('/branding/logo')) {
+			return branding_logo(store);
+		}
+		return branding_json(store);
+	}
+
+	if (method === 'POST' && rest.startsWith('/password-reset/login')) {
+		const body = await read_imperium_body(req);
+		const codigo = String(body.codigo ?? '').trim();
+		const user = codigo
+			? await store.find_where('user', { recovery_token: codigo })
+			: null;
+		const exp = user ? Date.parse(String(user.recovery_expires ?? '')) : 0;
+		if (!user || exp <= Date.now()) {
+			return Response.json(
+				{ message: 'El enlace no es válido', error: 'El enlace no es válido' },
+				{ status: 400 },
+			);
+		}
+		await store.update('user', String(user._id), {
+			recovery_token: null,
+			recovery_expires: null,
+		});
+		const safe = public_user(user);
+		const session = await create_session(sql, safe);
+		const access_rights = await build_access(store, safe);
+		const menus = await build_menus(store, access_rights);
+		return with_cookie(
+			Response.json({ user: safe, menus, access_rights }),
+			session.id,
+		);
 	}
 
 	const session = await load_session(sql, req);
@@ -296,6 +366,79 @@ async function build_menus(store: ImperiumStore, access: Awaited<ReturnType<type
 
 function by_order(a: ImperiumDoc, b: ImperiumDoc) {
 	return Number(a.order ?? 100) - Number(b.order ?? 100);
+}
+
+const BRANDING_REFS = [
+	'configuration-branding-mode',
+	'configuration-company-logo',
+	'configuration-branding-logo-width',
+	'configuration-branding-logo-height',
+	'configuration-branding-logo-text-position',
+	'configuration-default-theme',
+] as const;
+
+async function config_by_ref(store: ImperiumStore, ref: string) {
+	if (!store.has('configuration')) return null;
+	return store.find_where('configuration', { _ref: ref });
+}
+
+async function branding_json(store: ImperiumStore): Promise<Response> {
+	const docs = new Map<string, ImperiumDoc>();
+	for (const ref of BRANDING_REFS) {
+		const doc = await config_by_ref(store, ref);
+		if (doc) docs.set(ref, doc);
+	}
+	const logo = docs.get('configuration-company-logo');
+	const payload = {
+		branding_mode: unwrap_config(docs.get('configuration-branding-mode')?.value) ?? 'imperium',
+		company_logo: unwrap_config(logo?.value) ?? null,
+		company_logo_type: unwrap_config(logo?.type) ?? 'image',
+		logo_width: unwrap_config(docs.get('configuration-branding-logo-width')?.value) ?? null,
+		logo_height: unwrap_config(docs.get('configuration-branding-logo-height')?.value) ?? null,
+		logo_text_position: unwrap_config(docs.get('configuration-branding-logo-text-position')?.value) ?? null,
+		default_theme: String(unwrap_config(docs.get('configuration-default-theme')?.value) ?? 'default').trim() || 'default',
+	};
+	return Response.json({
+		data: [payload],
+		total_elementos: 1,
+		message: 'Branding cargado correctamente',
+	});
+}
+
+function unwrap_config(value: unknown): unknown {
+	if (typeof value !== 'string') return value;
+	const trimmed = value.trim();
+	if (!trimmed) return '';
+	try {
+		return JSON.parse(trimmed);
+	} catch {
+		return value;
+	}
+}
+
+async function branding_logo(store: ImperiumStore): Promise<Response> {
+	const logo = await config_by_ref(store, 'configuration-company-logo');
+	const type = String(logo?.type ?? 'image');
+	const reference = logo?.value;
+	if (type !== 'image' || !reference) {
+		return new Response('Logo no configurado', { status: 404 });
+	}
+	if (!store.has('attachment-management')) {
+		return new Response('Logo no encontrado', { status: 404 });
+	}
+	const attachment = await store.find_id('attachment-management', String(reference));
+	if (!attachment) {
+		return new Response('Logo no encontrado', { status: 404 });
+	}
+	const { serve_attachment_bytes } = await import('./media.ts');
+	const served = await serve_attachment_bytes(attachment);
+	if (!served) return new Response('Logo no encontrado', { status: 404 });
+	return new Response(served.body, {
+		headers: {
+			'content-type': served.mime,
+			'cache-control': 'public, max-age=300',
+		},
+	});
 }
 
 void ok;
