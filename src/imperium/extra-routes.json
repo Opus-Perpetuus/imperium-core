@@ -966,6 +966,18 @@
     "action": "checkout"
   },
   {
+    "resource": "cobranza",
+    "method": "post",
+    "path": "/webhook/mitec",
+    "action": "mitec_webhook"
+  },
+  {
+    "resource": "cobranza",
+    "method": "post",
+    "path": "/webhook/stripe",
+    "action": "stripe_webhook"
+  },
+  {
     "resource": "medical-file",
     "method": "get",
     "path": "/pending",

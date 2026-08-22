@@ -2,6 +2,7 @@
  * Acciones custom de Imperium, portadas a documentos SQL.
  * Cada handler replica la transición / efecto del service original.
  */
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { as_array, as_object, fail, ok, type ImperiumDoc } from './envelope.ts';
@@ -29,6 +30,15 @@ import {
 	warehouse_origin,
 	type GeoPoint,
 } from './route-optimize.ts';
+import {
+	assert_interinstance_outbound,
+	deny_interinstance,
+	forward_interinstance,
+	interinstance_key_from_req,
+	messaging_settings,
+	validate_interinstance_api_key,
+} from './interinstance.ts';
+import { mitec_create_link, mitec_decrypt_payload, mitec_parse_callback } from './mitec.ts';
 
 type Ctx = {
 	store: ImperiumStore;
@@ -239,10 +249,11 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return list_resource(ctx, 'messages');
 		case 'messages:create_chat_message':
 		case 'messages:create_internal_message':
+			return create_message(ctx);
 		case 'messages:create_interinstance_message':
-			return create_message(ctx);
+			return create_interinstance_message(ctx);
 		case 'messages:receive_interinstance_message':
-			return create_message(ctx);
+			return receive_interinstance_message(ctx);
 		case 'module-management:recreate_indexes':
 			return ok([], 'Índices SQL ya aplicados por el núcleo');
 		case 'module-management:activate_module':
@@ -343,13 +354,15 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return ok([{ public: true }], 'Metadata pública');
 		case 'tickets:create_public_ticket':
 		case 'tickets:create_internal_ticket':
-		case 'tickets:create_interinstance_ticket':
 		case 'tickets:create_error_ticket':
 		case 'tickets:create_log_ticket':
-		case 'tickets:receive_interinstance_ticket':
 			return create_ticket(ctx);
+		case 'tickets:create_interinstance_ticket':
+			return create_interinstance_ticket(ctx);
+		case 'tickets:receive_interinstance_ticket':
+			return receive_interinstance_ticket(ctx);
 		case 'tickets:read_received_interinstance_tickets':
-			return list_where(ctx, 'tickets', { origen: 'interinstance' });
+			return read_received_interinstance_tickets(ctx);
 		case 'tickets:update_ticket':
 			return update_ticket(ctx);
 		case 'tickets:read_my_tickets':
@@ -387,6 +400,10 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return patch_doc(ctx, 'cobranza-payment', ctx.params.id, {
 				estado: 'cancelado',
 			}, 'Pago cancelado');
+		case 'cobranza:mitec_webhook':
+			return cobranza_mitec_webhook(ctx);
+		case 'cobranza:stripe_webhook':
+			return cobranza_stripe_webhook(ctx);
 		case 'cobranza:lookup':
 			return cobranza_lookup(ctx);
 		case 'cobranza:checkout':
@@ -2328,6 +2345,10 @@ async function conversation(ctx: Ctx) {
 }
 
 async function create_message(ctx: Ctx) {
+	const settings = await messaging_settings(ctx.store);
+	if (!settings.messaging_enabled) {
+		return deny_interinstance('La mensajería está deshabilitada.', 403);
+	}
 	const created = await ctx.store.insert('messages', {
 		name: String(ctx.body.subject ?? ctx.body.name ?? 'mensaje'),
 		...ctx.body,
@@ -2336,6 +2357,154 @@ async function create_message(ctx: Ctx) {
 		fecha: now(),
 	});
 	return ok([created], 'Mensaje creado');
+}
+
+function interinstance_text(value: unknown) {
+	return String(value ?? '').trim();
+}
+
+function interinstance_recipients(value: unknown) {
+	if (Array.isArray(value)) {
+		return value.map((item) => interinstance_text(item)).filter(Boolean);
+	}
+	if (typeof value === 'string' && value.trim()) {
+		try {
+			return interinstance_recipients(JSON.parse(value));
+		} catch {
+			return value.split(',').map((item) => item.trim()).filter(Boolean);
+		}
+	}
+	return [];
+}
+
+function interinstance_participants(sender: string, recipients: string[]) {
+	return [...new Set([sender, ...recipients].filter(Boolean))];
+}
+
+async function create_interinstance_message(ctx: Ctx) {
+	const settings = await messaging_settings(ctx.store);
+	if (!settings.messaging_enabled) {
+		return deny_interinstance('La mensajería está deshabilitada.', 403);
+	}
+	if (!settings.interinstance_enabled) {
+		return deny_interinstance('La mensajería interinstancia está deshabilitada.', 403);
+	}
+	const { endpoint } = await assert_interinstance_outbound(ctx.store, 'messages');
+	const title = interinstance_text(ctx.body.title);
+	const message = interinstance_text(ctx.body.message);
+	if (!title || !message) {
+		throw new Error('Debes definir título y mensaje para enviar.');
+	}
+	const sender_user_id = actor_id(ctx);
+	const sender_name = actor_name(ctx);
+	const sender_email = String(ctx.actor?.email ?? '');
+	const recipient_user_ids = interinstance_recipients(
+		ctx.body.recipient_user_ids ?? ctx.body.recipient_ids,
+	);
+	const payload =
+		ctx.body.payload && typeof ctx.body.payload === 'object'
+			? as_object(ctx.body.payload)
+			: undefined;
+	const forward_payload = {
+		title,
+		message,
+		recipient_user_ids,
+		related_ticket_id: interinstance_text(ctx.body.related_ticket_id) || undefined,
+		payload,
+		instance_data: {
+			label: settings.instance_label,
+			version: settings.instance_version,
+			generatedAt: now(),
+		},
+		sender: {
+			user_id: sender_user_id,
+			name: sender_name,
+			email: sender_email,
+		},
+	};
+	const forward_result = await forward_interinstance(
+		endpoint,
+		settings.interinstance_api_key,
+		forward_payload,
+	);
+	const created = await ctx.store.insert('messages', {
+		name: title,
+		title,
+		message,
+		senderUserId: sender_user_id,
+		senderName: sender_name,
+		senderEmail: sender_email,
+		recipientUserIds: recipient_user_ids,
+		direction: 'outbound',
+		sourceType: 'interinstance',
+		participantUserIds: interinstance_participants(sender_user_id, recipient_user_ids),
+		readByUserIds: sender_user_id ? [sender_user_id] : [],
+		relatedTicketId: interinstance_text(ctx.body.related_ticket_id) || undefined,
+		payload: { ...(payload ?? {}), interinstance_delivery: forward_result },
+		instanceData: forward_payload.instance_data,
+		from: sender_user_id,
+		created_by: sender_user_id,
+		fecha: now(),
+	});
+	return ok(
+		[created],
+		forward_result.delivered
+			? 'Mensaje interinstancia enviado correctamente.'
+			: 'Mensaje interinstancia registrado localmente, pero no se pudo entregar al endpoint remoto.',
+	);
+}
+
+async function receive_interinstance_message(ctx: Ctx) {
+	const settings = await messaging_settings(ctx.store);
+	if (!settings.messaging_enabled) {
+		return deny_interinstance('La mensajería está deshabilitada.', 403);
+	}
+	if (!settings.interinstance_enabled) {
+		return deny_interinstance('La mensajería interinstancia está deshabilitada.', 403);
+	}
+	try {
+		await validate_interinstance_api_key(ctx.store, interinstance_key_from_req(ctx.req));
+	} catch (error) {
+		return deny_interinstance(
+			error instanceof Error ? error.message : 'Clave interinstancia inválida.',
+			401,
+		);
+	}
+	const title = interinstance_text(ctx.body.title);
+	const message = interinstance_text(ctx.body.message);
+	if (!title || !message) {
+		throw new Error('Debes definir título y mensaje para registrar.');
+	}
+	const sender = as_object(ctx.body.sender);
+	const sender_user_id = interinstance_text(sender.user_id);
+	const recipient_user_ids = interinstance_recipients(
+		ctx.body.recipient_user_ids ?? ctx.body.recipient_ids,
+	);
+	const created = await ctx.store.insert('messages', {
+		name: title,
+		title,
+		message,
+		senderUserId: sender_user_id,
+		senderName: interinstance_text(sender.name),
+		senderEmail: interinstance_text(sender.email),
+		recipientUserIds: recipient_user_ids,
+		direction: 'inbound',
+		sourceType: 'interinstance',
+		participantUserIds: interinstance_participants(sender_user_id, recipient_user_ids),
+		readByUserIds: sender_user_id ? [sender_user_id] : [],
+		relatedTicketId: interinstance_text(ctx.body.related_ticket_id) || undefined,
+		payload:
+			ctx.body.payload && typeof ctx.body.payload === 'object'
+				? as_object(ctx.body.payload)
+				: undefined,
+		instanceData:
+			ctx.body.instance_data && typeof ctx.body.instance_data === 'object'
+				? as_object(ctx.body.instance_data)
+				: undefined,
+		from: sender_user_id,
+		fecha: now(),
+	});
+	return ok([created], 'Mensaje interinstancia recibido correctamente.');
 }
 
 async function payroll_drafts(ctx: Ctx) {
@@ -3080,7 +3249,21 @@ async function field_values(ctx: Ctx, resource: string, field: string) {
 	return ok(values.map((v) => ({ value: v, label: String(v) })), 'Valores');
 }
 
+function ticket_should_forward(ctx: Ctx) {
+	const value = ctx.body.should_forward_interinstance;
+	if (value === true || value === 1) return true;
+	if (typeof value === 'string') {
+		const raw = value.trim().toLowerCase();
+		return raw === 'true' || raw === '1';
+	}
+	return false;
+}
+
 async function create_ticket(ctx: Ctx) {
+	if (ticket_should_forward(ctx)) {
+		await assert_interinstance_outbound(ctx.store, 'tickets');
+		return forward_created_ticket(ctx, infer_ticket_source(ctx.action));
+	}
 	const title = String(ctx.body.title ?? ctx.body.subject ?? ctx.body.name ?? 'Ticket');
 	const assigned = String(ctx.body.assigned_user_id ?? ctx.body.assignedUserId ?? '').trim();
 	const created = await ctx.store.insert('tickets', {
@@ -3095,6 +3278,202 @@ async function create_ticket(ctx: Ctx) {
 		created_by: actor_id(ctx),
 	});
 	return ok([created], 'Ticket creado');
+}
+
+async function create_interinstance_ticket(ctx: Ctx) {
+	const settings = await messaging_settings(ctx.store);
+	if (!settings.interinstance_enabled) {
+		return deny_interinstance('La recepción interinstancia no está habilitada.', 403);
+	}
+	await assert_interinstance_outbound(ctx.store, 'tickets');
+	const title = interinstance_text(ctx.body.title);
+	const description = interinstance_text(ctx.body.description);
+	if (!title || !description) {
+		throw new Error(
+			'Debes proporcionar título y descripción para crear el ticket interinstancia.',
+		);
+	}
+	return forward_created_ticket(ctx, 'internal', {
+		success: 'Ticket interinstancia enviado correctamente.',
+	});
+}
+
+async function forward_created_ticket(
+	ctx: Ctx,
+	source_type: string,
+	messages?: { success?: string },
+) {
+	const { settings, endpoint } = await assert_interinstance_outbound(ctx.store, 'tickets');
+	const title = interinstance_text(ctx.body.title ?? ctx.body.subject ?? ctx.body.name);
+	const description = interinstance_text(ctx.body.description ?? ctx.body.message);
+	const assigned = interinstance_text(ctx.body.assigned_user_id ?? ctx.body.assignedUserId);
+	const assigned_personal_task_ids = interinstance_recipients(ctx.body.assigned_personal_task_ids);
+	const assigned_project_ids = interinstance_recipients(ctx.body.assigned_project_ids);
+	const payload = {
+		title,
+		description,
+		source_type,
+		reporter: {
+			_id: actor_id(ctx),
+			name: actor_name(ctx),
+			email: String(ctx.actor?.email ?? ''),
+		},
+		assigned_user_id: assigned_personal_task_ids.length || assigned_project_ids.length ? undefined : assigned,
+		assigned_personal_task_ids,
+		assigned_project_ids,
+		payload:
+			ctx.body.payload && typeof ctx.body.payload === 'object'
+				? as_object(ctx.body.payload)
+				: undefined,
+		instance_data: {
+			label: settings.instance_label,
+			version: settings.instance_version,
+			generatedAt: now(),
+		},
+	};
+	const forward_result = await forward_interinstance(
+		endpoint,
+		settings.interinstance_api_key,
+		payload,
+	);
+	if (!forward_result.delivered) {
+		const status_segment = forward_result.status ? ` (${forward_result.status})` : '';
+		const response_message = interinstance_text(forward_result.responseMessage);
+		throw new Error(
+			response_message
+				? `No se pudo enviar el ticket interinstancia${status_segment}: ${response_message}`
+				: `No se pudo enviar el ticket interinstancia${status_segment}.`,
+		);
+	}
+	let remote: ImperiumDoc = {};
+	try {
+		const parsed = JSON.parse(String(forward_result.responseMessage ?? '')) as {
+			data?: ImperiumDoc[];
+		};
+		if (parsed?.data?.[0] && typeof parsed.data[0] === 'object') remote = parsed.data[0]!;
+	} catch {
+		remote = {};
+	}
+	const ticket: ImperiumDoc = {
+		...remote,
+		_id: remote._id ?? undefined,
+		title: remote.title ?? title,
+		description: remote.description ?? description,
+		name: String(remote.title ?? title),
+		sourceType: 'interinstance',
+		status: remote.status ?? 'open',
+		reporter: remote.reporter ?? payload.reporter,
+		assignedUserId: remote.assignedUserId ?? payload.assigned_user_id,
+		assignedPersonalTaskIds: remote.assignedPersonalTaskIds ?? assigned_personal_task_ids,
+		assignedProjectIds: remote.assignedProjectIds ?? assigned_project_ids,
+		payload: remote.payload ?? payload.payload,
+		instanceData: remote.instanceData ?? payload.instance_data,
+		interinstance: {
+			...as_object(remote.interinstance),
+			endpoint,
+			forwarded: true,
+			responseStatus: forward_result.status,
+			responseMessage: forward_result.responseMessage,
+			externalTicketId: remote._id,
+		},
+	};
+	return ok(
+		[ticket],
+		messages?.success ??
+			(source_type === 'error'
+				? 'Ticket de error interinstancia enviado correctamente.'
+				: source_type === 'log'
+					? 'Ticket de log interinstancia enviado correctamente.'
+					: 'Ticket interinstancia enviado correctamente.'),
+	);
+}
+
+async function receive_interinstance_ticket(ctx: Ctx) {
+	const settings = await messaging_settings(ctx.store);
+	if (!settings.interinstance_enabled) {
+		return deny_interinstance('La recepción interinstancia no está habilitada.', 403);
+	}
+	let matched: ImperiumDoc;
+	try {
+		matched = await validate_interinstance_api_key(
+			ctx.store,
+			interinstance_key_from_req(ctx.req),
+		);
+	} catch (error) {
+		return deny_interinstance(
+			error instanceof Error ? error.message : 'Clave interinstancia inválida.',
+			401,
+		);
+	}
+	const title = interinstance_text(ctx.body.title);
+	const description = interinstance_text(ctx.body.description);
+	if (!title || !description) {
+		throw new Error('La recepción interinstancia requiere título y descripción.');
+	}
+	const created = await ctx.store.insert('tickets', {
+		name: title,
+		title,
+		description,
+		status: 'open',
+		estado: 'open',
+		sourceType: 'interinstance',
+		reporter:
+			ctx.body.reporter && typeof ctx.body.reporter === 'object'
+				? as_object(ctx.body.reporter)
+				: undefined,
+		assignedPersonalTaskIds: interinstance_recipients(ctx.body.assigned_personal_task_ids),
+		assignedProjectIds: interinstance_recipients(ctx.body.assigned_project_ids),
+		payload:
+			ctx.body.payload && typeof ctx.body.payload === 'object'
+				? as_object(ctx.body.payload)
+				: undefined,
+		instanceData:
+			ctx.body.instance_data && typeof ctx.body.instance_data === 'object'
+				? as_object(ctx.body.instance_data)
+				: undefined,
+		interinstance: {
+			forwarded: false,
+			receivedFromKeyId: String(matched._id),
+			receivedFromDomain: matched.domain,
+			receivedFromClient: matched.client,
+		},
+		created_by: actor_id(ctx),
+	});
+	return ok([created], 'Ticket interinstancia recibido correctamente.');
+}
+
+async function read_received_interinstance_tickets(ctx: Ctx) {
+	const settings = await messaging_settings(ctx.store);
+	if (!settings.interinstance_enabled) {
+		return deny_interinstance('La recepción interinstancia no está habilitada.', 403);
+	}
+	let matched: ImperiumDoc;
+	try {
+		matched = await validate_interinstance_api_key(
+			ctx.store,
+			interinstance_key_from_req(ctx.req),
+		);
+	} catch (error) {
+		return deny_interinstance(
+			error instanceof Error ? error.message : 'Clave interinstancia inválida.',
+			401,
+		);
+	}
+	const { rows, total } = await ctx.store.find_many('tickets', {
+		where: { sourceType: 'interinstance' },
+		q: ctx.url.searchParams.get('termino') ?? '',
+		skip: Number(ctx.url.searchParams.get('desde') ?? 0),
+		take: Number(ctx.url.searchParams.get('limite') ?? 50),
+	});
+	const filtered = rows.filter((row) => {
+		const meta = as_object(row.interinstance);
+		return String(meta.receivedFromKeyId ?? '') === String(matched._id);
+	});
+	return ok(
+		filtered,
+		'Tickets interinstancia recibidos cargados correctamente.',
+		filtered.length === rows.length ? total : filtered.length,
+	);
 }
 
 function infer_ticket_source(action: string) {
@@ -3314,14 +3693,179 @@ async function cobranza_lookup(ctx: Ctx) {
 	return ok(rows, 'Cobranza');
 }
 
-async function cobranza_checkout(ctx: Ctx) {
-	const created = await ctx.store.insert('cobranza', {
-		name: String(ctx.body.name ?? ctx.body.folio ?? 'Cobro'),
-		...ctx.body,
-		estado: 'pendiente',
-		fecha: now(),
+async function cobranza_config_text(ctx: Ctx, ref: string, env_name: string) {
+	const from_env = String(process.env[env_name] ?? '').trim();
+	if (from_env) return from_env;
+	return cfg_text((await ctx.store.find_where('configuration', { ref }))?.value);
+}
+
+function cobranza_origin(ctx: Ctx) {
+	const host = ctx.req.headers.get('x-forwarded-host') ?? ctx.req.headers.get('host') ?? '';
+	const proto = ctx.req.headers.get('x-forwarded-proto') ?? 'https';
+	return ctx.req.headers.get('origin') || (host ? `${proto}://${host}` : '');
+}
+
+function cobranza_is_canceled(charge: ImperiumDoc) {
+	const status = String(charge.status ?? charge.estado ?? '').toUpperCase();
+	return status === 'CANCELADO' || status === 'CANCELED';
+}
+
+async function cobranza_recompute(ctx: Ctx, charge_id: string) {
+	const charge = await ctx.store.find_id('cobranza', charge_id);
+	if (!charge || cobranza_is_canceled(charge)) return charge;
+	let paid_amount = Number(charge.paid_amount ?? 0);
+	if (ctx.store.has('cobranza-payment')) {
+		const { rows } = await ctx.store.find_many('cobranza-payment', {
+			where: { charge_id },
+			take: 5000,
+			include_inactive: true,
+		});
+		const applied = rows.filter((row) => {
+			const status = String(row.status ?? row.estado ?? 'APPLIED').toUpperCase();
+			return status === 'APPLIED' || status === 'APLICADO';
+		});
+		if (applied.length) {
+			paid_amount = applied.reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
+		}
+	}
+	const total = Number(charge.total_amount ?? 0);
+	const balance = Math.max(total - paid_amount, 0);
+	const status = balance <= 0 ? 'PAGADO' : paid_amount > 0 ? 'PARCIAL' : 'PENDIENTE';
+	return ctx.store.update('cobranza', charge_id, {
+		paid_amount,
+		balance,
+		status,
+		estado: status.toLowerCase(),
 	});
-	return ok([created], 'Checkout creado');
+}
+
+async function apply_online_payment(
+	ctx: Ctx,
+	params: { charge_id: string; amount: number; provider: string; provider_ref?: string },
+) {
+	const charge = await ctx.store.find_id('cobranza', params.charge_id);
+	if (!charge) throw new Error('No se encontró el cargo.');
+	if (cobranza_is_canceled(charge)) {
+		throw new Error('El cargo está cancelado; no admite pagos.');
+	}
+	const amount = Math.min(params.amount, Number(charge.balance ?? params.amount));
+	if (!(amount > 0)) return;
+	const payment_name = `Pago ${charge.reference} ${params.provider_ref || params.provider}`;
+	if (params.provider_ref && ctx.store.has('cobranza-payment')) {
+		const already = await ctx.store.find_where('cobranza-payment', { name: payment_name });
+		if (already) return;
+	}
+	if (ctx.store.has('cobranza-payment')) {
+		await ctx.store.insert('cobranza-payment', {
+			name: payment_name,
+			charge_id: charge._id,
+			amount,
+			payment_date: now(),
+			status: 'APPLIED',
+			estado: 'aplicado',
+			provider: params.provider,
+			sync: true,
+		});
+	}
+	await cobranza_recompute(ctx, String(charge._id));
+}
+
+async function cobranza_checkout(ctx: Ctx) {
+	const charge_id = String(ctx.body.charge_id ?? '');
+	const provider = String(ctx.body.provider ?? 'STRIPE').toUpperCase();
+	if (!charge_id) throw new Error('Se requiere el cargo a pagar.');
+	const charge = await ctx.store.find_id('cobranza', charge_id);
+	if (!charge) throw new Error('No se encontró el cargo.');
+	if (Number(charge.balance ?? 0) <= 0) throw new Error('El cargo ya está pagado.');
+	const amount = Number(charge.balance);
+	const origin = cobranza_origin(ctx);
+	if (provider === 'MITEC') {
+		const credentials = {
+			key_hex: await cobranza_config_text(ctx, 'configuration-payments-mitec-key', 'MITEC_KEY'),
+			company: await cobranza_config_text(
+				ctx,
+				'configuration-payments-mitec-company',
+				'MITEC_COMPANY',
+			),
+			branch: await cobranza_config_text(
+				ctx,
+				'configuration-payments-mitec-branch',
+				'MITEC_BRANCH',
+			),
+			user: await cobranza_config_text(ctx, 'configuration-payments-mitec-user', 'MITEC_USER'),
+			password: await cobranza_config_text(
+				ctx,
+				'configuration-payments-mitec-password',
+				'MITEC_PASSWORD',
+			),
+			data0: await cobranza_config_text(ctx, 'configuration-payments-mitec-data0', 'MITEC_DATA0'),
+		};
+		const link = await mitec_create_link(credentials, String(charge.reference ?? ''), amount);
+		return ok([{ url: link.url, provider: 'MITEC' }], 'checkout');
+	}
+	const secret = await cobranza_config_text(
+		ctx,
+		'configuration-payments-stripe-secret-key',
+		'STRIPE_SECRET_KEY',
+	);
+	const session = await stripe_create_checkout({
+		secret_key: secret,
+		success_url: `${origin}/internal/cobranza/cobro?paid=1`,
+		cancel_url: `${origin}/internal/cobranza/cobro?paid=0`,
+		amount_cents: Math.round(amount * 100),
+		currency: 'mxn',
+		description: String(charge.concept || `Cobro ${charge.reference}`),
+		metadata: {
+			charge_id: String(charge._id),
+			reference: String(charge.reference ?? ''),
+		},
+	});
+	return ok([{ url: session.url, provider: 'STRIPE' }], 'checkout');
+}
+
+async function cobranza_mitec_webhook(ctx: Ctx) {
+	const encoded = String(ctx.body.strResponse ?? ctx.body.xml ?? '');
+	if (!encoded) throw new Error('Falta la respuesta de Mitec.');
+	const key = await cobranza_config_text(ctx, 'configuration-payments-mitec-key', 'MITEC_KEY');
+	const xml = encoded.trim().startsWith('<') ? encoded : mitec_decrypt_payload(encoded, key);
+	const parsed = mitec_parse_callback(xml);
+	if (!parsed.approved) return { received: true };
+	const charge = await ctx.store.find_where('cobranza', { reference: parsed.reference });
+	if (!charge) return { received: true };
+	await apply_online_payment(ctx, {
+		charge_id: String(charge._id),
+		amount: parsed.amount || Number(charge.balance ?? 0),
+		provider: 'MITEC',
+		provider_ref: parsed.folio,
+	});
+	return { received: true };
+}
+
+async function cobranza_stripe_webhook(ctx: Ctx) {
+	const secret = await cobranza_config_text(
+		ctx,
+		'configuration-payments-stripe-webhook-secret',
+		'STRIPE_WEBHOOK_SECRET',
+	);
+	const raw = JSON.stringify(ctx.body ?? {});
+	if (secret && !stripe_verify_webhook(raw, ctx.req.headers.get('stripe-signature'), secret)) {
+		throw new Error('Firma de webhook Stripe inválida.');
+	}
+	const event = ctx.body as {
+		type?: string;
+		data?: { object?: { id?: string; amount_total?: number; metadata?: { charge_id?: string } } };
+	};
+	if (event.type !== 'checkout.session.completed') return { received: true };
+	const charge_id = event.data?.object?.metadata?.charge_id;
+	if (!charge_id) return { received: true };
+	const cents = Number(event.data?.object?.amount_total || 0);
+	await apply_online_payment(ctx, {
+		charge_id,
+		amount: cents > 0 ? cents / 100 : 0,
+		provider: 'STRIPE',
+		provider_ref: event.data?.object?.id,
+	});
+	return { received: true };
 }
 
 function as_id_list(value: unknown): string[] {
@@ -3664,6 +4208,29 @@ async function stripe_create_checkout(input: {
 		throw new Error(payload.error?.message ?? 'Stripe rechazó la sesión de checkout.');
 	}
 	return { id: payload.id, url: payload.url };
+}
+
+function stripe_verify_webhook(
+	raw_body: string,
+	signature_header: string | null,
+	webhook_secret: string,
+) {
+	if (!webhook_secret || !signature_header) return false;
+	const parts = Object.fromEntries(
+		signature_header.split(',').map((piece) => {
+			const [key, ...rest] = piece.split('=');
+			return [key.trim(), rest.join('=')];
+		}),
+	) as { t?: string; v1?: string };
+	if (!parts.t || !parts.v1) return false;
+	const expected = createHmac('sha256', webhook_secret)
+		.update(`${parts.t}.${raw_body}`, 'utf8')
+		.digest('hex');
+	try {
+		return timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(parts.v1, 'hex'));
+	} catch {
+		return false;
+	}
 }
 
 async function payments_checkout(ctx: Ctx) {
