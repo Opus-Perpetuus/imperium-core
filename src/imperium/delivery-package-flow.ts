@@ -4,6 +4,7 @@
  * y sincronización del estado del pedido (surtido / enviado).
  */
 import { as_array, as_object, type ImperiumDoc } from './envelope.ts';
+import { sync_order_logistics_reservation } from './inventory-logistics-flow.ts';
 import type { ImperiumStore } from './store.ts';
 
 const PACKAGE_STATES = [
@@ -418,6 +419,7 @@ export async function after_delivery_package_mutate(
 	const unique = [...new Set(pedido_ids.map((id) => text(id)).filter(Boolean))];
 	for (const pedido_id of unique) {
 		await sync_order_state_from_packages(store, pedido_id);
+		await sync_order_logistics_reservation(store, pedido_id);
 	}
 }
 

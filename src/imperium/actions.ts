@@ -103,6 +103,7 @@ import {
 	cancel_delivery_package,
 	list_packages_by_pedido,
 } from './delivery-package-flow.ts';
+import { register_package_delivery_exit } from './inventory-logistics-flow.ts';
 import { recibir_delivery_return } from './delivery-return-flow.ts';
 import { apply_purchase_receipt_stock } from './purchase-order-flow.ts';
 import {
@@ -1575,6 +1576,14 @@ async function logistics_event(ctx: Ctx) {
 		last_logistics_event_at: occurred_at,
 	});
 	if (!saved) throw new Error('No se encontró el documento');
+	if (event_type === 'delivery') {
+		await register_package_delivery_exit(
+			ctx.store,
+			{ ...doc, ...saved },
+			event_id,
+			occurred_at,
+		);
+	}
 	await after_delivery_package_mutate(ctx.store, ref_id(saved.pedido) || ref_id(doc.pedido));
 	return ok(
 		[saved],
@@ -3675,6 +3684,9 @@ async function pedidos_sync_offline(ctx: Ctx) {
 						: 'Error al sincronizar el pedido',
 			});
 		}
+	}
+	if (resultados.some((item) => item.status === 'creado')) {
+		emit_pedidos_updated();
 	}
 	return Response.json({ ok: true, total: resultados.length, resultados });
 }
