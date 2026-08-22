@@ -112,6 +112,38 @@ async function record_rule_scope(
 	);
 }
 
+const INVENTORY_LEDGER_WRITE_ERRORS: Record<
+	string,
+	{ create: string; update: string; delete: string; batch: string }
+> = {
+	'inventory-movement': {
+		create: 'Los movimientos de inventario se generan automáticamente desde compras y logística',
+		update: 'Los movimientos de inventario no se pueden editar manualmente',
+		delete: 'Los movimientos de inventario no se pueden eliminar manualmente',
+		batch: 'Los movimientos de inventario no soportan operaciones batch',
+	},
+	'inventory-stock-quant': {
+		create: 'Las existencias por ubicación se generan automáticamente desde los movimientos de inventario',
+		update: 'Las existencias por ubicación no se pueden editar manualmente',
+		delete: 'Las existencias por ubicación no se pueden eliminar manualmente',
+		batch: 'Las existencias por ubicación no soportan operaciones batch',
+	},
+	'inventory-cost-entry': {
+		create: 'Las entradas de inventario se generan automáticamente al confirmar compras',
+		update: 'Las entradas de inventario no se pueden editar manualmente',
+		delete: 'Las entradas de inventario no se pueden eliminar manualmente',
+		batch: 'Las entradas de inventario no soportan operaciones batch',
+	},
+};
+
+function assert_inventory_ledger_write(
+	resource: string,
+	op: 'create' | 'update' | 'delete' | 'batch',
+) {
+	const message = INVENTORY_LEDGER_WRITE_ERRORS[resource]?.[op];
+	if (message) throw new Error(message);
+}
+
 async function assert_id_in_scope(
 	store: ImperiumStore,
 	resource: string,
@@ -226,8 +258,9 @@ export async function handle_crud(
 		if (is_physical_count_resource(resource)) {
 			throw new Error('Los conteos físicos no soportan operaciones batch');
 		}
-		if (resource === 'inventory-movement') {
-			throw new Error('Los movimientos de inventario no soportan operaciones batch');
+		assert_inventory_ledger_write(resource, 'batch');
+		if (resource === 'delivery-return') {
+			throw new Error('Las devoluciones no soportan operaciones batch');
 		}
 		if (is_location_resource(resource)) {
 			const raw = await body();
@@ -286,9 +319,7 @@ export async function handle_crud(
 		if (is_location_resource(resource)) {
 			throw new Error('Las ubicaciones no soportan borrado manual');
 		}
-		if (resource === 'inventory-movement') {
-			throw new Error('Los movimientos de inventario no se pueden eliminar manualmente');
-		}
+		assert_inventory_ledger_write(resource, 'delete');
 		const scope = await record_rule_scope(store, actor, resource, method);
 		await assert_id_in_scope(store, resource, segs[1], scope, method);
 		const deleted = await store.remove(resource, segs[1]);
@@ -412,11 +443,7 @@ export async function handle_crud(
 		);
 	}
 	if (method === 'POST' && segs.length === 0) {
-		if (resource === 'inventory-movement') {
-			throw new Error(
-				'Los movimientos de inventario se generan automáticamente desde compras y logística',
-			);
-		}
+		assert_inventory_ledger_write(resource, 'create');
 		let incoming = await prepare_user_write(
 			resource,
 			await apply_uploads(store, resource, await body(), actor, {
@@ -577,9 +604,7 @@ export async function handle_crud(
 		);
 	}
 	if (method === 'PUT' && segs.length === 0) {
-		if (resource === 'inventory-movement') {
-			throw new Error('Los movimientos de inventario no se pueden editar manualmente');
-		}
+		assert_inventory_ledger_write(resource, 'update');
 		const raw = await body();
 		const id = String(raw._id ?? raw.id ?? '');
 		if (!id) return json(resource, fail('Se necesita un id para actualizar').body, 400);
@@ -728,9 +753,7 @@ export async function handle_crud(
 		);
 	}
 	if (method === 'PATCH' && segs.length === 1) {
-		if (resource === 'inventory-movement') {
-			throw new Error('Los movimientos de inventario no se pueden editar manualmente');
-		}
+		assert_inventory_ledger_write(resource, 'update');
 		const previous = await store.find_id(resource, segs[0]!);
 		const scope = await record_rule_scope(store, actor, resource, method);
 		await assert_id_in_scope(store, resource, segs[0]!, scope, method);
