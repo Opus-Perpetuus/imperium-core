@@ -780,6 +780,12 @@
     "action": "read_ticket_field_values"
   },
   {
+    "resource": "citizen-report",
+    "method": "get",
+    "path": "/reverse-geocode",
+    "action": "reverse_geocode"
+  },
+  {
     "resource": "tickets",
     "method": "get",
     "path": "/public/metadata",

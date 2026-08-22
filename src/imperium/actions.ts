@@ -2,7 +2,8 @@
  * Acciones custom de Imperium, portadas a documentos SQL.
  * Cada handler replica la transición / efecto del service original.
  */
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { as_array, as_object, fail, ok, type ImperiumDoc } from './envelope.ts';
 import { read_imperium_body } from './body.ts';
 import type { ImperiumStore } from './store.ts';
@@ -53,7 +54,7 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'cfdi-catalog:search':
 			return catalog_search(ctx);
 		case 'cfdi-catalog:seed_samples':
-			return ok([], 'Semilla de catálogo: use los registros migrados');
+			return catalog_seed_samples(ctx);
 		case 'cfdi-document:from_invoice_request':
 			return cfdi_from(ctx, 'invoice-request', ctx.params.invoiceRequestId, 'invoice');
 		case 'cfdi-document:from_payroll_receipt':
@@ -164,14 +165,7 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'documentation-page:read_by_id':
 			return one(ctx, 'documentation-page', ctx.params.id);
 		case 'dynamic-dashboard:catalog':
-			return ok(
-				[...ctx.store.locs.values()].map((l) => ({
-					resource: l.resource,
-					name: l.name,
-					table: l.table,
-				})),
-				'Catálogo de tableros',
-			);
+			return dashboard_catalog(ctx);
 		case 'dynamic-dashboard:widget_data':
 			return widget_data(ctx);
 		case 'dynamic-dashboard:ai_query':
@@ -394,15 +388,11 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'ticketing-system-turn:take_next_turn':
 			return take_next_turn(ctx);
 		case 'ticketing-system-turn:notify_turn':
-			return patch_doc(ctx, 'ticketing-system-turn', String(ctx.body.id ?? ''), {
-				estado: 'notificado',
-				fecha_notificacion: now(),
-			}, 'Turno notificado');
+			return notify_turn(ctx);
 		case 'ticketing-system-turn:end_attending_turn':
-			return patch_doc(ctx, 'ticketing-system-turn', String(ctx.body.id ?? ''), {
-				estado: 'atendido',
-				fecha_fin: now(),
-			}, 'Turno finalizado');
+			return end_attending_turn(ctx);
+		case 'citizen-report:reverse_geocode':
+			return reverse_geocode(ctx);
 		case 'violation:challenge':
 			return patch_doc(ctx, 'violation', ctx.params.id, {
 				estado: 'impugnada',
@@ -521,7 +511,10 @@ async function generic_action(ctx: Ctx) {
 
 async function catalog_lookup(ctx: Ctx) {
 	const catalog = ctx.url.searchParams.get('catalog') ?? String(ctx.body.catalog ?? '');
-	const code = ctx.url.searchParams.get('code') ?? String(ctx.body.code ?? '');
+	const code =
+		ctx.url.searchParams.get('code') ??
+		ctx.url.searchParams.get('key') ??
+		String(ctx.body.code ?? ctx.body.key ?? '');
 	if (!catalog || !code) throw new Error('Se necesitan catalog y code');
 	const { rows } = await ctx.store.find_many('cfdi-catalog', {
 		where: { catalog, code },
@@ -529,6 +522,62 @@ async function catalog_lookup(ctx: Ctx) {
 		include_inactive: true,
 	});
 	return ok(rows, rows.length ? 'Catálogo encontrado' : 'Sin coincidencia');
+}
+
+function cfdi_samples_dir() {
+	const from_catalog = process.env.CATALOG_PATH
+		? join(dirname(process.env.CATALOG_PATH), '../backend/src/components/cfdi/cfdi-catalog/data/samples')
+		: '';
+	const candidates = [process.env.CFDI_SAMPLES_DIR, from_catalog].filter(Boolean) as string[];
+	return candidates.find((p) => existsSync(p)) ?? '';
+}
+
+async function catalog_seed_samples(ctx: Ctx) {
+	const dir = cfdi_samples_dir();
+	if (!dir) return ok([], 'No hay paquetes de catálogo SAT en el núcleo');
+	const files = readdirSync(dir).filter((f) => f.startsWith('c_') && f.endsWith('.json'));
+	const present = await ctx.store.find_many('cfdi-catalog', {
+		take: 20000,
+		include_inactive: true,
+		populate: false,
+	});
+	const have = new Set(present.rows.map((r) => String(r._ref ?? r.ref ?? '')));
+	let seeded = 0;
+	let skipped = 0;
+	for (const file of files) {
+		const catalog = file.slice(0, -5);
+		const rows = as_array(JSON.parse(readFileSync(join(dir, file), 'utf8')));
+		for (const raw of rows) {
+			const row = as_object(raw);
+			const code = String(row.code ?? '').trim();
+			if (!code) continue;
+			const description = String(row.description ?? row.texto ?? code).trim();
+			const ref = `cfdi-catalog-${catalog}-${code}`;
+			if (have.has(ref)) {
+				skipped += 1;
+				continue;
+			}
+			try {
+				await ctx.store.insert('cfdi-catalog', {
+					name: description !== code ? `${code} — ${description}`.slice(0, 500) : code,
+					catalog,
+					code,
+					description,
+					is_active: true,
+					_ref: ref,
+				});
+				seeded += 1;
+				have.add(ref);
+			} catch (err) {
+				if (String(err).includes('duplicate')) {
+					skipped += 1;
+					continue;
+				}
+				throw err;
+			}
+		}
+	}
+	return ok([{ seeded, skipped }], `Catálogo SAT sembrado (${seeded})`);
 }
 
 async function catalog_search(ctx: Ctx) {
@@ -720,11 +769,145 @@ async function documentation_adjacent(ctx: Ctx) {
 	);
 }
 
+async function dashboard_catalog(ctx: Ctx) {
+	const seen = new Set<string>();
+	const entries = [];
+	for (const loc of ctx.store.locs.values()) {
+		if (seen.has(loc.resource)) continue;
+		seen.add(loc.resource);
+		entries.push({
+			model_id: to_model_id(loc.resource),
+			module_name: loc.name,
+			fields: [
+				{ path: '_id', type: 'String', label: 'Id' },
+				{ path: 'name', type: 'String', label: 'Nombre' },
+				{ path: 'description', type: 'String', label: 'Descripción' },
+				{ path: 'is_active', type: 'Boolean', label: 'Activo' },
+				{ path: 'createdAt', type: 'Date', label: 'Creado' },
+				{ path: 'updatedAt', type: 'Date', label: 'Actualizado' },
+				...loc.columns.map((c) => ({
+					path: c.name,
+					type:
+						c.pg === 'json'
+							? 'Mixed'
+							: c.pg === 'boolean'
+								? 'Boolean'
+								: c.pg === 'number'
+									? 'Number'
+									: 'String',
+					label: c.name,
+				})),
+			],
+		});
+	}
+	return ok(entries, 'Catálogo de modelos disponible');
+}
+
+function to_model_id(resource: string) {
+	if (resource === 'branchoffice') return 'Branchoffice';
+	return resource
+		.split('-')
+		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+		.join('');
+}
+
 async function widget_data(ctx: Ctx) {
-	const resource = String(ctx.body.resource ?? ctx.body.model ?? '');
-	if (!resource || !ctx.store.has(resource)) return ok([{ rows: [] }], 'Sin recurso');
-	const { rows, total } = await ctx.store.find_many(resource, { take: Number(ctx.body.limite ?? 50) });
-	return ok([{ rows, total }], 'Datos de widget');
+	const spec = as_object(ctx.body.spec ?? ctx.body);
+	const pagination = as_object(ctx.body.pagination ?? {});
+	const widget_type = String(spec.widget_type ?? '');
+	const model_id = String(spec.model_id ?? spec.model ?? spec.resource ?? '');
+	if (!widget_type || !model_id) {
+		throw new Error("La especificación del widget requiere 'widget_type' y 'model_id'.");
+	}
+	let resource: string;
+	try {
+		resource = resolve_model(ctx, model_id);
+	} catch {
+		throw new Error(`El modelo '${model_id}' no está disponible.`);
+	}
+	const take = Number(pagination.limite ?? 50);
+	const skip = Number(pagination.desde ?? 0);
+	const for_table = widget_type === 'table';
+	const { rows, total } = await ctx.store.find_many(resource, {
+		take: for_table ? take : 5000,
+		skip: for_table ? skip : 0,
+	});
+	const agg = as_object(spec.aggregation);
+	const op = String(agg.op ?? 'count');
+	const field = String(agg.field ?? '');
+	const numeric = (row: ImperiumDoc) => Number(row[field] ?? 0);
+	const scalar = () => {
+		if (op === 'sum') return rows.reduce((acc, row) => acc + numeric(row), 0);
+		if (op === 'avg') {
+			return rows.length
+				? rows.reduce((acc, row) => acc + numeric(row), 0) / rows.length
+				: 0;
+		}
+		if (op === 'min') return rows.length ? Math.min(...rows.map(numeric)) : 0;
+		if (op === 'max') return rows.length ? Math.max(...rows.map(numeric)) : 0;
+		return total;
+	};
+	if (widget_type === 'kpi') {
+		return ok(
+			[{ widget_type, denied: false, kpi: { value: scalar() } }],
+			'Datos del widget obtenidos',
+		);
+	}
+	if (widget_type === 'progress') {
+		const progress = as_object(spec.progress);
+		return ok(
+			[{
+				widget_type,
+				denied: false,
+				progress: {
+					value: scalar(),
+					target_value: progress.target_value,
+					target_date: progress.target_date,
+				},
+			}],
+			'Datos del widget obtenidos',
+		);
+	}
+	if (widget_type.startsWith('chart-')) {
+		const group_by = String(spec.group_by ?? '');
+		if (!group_by) throw new Error("Los widgets de gráfica requieren 'group_by'.");
+		const map = new Map<string, number>();
+		for (const row of rows) {
+			const raw = row[group_by];
+			const name =
+				raw && typeof raw === 'object'
+					? String(as_object(raw).name ?? 'Sin valor')
+					: String(raw ?? 'Sin valor');
+			map.set(name, (map.get(name) ?? 0) + (op === 'count' ? 1 : numeric(row)));
+		}
+		const series = [...map.entries()]
+			.map(([name, value]) => ({ name, value }))
+			.sort((a, b) => b.value - a.value)
+			.slice(0, 20);
+		return ok(
+			[{ widget_type, denied: false, chart: { series, truncated: map.size > 20 } }],
+			'Datos del widget obtenidos',
+		);
+	}
+	const fields = as_array(spec.fields).map(String);
+	const table_rows = rows.map((row) => {
+		if (!fields.length) return row;
+		const slim: Record<string, unknown> = {};
+		for (const key of fields) slim[key] = row[key];
+		return slim;
+	});
+	return ok(
+		[{
+			widget_type,
+			denied: false,
+			table: {
+				rows: table_rows,
+				total_elementos: total,
+				fields: fields.length ? fields : Object.keys(table_rows[0] ?? { name: 1 }),
+			},
+		}],
+		'Datos del widget obtenidos',
+	);
 }
 
 async function import_location_tree(ctx: Ctx) {
@@ -1811,19 +1994,82 @@ async function cobranza_checkout(ctx: Ctx) {
 }
 
 async function take_next_turn(ctx: Ctx) {
-	const { rows } = await ctx.store.find_many('ticketing-system-turn', { take: 200 });
-	const waiting = rows
-		.filter((r) => ['espera', 'waiting', 'pendiente', ''].includes(String(r.estado ?? '')))
-		.sort((a, b) => Number(a.consecutivo ?? 0) - Number(b.consecutivo ?? 0));
+	const box = String(ctx.body.box_config_id ?? ctx.body.box ?? ctx.body.caja ?? '');
+	const pending = await ctx.store.find_many('ticketing-system-turn', {
+		where: { status: 'pendiente' },
+		take: 200,
+		include_inactive: false,
+	});
+	const waiting_alt = pending.rows.length
+		? pending.rows
+		: (
+				await ctx.store.find_many('ticketing-system-turn', {
+					where: { estado: 'pendiente' },
+					take: 200,
+					include_inactive: false,
+				})
+			).rows;
+	const waiting = waiting_alt.sort((a, b) => {
+		const ta = new Date(String(a.createdAt ?? a.created_at ?? 0)).getTime();
+		const tb = new Date(String(b.createdAt ?? b.created_at ?? 0)).getTime();
+		return ta - tb;
+	});
 	const next = waiting[0];
 	if (!next) throw new Error('No hay turnos en espera');
 	const updated = await ctx.store.update('ticketing-system-turn', String(next._id), {
-		estado: 'atendiendo',
-		caja: ctx.body.box ?? ctx.body.caja,
+		status: 'en_atencion',
+		estado: 'en_atencion',
+		assigned_box: box || next.assigned_box,
 		fecha_inicio: now(),
+		time_box: [now()],
 		atendido_por: actor_name(ctx),
 	});
 	return ok([updated], 'Turno tomado');
+}
+
+async function notify_turn(ctx: Ctx) {
+	const id = String(ctx.body.turn_id ?? ctx.body.id ?? ctx.body._id ?? '');
+	if (!id) throw new Error('Se necesita un id de turno para notificar');
+	const doc = await need(ctx, 'ticketing-system-turn', id);
+	return ok([doc], 'Turno notificado');
+}
+
+async function end_attending_turn(ctx: Ctx) {
+	const id = String(ctx.body.turn_id ?? ctx.body.id ?? ctx.body._id ?? '');
+	if (!id) throw new Error('Se necesita un id de turno para finalizar');
+	const doc = await need(ctx, 'ticketing-system-turn', id);
+	const time = as_array(doc.time);
+	const time_box = as_array(doc.time_box);
+	const time_attending = as_array(doc.time_attending);
+	const stamp = now();
+	const updated = await ctx.store.update('ticketing-system-turn', id, {
+		status: 'completado',
+		estado: 'completado',
+		time: [...time, stamp],
+		time_box: [...time_box, stamp],
+		time_attending: [...time_attending, stamp],
+		fecha_fin: stamp,
+	});
+	return ok([updated], 'Turno finalizado');
+}
+
+async function reverse_geocode(ctx: Ctx) {
+	const lat = String(ctx.url.searchParams.get('lat') ?? '').trim();
+	const lon = String(ctx.url.searchParams.get('lon') ?? '').trim();
+	if (!lat || !lon) {
+		return Response.json({ error: 'lat y lon son requeridos' }, { status: 400 });
+	}
+	const url = new URL('https://nominatim.openstreetmap.org/reverse');
+	url.searchParams.set('format', 'jsonv2');
+	url.searchParams.set('lat', lat);
+	url.searchParams.set('lon', lon);
+	url.searchParams.set('addressdetails', '1');
+	url.searchParams.set('accept-language', 'es');
+	const upstream = await fetch(url, {
+		headers: { 'user-agent': 'ImperiumSIC-modular/1.0' },
+	});
+	const payload = await upstream.json().catch(() => ({ error: 'geocode falló' }));
+	return Response.json(payload, { status: upstream.ok ? 200 : upstream.status });
 }
 
 async function need(ctx: Ctx, resource: string, id?: string) {

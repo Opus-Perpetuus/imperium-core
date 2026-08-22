@@ -504,8 +504,9 @@ export class ImperiumStore {
 		return rows.map((r) => (r as { v: unknown }).v).filter((v) => v != null && v !== '');
 	}
 
-	async stats(resource: string): Promise<Record<string, unknown>> {
+	async stats(resource: string, url?: URL): Promise<Record<string, unknown>> {
 		if (resource === 'ticketing-system-turn') return this.turn_stats();
+		if (resource === 'citizen-report') return this.citizen_report_stats(url);
 		const qt = this.qt(resource);
 		const rows = await this.sql.unsafe(
 			`SELECT
@@ -693,6 +694,165 @@ export class ImperiumStore {
 			services_stats,
 			customer_types_stats,
 			__export_data: {},
+		};
+	}
+
+	async citizen_report_stats(url?: URL): Promise<Record<string, unknown>> {
+		const { rows } = await this.find_many('citizen-report', {
+			take: 5000,
+			include_inactive: false,
+		});
+		const date_from = url?.searchParams.get('date_from');
+		const date_to = url?.searchParams.get('date_to');
+		const priorities = [
+			...(url?.searchParams.getAll('priorities[]') ?? []),
+			...(url?.searchParams.getAll('priorities') ?? []),
+		].filter(Boolean);
+		const statuses = [
+			...(url?.searchParams.getAll('statuses[]') ?? []),
+			...(url?.searchParams.getAll('statuses') ?? []),
+		].filter(Boolean);
+		const from_ms = date_from ? new Date(date_from).getTime() : NaN;
+		const to_ms = date_to ? new Date(date_to).getTime() : Date.now();
+		const filtered = rows.filter((r) => {
+			if (Number.isFinite(from_ms)) {
+				const created = new Date(String(r.createdAt ?? r.created_at ?? '')).getTime();
+				if (!Number.isFinite(created) || created < from_ms || created > to_ms) {
+					return false;
+				}
+			}
+			if (priorities.length && !priorities.includes(String(r.priority ?? ''))) {
+				return false;
+			}
+			if (statuses.length && !statuses.includes(String(r.status ?? ''))) {
+				return false;
+			}
+			return true;
+		});
+		const status_of = (r: ImperiumDoc) => String(r.status ?? '').toLowerCase();
+		const priority_of = (r: ImperiumDoc) => String(r.priority ?? '').toUpperCase();
+		const pending = filtered.filter((r) => {
+			const st = status_of(r);
+			if (st === 'pendiente' || st === 'en_proceso') return true;
+			if (!st && ['MEDIA', 'ALTA', 'URGENTE', 'CRITICA'].includes(priority_of(r))) {
+				return true;
+			}
+			return false;
+		});
+		const urgent = filtered.filter((r) =>
+			['URGENTE', 'CRITICA'].includes(priority_of(r)),
+		);
+		const resolved = filtered.filter((r) => {
+			const st = status_of(r);
+			if (st === 'terminado') return true;
+			if (!st && priority_of(r) === 'BAJA') return true;
+			return false;
+		});
+		const group = (key: (r: ImperiumDoc) => string) => {
+			const map = new Map<string, number>();
+			for (const r of filtered) {
+				const name = key(r) || 'Sin valor';
+				map.set(name, (map.get(name) ?? 0) + 1);
+			}
+			return [...map.entries()]
+				.map(([name, value]) => ({ name, value }))
+				.sort((a, b) => b.value - a.value);
+		};
+		const ref_name = (v: unknown, fallback: string) => {
+			const o = as_object(v);
+			return String(o.name ?? (typeof v === 'string' && v ? v : fallback));
+		};
+		const day_of = (r: ImperiumDoc) => {
+			const d = new Date(String(r.createdAt ?? r.created_at ?? ''));
+			return Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
+		};
+		const month_of = (r: ImperiumDoc) => day_of(r).slice(0, 7);
+		const recent_cut = Date.now() - 7 * 24 * 60 * 60 * 1000;
+		const recent = filtered.filter((r) => {
+			const t = new Date(String(r.createdAt ?? r.created_at ?? '')).getTime();
+			return Number.isFinite(t) && t >= recent_cut;
+		});
+		const closed = filtered.filter((r) => status_of(r) === 'terminado');
+		const resolution = new Map<string, { sum: number; n: number }>();
+		for (const r of closed) {
+			const a = new Date(String(r.createdAt ?? r.created_at ?? '')).getTime();
+			const b = new Date(String(r.updatedAt ?? r.updated_at ?? '')).getTime();
+			if (!Number.isFinite(a) || !Number.isFinite(b) || b < a) continue;
+			const days = (b - a) / (1000 * 60 * 60 * 24);
+			const p = priority_of(r) || 'SIN_PRIORIDAD';
+			const cur = resolution.get(p) ?? { sum: 0, n: 0 };
+			cur.sum += days;
+			cur.n += 1;
+			resolution.set(p, cur);
+		}
+		const avg_resolution_time = [...resolution.entries()]
+			.map(([name, v]) => ({ name, value: Number((v.sum / v.n).toFixed(1)) }))
+			.sort((a, b) => a.name.localeCompare(b.name));
+		const phones = new Map<string, number>();
+		for (const r of filtered) {
+			const phone = String(r.citizen_phone ?? '').trim();
+			if (!phone) continue;
+			phones.set(phone, (phones.get(phone) ?? 0) + 1);
+		}
+		const citizen_recurrence = [...phones.entries()]
+			.filter(([, n]) => n > 1)
+			.map(([name, value]) => ({ name, value }))
+			.sort((a, b) => b.value - a.value)
+			.slice(0, 10);
+		const coord = (r: ImperiumDoc) => {
+			const c = as_object(r.report_coordinates);
+			const lat = Number(c.latitude ?? c.lat);
+			const lon = Number(c.longitude ?? c.lng ?? c.lon);
+			if (!Number.isFinite(lat) || !Number.isFinite(lon)) return '';
+			return `${lat.toFixed(2)},${lon.toFixed(2)}`;
+		};
+		const export_sheet = (title: string, chart_type: string) => ({
+			records: filtered,
+			metadata: {
+				title,
+				unit: 'Quejas',
+				total_records: filtered.length,
+				chart_type,
+			},
+			lookups: {},
+		});
+		return {
+			kpis: {
+				total_complaints: filtered.length,
+				pending_complaints: pending.length,
+				urgent_complaints: urgent.length,
+				resolved_complaints: resolved.length,
+			},
+			charts: {
+				priority_distribution: { data: group((r) => String(r.priority ?? 'SIN_PRIORIDAD')) },
+				status_distribution: { data: group((r) => String(r.status ?? 'SIN_ESTATUS')) },
+				employee_workload: {
+					data: group((r) => ref_name(r.employee_taken_the_report, 'Sin asignar')),
+				},
+				department_distribution: {
+					data: group((r) => ref_name(r.department, 'Sin departamento')),
+				},
+				recent_activity: { data: group(day_of).filter((x) => x.name && recent.some((r) => day_of(r) === x.name)) },
+				reporting_medium_distribution: {
+					data: group((r) => ref_name(r.reporting_medium, 'Sin medio')),
+				},
+				problem_distribution: {
+					data: group((r) => ref_name(r.citizen_report_problem, 'Sin problema')),
+				},
+				monthly_trend: { data: group(month_of).filter((x) => x.name) },
+				geographic_distribution: {
+					data: group((r) => ref_name(r.borough, coord(r) || 'Sin ubicación')),
+				},
+				avg_resolution_time: { data: avg_resolution_time },
+				citizen_recurrence: { data: citizen_recurrence },
+			},
+			__export_data: {
+				priority_distribution: export_sheet('Distribución por Prioridad', 'pie'),
+				status_distribution: export_sheet('Distribución por Estatus', 'pie'),
+				employee_workload: export_sheet('Carga de Trabajo por Empleado', 'bar'),
+				department_distribution: export_sheet('Distribución por Departamento', 'pie'),
+				recent_activity: export_sheet('Actividad Reciente (7 días)', 'line'),
+			},
 		};
 	}
 }

@@ -18,12 +18,14 @@ export async function handle_crud(
 	const body = async () => read_imperium_body(req);
 
 	if (method === 'GET' && segs[0] === 'statistics' && segs.length === 1) {
-		const stats = await store.stats(resource);
-		return json(
-			ok([stats], resource === 'ticketing-system-turn'
+		const stats = await store.stats(resource, url);
+		const message =
+			resource === 'ticketing-system-turn'
 				? 'Estadísticas obtenidas con información completa'
-				: 'Estadísticas obtenidas correctamente'),
-		);
+				: resource === 'citizen-report'
+					? 'Estadísticas de reportes ciudadanos obtenidas correctamente'
+					: 'Estadísticas obtenidas correctamente';
+		return json(ok([stats], message));
 	}
 	if (method === 'GET' && segs[0] === 'field-values' && segs[1]) {
 		const { q } = query_list(url);
