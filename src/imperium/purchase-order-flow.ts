@@ -9,7 +9,22 @@ import {
 import type { ImperiumStore } from './store.ts';
 
 const WAREHOUSE_REF = 'inventory-internal-location-warehouse';
+const RECEPTIONS_REF = 'inventory-internal-location-receptions';
 const RECEPTION_CONFIG_REF = 'configuration-inventory-recepcion-default-location';
+
+function config_ref(value: unknown): string {
+	let current = value;
+	if (typeof current === 'string') {
+		const trimmed = current.trim();
+		if (!trimmed) return '';
+		try {
+			current = JSON.parse(trimmed);
+		} catch {
+			current = trimmed.replace(/^"+|"+$/g, '');
+		}
+	}
+	return text(current);
+}
 const EDITABLE = new Set(['borrador', 'aprobada']);
 
 function text(value: unknown): string {
@@ -162,17 +177,18 @@ export async function resolve_reception_location(
 		}
 	}
 	if (!store.has('inventory-internal-location')) return null;
-	let ref = WAREHOUSE_REF;
+	let ref = RECEPTIONS_REF;
 	if (store.has('configuration')) {
 		const cfg =
 			(await store.find_where('configuration', { _ref: RECEPTION_CONFIG_REF })) ??
 			(await store.find_where('configuration', { ref: RECEPTION_CONFIG_REF }));
-		const configured = text(cfg?.value);
+		const configured = config_ref(cfg?.value);
 		if (configured) ref = configured;
 	}
 	const by_ref =
 		(await store.find_where('inventory-internal-location', { _ref: ref })) ??
 		(await store.find_where('inventory-internal-location', { ref })) ??
+		(await store.find_where('inventory-internal-location', { _ref: RECEPTIONS_REF })) ??
 		(await store.find_where('inventory-internal-location', { _ref: WAREHOUSE_REF }));
 	if (!by_ref) return null;
 	return {

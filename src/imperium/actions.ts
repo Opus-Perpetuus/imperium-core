@@ -93,6 +93,13 @@ import {
 } from './delivery-package-flow.ts';
 import { recibir_delivery_return } from './delivery-return-flow.ts';
 import { apply_purchase_receipt_stock } from './purchase-order-flow.ts';
+import {
+	acomodar_reception,
+	in_transit_for_product,
+	list_pending_for_product,
+	register_internal_transfer,
+	reservar_reception,
+} from './inventory-reception-flow.ts';
 
 type Ctx = {
 	store: ImperiumStore;
@@ -274,9 +281,15 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'inventory-physical-count:aplicar':
 			return apply_physical_count(ctx);
 		case 'inventory-reception:read_in_transit':
-			return receptions_for_product(ctx, ctx.params.producto_id, ['en_camino', 'pendiente', 'parcial']);
+			return ok(
+				[await in_transit_for_product(ctx.store, ctx.params.producto_id)],
+				'Cantidad en camino calculada correctamente',
+			);
 		case 'inventory-reception:read_pending_for_product':
-			return receptions_for_product(ctx, ctx.params.producto_id, ['pendiente', 'parcial']);
+			return ok(
+				await list_pending_for_product(ctx.store, ctx.params.producto_id),
+				'Recepciones en camino del producto',
+			);
 		case 'inventory-reception:create_from_purchase_order':
 			return reception_from_po(ctx);
 		case 'inventory-reception:confirm_reception':
@@ -2439,23 +2452,17 @@ async function import_location_tree(ctx: Ctx) {
 }
 
 async function register_transfer(ctx: Ctx) {
-	const producto = String(ctx.body.producto ?? ctx.body.product_id ?? '');
-	const cantidad = Number(ctx.body.cantidad ?? 0);
-	if (!producto || !(cantidad > 0)) throw new Error('Producto y cantidad requeridos');
-	const origin = String(ctx.body.origen ?? '');
-	const dest = String(ctx.body.destino ?? '');
-	await adjust_quant(ctx, producto, origin, -cantidad);
-	await adjust_quant(ctx, producto, dest, cantidad);
-	const mov = await ctx.store.insert('inventory-movement', {
-		name: `Traslado ${producto}`,
-		tipo: 'traslado',
-		producto,
-		cantidad,
-		origen: origin,
-		destino: dest,
-		fecha: now(),
+	await register_internal_transfer(ctx.store, {
+		producto: String(ctx.body.producto ?? ctx.body.product_id ?? ''),
+		ubicacion_origen: String(ctx.body.ubicacion_origen ?? ctx.body.origen ?? ''),
+		ubicacion_destino: String(ctx.body.ubicacion_destino ?? ctx.body.destino ?? ''),
+		cantidad: Number(ctx.body.cantidad ?? 0),
 	});
-	return ok([mov], 'Traslado registrado');
+	return {
+		data: null,
+		total_elementos: 1,
+		message: 'Traslado registrado correctamente',
+	};
 }
 
 async function adjust_quant(ctx: Ctx, producto: string, ubicacion: string, delta: number) {
@@ -2656,18 +2663,6 @@ async function apply_physical_count(ctx: Ctx) {
 	}, 'Conteo aplicado correctamente');
 }
 
-async function receptions_for_product(ctx: Ctx, producto: string, estados: string[]) {
-	const { rows } = await ctx.store.find_many('inventory-reception', { take: 500 });
-	const hit = rows.filter((r) => {
-		const st = String(r.estado ?? '');
-		if (estados.length && !estados.includes(st) && st) {
-			/* still include if articulos match and pending */
-		}
-		return as_array(r.articulos).some((a) => String(as_object(a).producto) === producto);
-	});
-	return ok(hit, 'Recepciones del producto');
-}
-
 async function reception_from_po(ctx: Ctx) {
 	const po = await need(ctx, 'purchase-order', ctx.params.purchase_order_id);
 	const articulos = as_array(po.articulos).map((raw) => {
@@ -2687,13 +2682,18 @@ async function reception_from_po(ctx: Ctx) {
 		name: `Recepción ${po.name}`,
 		purchase_order: po._id,
 		orden_compra: po._id,
+		purchase_order_nombre: po.name,
+		purchase_order_folio: po.folio_interno,
+		proveedor: po.proveedor,
+		proveedor_nombre: po.proveedor_nombre,
+		proveedor_rfc: po.proveedor_rfc,
 		estado: 'pendiente',
 		articulos,
 		total_esperado: articulos.reduce((s, a) => s + a.cantidad_esperada, 0),
 		total_recibido: 0,
-		referencia: po.folio_interno ?? po.name,
+		referencia: po.referencia_origen ?? po.folio_interno ?? po.name,
 	});
-	return ok([created], 'Recepción creada desde orden de compra');
+	return ok([created], 'Recepción pendiente creada correctamente');
 }
 
 async function confirm_reception(ctx: Ctx) {
@@ -2778,40 +2778,13 @@ async function create_backorder(ctx: Ctx) {
 }
 
 async function acomodar(ctx: Ctx) {
-	const rec = await need(ctx, 'inventory-reception', ctx.params.id);
-	const ubicacion = String(ctx.body.ubicacion ?? ctx.body.destino ?? '');
-	const items = as_array(rec.articulos).map((x) => as_object(x));
-	for (const item of items) {
-		const pending = Number(item.cantidad_recibida ?? 0) - Number(item.cantidad_acomodada ?? 0);
-		if (pending > 0 && ubicacion) {
-			await adjust_quant(ctx, String(item.producto), ubicacion, pending);
-			item.cantidad_acomodada = Number(item.cantidad_recibida ?? 0);
-		} else {
-			item.cantidad_acomodada = Number(item.cantidad_recibida ?? 0);
-		}
-	}
-	return patch_doc(ctx, 'inventory-reception', String(rec._id), {
-		articulos: items,
-		estado: 'acomodada',
-		ubicacion,
-		fecha_acomodo: now(),
-	}, 'Mercancía acomodada');
+	const updated = await acomodar_reception(ctx.store, ctx.params.id, ctx.body);
+	return ok([updated], 'Producto acomodado correctamente');
 }
 
 async function reservar(ctx: Ctx) {
-	const rec = await need(ctx, 'inventory-reception', ctx.params.id);
-	const pedido = String(ctx.body.pedido ?? ctx.body.documento ?? '');
-	const items = as_array(rec.articulos).map((x) => as_object(x));
-	for (const item of items) {
-		const reservas = as_array(item.reservas);
-		reservas.push({
-			documento: pedido,
-			cantidad: Number(ctx.body.cantidad ?? item.cantidad_recibida ?? 0),
-			fecha: now(),
-		});
-		item.reservas = reservas;
-	}
-	return patch_doc(ctx, 'inventory-reception', String(rec._id), { articulos: items }, 'Reserva registrada');
+	const updated = await reservar_reception(ctx.store, ctx.params.id, ctx.body);
+	return ok([updated], 'Mercancía en camino reservada correctamente');
 }
 
 async function apply_stock_in(
