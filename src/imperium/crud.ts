@@ -38,11 +38,13 @@ export async function handle_crud(
 		);
 	}
 	if (method === 'GET' && segs[0] === 'export.csv' && segs.length === 1) {
-		const { q, include_inactive } = query_list(url);
+		const { q, include_inactive, where, ids } = query_list(url);
 		const { rows } = await store.find_many(resource, {
 			q,
 			take: 5000,
 			include_inactive,
+			where: Object.keys(where).length ? where : undefined,
+			ids,
 		});
 		const keys = new Set<string>();
 		for (const r of rows) for (const k of Object.keys(r)) keys.add(k);
@@ -107,7 +109,10 @@ export async function handle_crud(
 	}
 	if (method === 'GET' && segs.length === 0) {
 		const q = query_list(url);
-		const { rows, total } = await store.find_many(resource, q);
+		const { rows, total } = await store.find_many(resource, {
+			...q,
+			where: Object.keys(q.where).length ? q.where : undefined,
+		});
 		return json({
 			...ok(rows, 'Ruta encontrada', total),
 			tipo_de_instancia: instance_type(store, resource, rows),

@@ -37,12 +37,35 @@ export async function read_imperium_body(
 	return {};
 }
 
+const LIST_RESERVED = new Set([
+	'termino',
+	'q',
+	'desde',
+	'skip',
+	'limite',
+	'take',
+	'sort',
+	'campoSort',
+	'include_inactive',
+	'include_historical',
+	'show_archived',
+	'export_excel',
+	'ids',
+	'after',
+	'cursor',
+	'view_list_view',
+	'batch_match_field',
+	'populate',
+]);
+
 export function query_list(url: URL): {
 	q: string;
 	skip: number;
 	take: number;
 	sort: string;
 	include_inactive: boolean;
+	where: Record<string, unknown>;
+	ids?: string[];
 } {
 	const q = (url.searchParams.get('termino') ?? url.searchParams.get('q') ?? '').trim();
 	const skip = Math.max(0, Number(url.searchParams.get('desde') ?? url.searchParams.get('skip') ?? 0) || 0);
@@ -53,5 +76,14 @@ export function query_list(url: URL): {
 	const include_inactive =
 		url.searchParams.get('include_inactive') === '1' ||
 		url.searchParams.get('include_inactive') === 'true';
-	return { q, skip, take, sort, include_inactive };
+	const where: Record<string, unknown> = {};
+	for (const [key, value] of url.searchParams.entries()) {
+		if (LIST_RESERVED.has(key) || value === '') continue;
+		where[key] = value;
+	}
+	const ids_raw = (url.searchParams.get('ids') ?? '').trim();
+	const ids = ids_raw
+		? ids_raw.split(',').map((s) => s.trim()).filter(Boolean)
+		: undefined;
+	return { q, skip, take, sort, include_inactive, where, ids };
 }

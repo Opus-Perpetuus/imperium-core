@@ -96,11 +96,7 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'status-option-control:resolve_spurious_options':
 			return ok([], 'Normalización aplicada');
 		case 'lista-asistencia:mark_attendance':
-			return patch_doc(ctx, 'lista-asistencia', ctx.params.id, {
-				asistio: true,
-				fecha_marcado: now(),
-				marcado_por: actor_name(ctx),
-			}, 'Asistencia marcada');
+			return mark_attendance(ctx);
 		case 'debug-log:read_logs':
 			return list_resource(ctx, 'debug-log');
 		case 'debug-log:read_related_request_log':
@@ -286,10 +282,7 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'pos-session:conclude_close_report':
 			return pos_conclude(ctx);
 		case 'pos-session:cancel_open_session':
-			return patch_doc(ctx, 'pos-session', ctx.params.id, {
-				estado: 'cancelada',
-				fecha_cancelacion: now(),
-			}, 'Sesión POS cancelada');
+			return pos_cancel(ctx);
 		case 'purchase-order:approve':
 			return po_approve(ctx);
 		case 'purchase-order:register_receipt':
@@ -381,7 +374,7 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'cobranza:checkout':
 			return cobranza_checkout(ctx);
 		case 'medical-file:read_pending':
-			return list_where(ctx, 'medical-file', { estado: 'pendiente' });
+			return medical_pending(ctx);
 		case 'medical-file:read_for_doctor':
 			return list_where(ctx, 'medical-file', {
 				doctor: String(ctx.actor?._id ?? ctx.url.searchParams.get('doctor') ?? ''),
@@ -595,7 +588,8 @@ async function cfdi_from(ctx: Ctx, source: string, id: string | undefined, kind:
 	const created = await ctx.store.insert('cfdi-document', {
 		name: `CFDI ${src.name ?? id}`,
 		description: `Generado desde ${source}`,
-		estado: 'borrador',
+		status: 'draft',
+		estado: 'draft',
 		origen: source,
 		origen_id: id,
 		tipo: kind,
@@ -611,7 +605,10 @@ async function cfdi_validate(ctx: Ctx) {
 	if (!payload.emisor && !doc.emisor) errors.push('Falta emisor');
 	if (!payload.receptor && !doc.receptor) errors.push('Falta receptor');
 	const valid = errors.length === 0;
+	const status = valid ? 'valid' : 'invalid';
 	const updated = await ctx.store.update('cfdi-document', String(doc._id), {
+		status,
+		estado: status,
 		validado: valid,
 		errores_validacion: errors,
 		fecha_validacion: now(),
@@ -631,7 +628,8 @@ async function cfdi_stamp(ctx: Ctx) {
 	}
 	const uuid = crypto.randomUUID();
 	const updated = await ctx.store.update('cfdi-document', String(doc._id), {
-		estado: 'timbrado',
+		status: 'stamped',
+		estado: 'stamped',
 		uuid,
 		fecha_timbrado: now(),
 		pac: process.env.CFDI_PAC ?? 'local-dev',
@@ -1317,7 +1315,8 @@ async function invoice_cfdi_draft(ctx: Ctx) {
 	const rec = await need(ctx, 'invoice-request', ctx.params.id);
 	const created = await ctx.store.insert('cfdi-document', {
 		name: `Borrador ${rec.name}`,
-		estado: 'borrador',
+		status: 'draft',
+		estado: 'draft',
 		origen: 'invoice-request',
 		origen_id: rec._id,
 		payload_canonico: rec,
@@ -1715,13 +1714,40 @@ async function pos_report(ctx: Ctx, tipo: string) {
 
 async function pos_conclude(ctx: Ctx) {
 	const session = await need(ctx, 'pos-session', ctx.params.id);
-	const report = await pos_report(ctx, 'cierre');
+	if (!is_pos_session_open(session)) {
+		throw new Error('Solo se puede concluir el cierre para sesiones abiertas');
+	}
+	await pos_report(ctx, 'cierre');
+	const closed_at = now();
 	const updated = await ctx.store.update('pos-session', String(session._id), {
+		status: 'cerrada',
 		estado: 'cerrada',
-		fecha_cierre: now(),
+		on_use: false,
+		closing_date: closed_at,
+		fecha_cierre: closed_at,
 		cierre: ctx.body,
 	});
-	return ok([updated], 'Cierre de sesión concluido');
+	return ok([updated], 'Cierre de caja concluido correctamente');
+}
+
+async function pos_cancel(ctx: Ctx) {
+	const session = await need(ctx, 'pos-session', ctx.params.id);
+	if (!is_pos_session_open(session)) {
+		throw new Error('Solo se pueden cancelar sesiones abiertas');
+	}
+	const closed_at = now();
+	return patch_doc(ctx, 'pos-session', String(session._id), {
+		status: 'cancelada',
+		estado: 'cancelada',
+		on_use: false,
+		closing_date: closed_at,
+		fecha_cancelacion: closed_at,
+	}, 'Sesión cancelada correctamente.');
+}
+
+function is_pos_session_open(doc: ImperiumDoc) {
+	const raw = String(doc.status ?? doc.estado ?? '').trim().toLowerCase();
+	return raw === 'abierta' || raw === 'open';
 }
 
 async function po_approve(ctx: Ctx) {
@@ -2263,6 +2289,63 @@ async function reverse_geocode(ctx: Ctx) {
 	});
 	const payload = await upstream.json().catch(() => ({ error: 'geocode falló' }));
 	return Response.json(payload, { status: upstream.ok ? 200 : upstream.status });
+}
+
+async function mark_attendance(ctx: Ctx) {
+	const entry = await need(ctx, 'lista-asistencia', ctx.params.id);
+	const estado = String(ctx.body.estado ?? 'pendiente').trim();
+	if (!['pendiente', 'presente', 'ausente'].includes(estado)) {
+		throw new Error('El estado de asistencia no es válido');
+	}
+	const justificada = estado === 'ausente' ? Boolean(ctx.body.justificada) : false;
+	const evidencia = estado === 'ausente' ? String(ctx.body.evidencia ?? '') : '';
+	const description = String(ctx.body.description ?? '');
+	const registro_id = String(entry.registro_asistencia_id ?? '');
+	let attendance: ImperiumDoc | null = null;
+	if (registro_id && ctx.store.has('registro-asistencias')) {
+		attendance = await ctx.store.find_id('registro-asistencias', registro_id);
+		if (!attendance) throw new Error('No se encontró el registro de asistencia');
+		const estatus = String(attendance.estatus ?? attendance.estado ?? '');
+		if (estatus === 'cerrada') {
+			throw new Error('La asistencia ya está cerrada y no permite modificar sus alumnos');
+		}
+	}
+	const patch: ImperiumDoc = {
+		estado,
+		justificada,
+		evidencia,
+		description,
+	};
+	if (estado === 'ausente' && ctx.store.has('registro-incidencias')) {
+		const incident = await ctx.store.insert('registro-incidencias', {
+			name: `Ausencia ${entry.alumno_nombre_snapshot ?? entry.name ?? ''}`.trim(),
+			description,
+			alumno_id: entry.alumno_id,
+			grupo_id: entry.grupo_id,
+			registro_asistencia_id: entry.registro_asistencia_id,
+			lista_asistencia_id: entry._id,
+			materia_id: attendance?.materia_id,
+			tipo: 'ausencia',
+			justificada,
+			evidencia,
+			fecha_asistencia: attendance?.fecha_asistencia ?? now(),
+		});
+		patch.registro_incidencia_id = incident._id;
+	}
+	return patch_doc(ctx, 'lista-asistencia', String(entry._id), patch, 'Asistencia actualizada correctamente');
+}
+
+async function medical_pending(ctx: Ctx) {
+	const by_status = await ctx.store.find_many('medical-file', {
+		where: { status: 'pendiente' },
+		take: 500,
+	});
+	if (by_status.rows.length) return ok(by_status.rows, 'Pendientes', by_status.total);
+	const by_estado = await ctx.store.find_many('medical-file', {
+		where: { estado: 'pendiente' },
+		take: 500,
+	});
+	return ok(by_estado.rows, 'Pendientes', by_estado.total);
 }
 
 async function need(ctx: Ctx, resource: string, id?: string) {
