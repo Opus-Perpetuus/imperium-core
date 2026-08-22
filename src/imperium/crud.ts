@@ -38,6 +38,7 @@ import {
 import { decorate_product, prepare_product_write } from './products-flow.ts';
 import { decorate_vehicle, prepare_vehicle_write } from './vehicle-flow.ts';
 import { is_citizen_report_resource, prepare_citizen_report_write } from './citizen-report-flow.ts';
+import { assert_report_template_write } from './reports-flow.ts';
 import { is_asociacion_resource, prepare_asociacion_write } from './asociaciones-flow.ts';
 import {
 	apply_incidencia_list_where,
@@ -398,6 +399,9 @@ export async function handle_crud(
 		if (is_incidencia_resource(resource)) {
 			incoming = prepare_incidencia_write(incoming, true);
 		}
+		if (resource === 'reports') {
+			await assert_report_template_write(store, incoming);
+		}
 		const doc = await before_create(store, resource, incoming, actor);
 		const created = await store.insert(resource, doc);
 		await link_attachments_to_record(store, resource, created);
@@ -530,6 +534,9 @@ export async function handle_crud(
 		if (is_incidencia_resource(resource)) {
 			b = prepare_incidencia_write(b, false);
 		}
+		if (resource === 'reports') {
+			await assert_report_template_write(store, { ...previous, ...b });
+		}
 		const updated = await store.update(resource, id, b);
 		if (updated) await link_attachments_to_record(store, resource, updated);
 		if (!updated) return json(resource, fail('No encontrado', 404).body, 404);
@@ -634,6 +641,9 @@ export async function handle_crud(
 		}
 		if (is_incidencia_resource(resource)) {
 			patched = prepare_incidencia_write(patched, false);
+		}
+		if (resource === 'reports') {
+			await assert_report_template_write(store, { ...previous, ...patched });
 		}
 		const updated = await store.update(resource, segs[0]!, patched);
 		if (updated) await link_attachments_to_record(store, resource, updated);

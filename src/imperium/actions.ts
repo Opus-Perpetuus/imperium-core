@@ -80,6 +80,12 @@ import {
 import { is_upload, persist_upload_as_attachment } from './uploads.ts';
 import { emit_messages_refresh } from './socket-stub.ts';
 import {
+	assert_report_template_write,
+	interpolate_report_template,
+	report_validation_ok,
+	resolve_report_records,
+} from './reports-flow.ts';
+import {
 	GROUP_REF_ALMACEN,
 	GROUP_REF_SURTIDORES,
 	actor_group_refs,
@@ -461,9 +467,11 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'reports:get_image_base64':
 			return attachment_base64(ctx, ctx.params.attach_id);
 		case 'reports:generate_pdf':
-		case 'reports:generate_full_report_pdf':
-		case 'reports:process_preview':
 			return report_pdf(ctx);
+		case 'reports:generate_full_report_pdf':
+			return report_full_pdf(ctx);
+		case 'reports:process_preview':
+			return report_preview(ctx);
 		case 'reports:get_pdf_direct_target':
 			return reports_pdf_direct_target(ctx);
 		case 'reports:print_pdf_direct':
@@ -4327,19 +4335,89 @@ async function report_record(ctx: Ctx) {
 }
 
 async function report_validate(ctx: Ctx) {
-	const html = String(ctx.body.html ?? ctx.body.template ?? '');
-	const placeholders = [...html.matchAll(/\{\{\s*([\w.]+)\s*\}\}/g)].map((m) => m[1]!);
-	return ok(
-		[{ is_valid: true, placeholders, invalid_placeholders: [], model_name: ctx.body.model }],
-		'Plantilla válida',
-	);
+	let related = String(ctx.body.related_model ?? ctx.body.model ?? '').trim();
+	let html = String(ctx.body.html_content ?? ctx.body.html ?? ctx.body.template ?? '');
+	const report_id = String(ctx.body._id ?? ctx.body.id ?? '').trim();
+	if ((!related || !html) && report_id && ctx.store.has('reports')) {
+		const stored = await ctx.store.find_id('reports', report_id);
+		related = related || String(stored?.related_model ?? '');
+		html = html || String(stored?.html_content ?? '');
+	}
+	if (!related || !html) {
+		return ok(
+			[{ is_valid: true, placeholders: [], invalid_placeholders: [], model_name: related }],
+			'Plantilla válida',
+		);
+	}
+	try {
+		const resource = resolve_model(ctx, related);
+		const fields = await build_report_field_metadata(ctx, resource);
+		return report_validation_ok(html, fields, related);
+	} catch {
+		return ok([], `Error obteniendo campos del modelo ${related}`);
+	}
 }
 
-async function report_pdf(ctx: Ctx) {
-	const html = interpolate(
-		String(ctx.body.htmlContent ?? ctx.body.html ?? ctx.body.template ?? '<html><body>{{name}}</body></html>'),
-		as_object(ctx.body.record ?? ctx.body.data ?? ctx.body),
-	);
+async function report_preview(ctx: Ctx) {
+	const html = String(ctx.body.htmlContent ?? ctx.body.html_content ?? '');
+	const model_name = String(ctx.body.model_name ?? ctx.body.related_model ?? '');
+	const record_id = String(ctx.body.record_id ?? '');
+	if (!html || (!ctx.body.recordData && !(model_name && record_id))) {
+		throw new Error('htmlContent y recordData (o model_name+record_id) son requeridos');
+	}
+	let record = as_object(ctx.body.recordData ?? ctx.body.record ?? {});
+	if (model_name && record_id) {
+		try {
+			const resource = resolve_model(ctx, model_name);
+			const loaded = await ctx.store.find_id(resource, record_id);
+			if (loaded) {
+				const [populated] = await ctx.store.populate_docs(resource, [loaded]);
+				record = populated ?? loaded;
+			}
+		} catch {
+			/* keep client record */
+		}
+	}
+	if (!Object.keys(record).length) {
+		throw new Error('No se pudo obtener el registro para la vista previa');
+	}
+	return {
+		html: interpolate_report_template(html, record, actor_name(ctx) || 'USER'),
+		processed: true,
+	};
+}
+
+async function report_full_pdf(ctx: Ctx) {
+	const report_id = String(ctx.body.report_id ?? '');
+	const model_name = String(ctx.body.model_name ?? '');
+	if (!report_id || !model_name) throw new Error('Report o HTML inválido');
+	const report = await ctx.store.find_id('reports', report_id);
+	const html_content = String(report?.html_content ?? '').trim();
+	if (!report || !html_content) throw new Error('Report o HTML inválido');
+	const resource = resolve_model(ctx, model_name);
+	const records = await resolve_report_records(ctx.store, resource, ctx.body);
+	if (!records.length) {
+		throw new Error('No se encontraron registros para generar el reporte');
+	}
+	const user_name = actor_name(ctx) || 'USER';
+	const now = new Date();
+	const rendered = records.length === 1
+		? interpolate_report_template(html_content, records[0]!, user_name, now)
+		: records
+			.map((row) => interpolate_report_template(html_content, row, user_name, now))
+			.join('<hr />');
+	const gen_name = String(report.generated_report_name || '{{name}}_{{timestamp_actual}}');
+	const filename = `${interpolate_report_template(gen_name, records[0]!, user_name, now) || 'REPORTE_GENERADO'}${
+		records.length > 1 ? `_LOTE_${records.length}` : ''
+	}.pdf`;
+	return html_to_pdf_response(rendered, filename);
+}
+
+async function html_to_pdf_response(html: string, filename?: string) {
+	const headers: Record<string, string> = { 'content-type': 'application/pdf' };
+	if (filename) {
+		headers['content-disposition'] = `attachment; filename="${filename.replace(/"/g, '')}"`;
+	}
 	const chrome = [
 		process.env.PUPPETEER_EXECUTABLE_PATH,
 		process.env.CHROME_PATH,
@@ -4367,7 +4445,7 @@ async function report_pdf(ctx: Ctx) {
 			const code = await proc.exited;
 			if (code === 0 && existsSync(pdf_path)) {
 				const pdf = await Bun.file(pdf_path).arrayBuffer();
-				return new Response(pdf, { headers: { 'content-type': 'application/pdf' } });
+				return new Response(pdf, { headers });
 			}
 		} catch {
 			/* fallback */
@@ -4385,7 +4463,7 @@ async function report_pdf(ctx: Ctx) {
 			await page.setContent(html, { waitUntil: 'networkidle0' });
 			const pdf = await page.pdf({ format: 'A4', printBackground: true });
 			await browser.close();
-			return new Response(pdf, { headers: { 'content-type': 'application/pdf' } });
+			return new Response(pdf, { headers });
 		}
 	} catch {
 		/* fallback html */
@@ -4393,11 +4471,14 @@ async function report_pdf(ctx: Ctx) {
 	return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } });
 }
 
-function interpolate(html: string, record: Record<string, unknown>) {
-	return html.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_, path: string) => {
-		const v = path.split('.').reduce<unknown>((acc, k) => as_object(acc)[k], record);
-		return v == null ? '' : String(v);
-	});
+async function report_pdf(ctx: Ctx) {
+	const html = interpolate_report_template(
+		String(ctx.body.htmlContent ?? ctx.body.html ?? ctx.body.template ?? '<html><body>{{name}}</body></html>'),
+		as_object(ctx.body.record ?? ctx.body.recordData ?? ctx.body.data ?? ctx.body),
+		actor_name(ctx) || String(ctx.body.user_name ?? 'USER'),
+	);
+	const filename = String(ctx.body.fileName ?? ctx.body.filename ?? 'report.pdf');
+	return html_to_pdf_response(html, filename);
 }
 
 function resolve_model(ctx: Ctx, raw: string) {
