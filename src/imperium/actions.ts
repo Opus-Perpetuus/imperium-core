@@ -453,6 +453,8 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return pedidos_sync_offline(ctx);
 		case 'lista-de-precios:sync_offline':
 			return lista_de_precios_sync_offline(ctx);
+		case 'sku:sync_offline':
+			return sku_sync_offline(ctx);
 		case 'pos-session:get_next_consecutive':
 			return pos_next_consecutive(ctx);
 		case 'pos-session:get_last_closure_reference':
@@ -2313,7 +2315,7 @@ async function reports_print_pdf_direct(ctx: Ctx) {
 	if (pdf_b64) {
 		bytes = Buffer.from(pdf_b64, 'base64');
 	} else {
-		const generated = await report_pdf(ctx);
+		const generated = await report_full_pdf(ctx);
 		if (!(generated instanceof Response)) {
 			throw new Error('No se pudo generar el PDF para imprimir.');
 		}
@@ -3768,6 +3770,37 @@ async function lista_de_precios_sync_offline(ctx: Ctx) {
 		};
 	});
 	return Response.json({ listasDePrecios });
+}
+
+const SKU_OFFLINE_OMIT = new Set([
+	'produccion',
+	'existenciaAlmacenes',
+	'lotes',
+	'proveedores',
+]);
+
+/**
+ * Catálogo de SKU vendibles para PouchDB. Mismo contrato que
+ * `GET|USE /sku/offline/sincronizar` del original: `{ skus }` sin
+ * producción, almacenes, lotes ni proveedores.
+ */
+async function sku_sync_offline(ctx: Ctx) {
+	if (!ctx.store.has('sku')) return Response.json({ skus: [] });
+	const { rows } = await ctx.store.find_many('sku', {
+		take: 5000,
+		populate: false,
+	});
+	const skus = rows
+		.filter((row) => row.is_active !== false && row.puedoVenderlo === true)
+		.map((row) => {
+			const out: Record<string, unknown> = {};
+			for (const [key, value] of Object.entries(row)) {
+				if (SKU_OFFLINE_OMIT.has(key) || key === 'payload') continue;
+				out[key] = value;
+			}
+			return out;
+		});
+	return Response.json({ skus });
 }
 
 function session_employee_id(ctx: Ctx) {

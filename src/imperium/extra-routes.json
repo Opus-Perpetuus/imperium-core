@@ -630,6 +630,18 @@
     "action": "sync_offline"
   },
   {
+    "resource": "sku",
+    "method": "get",
+    "path": "/offline/sincronizar",
+    "action": "sync_offline"
+  },
+  {
+    "resource": "sku",
+    "method": "post",
+    "path": "/offline/sincronizar",
+    "action": "sync_offline"
+  },
+  {
     "resource": "pos-session",
     "method": "get",
     "path": "/next-consecutive",
