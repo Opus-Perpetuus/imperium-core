@@ -166,13 +166,11 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'lista-asistencia:mark_attendance':
 			return mark_attendance(ctx);
 		case 'debug-log:read_logs':
-			return list_resource(ctx, 'debug-log');
+			return debug_read_logs(ctx);
 		case 'debug-log:read_related_request_log':
-			return list_where(ctx, 'debug-log', {
-				request_id: ctx.url.searchParams.get('request_id') ?? '',
-			});
+			return debug_read_related(ctx);
 		case 'debug-log:read_log_by_id':
-			return one(ctx, 'debug-log', ctx.params.id);
+			return debug_read_one(ctx);
 		case 'delivery-package:read_offline_catalog':
 			return delivery_offline_catalog(ctx);
 		case 'delivery-package:read_load_manifest':
@@ -211,7 +209,7 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'document-change-history:read_history_by_id':
 			return one(ctx, 'document-change-history', ctx.params.id);
 		case 'documentation-page:read_all':
-			return list_resource(ctx, 'documentation-page');
+			return documentation_read_all(ctx);
 		case 'documentation-page:get_structure':
 			return documentation_structure(ctx);
 		case 'documentation-page:search':
@@ -221,11 +219,14 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'documentation-page:sync_documents':
 			return documentation_sync(ctx);
 		case 'documentation-page:read_by_slug':
-			return one_where(ctx, 'documentation-page', { slug: ctx.params.slug });
+			return documentation_read_one(ctx, {
+				slug: ctx.params.slug,
+				folder: ctx.url.searchParams.get('folder') ?? '',
+			});
 		case 'documentation-page:get_adjacent':
 			return documentation_adjacent(ctx);
 		case 'documentation-page:read_by_id':
-			return one(ctx, 'documentation-page', ctx.params.id);
+			return documentation_read_one(ctx, { id: ctx.params.id });
 		case 'dynamic-dashboard:catalog':
 			return dashboard_catalog(ctx);
 		case 'dynamic-dashboard:widget_data':
@@ -1634,6 +1635,203 @@ function documentation_children(children: Map<string, { key: string; title: stri
 			children: documentation_children(child.children as Map<string, typeof child>),
 		}))
 		.sort((a, b) => String(a.key).localeCompare(String(b.key)));
+}
+
+async function documentation_read_all(ctx: Ctx) {
+	const { rows } = await ctx.store.find_many('documentation-page', {
+		take: 5000,
+		include_inactive: false,
+	});
+	const docs = rows
+		.filter((doc) => doc.is_active !== false)
+		.sort((a, b) => {
+			const section = String(a.section ?? '').localeCompare(String(b.section ?? ''));
+			if (section) return section;
+			return Number(a.order ?? 0) - Number(b.order ?? 0);
+		})
+		.map((doc) => ({
+			_id: doc._id,
+			title: doc.title ?? doc.name,
+			slug: doc.slug,
+			section: doc.section,
+			folder_path: doc.folder_path,
+			metadata: doc.metadata,
+			order: doc.order,
+			is_root_page: doc.is_root_page,
+			parent_hierarchy: doc.parent_hierarchy,
+		}));
+	return ok(docs, 'Documentos obtenidos correctamente.', docs.length);
+}
+
+async function documentation_read_one(
+	ctx: Ctx,
+	opts: { id?: string; slug?: string; folder?: string },
+) {
+	let doc: ImperiumDoc | null = null;
+	if (opts.id) {
+		doc = await ctx.store.find_id('documentation-page', opts.id);
+	} else if (opts.slug) {
+		const { rows } = await ctx.store.find_many('documentation-page', {
+			where: { slug: opts.slug },
+			take: 20,
+			include_inactive: true,
+		});
+		doc =
+			rows.find((row) => {
+				if (row.is_active === false) return false;
+				if (!opts.folder) return true;
+				return String(row.folder_path ?? '') === opts.folder;
+			}) ?? null;
+	}
+	if (!doc || doc.is_active === false) {
+		return ok([], 'Documento no encontrado.');
+	}
+	return ok([doc], 'Documento obtenido correctamente.');
+}
+
+async function debug_read_logs(ctx: Ctx) {
+	const page = Math.max(1, Number(ctx.url.searchParams.get('page') ?? 1) || 1);
+	const size = Math.min(200, Math.max(1, Number(ctx.url.searchParams.get('size') ?? 50) || 50));
+	const sort_field = ctx.url.searchParams.get('sort') || 'createdAt';
+	const sort_dir = ctx.url.searchParams.get('dir') === 'asc' ? 1 : -1;
+	const levels = String(ctx.url.searchParams.get('level') ?? '')
+		.split(',')
+		.map((s) => s.trim())
+		.filter(Boolean);
+	const search = String(ctx.url.searchParams.get('search') ?? '').trim().toLowerCase();
+	const user = String(ctx.url.searchParams.get('user') ?? '').trim().toLowerCase();
+	const origin_file = String(ctx.url.searchParams.get('origin_file') ?? '').trim().toLowerCase();
+	const request_results = String(ctx.url.searchParams.get('request_result') ?? '')
+		.split(',')
+		.map((s) => s.trim().toLowerCase())
+		.filter(Boolean);
+	const { rows } = await ctx.store.find_many('debug-log', {
+		take: 5000,
+		include_inactive: true,
+	});
+	const filtered = rows.filter((row) => {
+		if (levels.length && !levels.includes(String(row.level ?? ''))) return false;
+		if (search) {
+			const hay = [row.message, row.name, row.search_field, row.origin]
+				.map((v) => JSON.stringify(v ?? '').toLowerCase())
+				.join(' ');
+			if (!hay.includes(search)) return false;
+		}
+		if (user) {
+			const hay = [
+				row.user,
+				row.created_by,
+				as_object(row.request_context).user,
+				as_object(as_object(row.request_context).user).email,
+				as_object(as_object(row.request_context).user).name,
+			]
+				.map((v) => String(v ?? '').toLowerCase())
+				.join(' ');
+			if (!hay.includes(user)) return false;
+		}
+		if (origin_file) {
+			const origin = as_object(row.origin);
+			const file = String(origin.file ?? row.origin_file ?? '').toLowerCase();
+			if (!file.includes(origin_file)) return false;
+		}
+		if (request_results.length && !debug_matches_request_result(row, request_results)) {
+			return false;
+		}
+		return true;
+	});
+	const allowed = new Set([
+		'createdAt',
+		'level',
+		'message',
+		'origin.file',
+		'request_context.response.status_code',
+		'request_context.response.duration_ms',
+	]);
+	const field = allowed.has(sort_field) ? sort_field : 'createdAt';
+	filtered.sort((a, b) => {
+		const av = debug_sort_value(a, field);
+		const bv = debug_sort_value(b, field);
+		if (av < bv) return -1 * sort_dir;
+		if (av > bv) return 1 * sort_dir;
+		return 0;
+	});
+	const total = filtered.length;
+	const slice = filtered.slice((page - 1) * size, page * size);
+	return {
+		...ok(slice, 'Logs obtenidos', total),
+		page,
+		size,
+		total_pages: Math.ceil(total / size) || 0,
+	};
+}
+
+function debug_sort_value(row: ImperiumDoc, field: string): string | number {
+	if (field === 'createdAt') return created_ms(row);
+	if (field === 'origin.file') return String(as_object(row.origin).file ?? '');
+	if (field === 'request_context.response.status_code') {
+		return Number(as_object(as_object(row.request_context).response).status_code ?? 0);
+	}
+	if (field === 'request_context.response.duration_ms') {
+		return Number(as_object(as_object(row.request_context).response).duration_ms ?? 0);
+	}
+	return String(row[field] ?? '');
+}
+
+function debug_matches_request_result(row: ImperiumDoc, wanted: string[]): boolean {
+	const response = as_object(as_object(row.request_context).response);
+	const status = Number(response.status_code);
+	const result = String(response.result ?? '').toLowerCase();
+	return wanted.some((value) => {
+		if (value === 'success') {
+			if (Number.isFinite(status) && status >= 200 && status <= 299) return true;
+			return ['success', 'ok'].includes(result);
+		}
+		if (value === 'warning') {
+			if (Number.isFinite(status) && status >= 300 && status <= 399) return true;
+			return ['warning', 'notice', 'redirect', 'redirection'].includes(result);
+		}
+		if (value === 'error') {
+			if (Number.isFinite(status) && status >= 400 && status <= 599) return true;
+			return ['error', 'danger'].includes(result);
+		}
+		return result === value;
+	});
+}
+
+async function debug_read_one(ctx: Ctx) {
+	const doc = await ctx.store.find_id('debug-log', ctx.params.id);
+	if (!doc) return ok([], 'Log no encontrado');
+	return ok([doc], 'Log encontrado');
+}
+
+async function debug_read_related(ctx: Ctx) {
+	const route = String(ctx.url.searchParams.get('route') ?? ctx.url.searchParams.get('url') ?? '').trim();
+	const method = String(ctx.url.searchParams.get('method') ?? '').trim().toUpperCase();
+	if (!route || !method) {
+		return ok([], 'Debes indicar `route` y `method` para localizar el log.');
+	}
+	const status_code = Number(ctx.url.searchParams.get('status') ?? '');
+	const { rows } = await ctx.store.find_many('debug-log', {
+		take: 2000,
+		include_inactive: true,
+	});
+	const hits = rows
+		.filter((row) => {
+			const ctx_req = as_object(row.request_context);
+			if (String(ctx_req.route ?? '') !== route) return false;
+			if (String(ctx_req.method ?? '').toUpperCase() !== method) return false;
+			const level = String(row.level ?? '');
+			if (!['error', 'request'].includes(level)) return false;
+			if (Number.isFinite(status_code) && status_code) {
+				const code = Number(as_object(ctx_req.response).status_code);
+				if (code !== status_code) return false;
+			}
+			return true;
+		})
+		.sort((a, b) => created_ms(b) - created_ms(a))
+		.slice(0, 10);
+	if (!hits.length) return ok([], 'No se encontró un log relacionado.');
+	return ok([hits[0]], 'Log relacionado encontrado');
 }
 
 async function documentation_structure(ctx: Ctx) {
