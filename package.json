@@ -9,6 +9,7 @@
     "docker:build": "docker build --build-context kit=../kit -t ghcr.io/opus-perpetuus/imperium-core:0.1.0 ."
   },
   "dependencies": {
-    "@opus-perpetuus/imperium-core-kit": "file:./vendor/kit"
+    "@opus-perpetuus/imperium-core-kit": "file:./vendor/kit",
+    "argon2": "^0.45.1"
   }
 }

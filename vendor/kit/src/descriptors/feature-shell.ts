@@ -275,14 +275,15 @@ export function parse_list_query(
   opts?: { max_take?: number },
 ): Required<Pick<NoxListQuery, "take" | "skip">> & NoxListQuery {
   const max_take = opts?.max_take ?? 100;
-  const q_raw = search_params.get("q");
+  const q_raw = search_params.get("q") ?? search_params.get("termino");
   const q = q_raw && q_raw.trim() ? q_raw.trim() : undefined;
 
-  let take = Number(search_params.get("take") ?? 100);
+  let take = Number(search_params.get("take") ?? search_params.get("limite") ?? 100);
   if (!Number.isFinite(take) || take < 1) take = 100;
-  if (take > max_take) take = max_take;
+  const effective_max = search_params.has("limite") ? Math.max(max_take, 10000) : max_take;
+  if (take > effective_max) take = effective_max;
 
-  let skip = Number(search_params.get("skip") ?? 0);
+  let skip = Number(search_params.get("skip") ?? search_params.get("desde") ?? 0);
   if (!Number.isFinite(skip) || skip < 0) skip = 0;
   skip = Math.floor(skip);
 

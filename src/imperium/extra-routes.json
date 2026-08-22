@@ -1,0 +1,962 @@
+[
+  {
+    "resource": "attachment-management",
+    "method": "get",
+    "path": "/:id/view",
+    "action": "view"
+  },
+  {
+    "resource": "cfdi-catalog",
+    "method": "get",
+    "path": "/lookup",
+    "action": "lookup"
+  },
+  {
+    "resource": "cfdi-catalog",
+    "method": "get",
+    "path": "/search",
+    "action": "search"
+  },
+  {
+    "resource": "cfdi-catalog",
+    "method": "post",
+    "path": "/seed-samples",
+    "action": "seed_samples"
+  },
+  {
+    "resource": "cfdi-document",
+    "method": "post",
+    "path": "/from-invoice-request/:invoiceRequestId",
+    "action": "from_invoice_request"
+  },
+  {
+    "resource": "cfdi-document",
+    "method": "post",
+    "path": "/from-payroll-receipt/:payrollReceiptId",
+    "action": "from_payroll_receipt"
+  },
+  {
+    "resource": "cfdi-document",
+    "method": "post",
+    "path": "/from-purchase-order/:purchaseOrderId",
+    "action": "from_purchase_order"
+  },
+  {
+    "resource": "cfdi-document",
+    "method": "post",
+    "path": "/:id/validate",
+    "action": "validate_document"
+  },
+  {
+    "resource": "cfdi-document",
+    "method": "post",
+    "path": "/:id/stamp",
+    "action": "stamp_document"
+  },
+  {
+    "resource": "cfdi-document",
+    "method": "get",
+    "path": "/:id/export.xml",
+    "action": "export_xml"
+  },
+  {
+    "resource": "cfdi-document",
+    "method": "get",
+    "path": "/:id/export.json",
+    "action": "export_json"
+  },
+  {
+    "resource": "auto-increment-control",
+    "method": "post",
+    "path": "/:id/increment",
+    "action": "increment"
+  },
+  {
+    "resource": "auto-increment-control",
+    "method": "get",
+    "path": "/preview/:model_name/:increment_field",
+    "action": "preview"
+  },
+  {
+    "resource": "auto-increment-control",
+    "method": "get",
+    "path": "/available-models",
+    "action": "get_available_models"
+  },
+  {
+    "resource": "auto-increment-control",
+    "method": "post",
+    "path": "/consolidate-duplicates",
+    "action": "consolidate_duplicates"
+  },
+  {
+    "resource": "auto-increment-control",
+    "method": "post",
+    "path": "/normalize-counters",
+    "action": "normalize_counters"
+  },
+  {
+    "resource": "configuration",
+    "method": "post",
+    "path": "/ai/generate-text",
+    "action": "ai_generate_text"
+  },
+  {
+    "resource": "custom-pattern-increment-sequence-parts",
+    "method": "get",
+    "path": "/by-counter-config/:counter_config_id",
+    "action": "get_by_counter_config"
+  },
+  {
+    "resource": "interface-restriction",
+    "method": "get",
+    "path": "/runtime",
+    "action": "runtime_read"
+  },
+  {
+    "resource": "status-option-control",
+    "method": "post",
+    "path": "/module/:module_id/configuration",
+    "action": "save_module_configuration"
+  },
+  {
+    "resource": "status-option-control",
+    "method": "post",
+    "path": "/normalize-state-values",
+    "action": "normalize_state_values"
+  },
+  {
+    "resource": "status-option-control",
+    "method": "post",
+    "path": "/resolve-spurious-options",
+    "action": "resolve_spurious_options"
+  },
+  {
+    "resource": "lista-asistencia",
+    "method": "post",
+    "path": "/mark-attendance/:id",
+    "action": "mark_attendance"
+  },
+  {
+    "resource": "debug-log",
+    "method": "get",
+    "path": "/",
+    "action": "read_logs"
+  },
+  {
+    "resource": "debug-log",
+    "method": "get",
+    "path": "/related-request",
+    "action": "read_related_request_log"
+  },
+  {
+    "resource": "debug-log",
+    "method": "get",
+    "path": "/:id",
+    "action": "read_log_by_id"
+  },
+  {
+    "resource": "delivery-package",
+    "method": "get",
+    "path": "/offline-catalog",
+    "action": "read_offline_catalog"
+  },
+  {
+    "resource": "delivery-package",
+    "method": "get",
+    "path": "/load-manifest",
+    "action": "read_load_manifest"
+  },
+  {
+    "resource": "delivery-package",
+    "method": "get",
+    "path": "/by-pedido/:pedidoId",
+    "action": "read_by_pedido"
+  },
+  {
+    "resource": "delivery-package",
+    "method": "get",
+    "path": "/chofer/queue",
+    "action": "read_chofer_queue"
+  },
+  {
+    "resource": "delivery-package",
+    "method": "post",
+    "path": "/close-empaque/:pedidoId",
+    "action": "close_empaque"
+  },
+  {
+    "resource": "delivery-package",
+    "method": "post",
+    "path": "/:id/logistics-event",
+    "action": "apply_logistics_event"
+  },
+  {
+    "resource": "delivery-package",
+    "method": "post",
+    "path": "/:id/cancel",
+    "action": "cancel_package"
+  },
+  {
+    "resource": "delivery-return",
+    "method": "post",
+    "path": "/:id/recibir",
+    "action": "recibir"
+  },
+  {
+    "resource": "delivery-route",
+    "method": "get",
+    "path": "/route-map",
+    "action": "read_route_map"
+  },
+  {
+    "resource": "delivery-route",
+    "method": "get",
+    "path": "/my-routes",
+    "action": "read_chofer_routes"
+  },
+  {
+    "resource": "delivery-route",
+    "method": "post",
+    "path": "/:id/optimize",
+    "action": "optimize_route"
+  },
+  {
+    "resource": "delivery-route",
+    "method": "get",
+    "path": "/:id/driver-location",
+    "action": "read_driver_location"
+  },
+  {
+    "resource": "document-change-history",
+    "method": "post",
+    "path": "/comment",
+    "action": "create_comment"
+  },
+  {
+    "resource": "document-change-history",
+    "method": "get",
+    "path": "/",
+    "action": "read_history"
+  },
+  {
+    "resource": "document-change-history",
+    "method": "get",
+    "path": "/:id",
+    "action": "read_history_by_id"
+  },
+  {
+    "resource": "documentation-page",
+    "method": "get",
+    "path": "/",
+    "action": "read_all"
+  },
+  {
+    "resource": "documentation-page",
+    "method": "get",
+    "path": "/structure",
+    "action": "get_structure"
+  },
+  {
+    "resource": "documentation-page",
+    "method": "get",
+    "path": "/search",
+    "action": "search"
+  },
+  {
+    "resource": "documentation-page",
+    "method": "get",
+    "path": "/sync-status",
+    "action": "check_sync_status"
+  },
+  {
+    "resource": "documentation-page",
+    "method": "post",
+    "path": "/sync",
+    "action": "sync_documents"
+  },
+  {
+    "resource": "documentation-page",
+    "method": "get",
+    "path": "/by-slug/:slug",
+    "action": "read_by_slug"
+  },
+  {
+    "resource": "documentation-page",
+    "method": "get",
+    "path": "/adjacent/:slug",
+    "action": "get_adjacent"
+  },
+  {
+    "resource": "documentation-page",
+    "method": "get",
+    "path": "/:id",
+    "action": "read_by_id"
+  },
+  {
+    "resource": "dynamic-dashboard",
+    "method": "get",
+    "path": "/catalog",
+    "action": "catalog"
+  },
+  {
+    "resource": "dynamic-dashboard",
+    "method": "post",
+    "path": "/widget-data",
+    "action": "widget_data"
+  },
+  {
+    "resource": "dynamic-dashboard",
+    "method": "post",
+    "path": "/ai-query",
+    "action": "ai_query"
+  },
+  {
+    "resource": "interactive-manual",
+    "method": "get",
+    "path": "/board",
+    "action": "board"
+  },
+  {
+    "resource": "inventory-internal-location",
+    "method": "post",
+    "path": "/import-tree",
+    "action": "import_tree"
+  },
+  {
+    "resource": "inventory-movement",
+    "method": "post",
+    "path": "/traslado",
+    "action": "register_transfer"
+  },
+  {
+    "resource": "inventory-physical-count",
+    "method": "post",
+    "path": "/import-apertura",
+    "action": "import_apertura"
+  },
+  {
+    "resource": "inventory-physical-count",
+    "method": "post",
+    "path": "/:id/aplicar",
+    "action": "aplicar"
+  },
+  {
+    "resource": "inventory-reception",
+    "method": "get",
+    "path": "/en-camino/:producto_id",
+    "action": "read_in_transit"
+  },
+  {
+    "resource": "inventory-reception",
+    "method": "get",
+    "path": "/pendientes-producto/:producto_id",
+    "action": "read_pending_for_product"
+  },
+  {
+    "resource": "inventory-reception",
+    "method": "post",
+    "path": "/from-purchase-order/:purchase_order_id",
+    "action": "create_from_purchase_order"
+  },
+  {
+    "resource": "inventory-reception",
+    "method": "post",
+    "path": "/:id/confirmar-recepcion",
+    "action": "confirm_reception"
+  },
+  {
+    "resource": "inventory-reception",
+    "method": "post",
+    "path": "/:id/crear-faltante",
+    "action": "create_backorder"
+  },
+  {
+    "resource": "inventory-reception",
+    "method": "post",
+    "path": "/:id/acomodar",
+    "action": "acomodar"
+  },
+  {
+    "resource": "inventory-reception",
+    "method": "post",
+    "path": "/:id/reservar",
+    "action": "reservar"
+  },
+  {
+    "resource": "inventory-stock-quant",
+    "method": "get",
+    "path": "/picking-route",
+    "action": "read_picking_route"
+  },
+  {
+    "resource": "inventory-stock-quant",
+    "method": "get",
+    "path": "/consistencia",
+    "action": "validar_consistencia"
+  },
+  {
+    "resource": "invoice-request",
+    "method": "post",
+    "path": "/from-order/:orderId",
+    "action": "generate_from_order"
+  },
+  {
+    "resource": "invoice-request",
+    "method": "post",
+    "path": "/:id/authorize",
+    "action": "authorize"
+  },
+  {
+    "resource": "invoice-request",
+    "method": "post",
+    "path": "/:id/send-to-commercial",
+    "action": "send_to_commercial"
+  },
+  {
+    "resource": "invoice-request",
+    "method": "post",
+    "path": "/:id/mark-invoiced",
+    "action": "mark_invoiced"
+  },
+  {
+    "resource": "invoice-request",
+    "method": "post",
+    "path": "/:id/link-cfdi-document",
+    "action": "link_cfdi_document"
+  },
+  {
+    "resource": "invoice-request",
+    "method": "post",
+    "path": "/:id/request-cfdi-draft",
+    "action": "request_cfdi_draft"
+  },
+  {
+    "resource": "invoice-request",
+    "method": "post",
+    "path": "/:id/cancel-request",
+    "action": "cancel_request"
+  },
+  {
+    "resource": "messages",
+    "method": "get",
+    "path": "/my",
+    "action": "read_my_messages"
+  },
+  {
+    "resource": "messages",
+    "method": "get",
+    "path": "/conversations",
+    "action": "read_my_conversations"
+  },
+  {
+    "resource": "messages",
+    "method": "get",
+    "path": "/conversation/:participantId",
+    "action": "read_conversation"
+  },
+  {
+    "resource": "messages",
+    "method": "get",
+    "path": "/search",
+    "action": "search_chat_messages"
+  },
+  {
+    "resource": "messages",
+    "method": "post",
+    "path": "/chat",
+    "action": "create_chat_message"
+  },
+  {
+    "resource": "messages",
+    "method": "post",
+    "path": "/internal",
+    "action": "create_internal_message"
+  },
+  {
+    "resource": "messages",
+    "method": "post",
+    "path": "/interinstance",
+    "action": "create_interinstance_message"
+  },
+  {
+    "resource": "messages",
+    "method": "post",
+    "path": "/interinstance/receive",
+    "action": "receive_interinstance_message"
+  },
+  {
+    "resource": "module-management",
+    "method": "post",
+    "path": "/recreate-indexes",
+    "action": "recreate_indexes"
+  },
+  {
+    "resource": "module-management",
+    "method": "put",
+    "path": "/:id/activate",
+    "action": "activate_module"
+  },
+  {
+    "resource": "module-management",
+    "method": "put",
+    "path": "/:id/deactivate",
+    "action": "deactivate_module"
+  },
+  {
+    "resource": "module-management",
+    "method": "put",
+    "path": "/:id/force-recreate-data",
+    "action": "force_recreate_data"
+  },
+  {
+    "resource": "module-management",
+    "method": "put",
+    "path": "/:id/install-data",
+    "action": "install_module_data"
+  },
+  {
+    "resource": "module-management",
+    "method": "put",
+    "path": "/:id/generate-mock-data",
+    "action": "generate_mock_data"
+  },
+  {
+    "resource": "module-management",
+    "method": "put",
+    "path": "/:id/delete-mock-data",
+    "action": "delete_mock_data"
+  },
+  {
+    "resource": "module-management",
+    "method": "post",
+    "path": "/migrate-legacy",
+    "action": "migrate_legacy_modules"
+  },
+  {
+    "resource": "payroll-period",
+    "method": "post",
+    "path": "/:id/generate-drafts",
+    "action": "generate_drafts"
+  },
+  {
+    "resource": "payroll-receipt",
+    "method": "post",
+    "path": "/:id/prepare-stamp",
+    "action": "prepare_stamp"
+  },
+  {
+    "resource": "payroll-receipt",
+    "method": "get",
+    "path": "/:id/export-payload",
+    "action": "export_payload"
+  },
+  {
+    "resource": "notifications",
+    "method": "get",
+    "path": "/my-summary",
+    "action": "read_my_summary"
+  },
+  {
+    "resource": "notifications",
+    "method": "get",
+    "path": "/my-notifications",
+    "action": "read_my_notifications"
+  },
+  {
+    "resource": "notifications",
+    "method": "get",
+    "path": "/my-mentions",
+    "action": "read_my_mentions"
+  },
+  {
+    "resource": "notifications",
+    "method": "post",
+    "path": "/toast-digest",
+    "action": "create_toast_digest"
+  },
+  {
+    "resource": "notifications",
+    "method": "patch",
+    "path": "/mark-all-read",
+    "action": "mark_all_as_read"
+  },
+  {
+    "resource": "notifications",
+    "method": "patch",
+    "path": "/:id/read",
+    "action": "update_read_status"
+  },
+  {
+    "resource": "notifications",
+    "method": "post",
+    "path": "/:id/action",
+    "action": "apply_action"
+  },
+  {
+    "resource": "notifications",
+    "method": "delete",
+    "path": "/clear",
+    "action": "clear_my_notifications"
+  },
+  {
+    "resource": "notifications",
+    "method": "delete",
+    "path": "/:id",
+    "action": "delete_notification"
+  },
+  {
+    "resource": "pedidos",
+    "method": "post",
+    "path": "/:id/reclamar-surtir",
+    "action": "reclamar_surtir"
+  },
+  {
+    "resource": "pos-session",
+    "method": "get",
+    "path": "/next-consecutive",
+    "action": "get_next_consecutive"
+  },
+  {
+    "resource": "pos-session",
+    "method": "get",
+    "path": "/last-closure-reference/:branch_office_id",
+    "action": "get_last_closure_reference"
+  },
+  {
+    "resource": "pos-session",
+    "method": "put",
+    "path": "/runtime/:id",
+    "action": "save_runtime_state"
+  },
+  {
+    "resource": "pos-session",
+    "method": "get",
+    "path": "/report/partial/:id",
+    "action": "generate_partial_report"
+  },
+  {
+    "resource": "pos-session",
+    "method": "post",
+    "path": "/report/close/:id",
+    "action": "generate_close_report"
+  },
+  {
+    "resource": "pos-session",
+    "method": "post",
+    "path": "/report/close/conclude/:id",
+    "action": "conclude_close_report"
+  },
+  {
+    "resource": "pos-session",
+    "method": "post",
+    "path": "/cancel/:id",
+    "action": "cancel_open_session"
+  },
+  {
+    "resource": "purchase-order",
+    "method": "post",
+    "path": "/:id/approve",
+    "action": "approve"
+  },
+  {
+    "resource": "purchase-order",
+    "method": "post",
+    "path": "/:id/register-receipt",
+    "action": "register_receipt"
+  },
+  {
+    "resource": "purchase-order",
+    "method": "post",
+    "path": "/:id/register-invoice",
+    "action": "register_invoice"
+  },
+  {
+    "resource": "purchase-order",
+    "method": "post",
+    "path": "/:id/confirm",
+    "action": "confirm"
+  },
+  {
+    "resource": "purchase-order",
+    "method": "post",
+    "path": "/replenish-from-order/:pedido_id",
+    "action": "replenish_from_order"
+  },
+  {
+    "resource": "purchase-order",
+    "method": "post",
+    "path": "/parse-document",
+    "action": "parse_document"
+  },
+  {
+    "resource": "reports",
+    "method": "get",
+    "path": "/first-record/:model_name",
+    "action": "get_first_record"
+  },
+  {
+    "resource": "reports",
+    "method": "get",
+    "path": "/model-fields/:modelName",
+    "action": "get_model_fields"
+  },
+  {
+    "resource": "reports",
+    "method": "post",
+    "path": "/generate-pdf",
+    "action": "generate_pdf"
+  },
+  {
+    "resource": "reports",
+    "method": "get",
+    "path": "/model-fields-detailed/:model_identifier",
+    "action": "get_model_fields_detailed"
+  },
+  {
+    "resource": "reports",
+    "method": "get",
+    "path": "/model-records/:model_identifier",
+    "action": "get_model_records"
+  },
+  {
+    "resource": "reports",
+    "method": "get",
+    "path": "/model-record/:model_identifier/:record_id",
+    "action": "get_model_record_by_id"
+  },
+  {
+    "resource": "reports",
+    "method": "post",
+    "path": "/validate-template",
+    "action": "validate_template"
+  },
+  {
+    "resource": "reports",
+    "method": "get",
+    "path": "/image-base64/:attach_id",
+    "action": "get_image_base64"
+  },
+  {
+    "resource": "reports",
+    "method": "post",
+    "path": "/generate-full-pdf",
+    "action": "generate_full_report_pdf"
+  },
+  {
+    "resource": "reports",
+    "method": "get",
+    "path": "/pdf-direct-target",
+    "action": "get_pdf_direct_target"
+  },
+  {
+    "resource": "reports",
+    "method": "post",
+    "path": "/print-pdf-direct",
+    "action": "print_pdf_direct"
+  },
+  {
+    "resource": "reports",
+    "method": "post",
+    "path": "/process-preview",
+    "action": "process_preview"
+  },
+  {
+    "resource": "tickets",
+    "method": "get",
+    "path": "/admin",
+    "action": "read_admin_tickets"
+  },
+  {
+    "resource": "tickets",
+    "method": "get",
+    "path": "/admin/:id",
+    "action": "read_admin_ticket"
+  },
+  {
+    "resource": "tickets",
+    "method": "get",
+    "path": "/field-values/:field_name",
+    "action": "read_ticket_field_values"
+  },
+  {
+    "resource": "tickets",
+    "method": "get",
+    "path": "/public/metadata",
+    "action": "read_public_metadata"
+  },
+  {
+    "resource": "tickets",
+    "method": "post",
+    "path": "/public",
+    "action": "create_public_ticket"
+  },
+  {
+    "resource": "tickets",
+    "method": "post",
+    "path": "/internal",
+    "action": "create_internal_ticket"
+  },
+  {
+    "resource": "tickets",
+    "method": "post",
+    "path": "/interinstance",
+    "action": "create_interinstance_ticket"
+  },
+  {
+    "resource": "tickets",
+    "method": "get",
+    "path": "/interinstance/received",
+    "action": "read_received_interinstance_tickets"
+  },
+  {
+    "resource": "tickets",
+    "method": "post",
+    "path": "/internal/error",
+    "action": "create_error_ticket"
+  },
+  {
+    "resource": "tickets",
+    "method": "post",
+    "path": "/internal/log",
+    "action": "create_log_ticket"
+  },
+  {
+    "resource": "tickets",
+    "method": "post",
+    "path": "/interinstance/receive",
+    "action": "receive_interinstance_ticket"
+  },
+  {
+    "resource": "tickets",
+    "method": "patch",
+    "path": "/:id",
+    "action": "update_ticket"
+  },
+  {
+    "resource": "tickets",
+    "method": "get",
+    "path": "/my",
+    "action": "read_my_tickets"
+  },
+  {
+    "resource": "user",
+    "method": "post",
+    "path": "/:id/recovery-link",
+    "action": "recovery_link"
+  },
+  {
+    "resource": "user",
+    "method": "post",
+    "path": "/:id/unlock-auth",
+    "action": "unlock_auth"
+  },
+  {
+    "resource": "user-pin",
+    "method": "post",
+    "path": "/verify",
+    "action": "verify"
+  },
+  {
+    "resource": "user-settings",
+    "method": "get",
+    "path": "/",
+    "action": "get"
+  },
+  {
+    "resource": "user-settings",
+    "method": "put",
+    "path": "/",
+    "action": "upsert"
+  },
+  {
+    "resource": "user-settings",
+    "method": "put",
+    "path": "/global-default-theme",
+    "action": "set_global_default_theme"
+  },
+  {
+    "resource": "user-settings",
+    "method": "put",
+    "path": "/table-config",
+    "action": "save_table_config"
+  },
+  {
+    "resource": "view-config-preset",
+    "method": "get",
+    "path": "/available",
+    "action": "available"
+  },
+  {
+    "resource": "view-config-preset",
+    "method": "get",
+    "path": "/baseline",
+    "action": "baseline"
+  },
+  {
+    "resource": "view-config-preset",
+    "method": "post",
+    "path": "/assign",
+    "action": "assign"
+  },
+  {
+    "resource": "cobranza-payment",
+    "method": "post",
+    "path": "/apply",
+    "action": "apply_payment"
+  },
+  {
+    "resource": "cobranza-payment",
+    "method": "post",
+    "path": "/cancel/:id",
+    "action": "cancel_payment"
+  },
+  {
+    "resource": "cobranza",
+    "method": "get",
+    "path": "/lookup",
+    "action": "lookup"
+  },
+  {
+    "resource": "cobranza",
+    "method": "post",
+    "path": "/checkout",
+    "action": "checkout"
+  },
+  {
+    "resource": "medical-file",
+    "method": "get",
+    "path": "/pending",
+    "action": "read_pending"
+  },
+  {
+    "resource": "medical-file",
+    "method": "get",
+    "path": "/doctor",
+    "action": "read_for_doctor"
+  },
+  {
+    "resource": "ticketing-system-turn",
+    "method": "post",
+    "path": "/take-next-turn",
+    "action": "take_next_turn"
+  },
+  {
+    "resource": "ticketing-system-turn",
+    "method": "post",
+    "path": "/notify-turn",
+    "action": "notify_turn"
+  },
+  {
+    "resource": "ticketing-system-turn",
+    "method": "post",
+    "path": "/end-attending-turn",
+    "action": "end_attending_turn"
+  },
+  {
+    "resource": "violation",
+    "method": "post",
+    "path": "/challenge/:id",
+    "action": "challenge"
+  }
+]

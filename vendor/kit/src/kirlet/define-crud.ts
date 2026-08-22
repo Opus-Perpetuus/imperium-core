@@ -64,6 +64,10 @@ export type DefineCrudOptions = {
   options_map?: { value: string; label: string };
   hooks?: CrudHooks;
   id_prefix?: string;
+  /** Campos desconocidos van a `payload` (contrato Imperium / Angular). */
+  unknown_to_payload?: boolean;
+  /** Alias HTTP de Imperium: PUT /, DELETE /id/:id, statistics, field-values. */
+  imperium?: boolean;
 };
 
 function apply_field(
@@ -118,16 +122,30 @@ function pick_body(
   fields: Record<string, CrudFieldSpec>,
   body: Record<string, unknown>,
   mode: "create" | "update",
+  unknown_to_payload = false,
 ): DomainRow {
   const out: DomainRow = {};
+  const extra: DomainRow = {};
   for (const [key, value] of Object.entries(body)) {
-    if (key === "id") continue;
-    if (!(key in fields)) {
+    if (key === "id" || key === "_id") continue;
+    const mapped = key === "_ref" ? "ref" : key === "createdAt" ? "created_at" : key === "updatedAt" ? "updated_at" : key;
+    if (!(mapped in fields) && mapped !== "payload") {
+      if (unknown_to_payload) {
+        extra[key] = value;
+        continue;
+      }
       throw new KirletHttpError(400, "validation_error", `unknown field: ${key}`, {
         field: key,
       });
     }
-    out[key] = apply_field(fields, key, value, mode);
+    if (mapped === "payload") continue;
+    if (mapped in fields) out[mapped] = apply_field(fields, mapped, value, mode);
+  }
+  if (unknown_to_payload && Object.keys(extra).length) {
+    const prev = (body.payload && typeof body.payload === "object" && !Array.isArray(body.payload))
+      ? (body.payload as DomainRow)
+      : {};
+    out.payload = { ...prev, ...extra };
   }
   if (mode === "create") {
     for (const [key, spec] of Object.entries(fields)) {
@@ -176,6 +194,8 @@ export function define_crud(opts: DefineCrudOptions): KirletRouteTable {
   const active_val = opts.active_value ?? true;
   const inactive_val = opts.inactive_value ?? false;
   const id_prefix = opts.id_prefix ?? resource.replace(/s$/, "").slice(0, 8);
+  const unknown_to_payload = opts.unknown_to_payload === true || opts.imperium === true;
+  const imperium = opts.imperium !== false;
 
   const history_resource = (ctx: KirletCtx) => {
     // full resource id filled by serve layer via slug; here use relative name
@@ -243,11 +263,102 @@ export function define_crud(opts: DefineCrudOptions): KirletRouteTable {
           })),
         };
       }
-      return { data: rows };
+      const total = await ctx.data.count(table, find_opts.where, find_opts.search);
+      return { data: rows, total_elementos: total, message: "Ruta encontrada" };
     },
 
+    ...(imperium
+      ? {
+          [`GET /${resource}/statistics`]: async (ctx: KirletCtx) => {
+            const total = await ctx.data.count(table);
+            return {
+              data: [
+                {
+                  total_records: total,
+                  last_updated: new Date().toISOString(),
+                },
+              ],
+              total_elementos: 1,
+              message: "Estadísticas obtenidas correctamente",
+            };
+          },
+          [`GET /${resource}/field-values/:field`]: async (ctx: KirletCtx) => {
+            const field = ctx.params.field;
+            const rows = await ctx.data.findMany(table, { limit: 500 });
+            const seen = new Set<string>();
+            const data = [];
+            for (const r of rows) {
+              const v = r[field];
+              if (v == null) continue;
+              const k = String(v);
+              if (seen.has(k)) continue;
+              seen.add(k);
+              data.push({ value: v, label: k });
+            }
+            return { data, total_elementos: data.length, message: "Valores de campo" };
+          },
+          [`POST /${resource}/mass-query`]: async (ctx: KirletCtx) => {
+            const body = (await ctx.body<{ ids?: string[] }>()) ?? {};
+            const ids = body.ids ?? [];
+            const rows = [];
+            for (const id of ids) {
+              const row = await ctx.data.findOne(table, { id });
+              if (row) rows.push(row);
+            }
+            return { data: rows, total_elementos: rows.length, message: "Consulta masiva" };
+          },
+          [`PUT /${resource}`]: async (ctx: KirletCtx) => {
+            const body = (await ctx.body<Record<string, unknown>>()) ?? {};
+            const id = String(body._id ?? body.id ?? "");
+            if (!id) throw new KirletHttpError(400, "validation_error", "Se necesita un id para actualizar");
+            const existing = await ctx.data.findOne(table, { id });
+            if (!existing) throw new KirletHttpError(404, "not_found", "not found");
+            let patch = pick_body(fields, body, "update", unknown_to_payload);
+            patch = { ...patch, updated_at: now_iso() };
+            await ctx.data.update(table, { id }, patch);
+            return { data: null, total_elementos: 1, message: "Actualizado correctamente" };
+          },
+          [`PUT /${resource}/batch`]: async (ctx: KirletCtx) => {
+            const body = (await ctx.body<unknown>()) ?? [];
+            const items = Array.isArray(body) ? body : [];
+            const data = [];
+            for (const raw of items) {
+              const row = raw as Record<string, unknown>;
+              const id = String(row._id ?? row.id ?? "");
+              if (id) {
+                const existing = await ctx.data.findOne(table, { id });
+                if (existing) {
+                  const patch = pick_body(fields, row, "update", unknown_to_payload);
+                  const updated = await ctx.data.update(table, { id }, { ...patch, updated_at: now_iso() });
+                  if (updated) data.push(updated);
+                  continue;
+                }
+              }
+            }
+            return { data, total_elementos: data.length, message: "Lote aplicado" };
+          },
+          [`DELETE /${resource}/id/:id`]: async (ctx: KirletCtx) => {
+            const existing = await ctx.data.findOne(table, { id: ctx.params.id });
+            if (!existing) throw new KirletHttpError(404, "not_found", "not found");
+            if (soft) {
+              const updated = await ctx.data.update(
+                table,
+                { id: ctx.params.id },
+                { [soft_field]: inactive_val, updated_at: now_iso() },
+              );
+              return { data: updated, total_elementos: 1, message: "Eliminado correctamente" };
+            }
+            await ctx.data.delete(table, { id: ctx.params.id });
+            return { data: existing, total_elementos: 1, message: "Eliminado correctamente" };
+          },
+        }
+      : {}),
+
     [`GET /${resource}/:id`]: async (ctx) => {
-      const row = await ctx.data.findOne(table, { id: ctx.params.id });
+      const raw_id = ctx.params.id;
+      const row = raw_id.startsWith("ref----")
+        ? await ctx.data.findOne(table, { ref: raw_id.slice(7) })
+        : await ctx.data.findOne(table, { id: raw_id });
       if (!row) throw new KirletHttpError(404, "not_found", "not found");
       if (soft && row[soft_field] === inactive_val) {
         throw new KirletHttpError(404, "not_found", "not found");
@@ -257,7 +368,7 @@ export function define_crud(opts: DefineCrudOptions): KirletRouteTable {
 
     [`POST /${resource}`]: async (ctx) => {
       const body = (await ctx.body<Record<string, unknown>>()) ?? {};
-      let row = pick_body(fields, body, "create");
+      let row = pick_body(fields, body, "create", unknown_to_payload);
       const id =
         typeof body.id === "string" && body.id ? body.id : new_id(id_prefix);
       const ts = now_iso();
@@ -292,7 +403,7 @@ export function define_crud(opts: DefineCrudOptions): KirletRouteTable {
       const existing = await ctx.data.findOne(table, { id: ctx.params.id });
       if (!existing) throw new KirletHttpError(404, "not_found", "not found");
       const body = (await ctx.body<Record<string, unknown>>()) ?? {};
-      let patch = pick_body(fields, body, "update");
+      let patch = pick_body(fields, body, "update", unknown_to_payload);
       patch = { ...patch, updated_at: now_iso() };
       if (opts.hooks?.before_update) {
         patch = await opts.hooks.before_update(
