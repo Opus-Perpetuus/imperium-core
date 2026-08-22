@@ -57,6 +57,19 @@ import {
 	notification_update_read,
 	register_comment_mentions,
 } from './notifications.ts';
+import {
+	normalize_state_values,
+	resolve_spurious_options,
+	save_status_config,
+} from './status-options.ts';
+import {
+	delete_mock_data,
+	force_recreate_data,
+	generate_mock_data,
+	install_module_data,
+	migrate_legacy_modules,
+	recreate_indexes,
+} from './module-data.ts';
 
 type Ctx = {
 	store: ImperiumStore;
@@ -143,8 +156,9 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'status-option-control:save_module_configuration':
 			return save_status_config(ctx);
 		case 'status-option-control:normalize_state_values':
+			return normalize_state_values(ctx);
 		case 'status-option-control:resolve_spurious_options':
-			return ok([], 'Normalización aplicada');
+			return resolve_spurious_options(ctx);
 		case 'lista-asistencia:mark_attendance':
 			return mark_attendance(ctx);
 		case 'debug-log:read_logs':
@@ -274,17 +288,21 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'messages:receive_interinstance_message':
 			return receive_interinstance_message(ctx);
 		case 'module-management:recreate_indexes':
-			return ok([], 'Índices SQL ya aplicados por el núcleo');
+			return recreate_indexes(ctx);
 		case 'module-management:activate_module':
-			return patch_doc(ctx, 'module-management', ctx.params.id, { is_enable: true }, 'Módulo activado');
+			return patch_doc(ctx, 'module-management', ctx.params.id, { is_enable: true }, 'Módulo activado exitosamente');
 		case 'module-management:deactivate_module':
-			return patch_doc(ctx, 'module-management', ctx.params.id, { is_enable: false }, 'Módulo desactivado');
+			return patch_doc(ctx, 'module-management', ctx.params.id, { is_enable: false }, 'Operación completada exitosamente');
 		case 'module-management:force_recreate_data':
+			return force_recreate_data(ctx);
 		case 'module-management:install_module_data':
+			return install_module_data(ctx);
 		case 'module-management:generate_mock_data':
+			return generate_mock_data(ctx);
 		case 'module-management:delete_mock_data':
+			return delete_mock_data(ctx);
 		case 'module-management:migrate_legacy_modules':
-			return ok([], 'Operación de datos aplicada sobre SQL');
+			return migrate_legacy_modules(ctx);
 		case 'payroll-period:generate_drafts':
 			return payroll_drafts(ctx);
 		case 'payroll-receipt:prepare_stamp':
@@ -951,22 +969,6 @@ async function normalize_counters(ctx: Ctx) {
 	return ok(rows, 'Contadores normalizados');
 }
 
-async function save_status_config(ctx: Ctx) {
-	const module_id = ctx.params.module_id;
-	const existing = await ctx.store.find_where('status-option-control', { module_id });
-	if (existing) {
-		return patch_doc(ctx, 'status-option-control', String(existing._id), {
-			...ctx.body,
-			module_id,
-		}, 'Configuración guardada');
-	}
-	const created = await ctx.store.insert('status-option-control', {
-		name: `Estados ${module_id}`,
-		module_id,
-		...ctx.body,
-	});
-	return ok([created], 'Configuración guardada');
-}
 
 async function close_empaque(ctx: Ctx) {
 	const pedido = await need(ctx, 'pedidos', ctx.params.pedidoId);
