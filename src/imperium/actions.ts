@@ -180,14 +180,15 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'document-change-history:read_history_by_id':
 			return one(ctx, 'document-change-history', ctx.params.id);
 		case 'documentation-page:read_all':
+			return list_resource(ctx, 'documentation-page');
 		case 'documentation-page:get_structure':
-			return list_resource(ctx, 'documentation-page');
+			return documentation_structure(ctx);
 		case 'documentation-page:search':
-			return list_resource(ctx, 'documentation-page');
+			return documentation_search(ctx);
 		case 'documentation-page:check_sync_status':
-			return ok([{ synced: true }], 'Sincronización');
+			return documentation_sync_status(ctx);
 		case 'documentation-page:sync_documents':
-			return ok([], 'Documentos sincronizados');
+			return documentation_sync(ctx);
 		case 'documentation-page:read_by_slug':
 			return one_where(ctx, 'documentation-page', { slug: ctx.params.slug });
 		case 'documentation-page:get_adjacent':
@@ -1284,8 +1285,149 @@ async function documentation_adjacent(ctx: Ctx) {
 	const i = rows.findIndex((r) => String(r.slug) === ctx.params.slug);
 	return ok(
 		[{ prev: rows[i - 1] ?? null, next: rows[i + 1] ?? null, current: rows[i] ?? null }],
-		'Adyacentes',
+		'Documentos adyacentes obtenidos.',
 	);
+}
+
+function documentation_page_card(doc: ImperiumDoc) {
+	const meta = as_object(doc.metadata);
+	return {
+		title: meta.title ?? doc.title ?? doc.name,
+		slug: doc.slug,
+		description: meta.description ?? doc.description,
+		icon: meta.icon,
+		order: doc.order,
+		headings: doc.headings ?? [],
+	};
+}
+
+function documentation_children(children: Map<string, { key: string; title: string; pages: ImperiumDoc[]; children: Map<string, unknown> }>): unknown[] {
+	return [...children.values()]
+		.map((child) => ({
+			key: child.key,
+			title: child.title,
+			description: '',
+			icon: 'fa-folder',
+			pages: [...child.pages].sort((a, b) => Number(a.order ?? 0) - Number(b.order ?? 0)),
+			children: documentation_children(child.children as Map<string, typeof child>),
+		}))
+		.sort((a, b) => String(a.key).localeCompare(String(b.key)));
+}
+
+async function documentation_structure(ctx: Ctx) {
+	const { rows } = await ctx.store.find_many('documentation-page', { take: 2000 });
+	const root_pages: ReturnType<typeof documentation_page_card>[] = [];
+	const sections = new Map<
+		string,
+		{
+			key: string;
+			title: string;
+			description: string;
+			icon: string;
+			pages: ReturnType<typeof documentation_page_card>[];
+			children: Map<string, { key: string; title: string; pages: ReturnType<typeof documentation_page_card>[]; children: Map<string, unknown> }>;
+		}
+	>();
+	for (const doc of rows) {
+		if (doc.is_root_page === true || doc.is_root_page === 'true') {
+			root_pages.push(documentation_page_card(doc));
+			continue;
+		}
+		const section_key = String(doc.section ?? 'general');
+		if (!sections.has(section_key)) {
+			sections.set(section_key, {
+				key: section_key,
+				title: section_key,
+				description: '',
+				icon: 'fa-folder',
+				pages: [],
+				children: new Map(),
+			});
+		}
+		const section = sections.get(section_key)!;
+		const folder_parts = String(doc.folder_path ?? '')
+			.split('/')
+			.filter((part) => part && part !== 'children');
+		if (!folder_parts.length) {
+			section.pages.push(documentation_page_card(doc));
+			continue;
+		}
+		let current = section.children;
+		let path = '';
+		for (let i = 0; i < folder_parts.length; i++) {
+			path = path ? `${path}/${folder_parts[i]}` : folder_parts[i]!;
+			if (!current.has(path)) {
+				current.set(path, {
+					key: path,
+					title: folder_parts[i]!,
+					pages: [],
+					children: new Map(),
+				});
+			}
+			const folder = current.get(path)!;
+			if (i === folder_parts.length - 1) {
+				folder.pages.push(documentation_page_card(doc));
+			} else {
+				current = folder.children as typeof current;
+			}
+		}
+	}
+	const structure = {
+		root_pages: root_pages.sort((a, b) => Number(a.order ?? 0) - Number(b.order ?? 0)),
+		sections: [...sections.values()]
+			.map((section) => ({
+				...section,
+				pages: section.pages.sort((a, b) => Number(a.order ?? 0) - Number(b.order ?? 0)),
+				children: documentation_children(section.children),
+			}))
+			.sort((a, b) => a.key.localeCompare(b.key)),
+	};
+	return ok([structure], 'Estructura obtenida correctamente.');
+}
+
+async function documentation_search(ctx: Ctx) {
+	const query = String(ctx.url.searchParams.get('q') ?? ctx.url.searchParams.get('termino') ?? '').trim();
+	if (query.length < 2) {
+		return ok([], 'La búsqueda debe tener al menos 2 caracteres.');
+	}
+	const { rows, total } = await ctx.store.find_many('documentation-page', { q: query, take: 50 });
+	return ok(rows, 'Documentos encontrados.', total);
+}
+
+async function documentation_sync_status(ctx: Ctx) {
+	const { total } = await ctx.store.find_many('documentation-page', { take: 1 });
+	return ok(
+		[{ has_documents: total > 0, total_documents: total, synced: total > 0 }],
+		total > 0 ? 'Documentos encontrados.' : 'No hay documentos sincronizados.',
+	);
+}
+
+async function documentation_sync(ctx: Ctx) {
+	if (ctx.actor?._ref !== 'user-menu-management-0') {
+		return ok([], 'Solo administradores pueden sincronizar documentos.');
+	}
+	const documents = as_array(ctx.body.documents);
+	if (!documents.length) {
+		return ok([], 'No se proporcionaron documentos para sincronizar.');
+	}
+	const { rows } = await ctx.store.find_many('documentation-page', {
+		take: 5000,
+		include_inactive: true,
+	});
+	for (const row of rows) {
+		await ctx.store.remove('documentation-page', String(row._id));
+	}
+	const created: ImperiumDoc[] = [];
+	for (const raw of documents) {
+		const doc = as_object(raw);
+		created.push(
+			await ctx.store.insert('documentation-page', {
+				name: String(doc.title ?? doc.name ?? doc.slug ?? 'documento'),
+				...doc,
+			}),
+		);
+	}
+	return ok(created, `${created.length} documento(s) sincronizado(s) correctamente.`);
 }
 
 async function dashboard_catalog(ctx: Ctx) {
