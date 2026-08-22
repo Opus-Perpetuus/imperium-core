@@ -135,10 +135,13 @@ import {
 import {
 	assert_pos_runtime_writable,
 	build_last_closure_reference,
+	build_pos_session_report,
 	cancel_pos_session_patch,
 	conclude_pos_session_patch,
 	is_pos_session_open,
 	normalize_pos_runtime_state,
+	POS_REPORT_CLOSE,
+	POS_REPORT_PARTIAL,
 	preview_pos_consecutive,
 } from './pos-session-flow.ts';
 import {
@@ -3817,6 +3820,16 @@ async function pos_runtime(ctx: Ctx) {
 	return ok([runtime_state], 'Estado operativo del POS guardado correctamente');
 }
 
+async function pos_session_for_report(ctx: Ctx) {
+	const session = ctx.params.id
+		? await ctx.store.find_id('pos-session', ctx.params.id)
+		: null;
+	if (!session || session.is_active === false) {
+		throw new Error('No se encontró la sesión solicitada');
+	}
+	return session;
+}
+
 async function pos_report(ctx: Ctx, tipo: string) {
 	await assert_pos_pin(
 		ctx.store,
@@ -3827,66 +3840,16 @@ async function pos_report(ctx: Ctx, tipo: string) {
 			: { method: 'GET', path: '/pos-session/report/partial/:id', label: 'Reporte parcial POS' },
 		ctx.actor,
 	);
-	const session = await need(ctx, 'pos-session', ctx.params.id);
+	const session = await pos_session_for_report(ctx);
 	if (tipo === 'cierre' && !is_pos_session_open(session)) {
 		throw new Error('Solo se puede generar el cierre para sesiones abiertas');
 	}
-	const tickets = ctx.store.has('pos-tickets')
-		? (
-				await ctx.store.find_many('pos-tickets', {
-					where: { pos_session: String(session._id) },
-					take: 2000,
-					populate: false,
-				})
-			).rows
-		: as_array(session.ordenes).map(as_object);
-	const summaries = tickets.map((ticket) => {
-		const ticket_type = String(ticket.ticket_type ?? 'VENTA').toUpperCase();
-		const subtotal = Number(ticket.subtotal ?? ticket.total ?? ticket.importe ?? 0);
-		const withdrawal_amount = Number(ticket.withdrawal_amount ?? 0);
-		const is_withdrawal = ticket_type.includes('RETIRO');
-		const cash_effect = is_withdrawal ? -Math.abs(withdrawal_amount || subtotal) : subtotal;
-		return {
-			_id: String(ticket._id ?? ''),
-			ticket_sequence: String(ticket.ticket_sequence ?? ticket.name ?? ''),
-			ticket_type,
-			client_name: String(ticket.client_name ?? 'Publico general'),
-			withdrawal_amount,
-			withdrawal_reason: String(ticket.withdrawal_reason ?? ''),
-			withdrawal_signature: ticket.withdrawal_signature ?? '',
-			cash_effect,
-			display_amount: Math.abs(cash_effect),
-			subtotal,
-			total_paid: Number(ticket.total_paid ?? subtotal),
-			createdAt: ticket.createdAt ?? ticket.created_at ?? now(),
-		};
-	});
-	const total_sales = summaries
-		.filter((t) => !String(t.ticket_type).includes('RETIRO'))
-		.reduce((s, t) => s + Number(t.subtotal), 0);
-	const total_manual_withdrawals = summaries
-		.filter((t) => String(t.ticket_type).includes('RETIRO'))
-		.reduce((s, t) => s + Math.abs(Number(t.withdrawal_amount || t.subtotal)), 0);
-	const opening_money = Number(session.cash_register_opening_money ?? 0);
-	const branch = as_object(session.branch_office);
-	const cashier = as_object(session.cashier);
-	const report = {
-		report_type: tipo === 'cierre' ? 'CIERRE_CAJA' : 'VENTAS_PARCIAL',
-		generated_at: now(),
-		session_id: String(session._id),
-		session_name: String(session.name ?? ''),
-		branch_office_name: String(branch.name ?? session.branch_office ?? 'Sin asignar'),
-		opening_date: session.opening_date ?? now(),
-		closing_date: session.closing_date,
-		user_name: actor_name(ctx) || 'Usuario actual',
-		employee_name: String(session.cashier_name ?? cashier.name ?? 'Sin asignar'),
-		total_tickets: summaries.length,
-		total_sales: Number(total_sales.toFixed(2)),
-		total_manual_withdrawals: Number(total_manual_withdrawals.toFixed(2)),
-		expected_cash: Number((opening_money + total_sales - total_manual_withdrawals).toFixed(2)),
-		cash_register_opening_money: opening_money,
-		tickets: summaries,
-	};
+	const report = await build_pos_session_report(
+		ctx.store,
+		session,
+		tipo === 'cierre' ? POS_REPORT_CLOSE : POS_REPORT_PARTIAL,
+		actor_name(ctx),
+	);
 	return ok(
 		[report],
 		tipo === 'cierre'
@@ -3907,11 +3870,10 @@ async function pos_conclude(ctx: Ctx) {
 		},
 		ctx.actor,
 	);
-	const session = await need(ctx, 'pos-session', ctx.params.id);
+	const session = await pos_session_for_report(ctx);
 	if (!is_pos_session_open(session)) {
 		throw new Error('Solo se puede concluir el cierre para sesiones abiertas');
 	}
-	await pos_report(ctx, 'cierre');
 	const updated = await ctx.store.update(
 		'pos-session',
 		String(session._id),

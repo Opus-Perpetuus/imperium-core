@@ -4,7 +4,12 @@
 import { as_array, as_object, type ImperiumDoc } from './envelope.ts';
 import type { ImperiumStore } from './store.ts';
 
-const TICKET_TYPES = new Set(['VENTA', 'DEVOLUCION', 'RETIRO_MANUAL_CAJA']);
+const TICKET_VENTA = 'VENTA';
+const TICKET_DEVOLUCION = 'DEVOLUCION';
+const TICKET_RETIRO = 'RETIRO_MANUAL_CAJA';
+const TICKET_TYPES = new Set([TICKET_VENTA, TICKET_DEVOLUCION, TICKET_RETIRO]);
+export const POS_REPORT_PARTIAL = 'VENTAS_PARCIAL';
+export const POS_REPORT_CLOSE = 'CIERRE_CAJA';
 const INVALID_SIGNATURES = new Set([
 	'null',
 	'undefined',
@@ -405,6 +410,172 @@ export async function prepare_pos_ticket_create(
 	return out;
 }
 
+function ticket_created_at(ticket: ImperiumDoc): Date {
+	const raw = ticket.createdAt ?? ticket.created_at;
+	const date = raw instanceof Date ? raw : new Date(String(raw ?? ''));
+	return Number.isNaN(date.getTime()) ? new Date(0) : date;
+}
+
+function is_reportable_ticket(ticket: ImperiumDoc, generated_at: Date): boolean {
+	if (ticket.is_active === false) return false;
+	if (!text(ticket.ticket_sequence)) return false;
+	const state = text(ticket.state ?? ticket.estado).toLowerCase();
+	if (state === 'cancelado' || state === 'canceled' || state === 'cancelled') return false;
+	return ticket_created_at(ticket) <= generated_at;
+}
+
+function resolve_withdrawal_amount(ticket: ImperiumDoc, ticket_type: string): number {
+	if (ticket_type !== TICKET_RETIRO) return 0;
+	const withdrawal_amount = Number(ticket.withdrawal_amount ?? 0);
+	if (Number.isFinite(withdrawal_amount) && withdrawal_amount > 0) {
+		return round_money(withdrawal_amount);
+	}
+	return round_money(Number(ticket.subtotal ?? 0));
+}
+
+function ticket_cash_effect(ticket_type: string, subtotal: number, withdrawal_amount: number): number {
+	if (ticket_type === TICKET_RETIRO) return round_money(-withdrawal_amount);
+	return round_money(subtotal);
+}
+
+function ticket_display_amount(
+	ticket_type: string,
+	subtotal: number,
+	withdrawal_amount: number,
+): number {
+	if (ticket_type === TICKET_RETIRO) return round_money(withdrawal_amount);
+	return round_money(subtotal);
+}
+
+function ticket_client_name(ticket: ImperiumDoc, ticket_type: string): string {
+	if (ticket_type === TICKET_RETIRO) return 'Retiro manual de caja';
+	const full = `${text(ticket.client_name)} ${text(ticket.client_lastname)}`.trim();
+	return full || 'Publico general';
+}
+
+function summarize_pos_ticket(ticket: ImperiumDoc): ImperiumDoc {
+	const ticket_type = text(ticket.ticket_type).toUpperCase() || TICKET_VENTA;
+	const subtotal = Number(ticket.subtotal ?? 0);
+	const withdrawal_amount = resolve_withdrawal_amount(ticket, ticket_type);
+	return {
+		_id: String(ticket._id ?? ''),
+		ticket_sequence: text(ticket.ticket_sequence),
+		ticket_type,
+		client_name: ticket_client_name(ticket, ticket_type),
+		withdrawal_amount,
+		withdrawal_reason: text(ticket.withdrawal_reason),
+		withdrawal_signature: normalize_signature(ticket.withdrawal_signature),
+		cash_effect: ticket_cash_effect(ticket_type, subtotal, withdrawal_amount),
+		display_amount: ticket_display_amount(ticket_type, subtotal, withdrawal_amount),
+		subtotal,
+		total_paid: Number(ticket.total_paid ?? 0),
+		createdAt: ticket_created_at(ticket).toISOString(),
+	};
+}
+
+async function ticket_summaries_for_session(
+	store: ImperiumStore,
+	session_id: string,
+	generated_at: Date,
+): Promise<ImperiumDoc[]> {
+	if (!store.has('pos-tickets')) return [];
+	const { rows } = await store.find_many('pos-tickets', {
+		where: { pos_session: session_id },
+		take: 2000,
+		include_inactive: true,
+		populate: false,
+	});
+	return rows
+		.filter((ticket) => is_reportable_ticket(ticket, generated_at))
+		.sort((a, b) => ticket_created_at(a).getTime() - ticket_created_at(b).getTime())
+		.map(summarize_pos_ticket);
+}
+
+function total_sales_of(summaries: ImperiumDoc[]): number {
+	return summaries.reduce(
+		(sum, ticket) =>
+			text(ticket.ticket_type) === TICKET_VENTA ? sum + Number(ticket.subtotal ?? 0) : sum,
+		0,
+	);
+}
+
+function total_withdrawals_of(summaries: ImperiumDoc[]): number {
+	return round_money(
+		summaries.reduce(
+			(sum, ticket) =>
+				text(ticket.ticket_type) === TICKET_RETIRO
+					? sum + Number(ticket.withdrawal_amount ?? 0)
+					: sum,
+			0,
+		),
+	);
+}
+
+function expected_cash_of(opening_money: number, summaries: ImperiumDoc[]): number {
+	const movements = summaries.reduce((sum, ticket) => sum + Number(ticket.cash_effect ?? 0), 0);
+	return round_money(opening_money + movements);
+}
+
+function session_employee_name(session: ImperiumDoc): string {
+	const cashier_name = text(session.cashier_name);
+	if (cashier_name) return cashier_name;
+	const cashier = as_object(session.cashier);
+	const from_ref = text(cashier.name ?? cashier._name);
+	if (from_ref) return from_ref;
+	const active = [...as_array(session.usage_history)].reverse().find((raw) => {
+		const entry = as_object(raw);
+		return !text(entry.ended_at);
+	});
+	return text(as_object(active).cashier_name) || 'Sin asignar';
+}
+
+function session_branch_name(session: ImperiumDoc): string {
+	const branch = as_object(session.branch_office);
+	return text(branch.name ?? branch._name) || 'Sin asignar';
+}
+
+export async function build_pos_session_report(
+	store: ImperiumStore,
+	session: ImperiumDoc,
+	report_type: string,
+	user_name: string,
+	generated_at = new Date(),
+): Promise<ImperiumDoc> {
+	const summaries = await ticket_summaries_for_session(store, String(session._id), generated_at);
+	const opening_money = round_money(Number(session.cash_register_opening_money ?? 0));
+	let branch_office_name = session_branch_name(session);
+	if (branch_office_name === 'Sin asignar') {
+		const branch_id = ref_id(session.branch_office);
+		if (branch_id) {
+			const resolved = await resolve_branch_name(store, branch_id);
+			if (resolved && resolved !== 'SIN-SUCURSAL') branch_office_name = resolved;
+		}
+	}
+	let employee_name = session_employee_name(session);
+	if (employee_name === 'Sin asignar') {
+		const cashier_id = ref_id(session.cashier);
+		const resolved = await resolve_cashier_name(store, cashier_id);
+		if (resolved) employee_name = resolved;
+	}
+	return {
+		report_type,
+		generated_at: generated_at.toISOString(),
+		session_id: String(session._id),
+		session_name: text(session.name),
+		branch_office_name,
+		opening_date: session.opening_date ?? generated_at.toISOString(),
+		closing_date: session.closing_date ?? session.fecha_cierre,
+		user_name: user_name || 'Usuario actual',
+		employee_name,
+		total_tickets: summaries.length,
+		total_sales: round_money(total_sales_of(summaries)),
+		total_manual_withdrawals: total_withdrawals_of(summaries),
+		expected_cash: expected_cash_of(opening_money, summaries),
+		cash_register_opening_money: opening_money,
+		tickets: summaries,
+	};
+}
+
 export async function build_last_closure_reference(
 	store: ImperiumStore,
 	branch_office_id: string,
@@ -439,25 +610,10 @@ export async function build_last_closure_reference(
 			suggested_opening_money: 0,
 		};
 	}
-	const tickets = store.has('pos-tickets')
-		? (
-				await store.find_many('pos-tickets', {
-					where: { pos_session: String(last._id) },
-					take: 2000,
-					populate: false,
-				})
-			).rows
-		: [];
-	let total_sales = 0;
-	let withdrawals = 0;
-	for (const ticket of tickets) {
-		const type = text(ticket.ticket_type).toUpperCase();
-		if (type.includes('RETIRO')) {
-			withdrawals += Math.abs(Number(ticket.withdrawal_amount || ticket.subtotal || 0));
-		} else {
-			total_sales += Number(ticket.subtotal ?? ticket.total ?? 0);
-		}
-	}
+	const generated_at = last.closing_date || last.fecha_cierre
+		? new Date(String(last.closing_date ?? last.fecha_cierre))
+		: new Date();
+	const summaries = await ticket_summaries_for_session(store, String(last._id), generated_at);
 	const opening = round_money(Number(last.cash_register_opening_money ?? 0));
 	return {
 		found: true,
@@ -465,8 +621,8 @@ export async function build_last_closure_reference(
 		last_session_id: last._id,
 		last_session_name: last.name,
 		closing_date: last.closing_date ?? last.fecha_cierre,
-		total_sales: round_money(total_sales),
-		last_closure_amount: round_money(opening + total_sales - withdrawals),
+		total_sales: round_money(total_sales_of(summaries)),
+		last_closure_amount: expected_cash_of(opening, summaries),
 		suggested_opening_money: opening,
 	};
 }
