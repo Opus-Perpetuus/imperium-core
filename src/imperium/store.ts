@@ -754,21 +754,29 @@ export class ImperiumStore {
 		return rows.map((r) => (r as { v: unknown }).v).filter((v) => v != null && v !== '');
 	}
 
-	async stats(resource: string, url?: URL): Promise<Record<string, unknown>> {
-		if (resource === 'ticketing-system-turn') return this.turn_stats();
-		if (resource === 'citizen-report') return this.citizen_report_stats(url);
+	async stats(
+		resource: string,
+		url?: URL,
+		mongo_match?: Record<string, unknown> | null,
+	): Promise<Record<string, unknown>> {
+		if (resource === 'ticketing-system-turn') return this.turn_stats(mongo_match);
+		if (resource === 'citizen-report') return this.citizen_report_stats(url, mongo_match);
 		const qt = this.qt(resource);
+		const cols = this.column_names(resource);
 		const from = new Date();
 		from.setDate(from.getDate() - 30);
 		const from_iso = from.toISOString();
+		const params: unknown[] = [from_iso];
+		const extra = mongo_match ? mongo_match_to_sql(mongo_match, cols, params) : '';
+		const where = extra ? ` WHERE ${extra}` : '';
 		const rows = await this.sql.unsafe(
 			`SELECT
         count(*)::int AS total_records,
         count(*) FILTER (WHERE is_active IS DISTINCT FROM false)::int AS active_records,
         count(*) FILTER (WHERE is_active = false)::int AS inactive_records,
         count(*) FILTER (WHERE created_at >= $1)::int AS recent_records
-      FROM ${qt}`,
-			[from_iso],
+      FROM ${qt}${where}`,
+			params,
 		);
 		const r = (rows[0] ?? {}) as Record<string, number>;
 		const total_records = r.total_records ?? 0;
@@ -792,10 +800,11 @@ export class ImperiumStore {
 		};
 	}
 
-	async turn_stats(): Promise<Record<string, unknown>> {
+	async turn_stats(mongo_match?: Record<string, unknown> | null): Promise<Record<string, unknown>> {
 		const { rows } = await this.find_many('ticketing-system-turn', {
 			take: 5000,
 			include_inactive: true,
+			mongo_match,
 		});
 		const completed = rows.filter(
 			(r) => String(r.status ?? r.state ?? '') === 'completado',
@@ -960,10 +969,14 @@ export class ImperiumStore {
 		};
 	}
 
-	async citizen_report_stats(url?: URL): Promise<Record<string, unknown>> {
+	async citizen_report_stats(
+		url?: URL,
+		mongo_match?: Record<string, unknown> | null,
+	): Promise<Record<string, unknown>> {
 		const { rows } = await this.find_many('citizen-report', {
 			take: 5000,
 			include_inactive: false,
+			mongo_match,
 		});
 		const date_from = url?.searchParams.get('date_from');
 		const date_to = url?.searchParams.get('date_to');

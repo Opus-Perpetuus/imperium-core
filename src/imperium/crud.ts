@@ -103,7 +103,8 @@ export async function handle_crud(
 	const body = async () => read_imperium_body(req);
 
 	if (method === 'GET' && segs[0] === 'statistics' && segs.length === 1) {
-		const stats = await store.stats(resource, url);
+		const scope = await record_rule_scope(store, actor, resource, method);
+		const stats = await store.stats(resource, url, scope.match);
 		const message =
 			resource === 'ticketing-system-turn'
 				? 'Estadísticas obtenidas con información completa'
