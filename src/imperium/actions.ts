@@ -244,12 +244,9 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'payroll-period:generate_drafts':
 			return payroll_drafts(ctx);
 		case 'payroll-receipt:prepare_stamp':
-			return patch_doc(ctx, 'payroll-receipt', ctx.params.id, {
-				estado: 'listo_timbrado',
-				fecha_preparacion: now(),
-			}, 'Recibo listo para timbrar');
+			return payroll_prepare_stamp(ctx);
 		case 'payroll-receipt:export_payload':
-			return one(ctx, 'payroll-receipt', ctx.params.id);
+			return payroll_export_payload(ctx);
 		case 'notifications:read_my_summary':
 			return notification_summary(ctx);
 		case 'notifications:read_my_notifications':
@@ -1421,18 +1418,51 @@ async function payroll_drafts(ctx: Ctx) {
 	for (const emp of employees) {
 		created.push(
 			await ctx.store.insert('payroll-receipt', {
-				name: `${period.name} ${emp.name}`,
+				name: `Recibo ${emp.name} · ${period.name}`.slice(0, 200),
+				description: 'Borrador de nómina generado automáticamente',
 				employee: emp._id,
-				periodo: period._id,
-				estado: 'borrador',
+				payroll_period: period._id,
+				estado: 'calculated',
 			}),
 		);
 	}
 	await ctx.store.update('payroll-period', String(period._id), {
+		estado: 'open',
 		borradores_generados: true,
 		fecha_borradores: now(),
 	});
 	return ok(created, 'Borradores de nómina generados');
+}
+
+async function payroll_prepare_stamp(ctx: Ctx) {
+	const rec = await need(ctx, 'payroll-receipt', ctx.params.id);
+	const payload = rec.payload_cfdi ?? {
+		meta: { source: 'payroll_receipt', source_id: rec._id },
+		receptor: { nombre: rec.name },
+		estado: 'ready_to_stamp',
+	};
+	return patch_doc(
+		ctx,
+		'payroll-receipt',
+		String(rec._id),
+		{
+			estado: 'ready_to_stamp',
+			payload_cfdi: payload,
+			fecha_preparacion: now(),
+		},
+		'Recibo listo para timbrar',
+	);
+}
+
+async function payroll_export_payload(ctx: Ctx) {
+	const rec = await need(ctx, 'payroll-receipt', ctx.params.id);
+	const payload =
+		rec.payload_cfdi ??
+		({
+			meta: { source: 'payroll_receipt', source_id: rec._id },
+			receptor: { nombre: rec.name },
+		} as ImperiumDoc);
+	return ok([payload], 'Payload CFDI N exportado (sin timbrar)');
 }
 
 async function notification_summary(ctx: Ctx) {
