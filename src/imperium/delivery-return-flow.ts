@@ -154,7 +154,7 @@ async function register_return_receipt(
 	}
 }
 
-async function apply_quant_delta(
+export async function apply_quant_delta(
 	store: ImperiumStore,
 	params: {
 		producto: string;
@@ -195,7 +195,7 @@ async function apply_quant_delta(
 	else await store.insert('inventory-stock-quant', patch);
 }
 
-async function recompute_product_existencia(store: ImperiumStore, product_id: string) {
+export async function recompute_product_existencia(store: ImperiumStore, product_id: string) {
 	if (!store.has('products')) return;
 	let total = 0;
 	if (store.has('inventory-stock-quant')) {

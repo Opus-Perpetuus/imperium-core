@@ -92,6 +92,7 @@ import {
 	list_packages_by_pedido,
 } from './delivery-package-flow.ts';
 import { recibir_delivery_return } from './delivery-return-flow.ts';
+import { apply_purchase_receipt_stock } from './purchase-order-flow.ts';
 
 type Ctx = {
 	store: ImperiumStore;
@@ -2720,17 +2721,23 @@ async function confirm_reception(ctx: Ctx) {
 	});
 	for (const line of lines) {
 		line.item.cantidad_recibida = Number(line.item.cantidad_recibida ?? 0) + line.cantidad;
-		await apply_stock_in(ctx, String(line.producto), line.cantidad, Number(line.item.costo_unitario ?? 0), rec);
 	}
 	const total_esperado = items.reduce((s, i) => s + Number(i.cantidad_esperada ?? 0), 0);
 	const total_recibido = items.reduce((s, i) => s + Number(i.cantidad_recibida ?? 0), 0);
 	const next = total_recibido >= total_esperado ? 'recibida' : 'parcial';
 	if (rec.purchase_order || rec.orden_compra) {
-		await po_apply_receipt(ctx, String(rec.purchase_order ?? rec.orden_compra), lines.map((l) => ({
-			producto: l.producto,
-			cantidad: l.cantidad,
-			costo_unitario: Number(l.item.costo_unitario ?? 0),
-		})), false);
+		await po_apply_receipt(
+			ctx,
+			String(rec.purchase_order ?? rec.orden_compra),
+			lines.map((l) => ({
+				producto: l.producto,
+				cantidad: l.cantidad,
+				costo_unitario: Number(l.item.costo_unitario ?? 0),
+			})),
+			false,
+			`reception-${rec._id}-${Date.now()}`,
+			String(ctx.body.referencia ?? rec.referencia ?? ''),
+		);
 	}
 	const updated = await ctx.store.update('inventory-reception', String(rec._id), {
 		articulos: items,
@@ -2814,38 +2821,13 @@ async function apply_stock_in(
 	costo: number,
 	source: ImperiumDoc,
 ) {
-	const prod = await ctx.store.find_id('products', producto);
-	if (!prod) return;
-	const prev = Number(prod.existencia ?? 0);
-	const avg = Number(prod.costoCompraPromedio ?? 0);
-	const next = prev + cantidad;
-	const new_avg = next > 0 ? (prev * avg + cantidad * costo) / next : costo;
-	await ctx.store.update('products', producto, {
-		existencia: next,
-		ultimoCostoCompra: costo,
-		costoCompraPromedio: new_avg,
-		fechaUltimaCompra: now(),
+	await apply_purchase_receipt_stock(ctx.store, {
+		producto,
+		cantidad,
+		costo_unitario: costo,
+		source,
+		receipt_key: `receipt-${source._id}-${Date.now()}`,
 	});
-	if (ctx.store.has('inventory-cost-entry')) {
-		await ctx.store.insert('inventory-cost-entry', {
-			name: `${source.name} - ${prod.name}`,
-			producto,
-			cantidad,
-			costo_unitario: costo,
-			stock_previo: prev,
-			stock_resultante: next,
-			origen: source._id,
-		});
-	}
-	if (ctx.store.has('inventory-movement')) {
-		await ctx.store.insert('inventory-movement', {
-			name: `Entrada ${prod.name}`,
-			tipo: 'entrada',
-			producto,
-			cantidad,
-			origen: source._id,
-		});
-	}
 }
 
 async function picking_route(ctx: Ctx) {
@@ -4047,7 +4029,7 @@ async function po_approve(ctx: Ctx) {
 			/* migrated docs may use other labels */
 		}
 	}
-	if (['aprobada', 'confirmada', 'archivada'].includes(estado)) {
+	if (estado !== 'borrador' && estado !== 'DRAFT') {
 		throw new Error('No se encontró la orden o ya fue aprobada previamente');
 	}
 	const updated = await ctx.store.update('purchase-order', String(po._id), {
@@ -4083,6 +4065,7 @@ async function po_receive(ctx: Ctx, confirm_all: boolean) {
 			}))
 		: as_array(ctx.body.articulos).map(as_object);
 	if (!requested.length) throw new Error('La orden de compra no tiene cantidades pendientes por recibir');
+	const receipt_key = String(ctx.body.receipt_key ?? '').trim() || `receipt-${po._id}-${Date.now()}`;
 	const updated = await po_apply_receipt(
 		ctx,
 		String(po._id),
@@ -4090,8 +4073,12 @@ async function po_receive(ctx: Ctx, confirm_all: boolean) {
 			producto: String(l.producto ?? l.product_id ?? ''),
 			cantidad: Number(l.cantidad ?? 0),
 			costo_unitario: Number(l.costo_unitario ?? 0),
+			ubicacion_destino: String(l.ubicacion_destino ?? ''),
+			ubicacion_destino_nombre: String(l.ubicacion_destino_nombre ?? ''),
 		})),
 		confirm_all,
+		receipt_key,
+		String(ctx.body.referencia ?? ''),
 	);
 	return ok(
 		[updated],
@@ -4102,8 +4089,16 @@ async function po_receive(ctx: Ctx, confirm_all: boolean) {
 async function po_apply_receipt(
 	ctx: Ctx,
 	po_id: string,
-	lines: Array<{ producto: string; cantidad: number; costo_unitario: number }>,
+	lines: Array<{
+		producto: string;
+		cantidad: number;
+		costo_unitario: number;
+		ubicacion_destino?: string;
+		ubicacion_destino_nombre?: string;
+	}>,
 	force_confirm: boolean,
+	receipt_key = `receipt-${po_id}-${Date.now()}`,
+	referencia = '',
 ): Promise<ImperiumDoc> {
 	const po = await need(ctx, 'purchase-order', po_id);
 	const articulos = as_array(po.articulos).map(as_object);
@@ -4115,7 +4110,16 @@ async function po_apply_receipt(
 			throw new Error(`La recepción de ${item.producto_nombre ?? line.producto} excede la cantidad pendiente`);
 		}
 		item.cantidad_recibida = Number(item.cantidad_recibida ?? 0) + line.cantidad;
-		await apply_stock_in(ctx, line.producto, line.cantidad, line.costo_unitario || Number(item.costo_unitario ?? 0), po);
+		await apply_purchase_receipt_stock(ctx.store, {
+			producto: line.producto,
+			cantidad: line.cantidad,
+			costo_unitario: line.costo_unitario || Number(item.costo_unitario ?? 0),
+			source: po,
+			receipt_key,
+			ubicacion_destino: line.ubicacion_destino,
+			ubicacion_destino_nombre: line.ubicacion_destino_nombre,
+			referencia,
+		});
 	}
 	const total = articulos.reduce((s, a) => s + Number(a.cantidad ?? 0), 0);
 	const rec = articulos.reduce((s, a) => s + Number(a.cantidad_recibida ?? 0), 0);
@@ -4134,14 +4138,26 @@ async function po_apply_receipt(
 
 async function po_register_invoice(ctx: Ctx) {
 	const po = await need(ctx, 'purchase-order', ctx.params.id);
-	const facturas = as_array(po.facturas_proveedor);
+	const numero = String(ctx.body.numero_factura ?? ctx.body.folio ?? '').trim();
+	if (!numero) throw new Error('La factura 1 requiere número de factura');
+	const facturas = as_array(po.facturas_proveedor).map(as_object);
+	if (facturas.some((invoice) => String(invoice.numero_factura) === numero)) {
+		throw new Error('La factura del proveedor ya está registrada');
+	}
 	facturas.push({
 		...ctx.body,
+		numero_factura: numero,
 		fecha: now(),
 		estado: 'registrada',
 		usuario: actor_name(ctx),
 	});
-	return patch_doc(ctx, 'purchase-order', String(po._id), { facturas_proveedor: facturas }, 'Factura de proveedor registrada');
+	return patch_doc(
+		ctx,
+		'purchase-order',
+		String(po._id),
+		{ facturas_proveedor: facturas },
+		'Factura de proveedor registrada correctamente',
+	);
 }
 
 async function po_replenish(ctx: Ctx) {

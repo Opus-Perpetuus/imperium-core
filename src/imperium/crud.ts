@@ -21,6 +21,10 @@ import {
 	prepare_delivery_return_create,
 	prepare_delivery_return_update,
 } from './delivery-return-flow.ts';
+import {
+	prepare_purchase_order_create,
+	prepare_purchase_order_update,
+} from './purchase-order-flow.ts';
 import { build_access } from './auth.ts';
 import { is_seed_admin } from './group-access.ts';
 import {
@@ -257,6 +261,9 @@ export async function handle_crud(
 		if (resource === 'delivery-return') {
 			incoming = await prepare_delivery_return_create(incoming);
 		}
+		if (resource === 'purchase-order') {
+			incoming = await prepare_purchase_order_create(store, incoming);
+		}
 		if (resource === 'pos-tickets') {
 			await assert_pos_pin(
 				store,
@@ -287,7 +294,9 @@ export async function handle_crud(
 						? 'Bulto creado correctamente'
 						: resource === 'delivery-return'
 							? 'Devolución creada correctamente'
-							: 'Ruta creada';
+							: resource === 'purchase-order'
+								? 'Orden de compra creada correctamente'
+								: 'Ruta creada';
 		return json(
 			resource,
 			notice ? { ...ok([populated], message), user_pin_notice: notice } : ok([populated], message),
@@ -328,6 +337,9 @@ export async function handle_crud(
 		if (resource === 'delivery-return') {
 			b = await prepare_delivery_return_update(b, previous);
 		}
+		if (resource === 'purchase-order') {
+			b = await prepare_purchase_order_update(b, previous);
+		}
 		const updated = await store.update(resource, id, b);
 		if (updated) await link_attachments_to_record(store, resource, updated);
 		if (!updated) return json(resource, fail('No encontrado', 404).body, 404);
@@ -351,7 +363,9 @@ export async function handle_crud(
 						? 'Bulto actualizado correctamente'
 						: resource === 'delivery-return'
 							? 'Devolución actualizada correctamente'
-							: 'Actualizado correctamente',
+							: resource === 'purchase-order'
+								? 'Orden de compra actualizada correctamente'
+								: 'Actualizado correctamente',
 			),
 		);
 	}
@@ -377,6 +391,9 @@ export async function handle_crud(
 		if (resource === 'delivery-return') {
 			patched = await prepare_delivery_return_update(patched, previous);
 		}
+		if (resource === 'purchase-order') {
+			patched = await prepare_purchase_order_update(patched, previous);
+		}
 		const updated = await store.update(resource, segs[0]!, patched);
 		if (updated) await link_attachments_to_record(store, resource, updated);
 		if (!updated) return json(resource, fail('No encontrado', 404).body, 404);
@@ -399,7 +416,9 @@ export async function handle_crud(
 						? 'Bulto actualizado correctamente'
 						: resource === 'delivery-return'
 							? 'Devolución actualizada correctamente'
-							: 'Actualizado correctamente',
+							: resource === 'purchase-order'
+								? 'Orden de compra actualizada correctamente'
+								: 'Actualizado correctamente',
 			),
 		);
 	}
