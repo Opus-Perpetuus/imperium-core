@@ -120,10 +120,10 @@ function scalar_ref(v: unknown): unknown {
 	}
 	const o = v as Record<string, unknown>;
 	const id = o._id ?? o.id;
-	if (id == null || id === '') return v;
 	const allowed = new Set(['_id', 'id', 'name', 'description', 'is_active']);
-	if (Object.keys(o).every((k) => allowed.has(k))) return String(id);
-	return v;
+	if (!Object.keys(o).every((k) => allowed.has(k))) return v;
+	if (id == null || id === '') return null;
+	return String(id);
 }
 
 function omit(row: Record<string, unknown>, keys: string[]) {

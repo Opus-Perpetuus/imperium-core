@@ -455,10 +455,7 @@ export class ImperiumStore {
 			for (const [field, model] of Object.entries(field_map)) {
 				const target = this.resource_for_model(model);
 				const id = ref_id(doc[field]);
-				if (!id) {
-					out[field] = { _id: null, name: '' };
-					continue;
-				}
+				if (!id) continue;
 				const hit = target ? loaded.get(target)?.get(id) : undefined;
 				out[field] = hit
 					? { _id: hit._id, name: hit.name ?? '', description: hit.description ?? '' }
@@ -718,9 +715,22 @@ function turn_duration_minutes(row: ImperiumDoc): number {
 
 function ref_id(value: unknown): string {
 	if (value == null || value === '') return '';
+	if (typeof value === 'string') {
+		const s = value.trim();
+		if (s.startsWith('{') || (s.startsWith('"') && s.endsWith('"'))) {
+			try {
+				return ref_id(JSON.parse(s));
+			} catch {
+				return s.replace(/^"+|"+$/g, '');
+			}
+		}
+		return s;
+	}
 	if (typeof value === 'object' && !Array.isArray(value)) {
 		const o = value as Record<string, unknown>;
-		return String(o._id ?? o.id ?? '').trim();
+		const id = o._id ?? o.id;
+		if (id == null || id === '') return '';
+		return String(id).trim();
 	}
 	return String(value).trim();
 }
