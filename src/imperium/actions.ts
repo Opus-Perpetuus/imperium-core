@@ -4151,11 +4151,21 @@ async function po_replenish(ctx: Ctx) {
 	return ok([result], 'Reabasto automático actualizado');
 }
 
+async function resolve_report_target(ctx: Ctx, raw: string) {
+	const resource = resolve_model(ctx, raw);
+	await assert_target_model_read(ctx.store, ctx.actor, resource);
+	return resource;
+}
+
 async function report_first(ctx: Ctx) {
 	const model = ctx.params.model_name ?? ctx.params.modelName ?? '';
-	const resource = resolve_model(ctx, model);
-	const { rows } = await ctx.store.find_many(resource, { take: 1 });
-	return ok(rows, 'Primer registro');
+	try {
+		const resource = await resolve_report_target(ctx, model);
+		const { rows } = await ctx.store.find_many(resource, { take: 1 });
+		return ok(rows, 'Primer registro');
+	} catch {
+		return ok([], 'Primer registro');
+	}
 }
 
 const REPORT_SYSTEM_PATHS = new Set([
@@ -4352,7 +4362,7 @@ async function report_fields(ctx: Ctx, detailed: boolean) {
 	const model =
 		ctx.params.model_identifier ?? ctx.params.modelName ?? ctx.params.model_name ?? '';
 	try {
-		const resource = resolve_model(ctx, model);
+		const resource = await resolve_report_target(ctx, model);
 		const fields = await build_report_field_metadata(ctx, resource);
 		if (!detailed) {
 			return ok(
@@ -4367,13 +4377,23 @@ async function report_fields(ctx: Ctx, detailed: boolean) {
 }
 
 async function report_records(ctx: Ctx) {
-	const resource = resolve_model(ctx, ctx.params.model_identifier ?? '');
-	return list_resource({ ...ctx, resource } as Ctx, resource);
+	const model = ctx.params.model_identifier ?? '';
+	try {
+		const resource = await resolve_report_target(ctx, model);
+		return list_resource({ ...ctx, resource } as Ctx, resource);
+	} catch {
+		return ok([], `Error obteniendo registros del modelo ${model}`);
+	}
 }
 
 async function report_record(ctx: Ctx) {
-	const resource = resolve_model(ctx, ctx.params.model_identifier ?? '');
-	return one(ctx, resource, ctx.params.record_id);
+	const model = ctx.params.model_identifier ?? '';
+	try {
+		const resource = await resolve_report_target(ctx, model);
+		return one(ctx, resource, ctx.params.record_id);
+	} catch {
+		return ok([], `Error obteniendo registro del modelo ${model}`);
+	}
 }
 
 async function report_validate(ctx: Ctx) {
@@ -4392,7 +4412,7 @@ async function report_validate(ctx: Ctx) {
 		);
 	}
 	try {
-		const resource = resolve_model(ctx, related);
+		const resource = await resolve_report_target(ctx, related);
 		const fields = await build_report_field_metadata(ctx, resource);
 		return report_validation_ok(html, fields, related);
 	} catch {
@@ -4410,7 +4430,7 @@ async function report_preview(ctx: Ctx) {
 	let record = as_object(ctx.body.recordData ?? ctx.body.record ?? {});
 	if (model_name && record_id) {
 		try {
-			const resource = resolve_model(ctx, model_name);
+			const resource = await resolve_report_target(ctx, model_name);
 			const loaded = await ctx.store.find_id(resource, record_id);
 			if (loaded) {
 				const [populated] = await ctx.store.populate_docs(resource, [loaded]);
@@ -4453,7 +4473,7 @@ async function report_full_pdf(ctx: Ctx) {
 	const report = await ctx.store.find_id('reports', report_id);
 	const html_content = String(report?.html_content ?? '').trim();
 	if (!report || !html_content) throw new Error('Report o HTML inválido');
-	const resource = resolve_model(ctx, model_name);
+	const resource = await resolve_report_target(ctx, model_name);
 	const records = await resolve_report_records(ctx.store, resource, ctx.body);
 	if (!records.length) {
 		throw new Error('No se encontraron registros para generar el reporte');
