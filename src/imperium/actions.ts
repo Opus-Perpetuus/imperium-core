@@ -7,7 +7,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { as_array, as_object, fail, ok, type ImperiumDoc } from './envelope.ts';
 import { read_imperium_body } from './body.ts';
-import type { ImperiumStore } from './store.ts';
+import { qident, type ImperiumStore } from './store.ts';
 import { assert_pos_pin, verify_user_pin } from './user-pin.ts';
 import { stamp_with_pac } from './pac.ts';
 import {
@@ -494,6 +494,16 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return agua_reportes(ctx);
 		case 'agua:print_mode':
 			return agua_print_mode(ctx);
+		case 'physical-device:report':
+			return physical_device_report(ctx);
+		case 'model-tracker:get_all_models':
+			return model_tracker_all_models(ctx);
+		case 'model-tracker:get_search_engine_status':
+			return model_tracker_search_status(ctx);
+		case 'model-tracker:read_field_values_globally':
+			return model_tracker_field_values(ctx);
+		case 'model-tracker:trigger_reindex':
+			return model_tracker_reindex(ctx);
 		default:
 			return generic_action(ctx);
 	}
@@ -4976,6 +4986,204 @@ async function agua_print_mode(ctx: Ctx) {
 	const value = cfg_text(doc?.value, 'escpos').toLowerCase();
 	const mode = value === 'zpl' ? 'zpl' : 'escpos';
 	return ok([{ mode }], 'Tecnología de impresión');
+}
+
+const HARDWARE_REPORTING_FLAG = 'configuration-desktop-hardware-reporting-enabled';
+
+function truthy_flag(value: unknown, fallback = false) {
+	if (typeof value === 'boolean') return value;
+	if (typeof value === 'number') return value !== 0;
+	if (value == null) return fallback;
+	return ['true', '1', 'yes', 'on'].includes(String(value).trim().toLowerCase());
+}
+
+async function hardware_reporting_enabled(store: ImperiumStore) {
+	const flag =
+		(await store.find_where('configuration', { _ref: HARDWARE_REPORTING_FLAG })) ??
+		(await store.find_where('configuration', { ref: HARDWARE_REPORTING_FLAG }));
+	return truthy_flag(flag?.value, false);
+}
+
+async function physical_device_report(ctx: Ctx) {
+	if (!(await hardware_reporting_enabled(ctx.store))) {
+		throw new Error('El reporte de hardware de dispositivos está desactivado.');
+	}
+	const install_uuid = String(ctx.body.install_uuid ?? '').trim();
+	if (!install_uuid) {
+		throw new Error('Se requiere install_uuid para registrar el dispositivo.');
+	}
+	const payload = as_object(ctx.body);
+	const device_kind = String(
+		payload.device_kind ||
+			(payload.os_platform === 'android' ? 'mobile' : payload.os_platform ? 'desktop' : ''),
+	);
+	const doc: ImperiumDoc = {
+		name: String(payload.hostname || payload.model || install_uuid),
+		install_uuid,
+		machine_uuid: String(payload.machine_uuid ?? ''),
+		hostname: String(payload.hostname ?? ''),
+		manufacturer: String(payload.manufacturer ?? ''),
+		model: String(payload.model ?? ''),
+		serial: String(payload.serial ?? ''),
+		os_platform: String(payload.os_platform ?? ''),
+		os_distro: String(payload.os_distro ?? ''),
+		os_release: String(payload.os_release ?? ''),
+		os_arch: String(payload.os_arch ?? ''),
+		cpu_brand: String(payload.cpu_brand ?? ''),
+		cpu_cores: payload.cpu_cores ?? 0,
+		memory_total_bytes: payload.memory_total_bytes ?? 0,
+		gpu_primary: String(payload.gpu_primary ?? ''),
+		primary_mac: String(payload.primary_mac ?? ''),
+		primary_ip4: String(payload.primary_ip4 ?? ''),
+		device_kind,
+		app_version: String(payload.app_version ?? ''),
+		last_user_id: actor_id(ctx),
+		last_user_name: actor_name(ctx),
+		last_seen: now(),
+		raw_snapshot: payload.raw_snapshot ?? {},
+		is_active: true,
+	};
+	const existing = await ctx.store.find_where('physical-device', { install_uuid });
+	const saved = existing
+		? await ctx.store.update('physical-device', String(existing._id), doc)
+		: await ctx.store.insert('physical-device', doc);
+	return ok([saved ?? doc], 'Dispositivo registrado');
+}
+
+async function model_tracker_all_models(ctx: Ctx) {
+	const { rows, total } = await ctx.store.find_many('model-tracker', {
+		take: 5000,
+		include_inactive: true,
+	});
+	return ok(rows, 'Todos los modelos registrados fueron obtenidos.', total);
+}
+
+async function model_tracker_search_status() {
+	const host = String(
+		process.env.MEILI_HOST ??
+			process.env.MEILISEARCH_HOST ??
+			process.env.SEARCH_ENGINE_URL ??
+			'',
+	).trim();
+	let active = false;
+	if (host) {
+		try {
+			const res = await fetch(`${host.replace(/\/+$/, '')}/health`, {
+				signal: AbortSignal.timeout(1500),
+			});
+			active = res.ok;
+		} catch {
+			active = false;
+		}
+	}
+	return ok(
+		[{ active, configured: Boolean(host) }],
+		active
+			? 'Motor de búsqueda externo activo.'
+			: 'Motor de búsqueda externo no disponible.',
+	);
+}
+
+async function model_tracker_reindex(ctx: Ctx) {
+	const only_model = String(ctx.params.model_name ?? '').trim();
+	const force = ctx.url.searchParams.get('force') === 'true';
+	const { rows } = await ctx.store.find_many('module-management', {
+		take: 2000,
+		include_inactive: true,
+	});
+	for (const module_record of rows) {
+		const model_id = String(module_record.model_id ?? '');
+		if (
+			only_model &&
+			model_id !== only_model &&
+			model_id.toLowerCase() !== only_model.toLowerCase()
+		) {
+			continue;
+		}
+		const resource = ctx.store.resource_for_model(model_id);
+		if (!resource || !ctx.store.has(resource)) continue;
+		const docs = await ctx.store.find_many(resource, {
+			take: 2000,
+			include_inactive: true,
+		});
+		for (const doc of docs.rows) {
+			const search = [doc.name, doc.description, doc._ref]
+				.map((part) => String(part ?? '').trim())
+				.filter(Boolean)
+				.join(' ');
+			if (search && (force || String(doc.search_field ?? '') !== search)) {
+				await ctx.store.update(resource, String(doc._id), { search_field: search });
+			}
+		}
+	}
+	const forced = force ? ' (forzado)' : '';
+	return ok(
+		[],
+		only_model
+			? `Reindexado de "${only_model}" iniciado${forced}. El progreso se emite por sockets.`
+			: `Reindexado de todos los modelos iniciado${forced}. El progreso se emite por sockets.`,
+	);
+}
+
+async function model_tracker_field_values(ctx: Ctx) {
+	const model_tracker_id = String(ctx.params.model_tracker_id ?? '').trim();
+	const field_path = String(ctx.params.field_path ?? '').trim();
+	if (!model_tracker_id || !field_path) {
+		throw new Error('Se requiere el ID del modelo y la ruta del campo.');
+	}
+	if (!/^[A-Za-z0-9_][A-Za-z0-9_.]*$/.test(field_path)) {
+		throw new Error('La ruta del campo contiene caracteres no permitidos.');
+	}
+	const tracker =
+		(await ctx.store.find_id('model-tracker', model_tracker_id)) ??
+		(await ctx.store.find_where('model-tracker', { __model_name: model_tracker_id }));
+	if (!tracker) throw new Error('No se encontró el modelo especificado.');
+	const model_name = String(tracker.__model_name ?? tracker.name ?? '');
+	const resource = ctx.store.resource_for_model(model_name);
+	if (!resource || !ctx.store.has(resource)) {
+		throw new Error('El modelo no tiene una colección asociada.');
+	}
+	const termino = (ctx.url.searchParams.get('termino') ?? '').trim();
+	const desde = Math.max(Number.parseInt(ctx.url.searchParams.get('desde') ?? '0', 10) || 0, 0);
+	const limite = Math.min(
+		Number.parseInt(ctx.url.searchParams.get('limite') ?? '2000', 10) || 2000,
+		10000,
+	);
+	const cols = ctx.store.column_names(resource);
+	const qt = ctx.store.qt(resource);
+	const top = field_path.split('.')[0]!;
+	const params: unknown[] = [];
+	let value_expr: string;
+	if (cols.has(field_path)) value_expr = qident(field_path);
+	else if (cols.has(top)) value_expr = qident(top);
+	else {
+		params.push(field_path);
+		value_expr = `payload ->> $${params.length}`;
+	}
+	let where = `${value_expr} IS NOT NULL AND ${value_expr}::text <> ''`;
+	if (termino) {
+		params.push(`%${termino}%`);
+		where += ` AND ${value_expr}::text ILIKE $${params.length}`;
+	}
+	params.push(limite, desde);
+	const rows = await ctx.sql.unsafe(
+		`SELECT ${value_expr}::text AS value, count(*)::int AS count
+     FROM ${qt}
+     WHERE ${where}
+     GROUP BY 1
+     ORDER BY count DESC, value ASC
+     LIMIT $${params.length - 1} OFFSET $${params.length}`,
+		params,
+	);
+	const data = rows.map((row) => {
+		const value = String((row as { value: unknown }).value ?? '');
+		return {
+			value,
+			label: value,
+			count: Number((row as { count: unknown }).count ?? 0),
+		};
+	});
+	return ok(data, 'Valores');
 }
 
 function cfg_text(value: unknown, fallback = '') {

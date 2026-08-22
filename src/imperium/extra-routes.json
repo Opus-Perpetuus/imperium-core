@@ -1120,5 +1120,41 @@
     "method": "get",
     "path": "/print-mode",
     "action": "print_mode"
+  },
+  {
+    "resource": "physical-device",
+    "method": "post",
+    "path": "/report",
+    "action": "report"
+  },
+  {
+    "resource": "model-tracker",
+    "method": "get",
+    "path": "/all-models",
+    "action": "get_all_models"
+  },
+  {
+    "resource": "model-tracker",
+    "method": "get",
+    "path": "/search-engine/status",
+    "action": "get_search_engine_status"
+  },
+  {
+    "resource": "model-tracker",
+    "method": "get",
+    "path": "/global/:model_tracker_id/field-values/:field_path",
+    "action": "read_field_values_globally"
+  },
+  {
+    "resource": "model-tracker",
+    "method": "post",
+    "path": "/reindex",
+    "action": "trigger_reindex"
+  },
+  {
+    "resource": "model-tracker",
+    "method": "post",
+    "path": "/reindex/:model_name",
+    "action": "trigger_reindex"
   }
 ]
