@@ -121,6 +121,102 @@ export function is_pos_session_open(doc: ImperiumDoc): boolean {
 	return raw === 'abierta' || raw === 'open';
 }
 
+const POS_WORK_MODES = new Set(['ONLINE', 'OFFLINE']);
+
+function normalize_runtime_product_snapshot(snapshot: unknown): ImperiumDoc | undefined {
+	const product = as_object(snapshot);
+	if (!Object.keys(product).length) return undefined;
+	return {
+		_id: text(product._id),
+		name: text(product.name),
+		description: text(product.description),
+		codigo: text(product.codigo),
+		image: text(product.image),
+		costoVenta: round_money(Number(product.costoVenta ?? 0)),
+		etiquetas: as_array(product.etiquetas)
+			.map((tag) => text(tag))
+			.filter(Boolean),
+		unidad: text(product.unidad),
+		positional_code: text(product.positional_code),
+	};
+}
+
+function normalize_runtime_item(item: unknown): ImperiumDoc | null {
+	const runtime_item = as_object(item);
+	if (!Object.keys(runtime_item).length) return null;
+	const product_id = text(runtime_item.product_id);
+	const quantity = Number(runtime_item.quantity ?? 0);
+	const unit_price = Number(runtime_item.unit_price ?? 0);
+	if (!product_id || !Number.isFinite(quantity) || quantity <= 0) return null;
+	return {
+		product_id,
+		quantity: Math.max(1, Math.trunc(quantity)),
+		unit_price: Number.isFinite(unit_price) && unit_price > 0 ? round_money(unit_price) : 0,
+		product_snapshot: normalize_runtime_product_snapshot(runtime_item.product_snapshot),
+	};
+}
+
+function normalize_runtime_client(client: unknown): ImperiumDoc | null {
+	const runtime_client = as_object(client);
+	if (!Object.keys(runtime_client).length) return null;
+	return {
+		_id: text(runtime_client._id),
+		name: text(runtime_client.name),
+		calle: text(runtime_client.calle),
+		numeroInterior: text(runtime_client.numeroInterior),
+		numeroExterior: text(runtime_client.numeroExterior),
+		colonia: text(runtime_client.colonia),
+		codigoPostal: text(runtime_client.codigoPostal),
+		estado: text(runtime_client.estado),
+		pais: text(runtime_client.pais),
+		ciudad: text(runtime_client.ciudad),
+	};
+}
+
+export function normalize_pos_runtime_state(raw_state: unknown): ImperiumDoc {
+	const runtime_state = as_object(raw_state);
+	const raw_mode = text(runtime_state.mode ?? 'ONLINE').toUpperCase();
+	const mode = POS_WORK_MODES.has(raw_mode) ? raw_mode : 'ONLINE';
+	const raw_sequence = Number(runtime_state.sequence ?? 1);
+	const raw_cash = Number(runtime_state.cash ?? 0);
+	const items = as_array(runtime_state.items)
+		.map(normalize_runtime_item)
+		.filter((item): item is ImperiumDoc => Boolean(item));
+	return {
+		mode,
+		sequence: Number.isFinite(raw_sequence) && raw_sequence > 0 ? Math.trunc(raw_sequence) : 1,
+		cash: Number.isFinite(raw_cash) && raw_cash > 0 ? round_money(raw_cash) : 0,
+		items,
+		client: normalize_runtime_client(runtime_state.client),
+		updated_at: new Date().toISOString(),
+	};
+}
+
+export function assert_pos_runtime_writable(session: ImperiumDoc | null, actor: ImperiumDoc | null) {
+	const current_user_id = actor_id(actor);
+	if (!current_user_id) {
+		throw new Error('No se pudo validar el usuario que intenta guardar el POS');
+	}
+	if (!session) {
+		throw new Error('La sesión POS especificada no existe');
+	}
+	if (session.is_active === false) {
+		throw new Error('No se puede guardar el POS porque la sesión está inactiva');
+	}
+	if (!is_pos_session_open(session)) {
+		throw new Error('No se puede guardar el POS porque la sesión no está abierta');
+	}
+	const active_usage = [...as_array(session.usage_history)].reverse().find((raw) => {
+		const entry = as_object(raw);
+		return !text(entry.ended_at);
+	});
+	const active_usage_user_id = ref_id(as_object(active_usage).used_by_user);
+	const created_by_user_id = ref_id(session.created_by);
+	if (created_by_user_id !== current_user_id && active_usage_user_id !== current_user_id) {
+		throw new Error('No se puede guardar el POS porque la sesión no pertenece al usuario actual');
+	}
+}
+
 export async function preview_pos_consecutive(store: ImperiumStore): Promise<number> {
 	let floor = 0;
 	if (store.has('pos-session')) {

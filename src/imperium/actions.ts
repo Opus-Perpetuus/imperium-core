@@ -127,10 +127,12 @@ import {
 	take_next_turn as take_ticketing_turn,
 } from './ticketing-turn-flow.ts';
 import {
+	assert_pos_runtime_writable,
 	build_last_closure_reference,
 	cancel_pos_session_patch,
 	conclude_pos_session_patch,
 	is_pos_session_open,
+	normalize_pos_runtime_state,
 	preview_pos_consecutive,
 } from './pos-session-flow.ts';
 import {
@@ -3800,11 +3802,13 @@ async function pos_last_closure(ctx: Ctx) {
 }
 
 async function pos_runtime(ctx: Ctx) {
-	const updated = await ctx.store.update('pos-session', ctx.params.id, {
-		runtime_state: ctx.body.runtime_state ?? ctx.body,
-	});
-	if (!updated) throw new Error('Se requiere el id de la sesión POS');
-	return ok([ctx.body.runtime_state ?? ctx.body], 'Estado operativo del POS guardado correctamente');
+	const session_id = String(ctx.params.id ?? '').trim();
+	if (!session_id) throw new Error('Se requiere el id de la sesión POS');
+	const session = await ctx.store.find_id('pos-session', session_id);
+	assert_pos_runtime_writable(session, ctx.actor);
+	const runtime_state = normalize_pos_runtime_state(ctx.body.runtime_state ?? ctx.body);
+	await ctx.store.update('pos-session', session_id, { runtime_state });
+	return ok([runtime_state], 'Estado operativo del POS guardado correctamente');
 }
 
 async function pos_report(ctx: Ctx, tipo: string) {
