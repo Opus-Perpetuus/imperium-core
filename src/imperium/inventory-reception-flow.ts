@@ -1,5 +1,6 @@
 /**
- * Recepciones de almacén: acomodar y reservar como el service original.
+ * Recepciones de almacén: from-PO, faltante, acomodar y reservar
+ * como el service original.
  */
 import { as_array, as_object, type ImperiumDoc } from './envelope.ts';
 import {
@@ -31,6 +32,152 @@ function reserved_of(item: ImperiumDoc): number {
 	return round_qty(
 		as_array(item.reservas).reduce((acc, raw) => acc + Number(as_object(raw).cantidad ?? 0), 0),
 	);
+}
+
+const OPEN_STATES = new Set(['pendiente', 'parcial', 'PENDING', 'PARTIAL']);
+
+function is_object_id(value: string): boolean {
+	return /^[a-fA-F0-9]{24}$/.test(value);
+}
+
+export async function create_reception_from_purchase_order(
+	store: ImperiumStore,
+	purchase_order_id: string,
+	body: ImperiumDoc,
+): Promise<ImperiumDoc> {
+	const po_id = text(purchase_order_id);
+	if (!po_id || !is_object_id(po_id)) {
+		throw new Error('Se necesita el id de la orden de compra');
+	}
+	const po = await store.find_id('purchase-order', po_id);
+	if (!po || po.is_active === false) {
+		throw new Error('No se encontró la orden de compra indicada');
+	}
+	if (text(po.estado) === 'archivada') {
+		throw new Error('No puedes crear recepciones de una orden de compra archivada');
+	}
+	const raw_lines = as_array(body.articulos);
+	const source = raw_lines.length
+		? raw_lines.map(as_object)
+		: as_array(po.articulos).map((raw) => {
+				const item = as_object(raw);
+				return {
+					producto: item.producto ?? item.product_id,
+					producto_nombre: item.producto_nombre ?? item.name,
+					producto_codigo: item.producto_codigo ?? item.codigo,
+					codigo_proveedor: item.codigo_proveedor,
+					cantidad_esperada: round_qty(
+						Number(item.cantidad ?? 0) - Number(item.cantidad_recibida ?? 0),
+					),
+					costo_unitario: item.costo_unitario ?? item.costo,
+				};
+			});
+	const articulos = source.map((line, index) => {
+		const producto = ref_id(line.producto);
+		if (!producto || !is_object_id(producto)) {
+			throw new Error(`La línea ${index + 1} de la recepción necesita un producto válido`);
+		}
+		return {
+			producto,
+			producto_nombre: text(line.producto_nombre),
+			producto_codigo: text(line.producto_codigo),
+			codigo_proveedor: text(line.codigo_proveedor),
+			cantidad_esperada: round_qty(Number(line.cantidad_esperada ?? 0)),
+			cantidad_recibida: 0,
+			cantidad_acomodada: 0,
+			costo_unitario: Number(line.costo_unitario ?? 0),
+			reservas: [],
+		};
+	}).filter((line) => line.cantidad_esperada > 0);
+	if (!articulos.length) {
+		throw new Error('La orden de compra no tiene cantidades pendientes por recibir');
+	}
+	const created = await store.insert('inventory-reception', {
+		name: `Recepción ${po.name}`,
+		description: text(body.description),
+		estado: 'pendiente',
+		purchase_order: po._id,
+		orden_compra: po._id,
+		purchase_order_nombre: po.name,
+		purchase_order_folio: po.folio_interno,
+		proveedor: po.proveedor,
+		proveedor_nombre: po.proveedor_nombre ?? '',
+		proveedor_rfc: po.proveedor_rfc ?? '',
+		uuid_xml: text(body.uuid_xml) || text(po.uuid_xml),
+		referencia: text(body.referencia) || text(po.referencia_origen),
+		fecha_esperada: body.fecha_esperada,
+		articulos,
+		total_esperado: articulos.reduce((sum, line) => sum + line.cantidad_esperada, 0),
+		total_recibido: 0,
+	});
+	return created;
+}
+
+export async function create_reception_backorder(
+	store: ImperiumStore,
+	reception_id: string,
+): Promise<ImperiumDoc> {
+	const id = text(reception_id);
+	const record = await store.find_id('inventory-reception', id);
+	if (!record || record.is_active === false) {
+		throw new Error('No se encontró la recepción indicada');
+	}
+	if (!OPEN_STATES.has(text(record.estado))) {
+		throw new Error('La recepción ya fue cerrada o cancelada');
+	}
+	const remaining = as_array(record.articulos)
+		.map(as_object)
+		.map((item) => ({
+			producto: item.producto,
+			producto_nombre: item.producto_nombre,
+			producto_codigo: item.producto_codigo,
+			codigo_proveedor: item.codigo_proveedor,
+			cantidad_esperada: pending_of(item),
+			cantidad_recibida: 0,
+			cantidad_acomodada: 0,
+			costo_unitario: item.costo_unitario,
+			reservas: as_array(item.reservas),
+		}))
+		.filter((item) => item.cantidad_esperada > 0);
+	if (!remaining.length) {
+		throw new Error('La recepción no tiene cantidades faltantes');
+	}
+	const closed_articulos = as_array(record.articulos).map((raw) => {
+		const item = as_object(raw);
+		return {
+			...item,
+			cantidad_esperada: Number(item.cantidad_recibida ?? 0),
+			reservas: [],
+		};
+	});
+	const total_recibido = closed_articulos.reduce(
+		(sum, item) => sum + Number(item.cantidad_recibida ?? 0),
+		0,
+	);
+	await store.update('inventory-reception', id, {
+		articulos: closed_articulos,
+		total_esperado: total_recibido,
+		total_recibido,
+		estado: 'recibida',
+	});
+	return store.insert('inventory-reception', {
+		name: `${record.name} (faltante)`,
+		description: record.description,
+		estado: 'pendiente',
+		purchase_order: record.purchase_order,
+		orden_compra: record.purchase_order ?? record.orden_compra,
+		purchase_order_nombre: record.purchase_order_nombre,
+		purchase_order_folio: record.purchase_order_folio,
+		proveedor: record.proveedor,
+		proveedor_nombre: record.proveedor_nombre,
+		proveedor_rfc: record.proveedor_rfc,
+		uuid_xml: record.uuid_xml,
+		referencia: record.referencia,
+		fecha_esperada: record.fecha_esperada,
+		articulos: remaining,
+		total_esperado: remaining.reduce((sum, item) => sum + Number(item.cantidad_esperada ?? 0), 0),
+		total_recibido: 0,
+	});
 }
 
 function allows_storage(loc: ImperiumDoc | null): boolean {

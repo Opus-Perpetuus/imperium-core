@@ -108,6 +108,8 @@ import { recibir_delivery_return } from './delivery-return-flow.ts';
 import { apply_purchase_receipt_stock } from './purchase-order-flow.ts';
 import {
 	acomodar_reception,
+	create_reception_backorder,
+	create_reception_from_purchase_order,
 	in_transit_for_product,
 	list_pending_for_product,
 	register_internal_transfer,
@@ -2646,35 +2648,11 @@ async function apply_physical_count(ctx: Ctx) {
 }
 
 async function reception_from_po(ctx: Ctx) {
-	const po = await need(ctx, 'purchase-order', ctx.params.purchase_order_id);
-	const articulos = as_array(po.articulos).map((raw) => {
-		const a = as_object(raw);
-		return {
-			producto: a.producto ?? a.product_id,
-			producto_nombre: a.producto_nombre ?? a.name,
-			producto_codigo: a.producto_codigo ?? a.codigo,
-			cantidad_esperada: Number(a.cantidad ?? 0),
-			cantidad_recibida: 0,
-			cantidad_acomodada: 0,
-			costo_unitario: Number(a.costo_unitario ?? a.costo ?? 0),
-			reservas: [],
-		};
-	});
-	const created = await ctx.store.insert('inventory-reception', {
-		name: `Recepción ${po.name}`,
-		purchase_order: po._id,
-		orden_compra: po._id,
-		purchase_order_nombre: po.name,
-		purchase_order_folio: po.folio_interno,
-		proveedor: po.proveedor,
-		proveedor_nombre: po.proveedor_nombre,
-		proveedor_rfc: po.proveedor_rfc,
-		estado: 'pendiente',
-		articulos,
-		total_esperado: articulos.reduce((s, a) => s + a.cantidad_esperada, 0),
-		total_recibido: 0,
-		referencia: po.referencia_origen ?? po.folio_interno ?? po.name,
-	});
+	const created = await create_reception_from_purchase_order(
+		ctx.store,
+		ctx.params.purchase_order_id,
+		ctx.body,
+	);
 	return ok([created], 'Recepción pendiente creada correctamente');
 }
 
@@ -2732,31 +2710,8 @@ async function confirm_reception(ctx: Ctx) {
 }
 
 async function create_backorder(ctx: Ctx) {
-	const rec = await need(ctx, 'inventory-reception', ctx.params.id);
-	const remaining = as_array(rec.articulos)
-		.map((raw) => as_object(raw))
-		.map((item) => ({
-			...item,
-			cantidad_esperada: Number(item.cantidad_esperada ?? 0) - Number(item.cantidad_recibida ?? 0),
-			cantidad_recibida: 0,
-			cantidad_acomodada: 0,
-		}))
-		.filter((i) => Number(i.cantidad_esperada) > 0);
-	if (!remaining.length) throw new Error('La recepción no tiene cantidades faltantes');
-	await ctx.store.update('inventory-reception', String(rec._id), {
-		estado: 'cerrada_faltante',
-	});
-	const created = await ctx.store.insert('inventory-reception', {
-		name: `${rec.name} (faltante)`,
-		purchase_order: rec.purchase_order ?? rec.orden_compra,
-		orden_compra: rec.purchase_order ?? rec.orden_compra,
-		estado: 'pendiente',
-		articulos: remaining,
-		total_esperado: remaining.reduce((s, i) => s + Number(i.cantidad_esperada), 0),
-		total_recibido: 0,
-		origen: rec._id,
-	});
-	return ok([created], 'Faltante creado');
+	const created = await create_reception_backorder(ctx.store, ctx.params.id);
+	return ok([created], 'Recepción por faltante creada correctamente');
 }
 
 async function acomodar(ctx: Ctx) {
