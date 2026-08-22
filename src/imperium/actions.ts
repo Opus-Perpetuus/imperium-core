@@ -2493,6 +2493,13 @@ async function import_location_tree(ctx: Ctx) {
 	);
 }
 
+export async function import_location_tree_from_body(
+	store: ImperiumStore,
+	body: Record<string, unknown>,
+) {
+	return import_location_tree({ store, body } as Ctx);
+}
+
 async function register_transfer(ctx: Ctx) {
 	await register_internal_transfer(ctx.store, {
 		producto: String(ctx.body.producto ?? ctx.body.product_id ?? ''),

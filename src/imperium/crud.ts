@@ -39,6 +39,7 @@ import {
 import { decorate_product, prepare_product_write } from './products-flow.ts';
 import { decorate_vehicle, prepare_vehicle_write } from './vehicle-flow.ts';
 import { is_location_resource, prepare_location_write } from './location-flow.ts';
+import { import_location_tree_from_body } from './actions.ts';
 import {
 	decorate_physical_count,
 	is_physical_count_resource,
@@ -225,6 +226,16 @@ export async function handle_crud(
 		if (is_physical_count_resource(resource)) {
 			throw new Error('Los conteos físicos no soportan operaciones batch');
 		}
+		if (resource === 'inventory-movement') {
+			throw new Error('Los movimientos de inventario no soportan operaciones batch');
+		}
+		if (is_location_resource(resource)) {
+			const raw = await body();
+			const payload = Array.isArray(raw)
+				? { lineas: raw }
+				: (as_object(raw) as Record<string, unknown>);
+			return json(resource, await import_location_tree_from_body(store, payload));
+		}
 		const b = await body();
 		const items = Array.isArray(b) ? b : Array.isArray(b.rows) ? b.rows : [];
 		const match = String(url.searchParams.get('batch_match_field') ?? '_id');
@@ -274,6 +285,9 @@ export async function handle_crud(
 		}
 		if (is_location_resource(resource)) {
 			throw new Error('Las ubicaciones no soportan borrado manual');
+		}
+		if (resource === 'inventory-movement') {
+			throw new Error('Los movimientos de inventario no se pueden eliminar manualmente');
 		}
 		const scope = await record_rule_scope(store, actor, resource, method);
 		await assert_id_in_scope(store, resource, segs[1], scope, method);
@@ -398,6 +412,11 @@ export async function handle_crud(
 		);
 	}
 	if (method === 'POST' && segs.length === 0) {
+		if (resource === 'inventory-movement') {
+			throw new Error(
+				'Los movimientos de inventario se generan automáticamente desde compras y logística',
+			);
+		}
 		let incoming = await prepare_user_write(
 			resource,
 			await apply_uploads(store, resource, await body(), actor, {
@@ -558,6 +577,9 @@ export async function handle_crud(
 		);
 	}
 	if (method === 'PUT' && segs.length === 0) {
+		if (resource === 'inventory-movement') {
+			throw new Error('Los movimientos de inventario no se pueden editar manualmente');
+		}
 		const raw = await body();
 		const id = String(raw._id ?? raw.id ?? '');
 		if (!id) return json(resource, fail('Se necesita un id para actualizar').body, 400);
@@ -706,6 +728,9 @@ export async function handle_crud(
 		);
 	}
 	if (method === 'PATCH' && segs.length === 1) {
+		if (resource === 'inventory-movement') {
+			throw new Error('Los movimientos de inventario no se pueden editar manualmente');
+		}
 		const previous = await store.find_id(resource, segs[0]!);
 		const scope = await record_rule_scope(store, actor, resource, method);
 		await assert_id_in_scope(store, resource, segs[0]!, scope, method);
