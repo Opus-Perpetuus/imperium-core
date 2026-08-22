@@ -398,11 +398,7 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'citizen-report:reverse_geocode':
 			return reverse_geocode(ctx);
 		case 'violation:challenge':
-			return patch_doc(ctx, 'violation', ctx.params.id, {
-				estado: 'impugnada',
-				fecha_impugnacion: now(),
-				motivo_impugnacion: ctx.body.motivo ?? ctx.body.reason,
-			}, 'Infracción impugnada');
+			return violation_challenge(ctx);
 		case 'attachment-management:view':
 			return attachment_view(ctx);
 		case 'payments:public_catalog':
@@ -1218,6 +1214,34 @@ const IR_READY_ALIASES = new Set([IR_READY, 'lista_comercial']);
 const IR_SENT_ALIASES = new Set([IR_SENT, 'enviada_comercial']);
 const IR_INVOICED_ALIASES = new Set([IR_INVOICED, 'facturada']);
 const IR_CANCELED_ALIASES = new Set([IR_CANCELED, 'cancelada']);
+
+async function violation_challenge(ctx: Ctx) {
+	const rec = await need(ctx, 'violation', ctx.params.id);
+	const reason = String(ctx.body.reason ?? ctx.body.motivo ?? '').trim();
+	if (reason.length < 4) {
+		throw new Error('Escribe el motivo de la impugnación (mínimo 4 caracteres).');
+	}
+	const status = String(rec.status ?? rec.estado ?? '');
+	if (status === 'PAGADA') {
+		throw new Error('No se puede impugnar una infracción ya pagada.');
+	}
+	if (status === 'CANCELADA') {
+		throw new Error('La infracción está cancelada.');
+	}
+	return patch_doc(
+		ctx,
+		'violation',
+		String(rec._id),
+		{
+			status: 'IMPUGNADA',
+			estado: 'IMPUGNADA',
+			challenged_reason: reason,
+			challenged_at: now(),
+			challenged_by_id: actor_id(ctx),
+		},
+		'Infracción impugnada.',
+	);
+}
 
 async function invoice_from_order(ctx: Ctx) {
 	const order = await need(ctx, 'pedidos', ctx.params.orderId);
