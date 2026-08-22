@@ -39,6 +39,12 @@ import {
 	validate_interinstance_api_key,
 } from './interinstance.ts';
 import { mitec_create_link, mitec_decrypt_payload, mitec_parse_callback } from './mitec.ts';
+import {
+	email_is_configured,
+	resolve_email_settings,
+	send_password_reset_email,
+} from './email.ts';
+import { generate_password_reset } from './password-reset.ts';
 
 type Ctx = {
 	store: ImperiumStore;
@@ -397,9 +403,7 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'cobranza-payment:apply_payment':
 			return cobranza_apply(ctx);
 		case 'cobranza-payment:cancel_payment':
-			return patch_doc(ctx, 'cobranza-payment', ctx.params.id, {
-				estado: 'cancelado',
-			}, 'Pago cancelado');
+			return cobranza_cancel(ctx);
 		case 'cobranza:mitec_webhook':
 			return cobranza_mitec_webhook(ctx);
 		case 'cobranza:stripe_webhook':
@@ -3532,13 +3536,66 @@ async function save_delivery_signature(ctx: Ctx, package_id: string): Promise<st
 }
 
 async function user_recovery(ctx: Ctx) {
-	const user = await need(ctx, 'user', ctx.params.id);
-	const token = crypto.randomUUID();
-	await ctx.store.update('user', String(user._id), {
-		recovery_token: token,
-		recovery_expires: new Date(Date.now() + 3600_000).toISOString(),
-	});
-	return ok([{ token, user_id: user._id }], 'Enlace de recuperación generado');
+	if (!ctx.params.id) throw new Error('Se necesita el id del usuario.');
+	const is_admin = ctx.actor?._ref === 'user-menu-management-0';
+	if (!is_admin) {
+		throw new Error('No tienes permisos para generar enlaces de acceso de otros usuarios.');
+	}
+	const user = await ctx.store.find_id('user', ctx.params.id);
+	if (!user) throw new Error('No se encontró el usuario.');
+	const email = String(user.email ?? '').trim();
+	if (!email) throw new Error('El usuario no tiene un correo para enviarle el enlace.');
+	const requested = String(ctx.body.kind ?? '');
+	const kind: 'recovery' | 'invitation' =
+		requested === 'recovery' || requested === 'invitation'
+			? requested
+			: user.password
+				? 'recovery'
+				: 'invitation';
+	const settings = await resolve_email_settings(ctx.store);
+	const generated = await generate_password_reset(
+		ctx.store,
+		user,
+		kind,
+		settings,
+		cobranza_origin(ctx),
+	);
+	let email_sent = false;
+	let email_error: string | undefined;
+	const send_email = ctx.body.send_email === true || ctx.body.send_email === 'true';
+	if (send_email) {
+		if (!email_is_configured(settings)) {
+			email_error =
+				'El servicio de correo no está configurado en el servidor. Comparte el enlace manualmente.';
+		} else {
+			try {
+				await send_password_reset_email({
+					settings,
+					to: email,
+					link: generated.link,
+					kind,
+					user_name: String(user.name ?? ''),
+				});
+				email_sent = true;
+			} catch {
+				email_error = 'No se pudo enviar el correo. Comparte el enlace manualmente.';
+			}
+		}
+	}
+	return ok(
+		[
+			{
+				link: generated.link,
+				codigo: generated.raw,
+				expires_at: generated.expires_at,
+				kind,
+				email,
+				email_sent,
+				email_error,
+			},
+		],
+		email_sent ? 'Enlace generado y enviado por correo.' : 'Enlace generado correctamente.',
+	);
 }
 
 async function verify_pin(ctx: Ctx) {
@@ -3666,25 +3723,74 @@ async function view_assign(ctx: Ctx) {
 }
 
 async function cobranza_apply(ctx: Ctx) {
-	const created = await ctx.store.insert('cobranza-payment', {
-		name: `Pago ${ctx.body.referencia ?? ''}`.trim(),
-		...ctx.body,
-		estado: 'aplicado',
-		fecha: now(),
-		usuario: actor_name(ctx),
-	});
-	if (ctx.body.cobranza && ctx.store.has('cobranza')) {
-		const c = await ctx.store.find_id('cobranza', String(ctx.body.cobranza));
-		if (c) {
-			const paid = Number(c.pagado ?? 0) + Number(ctx.body.importe ?? ctx.body.monto ?? 0);
-			const total = Number(c.total ?? c.importe ?? 0);
-			await ctx.store.update('cobranza', String(c._id), {
-				pagado: paid,
-				estado: paid >= total && total > 0 ? 'pagada' : 'parcial',
-			});
-		}
+	const charge_id = String(ctx.body.charge_id ?? ctx.body.cobranza ?? '');
+	const method_id = String(ctx.body.method_id ?? '');
+	const pos_session_id = String(ctx.body.pos_session_id ?? '');
+	const amount = Number(ctx.body.amount ?? ctx.body.importe ?? ctx.body.monto);
+	const provider = String(ctx.body.provider ?? 'CASH').toUpperCase();
+	if (!charge_id) throw new Error('Se requiere el cargo a abonar.');
+	if (!method_id) throw new Error('Se requiere el método de pago.');
+	if (!pos_session_id) throw new Error('Se requiere una sesión de caja abierta.');
+	if (!Number.isFinite(amount) || amount <= 0) {
+		throw new Error('El monto del pago debe ser mayor a cero.');
 	}
-	return ok([created], 'Pago aplicado');
+	if (provider !== 'CASH') {
+		throw new Error('Los pagos con Stripe o Mitec se inician desde «Pagar en línea».');
+	}
+	const charge = await ctx.store.find_id('cobranza', charge_id);
+	if (!charge) throw new Error('No se encontró el cargo.');
+	if (cobranza_is_canceled(charge)) {
+		throw new Error('El cargo está cancelado; no admite pagos.');
+	}
+	const balance = Number(charge.balance ?? 0);
+	if (balance <= 0) throw new Error('El cargo ya está pagado.');
+	if (amount > balance + 0.009) {
+		throw new Error(`El monto excede el saldo pendiente (${balance.toFixed(2)}).`);
+	}
+	const session = await ctx.store.find_id('pos-session', pos_session_id);
+	if (!session) throw new Error('No se encontró la sesión de caja.');
+	if (!is_pos_session_open(session)) {
+		throw new Error('La sesión de caja no está abierta.');
+	}
+	const created = await ctx.store.insert('cobranza-payment', {
+		name: `Pago ${charge.reference ?? ''}`.trim(),
+		charge_id: charge._id,
+		amount,
+		method_id,
+		pos_session_id,
+		cashier_id: actor_id(ctx),
+		created_by: actor_id(ctx),
+		payment_date: now(),
+		status: 'APPLIED',
+		estado: 'aplicado',
+		provider: 'CASH',
+		sync: true,
+	});
+	const updated_charge = await cobranza_recompute(ctx, String(charge._id));
+	return {
+		...ok([created], 'Pago aplicado correctamente.'),
+		charge: updated_charge,
+	};
+}
+
+async function cobranza_cancel(ctx: Ctx) {
+	if (!ctx.params.id) throw new Error('Identificador de pago inválido.');
+	const payment = await ctx.store.find_id('cobranza-payment', ctx.params.id);
+	if (!payment) throw new Error('No se encontró el pago.');
+	const status = String(payment.status ?? payment.estado ?? '').toUpperCase();
+	if (status === 'CANCELED' || status === 'CANCELADO') {
+		throw new Error('El pago ya está cancelado.');
+	}
+	const updated = await ctx.store.update('cobranza-payment', String(payment._id), {
+		status: 'CANCELED',
+		estado: 'cancelado',
+	});
+	const charge_id = String(payment.charge_id ?? '');
+	const updated_charge = charge_id ? await cobranza_recompute(ctx, charge_id) : null;
+	return {
+		...ok([updated ?? payment], 'Pago cancelado correctamente.'),
+		charge: updated_charge,
+	};
 }
 
 async function cobranza_lookup(ctx: Ctx) {

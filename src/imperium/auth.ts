@@ -4,6 +4,12 @@
 import { as_array, as_object, ok, type ImperiumDoc } from './envelope.ts';
 import { read_imperium_body } from './body.ts';
 import { PREFER_OWNER, type ImperiumStore } from './store.ts';
+import {
+	email_is_configured,
+	resolve_email_settings,
+	send_password_reset_email,
+} from './email.ts';
+import { find_user_by_reset_token, generate_password_reset } from './password-reset.ts';
 
 const COOKIE = 'connect.sid';
 const SECRET = process.env.SESSION_SECRET ?? 'imperium-modular-dev-session';
@@ -87,12 +93,23 @@ export async function handle_auth(
 		const body = await read_imperium_body(req);
 		const email = String(body.email ?? '').trim().toLowerCase();
 		const user = email ? await store.find_where('user', { email }) : null;
-		if (user) {
-			const token = crypto.randomUUID();
-			await store.update('user', String(user._id), {
-				recovery_token: token,
-				recovery_expires: new Date(Date.now() + 3600_000).toISOString(),
-			});
+		if (user && user.is_active !== false) {
+			const settings = await resolve_email_settings(store);
+			const origin = req.headers.get('origin') ?? '';
+			const generated = await generate_password_reset(store, user, 'recovery', settings, origin);
+			if (email_is_configured(settings)) {
+				try {
+					await send_password_reset_email({
+						settings,
+						to: String(user.email ?? email),
+						link: generated.link,
+						kind: 'recovery',
+						user_name: String(user.name ?? ''),
+					});
+				} catch {
+					/* la respuesta al cliente debe ser genérica */
+				}
+			}
 		}
 		return Response.json({
 			message:
@@ -101,14 +118,10 @@ export async function handle_auth(
 	}
 	if (method === 'GET' && rest.startsWith('/password-reset/validate')) {
 		const codigo = String(url.searchParams.get('codigo') ?? '').trim();
-		const user = codigo
-			? await store.find_where('user', { recovery_token: codigo })
-			: null;
-		const exp = user ? Date.parse(String(user.recovery_expires ?? '')) : 0;
-		const valid = Boolean(user && exp > Date.now());
+		const user = await find_user_by_reset_token(store, codigo);
 		return Response.json({
-			valid,
-			type: valid ? 'recovery' : null,
+			valid: Boolean(user),
+			type: user ? String(user.reset_password_kind ?? 'recovery') : null,
 		});
 	}
 	if (method === 'GET' && rest.startsWith('/branding')) {
@@ -121,17 +134,20 @@ export async function handle_auth(
 	if (method === 'POST' && rest.startsWith('/password-reset/login')) {
 		const body = await read_imperium_body(req);
 		const codigo = String(body.codigo ?? '').trim();
-		const user = codigo
-			? await store.find_where('user', { recovery_token: codigo })
-			: null;
-		const exp = user ? Date.parse(String(user.recovery_expires ?? '')) : 0;
-		if (!user || exp <= Date.now()) {
+		const user = await find_user_by_reset_token(store, codigo);
+		if (!user) {
 			return Response.json(
-				{ message: 'El enlace no es válido', error: 'El enlace no es válido' },
+				{
+					message: 'El enlace no es válido o ya expiró.',
+					error: 'El enlace no es válido o ya expiró.',
+				},
 				{ status: 400 },
 			);
 		}
 		await store.update('user', String(user._id), {
+			reset_password_token_hash: null,
+			reset_password_expires: null,
+			reset_password_kind: null,
 			recovery_token: null,
 			recovery_expires: null,
 		});
