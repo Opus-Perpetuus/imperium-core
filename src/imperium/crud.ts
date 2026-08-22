@@ -4,6 +4,7 @@
 import { as_array, as_object, fail, ok, type ImperiumDoc } from './envelope.ts';
 import { query_list, read_imperium_body } from './body.ts';
 import type { ImperiumStore } from './store.ts';
+import { assert_pos_pin, maybe_create_pos_session_pin } from './user-pin.ts';
 
 export async function handle_crud(
 	store: ImperiumStore,
@@ -120,23 +121,54 @@ export async function handle_crud(
 		});
 	}
 	if (method === 'GET' && segs.length === 1) {
+		if (resource === 'pos-session') {
+			await assert_pos_pin(
+				store,
+				req,
+				segs[0]!,
+				{ method: 'GET', path: '/pos-session/:id', label: 'Restaurar sesion POS' },
+				actor,
+			);
+		}
 		const doc = await store.find_id(resource, segs[0]!);
 		if (!doc) return json(fail('No encontrado', 404).body, 404);
 		const [populated] = await store.populate_docs(resource, [doc]);
 		return json(ok([populated], 'Ruta encontrada'));
 	}
 	if (method === 'POST' && segs.length === 0) {
-		const doc = await before_create(store, resource, await body(), actor);
+		const incoming = await body();
+		if (resource === 'pos-tickets') {
+			await assert_pos_pin(
+				store,
+				req,
+				String(incoming.pos_session ?? ''),
+				{ method: 'POST', path: '/pos-tickets', label: 'Crear ticket POS' },
+				actor,
+			);
+		}
+		const doc = await before_create(store, resource, incoming, actor);
 		const created = await store.insert(resource, doc);
-		await after_create(store, resource, created);
+		const notice = await after_create(store, resource, created, actor);
 		const [populated] = await store.populate_docs(resource, [created]);
 		const message = resource === 'pos-tickets' ? 'Ticket creado' : 'Ruta creada';
-		return json(ok([populated], message), 201);
+		return json(
+			notice ? { ...ok([populated], message), user_pin_notice: notice } : ok([populated], message),
+			201,
+		);
 	}
 	if (method === 'PUT' && segs.length === 0) {
 		const b = await body();
 		const id = String(b._id ?? b.id ?? '');
 		if (!id) return json(fail('Se necesita un id para actualizar').body, 400);
+		if (resource === 'pos-session') {
+			await assert_pos_pin(
+				store,
+				req,
+				id,
+				{ method: 'PUT', path: '/pos-session', label: 'Actualizar sesion POS' },
+				actor,
+			);
+		}
 		const updated = await store.update(resource, id, b);
 		if (!updated) return json(fail('No encontrado', 404).body, 404);
 		const [populated] = await store.populate_docs(resource, [updated]);
@@ -227,8 +259,12 @@ async function after_create(
 	store: ImperiumStore,
 	resource: string,
 	created: ImperiumDoc,
-): Promise<void> {
-	if (resource !== 'pos-tickets') return;
+	actor: ImperiumDoc | null,
+): Promise<unknown> {
+	if (resource === 'pos-session') {
+		return maybe_create_pos_session_pin(store, created, actor);
+	}
+	if (resource !== 'pos-tickets') return null;
 	if (String(created.ticket_type ?? 'VENTA').toUpperCase() !== 'VENTA') return;
 	const items = as_array(created.items).map(as_object);
 	for (const item of items) {

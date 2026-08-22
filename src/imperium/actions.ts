@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 import { as_array, as_object, fail, ok, type ImperiumDoc } from './envelope.ts';
 import { read_imperium_body } from './body.ts';
 import type { ImperiumStore } from './store.ts';
+import { assert_pos_pin, verify_user_pin } from './user-pin.ts';
 
 type Ctx = {
 	store: ImperiumStore;
@@ -616,22 +617,79 @@ async function cfdi_validate(ctx: Ctx) {
 	return ok([updated], 'Documento validado');
 }
 
+function pac_provider() {
+	return String(process.env.CFDI_PAC_PROVIDER ?? 'noop').trim().toLowerCase();
+}
+
+function inject_tfd(xml: string, stamp: { uuid: string; fecha: string; sello_sat: string; no_cert: string; sello_cfd: string }) {
+	const tfd =
+		`<tfd:TimbreFiscalDigital xmlns:tfd="http://www.sat.gob.mx/TimbreFiscalDigital" ` +
+		`Version="1.1" UUID="${stamp.uuid}" FechaTimbrado="${stamp.fecha}" ` +
+		`RfcProvCertif="MOCK010101AAA" SelloCFD="${stamp.sello_cfd}" ` +
+		`NoCertificadoSAT="${stamp.no_cert}" SelloSAT="${stamp.sello_sat}"/>`;
+	if (xml.includes('TimbreFiscalDigital')) return xml;
+	if (xml.includes('</cfdi:Complemento>')) {
+		return xml.replace('</cfdi:Complemento>', `${tfd}</cfdi:Complemento>`);
+	}
+	if (xml.includes('</cfdi:Comprobante>')) {
+		return xml.replace(
+			'</cfdi:Comprobante>',
+			`<cfdi:Complemento>${tfd}</cfdi:Complemento></cfdi:Comprobante>`,
+		);
+	}
+	return `${xml}${tfd}`;
+}
+
 async function cfdi_stamp(ctx: Ctx) {
 	const doc = await need(ctx, 'cfdi-document', ctx.params.id);
-	if (doc.validado === false) {
+	if (doc.validado === false || doc.status === 'invalid') {
 		throw new Error('El CFDI tiene errores de validación; corrígelos antes de timbrar.');
 	}
-	const xml = String(doc.xml ?? as_object(doc.payload_canonico).xml ?? '');
-	if (!xml && !doc.payload_canonico) {
+	const canonical = as_object(doc.canonical ?? doc.payload_canonico);
+	if (!Object.keys(canonical).length) {
 		throw new Error('El documento no tiene payload canónico para timbrar.');
 	}
+	const xml = String(doc.xml ?? canonical.xml ?? '');
+	await ctx.store.update('cfdi-document', String(doc._id), {
+		status: 'stamping',
+		estado: 'stamping',
+	});
+	const provider = pac_provider();
+	if (!provider || provider === 'noop' || provider === 'none') {
+		await ctx.store.update('cfdi-document', String(doc._id), {
+			status: 'stamp_error',
+			estado: 'stamp_error',
+		});
+		throw new Error(
+			'PAC no configurado: no se puede timbrar. Configure un adaptador de PAC (set_cfdi_pac_adapter) o use solo exportación XML/JSON.',
+		);
+	}
+	if (provider !== 'mock' && provider !== 'demo' && provider !== 'test') {
+		await ctx.store.update('cfdi-document', String(doc._id), {
+			status: 'stamp_error',
+			estado: 'stamp_error',
+		});
+		throw new Error(
+			`CFDI_PAC_PROVIDER desconocido: "${provider}". Use noop | mock | sw_sapien | finkok | facturama.`,
+		);
+	}
+	const source_xml = xml || `<?xml version="1.0"?><cfdi:Comprobante/>`;
 	const uuid = crypto.randomUUID();
+	const fecha = now();
+	const sello_sat = Buffer.from(`sat|${uuid}`).toString('base64');
+	const sello_cfd = source_xml.match(/\sSello="([^"]+)"/)?.[1] ?? Buffer.from(`cfd|${uuid}`).toString('base64');
+	const no_cert = '30001000000400002495';
+	const xml_timbrado = inject_tfd(source_xml, { uuid, fecha, sello_sat, no_cert, sello_cfd });
 	const updated = await ctx.store.update('cfdi-document', String(doc._id), {
 		status: 'stamped',
 		estado: 'stamped',
 		uuid,
-		fecha_timbrado: now(),
-		pac: process.env.CFDI_PAC ?? 'local-dev',
+		fecha_timbrado: fecha,
+		xml: xml_timbrado,
+		xml_timbrado,
+		pac: 'mock',
+		rfc_prov_certif: 'MOCK010101AAA',
+		no_certificado_sat: no_cert,
 	});
 	return ok([updated], 'Documento timbrado');
 }
@@ -2167,6 +2225,15 @@ async function pos_runtime(ctx: Ctx) {
 }
 
 async function pos_report(ctx: Ctx, tipo: string) {
+	await assert_pos_pin(
+		ctx.store,
+		ctx.req,
+		String(ctx.params.id ?? ''),
+		tipo === 'cierre'
+			? { method: 'POST', path: '/pos-session/report/close/:id', label: 'Reporte de cierre POS' }
+			: { method: 'GET', path: '/pos-session/report/partial/:id', label: 'Reporte parcial POS' },
+		ctx.actor,
+	);
 	const session = await need(ctx, 'pos-session', ctx.params.id);
 	const tickets = ctx.store.has('pos-tickets')
 		? (
@@ -2177,20 +2244,73 @@ async function pos_report(ctx: Ctx, tipo: string) {
 				})
 			).rows
 		: as_array(session.ordenes).map(as_object);
-	const total = tickets.reduce((s, o) => s + Number(o.subtotal ?? o.total ?? o.importe ?? 0), 0);
+	const summaries = tickets.map((ticket) => {
+		const ticket_type = String(ticket.ticket_type ?? 'VENTA').toUpperCase();
+		const subtotal = Number(ticket.subtotal ?? ticket.total ?? ticket.importe ?? 0);
+		const withdrawal_amount = Number(ticket.withdrawal_amount ?? 0);
+		const is_withdrawal = ticket_type.includes('RETIRO');
+		const cash_effect = is_withdrawal ? -Math.abs(withdrawal_amount || subtotal) : subtotal;
+		return {
+			_id: String(ticket._id ?? ''),
+			ticket_sequence: String(ticket.ticket_sequence ?? ticket.name ?? ''),
+			ticket_type,
+			client_name: String(ticket.client_name ?? 'Publico general'),
+			withdrawal_amount,
+			withdrawal_reason: String(ticket.withdrawal_reason ?? ''),
+			withdrawal_signature: ticket.withdrawal_signature ?? '',
+			cash_effect,
+			display_amount: Math.abs(cash_effect),
+			subtotal,
+			total_paid: Number(ticket.total_paid ?? subtotal),
+			createdAt: ticket.createdAt ?? ticket.created_at ?? now(),
+		};
+	});
+	const total_sales = summaries
+		.filter((t) => !String(t.ticket_type).includes('RETIRO'))
+		.reduce((s, t) => s + Number(t.subtotal), 0);
+	const total_manual_withdrawals = summaries
+		.filter((t) => String(t.ticket_type).includes('RETIRO'))
+		.reduce((s, t) => s + Math.abs(Number(t.withdrawal_amount || t.subtotal)), 0);
+	const opening_money = Number(session.cash_register_opening_money ?? 0);
+	const branch = as_object(session.branch_office);
+	const cashier = as_object(session.cashier);
 	const report = {
-		tipo,
-		session_id: session._id,
-		fecha: now(),
-		ordenes: tickets.length,
-		tickets: tickets.length,
-		total,
-		session,
+		report_type: tipo === 'cierre' ? 'CIERRE_CAJA' : 'VENTAS_PARCIAL',
+		generated_at: now(),
+		session_id: String(session._id),
+		session_name: String(session.name ?? ''),
+		branch_office_name: String(branch.name ?? session.branch_office ?? 'Sin asignar'),
+		opening_date: session.opening_date ?? now(),
+		closing_date: session.closing_date,
+		user_name: actor_name(ctx) || 'Usuario actual',
+		employee_name: String(session.cashier_name ?? cashier.name ?? 'Sin asignar'),
+		total_tickets: summaries.length,
+		total_sales: Number(total_sales.toFixed(2)),
+		total_manual_withdrawals: Number(total_manual_withdrawals.toFixed(2)),
+		expected_cash: Number((opening_money + total_sales - total_manual_withdrawals).toFixed(2)),
+		cash_register_opening_money: opening_money,
+		tickets: summaries,
 	};
-	return ok([report], tipo === 'cierre' ? 'Reporte de cierre' : 'Reporte parcial');
+	return ok(
+		[report],
+		tipo === 'cierre'
+			? 'Cierre de caja generado correctamente'
+			: 'Reporte parcial generado correctamente',
+	);
 }
 
 async function pos_conclude(ctx: Ctx) {
+	await assert_pos_pin(
+		ctx.store,
+		ctx.req,
+		String(ctx.params.id ?? ''),
+		{
+			method: 'POST',
+			path: '/pos-session/report/close/conclude/:id',
+			label: 'Concluir cierre POS',
+		},
+		ctx.actor,
+	);
 	const session = await need(ctx, 'pos-session', ctx.params.id);
 	if (!is_pos_session_open(session)) {
 		throw new Error('Solo se puede concluir el cierre para sesiones abiertas');
@@ -2209,6 +2329,13 @@ async function pos_conclude(ctx: Ctx) {
 }
 
 async function pos_cancel(ctx: Ctx) {
+	await assert_pos_pin(
+		ctx.store,
+		ctx.req,
+		String(ctx.params.id ?? ''),
+		{ method: 'POST', path: '/pos-session/cancel/:id', label: 'Cancelar sesion POS' },
+		ctx.actor,
+	);
 	const session = await need(ctx, 'pos-session', ctx.params.id);
 	if (!is_pos_session_open(session)) {
 		throw new Error('Solo se pueden cancelar sesiones abiertas');
@@ -2585,13 +2712,7 @@ async function user_recovery(ctx: Ctx) {
 }
 
 async function verify_pin(ctx: Ctx) {
-	const pin = String(ctx.body.pin ?? '');
-	const { rows } = await ctx.store.find_many('user-pin', { take: 50 });
-	const uid = actor_id(ctx);
-	const hit = rows.find((r) => String(r.user ?? r.created_by) === uid || !uid);
-	const ok_pin = hit && String(hit.pin ?? hit.value ?? '') === pin;
-	if (!ok_pin) throw new Error('PIN incorrecto');
-	return ok([{ valid: true }], 'PIN válido');
+	return verify_user_pin(ctx.store, ctx.body, ctx.actor);
 }
 
 async function user_settings_doc(ctx: Ctx) {
@@ -2752,38 +2873,100 @@ async function cobranza_checkout(ctx: Ctx) {
 	return ok([created], 'Checkout creado');
 }
 
+function as_id_list(value: unknown): string[] {
+	if (Array.isArray(value)) {
+		return value.map((item) => ref_id(item) || String(item ?? '').trim()).filter(Boolean);
+	}
+	if (typeof value === 'string') {
+		const text = value.trim();
+		if (!text) return [];
+		try {
+			return as_id_list(JSON.parse(text));
+		} catch {
+			return text.split(',').map((s) => s.trim()).filter(Boolean);
+		}
+	}
+	if (value && typeof value === 'object') {
+		const id = ref_id(value);
+		return id ? [id] : [];
+	}
+	return [];
+}
+
 async function take_next_turn(ctx: Ctx) {
-	const box = String(ctx.body.box_config_id ?? ctx.body.box ?? ctx.body.caja ?? '');
+	const box_id = String(ctx.body.box_config_id ?? ctx.body.box ?? ctx.body.caja ?? '').trim();
+	if (!box_id) throw new Error('Se necesita una caja para tomar el siguiente turno');
+	const box = await ctx.store.find_id('ticketing-system-box-config', box_id);
+	if (!box) throw new Error('No se encontró la configuración de la caja');
+	const allowed_services = as_id_list(box.allowed_services);
+	const allowed_types = as_id_list(box.allowed_customer_types);
 	const pending = await ctx.store.find_many('ticketing-system-turn', {
 		where: { status: 'pendiente' },
-		take: 200,
-		include_inactive: false,
+		take: 10000,
 	});
-	const waiting_alt = pending.rows.length
+	const waiting = pending.rows.length
 		? pending.rows
 		: (
 				await ctx.store.find_many('ticketing-system-turn', {
 					where: { estado: 'pendiente' },
-					take: 200,
-					include_inactive: false,
+					take: 10000,
 				})
 			).rows;
-	const waiting = waiting_alt.sort((a, b) => {
-		const ta = new Date(String(a.createdAt ?? a.created_at ?? 0)).getTime();
-		const tb = new Date(String(b.createdAt ?? b.created_at ?? 0)).getTime();
-		return ta - tb;
+	if (!waiting.length) throw new Error('Sin turnos a la espera');
+	const matching = waiting.filter((turn) => {
+		const services = as_id_list(turn.services);
+		const type_id = ref_id(turn.customer_type);
+		const services_ok = services.every((id) => allowed_services.includes(id));
+		const type_ok = allowed_types.includes(type_id);
+		return services_ok && type_ok;
 	});
-	const next = waiting[0];
-	if (!next) throw new Error('No hay turnos en espera');
+	if (!matching.length) {
+		const missing_services = new Set<string>();
+		const missing_types = new Set<string>();
+		for (const turn of waiting) {
+			for (const id of as_id_list(turn.services)) {
+				if (!allowed_services.includes(id)) missing_services.add(id);
+			}
+			const type_id = ref_id(turn.customer_type);
+			if (!allowed_types.includes(type_id)) {
+				missing_types.add(type_id || 'tipo desconocido');
+			}
+		}
+		const services_list = [...missing_services].join(', ');
+		const types_list = [...missing_types].join(', ');
+		if (missing_services.size && missing_types.size) {
+			throw new Error(
+				`Los turnos disponibles requieren que la caja tenga el servicio '${services_list}' y el tipo de usuario '${types_list}' configurado. No fue posible tomar un turno.`,
+			);
+		}
+		if (missing_services.size) {
+			throw new Error(
+				`Los turnos disponibles requieren que la caja tenga el servicio '${services_list}' configurado. No fue posible tomar un turno.`,
+			);
+		}
+		throw new Error(
+			`Los turnos disponibles requieren que la caja tenga el tipo de usuario '${types_list}' configurado. No fue posible tomar un turno.`,
+		);
+	}
+	matching.sort((a, b) => {
+		const pa = Number(a.priority_level ?? 0);
+		const pb = Number(b.priority_level ?? 0);
+		if (pb !== pa) return pb - pa;
+		return (
+			new Date(String(a.createdAt ?? a.created_at ?? 0)).getTime() -
+			new Date(String(b.createdAt ?? b.created_at ?? 0)).getTime()
+		);
+	});
+	const next = matching[0];
 	const updated = await ctx.store.update('ticketing-system-turn', String(next._id), {
 		status: 'en_atencion',
 		estado: 'en_atencion',
-		assigned_box: box || next.assigned_box,
+		assigned_box: box_id,
 		fecha_inicio: now(),
 		time_box: [now()],
 		atendido_por: actor_name(ctx),
 	});
-	return ok([updated], 'Turno tomado');
+	return ok([updated], 'Turno tomado', waiting.length);
 }
 
 async function notify_turn(ctx: Ctx) {
@@ -2922,11 +3105,32 @@ async function payments_catalog(ctx: Ctx) {
 		}
 	}
 	const cfdi_on = !disabled.has('CfdiDocument') && ctx.store.has('cfdi-document');
-	const services = [
+	const services = payable_services();
+	const data = services
+		.filter((s) => !s.required_model_id || !disabled.has(s.required_model_id))
+		.map((s) => ({
+			slug: s.slug,
+			title: s.title,
+			description: s.description,
+			kind: s.kind,
+			lookup_label: s.lookup_label,
+			invoice_available: Boolean(s.billable && cfdi_on),
+		}));
+	const secret = await payments_stripe_secret(ctx);
+	const publishable = await payments_config_text(
+		ctx,
+		'configuration-payments-stripe-publishable-key',
+		'STRIPE_PUBLISHABLE_KEY',
+	);
+	return ok(data, secret && publishable ? 'ok' : 'pagos_no_configurados');
+}
+
+function payable_services() {
+	return [
 		{
 			slug: 'generico',
 			title: 'Pago de prueba',
-			description: 'Cargo libre para validar el portal de pagos.',
+			description: 'Cargo libre para validar Stripe en modo test.',
 			kind: 'one_time',
 			required_model_id: null as string | null,
 			lookup_label: null as string | null,
@@ -2951,40 +3155,114 @@ async function payments_catalog(ctx: Ctx) {
 			billable: true,
 		},
 	];
-	const data = services
-		.filter((s) => !s.required_model_id || !disabled.has(s.required_model_id))
-		.map((s) => ({
-			slug: s.slug,
-			title: s.title,
-			description: s.description,
-			kind: s.kind,
-			lookup_label: s.lookup_label,
-			invoice_available: Boolean(s.billable && cfdi_on),
-		}));
-	return ok(data, 'ok');
+}
+
+async function payments_config_text(ctx: Ctx, ref: string, env_name: string) {
+	const from_env = String(process.env[env_name] ?? '').trim();
+	if (from_env) return from_env;
+	return cfg_text((await ctx.store.find_where('configuration', { ref }))?.value);
+}
+
+async function payments_stripe_secret(ctx: Ctx) {
+	return payments_config_text(
+		ctx,
+		'configuration-payments-stripe-secret-key',
+		'STRIPE_SECRET_KEY',
+	);
+}
+
+async function stripe_create_checkout(input: {
+	secret_key: string;
+	success_url: string;
+	cancel_url: string;
+	amount_cents: number;
+	currency: string;
+	description: string;
+	customer_email?: string;
+	metadata: Record<string, string>;
+}) {
+	if (!input.secret_key) {
+		throw new Error('Stripe no está configurado (falta la clave secreta).');
+	}
+	const body = new URLSearchParams();
+	body.set('success_url', input.success_url);
+	body.set('cancel_url', input.cancel_url);
+	body.set('mode', 'payment');
+	if (input.customer_email) body.set('customer_email', input.customer_email);
+	for (const [key, value] of Object.entries(input.metadata)) {
+		body.set(`metadata[${key}]`, value);
+	}
+	body.set('line_items[0][price_data][currency]', input.currency);
+	body.set('line_items[0][price_data][product_data][name]', input.description);
+	body.set('line_items[0][price_data][unit_amount]', String(input.amount_cents));
+	body.set('line_items[0][quantity]', '1');
+	const response = await fetch('https://api.stripe.com/v1/checkout/sessions', {
+		method: 'POST',
+		headers: {
+			Authorization: `Bearer ${input.secret_key}`,
+			'Content-Type': 'application/x-www-form-urlencoded',
+		},
+		body,
+	});
+	const payload = (await response.json()) as {
+		id?: string;
+		url?: string;
+		error?: { message?: string };
+	};
+	if (!response.ok || !payload.id || !payload.url) {
+		throw new Error(payload.error?.message ?? 'Stripe rechazó la sesión de checkout.');
+	}
+	return { id: payload.id, url: payload.url };
 }
 
 async function payments_checkout(ctx: Ctx) {
 	const slug = String(ctx.body.service_slug ?? '');
-	if (!slug) throw new Error('Servicio de pago no encontrado.');
-	const amount = Number(ctx.body.amount ?? 0);
+	const service = payable_services().find((s) => s.slug === slug);
+	if (!service) throw new Error('Servicio de pago no encontrado.');
+	const lookup = String(ctx.body.lookup ?? '').trim();
+	if (service.lookup_label && !lookup) {
+		throw new Error(`Se requiere: ${service.lookup_label}.`);
+	}
+	const amount = Number(ctx.body.amount);
+	if (!Number.isFinite(amount) || amount <= 0) {
+		throw new Error('El monto debe ser mayor a cero.');
+	}
+	const secret = await payments_stripe_secret(ctx);
+	const currency =
+		(await payments_config_text(ctx, 'configuration-payments-currency', 'STRIPE_CURRENCY')) ||
+		'mxn';
+	const host = ctx.req.headers.get('x-forwarded-host') ?? ctx.req.headers.get('host') ?? '';
+	const proto = ctx.req.headers.get('x-forwarded-proto') ?? 'https';
+	const origin = ctx.req.headers.get('origin') || (host ? `${proto}://${host}` : '');
 	const created = await ctx.store.insert('payments', {
-		name: `Pago ${slug}`,
+		name: `Pago ${service.slug} ${lookup || 'libre'}`.slice(0, 120),
+		description: service.title,
 		service_slug: slug,
 		amount,
 		status: 'pendiente',
-		provider: 'local-dev',
-		currency: 'MXN',
-		external_ref: ctx.body.lookup ?? '',
-		lookup: ctx.body.lookup ?? '',
-		email: ctx.body.email ?? '',
-		invoice: ctx.body.invoice ?? false,
+		provider: 'stripe',
+		currency,
+		external_ref: lookup,
+		customer_email: ctx.body.email ? String(ctx.body.email) : '',
+		invoice_requested: Boolean(ctx.body.invoice),
 	});
-	const origin = ctx.req.headers.get('origin') ?? '';
-	return ok(
-		[{ url: `${origin}/pagos/resultado?session_id=${created._id}`, session_id: created._id }],
-		'Checkout creado',
-	);
+	const session = await stripe_create_checkout({
+		secret_key: secret,
+		success_url: `${origin}/pagos/exito?session_id={CHECKOUT_SESSION_ID}`,
+		cancel_url: `${origin}/pagos/cancelado`,
+		amount_cents: Math.round(amount * 100),
+		currency,
+		description: service.title,
+		customer_email: ctx.body.email ? String(ctx.body.email) : undefined,
+		metadata: {
+			payment_id: String(created._id),
+			service_slug: service.slug,
+		},
+	});
+	await ctx.store.update('payments', String(created._id), {
+		provider_ref: session.id,
+	});
+	return ok([{ url: session.url }], 'checkout');
 }
 
 async function payments_session(ctx: Ctx) {

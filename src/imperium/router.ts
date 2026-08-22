@@ -8,6 +8,7 @@ import { handle_action } from './actions.ts';
 import { serve_media } from './media.ts';
 import { ImperiumStore, load_catalog_path } from './store.ts';
 import { fail } from './envelope.ts';
+import { PinChallengeError } from './user-pin.ts';
 
 type ExtraRoute = {
 	resource: string;
@@ -82,6 +83,21 @@ export function create_imperium_layer(sql: Bun.SQL) {
 					Response.json(fail('not found', 404).body, { status: 404 }),
 				);
 			} catch (err) {
+				if (err instanceof PinChallengeError) {
+					return add_cors(
+						req,
+						Response.json(
+							{
+								message: err.message,
+								error: err.message,
+								code: err.code,
+								details: { user_pin_challenge: err.challenge },
+								user_pin_challenge: err.challenge,
+							},
+							{ status: 400 },
+						),
+					);
+				}
 				const message = err instanceof Error ? err.message : String(err);
 				return add_cors(req, Response.json(fail(message).body, { status: 400 }));
 			}
@@ -155,7 +171,8 @@ function add_cors(req: Request, res: Response | null): Response | null {
 	headers.set('access-control-allow-credentials', 'true');
 	headers.set(
 		'access-control-allow-headers',
-		req.headers.get('access-control-request-headers') ?? 'content-type,authorization',
+		req.headers.get('access-control-request-headers') ??
+			'content-type,authorization,x-user-pin-token',
 	);
 	headers.set('access-control-allow-methods', 'GET,POST,PUT,PATCH,DELETE,HEAD,OPTIONS');
 	return new Response(res.body, { status: res.status, headers });
