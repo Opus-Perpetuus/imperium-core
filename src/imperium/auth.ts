@@ -530,7 +530,13 @@ const SESSION_SCOPED_EXTRAS = new Set([
 	'model-tracker:read_field_values_globally',
 	'auto-increment-control:preview',
 	'auto-increment-control:get_available_models',
+	'auto-increment-control:increment',
+	'auto-increment-control:consolidate_duplicates',
+	'auto-increment-control:normalize_counters',
 	'custom-pattern-increment-sequence-parts:get_by_counter_config',
+	'status-option-control:save_module_configuration',
+	'status-option-control:normalize_state_values',
+	'status-option-control:resolve_spurious_options',
 ]);
 
 function is_session_scoped_extra(resource?: string, action?: string) {
