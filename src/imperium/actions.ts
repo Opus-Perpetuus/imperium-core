@@ -119,7 +119,7 @@ import {
 	mark_invoice_request,
 	send_invoice_to_commercial,
 } from './invoice-request-flow.ts';
-import { resolve_widget_data } from './dashboard-flow.ts';
+import { resolve_dashboard_catalog, resolve_widget_data } from './dashboard-flow.ts';
 import {
 	end_attending_turn as end_ticketing_turn,
 	notify_turn as notify_ticketing_turn,
@@ -1220,11 +1220,11 @@ async function close_empaque(ctx: Ctx) {
 			updated.push(pack);
 		}
 	}
-	await ctx.store.update('pedidos', String(pedido._id), {
-		estado_empaque: 'cerrado',
-		fecha_cierre_empaque: now(),
-	});
-	return ok(updated, 'Empaque cerrado');
+	await after_delivery_package_mutate(ctx.store, String(pedido._id));
+	return ok(
+		updated.length ? updated : active,
+		'Empaque cerrado. Los bultos quedaron asignados para carga del chofer.',
+	);
 }
 
 async function read_chofer_queue(ctx: Ctx) {
@@ -2124,37 +2124,7 @@ async function documentation_sync(ctx: Ctx) {
 }
 
 async function dashboard_catalog(ctx: Ctx) {
-	const seen = new Set<string>();
-	const entries = [];
-	for (const loc of ctx.store.locs.values()) {
-		if (seen.has(loc.resource)) continue;
-		seen.add(loc.resource);
-		entries.push({
-			model_id: to_model_id(loc.resource),
-			module_name: loc.name,
-			fields: [
-				{ path: '_id', type: 'String', label: 'Id' },
-				{ path: 'name', type: 'String', label: 'Nombre' },
-				{ path: 'description', type: 'String', label: 'Descripción' },
-				{ path: 'is_active', type: 'Boolean', label: 'Activo' },
-				{ path: 'createdAt', type: 'Date', label: 'Creado' },
-				{ path: 'updatedAt', type: 'Date', label: 'Actualizado' },
-				...loc.columns.map((c) => ({
-					path: c.name,
-					type:
-						c.pg === 'json'
-							? 'Mixed'
-							: c.pg === 'boolean'
-								? 'Boolean'
-								: c.pg === 'number'
-									? 'Number'
-									: 'String',
-					label: c.name,
-				})),
-			],
-		});
-	}
-	return ok(entries, 'Catálogo de modelos disponible');
+	return resolve_dashboard_catalog(ctx.store, ctx.actor);
 }
 
 const AI_QUERY_JSON_SCHEMA: Record<string, unknown> = {
@@ -2240,14 +2210,6 @@ async function reports_print_pdf_direct(ctx: Ctx) {
 	}
 	await send_pdf(ctx.store, bytes);
 	return ok([{ ok: true }], 'Enviado a la impresora PDF Direct');
-}
-
-function to_model_id(resource: string) {
-	if (resource === 'branchoffice') return 'Branchoffice';
-	return resource
-		.split('-')
-		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-		.join('');
 }
 
 async function widget_data(ctx: Ctx) {

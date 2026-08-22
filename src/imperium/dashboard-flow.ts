@@ -445,3 +445,170 @@ export async function resolve_widget_data(
 		'Datos del widget obtenidos',
 	);
 }
+
+const INTERNAL_CATALOG_RESOURCES = new Set([
+	'debug-log',
+	'document-change-history',
+	'mentions',
+	'model-tracker',
+]);
+
+const CATALOG_FIELD_LABELS: Record<string, string> = {
+	_id: 'Id',
+	name: 'Nombre',
+	description: 'Descripción',
+	is_active: 'Activo',
+	createdAt: 'Creado',
+	updatedAt: 'Actualizado',
+	estado: 'Estado',
+	state: 'Estado',
+};
+
+export function catalog_model_id(resource: string) {
+	if (resource === 'branchoffice') return 'Branchoffice';
+	return resource
+		.split('-')
+		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+		.join('');
+}
+
+function try_resolve_widget_resource(store: ImperiumStore, raw: string) {
+	if (!raw) return '';
+	try {
+		return resolve_widget_resource(store, raw);
+	} catch {
+		return '';
+	}
+}
+
+function catalog_field_type(path: string, pg?: string, ref?: string) {
+	if (ref) return 'ObjectID';
+	if (path === 'createdAt' || path === 'updatedAt' || path.endsWith('_at') || path.endsWith('At')) {
+		return 'Date';
+	}
+	if (path === 'is_active') return 'Boolean';
+	if (pg === 'boolean') return 'Boolean';
+	if (pg === 'number') return 'Number';
+	if (pg === 'json') return 'Mixed';
+	return 'String';
+}
+
+function push_catalog_field(
+	fields: Map<string, Record<string, unknown>>,
+	path: string,
+	type: string,
+	extra: Record<string, unknown> = {},
+) {
+	if (!path || is_blocked_path(path) || fields.has(path)) return;
+	fields.set(path, {
+		path,
+		type,
+		label: CATALOG_FIELD_LABELS[path] ?? path,
+		...extra,
+	});
+}
+
+async function build_catalog_fields(store: ImperiumStore, resource: string) {
+	const fields = new Map<string, Record<string, unknown>>();
+	const loc = store.loc(resource);
+	const refs = store.field_refs(resource);
+	push_catalog_field(fields, '_id', 'String');
+	push_catalog_field(fields, 'name', 'String');
+	push_catalog_field(fields, 'description', 'String');
+	push_catalog_field(fields, 'is_active', 'Boolean');
+	push_catalog_field(fields, 'createdAt', 'Date');
+	push_catalog_field(fields, 'updatedAt', 'Date');
+	for (const col of loc.columns) {
+		const ref = refs[col.name];
+		push_catalog_field(fields, col.name, catalog_field_type(col.name, col.pg, ref), {
+			is_reference: Boolean(ref),
+			ref: ref || undefined,
+		});
+	}
+	for (const [path, ref] of Object.entries(refs)) {
+		push_catalog_field(fields, path, 'ObjectID', { is_reference: true, ref });
+	}
+	const { rows } = await store.find_many(resource, {
+		take: 1,
+		include_inactive: true,
+		populate: false,
+	});
+	const sample = rows[0] ?? {};
+	for (const key of Object.keys(sample)) {
+		if (key === 'payload' || key === 'custom_data' || key === 'id') continue;
+		const value = sample[key];
+		const type =
+			value instanceof Date
+				? 'Date'
+				: typeof value === 'boolean'
+					? 'Boolean'
+					: typeof value === 'number'
+						? 'Number'
+						: Array.isArray(value)
+							? 'Array'
+							: value && typeof value === 'object'
+								? 'Mixed'
+								: 'String';
+		push_catalog_field(fields, key, type, { is_array: Array.isArray(value) });
+	}
+	return [...fields.values()];
+}
+
+export async function resolve_dashboard_catalog(
+	store: ImperiumStore,
+	actor: ImperiumDoc | null,
+) {
+	const access = actor
+		? await build_access(store, actor)
+		: { has_full_access: false, permissions_by_model: {}, user_group_names: [] as string[] };
+	const modules = store.has('module-management')
+		? (
+				await store.find_many('module-management', {
+					take: 5000,
+					include_inactive: true,
+					populate: false,
+				})
+			).rows
+		: [];
+	const enabled = modules.filter(
+		(row) => access_flag(row.is_enable) && row.is_active !== false,
+	);
+	const seen = new Set<string>();
+	const pending: Array<{ resource: string; model_id: string; module_name: string }> = [];
+	const consider = (resource: string, model_id: string, module_name: string) => {
+		if (!resource || INTERNAL_CATALOG_RESOURCES.has(resource) || !store.has(resource)) return;
+		if (seen.has(resource) || seen.has(model_id)) return;
+		if (!can_read_model(access, resource, model_id).ok) return;
+		seen.add(resource);
+		seen.add(model_id);
+		pending.push({ resource, model_id, module_name });
+	};
+	if (enabled.length) {
+		for (const row of enabled) {
+			const model_id = String(row.model_id ?? '').trim();
+			const resource = try_resolve_widget_resource(
+				store,
+				model_id || String(row.module_name ?? row.name ?? ''),
+			);
+			if (!resource) continue;
+			consider(
+				resource,
+				model_id || catalog_model_id(resource),
+				String(row.name ?? row.module_name ?? model_id ?? resource),
+			);
+		}
+	} else {
+		for (const loc of store.locs.values()) {
+			consider(loc.resource, catalog_model_id(loc.resource), loc.name);
+		}
+	}
+	const entries = [];
+	for (const item of pending) {
+		entries.push({
+			model_id: item.model_id,
+			module_name: item.module_name,
+			fields: await build_catalog_fields(store, item.resource),
+		});
+	}
+	return ok(entries, 'Catálogo de modelos disponible');
+}
