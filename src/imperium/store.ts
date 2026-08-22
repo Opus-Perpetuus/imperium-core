@@ -37,6 +37,13 @@ export const PREFER_OWNER: Record<string, string> = {
 	pedidos: 'ventas',
 };
 
+/** Bases Angular (`super('proyectos')`) vs resource del catálogo modular. */
+export const RESOURCE_ALIASES: Record<string, string> = {
+	proyectos: 'planeacion-proyectos',
+	'mis-tareas': 'planeacion-mis-tareas',
+	'proyectos-task': 'planeacion-proyectos-task',
+};
+
 type RefBook = {
 	fields: Record<string, Record<string, string>>;
 	models: Record<string, string>;
@@ -123,6 +130,10 @@ export class ImperiumStore {
 					this.locs.set(m.resource, loc);
 				}
 			}
+		}
+		for (const [alias, resource] of Object.entries(RESOURCE_ALIASES)) {
+			const loc = this.locs.get(resource);
+			if (loc && !this.locs.has(alias)) this.locs.set(alias, loc);
 		}
 		const host =
 			this.all_locs.find((l) => l.slug === 'configuracion') ?? this.all_locs[0];

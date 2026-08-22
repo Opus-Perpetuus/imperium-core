@@ -142,19 +142,15 @@ export async function handle_crud(
 function instance_type(
 	store: ImperiumStore,
 	resource: string,
-	rows: ImperiumDoc[],
+	_rows: ImperiumDoc[],
 ): Record<string, { nombre_encabezado: string; tipo: string }> {
-	const keys = new Set<string>(['_id', 'name', 'description', 'is_active', '_ref']);
-	for (const col of store.loc(resource).columns) keys.add(col.name);
-	for (const row of rows.slice(0, 5)) {
-		for (const k of Object.keys(row)) {
-			if (k === 'payload' || k === 'custom_data' || k === 'id') continue;
-			keys.add(k);
-		}
+	const keys = ['_id', 'name', 'description', 'is_active', '_ref'];
+	for (const col of store.loc(resource).columns) {
+		if (!keys.includes(col.name)) keys.push(col.name);
 	}
 	const out: Record<string, { nombre_encabezado: string; tipo: string }> = {};
 	for (const k of keys) {
-		out[k] = { nombre_encabezado: k.replace(/_/g, ' '), tipo: 'String' };
+		out[k] = { nombre_encabezado: k.replace(/_/g, ' '), tipo: 'string' };
 	}
 	return out;
 }

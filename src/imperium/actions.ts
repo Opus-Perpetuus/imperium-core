@@ -222,8 +222,9 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 				fecha_cancelacion: now(),
 			}, 'Solicitud cancelada');
 		case 'messages:read_my_messages':
-		case 'messages:read_my_conversations':
 			return my_messages(ctx);
+		case 'messages:read_my_conversations':
+			return my_conversations(ctx);
 		case 'messages:read_conversation':
 			return conversation(ctx);
 		case 'messages:search_chat_messages':
@@ -1094,6 +1095,50 @@ async function invoice_cfdi_draft(ctx: Ctx) {
 	});
 	await ctx.store.update('invoice-request', String(rec._id), { cfdi_draft: created._id });
 	return ok([created], 'Borrador CFDI creado');
+}
+
+function message_participants(doc: ImperiumDoc, uid: string): string[] {
+	const parts = as_array(doc.participants ?? doc.participant_user_ids).map(String).filter(Boolean);
+	const extra = [doc.from, doc.to, doc.created_by].map((v) => String(v ?? '')).filter(Boolean);
+	const all = [...new Set([...parts, ...extra, uid].filter(Boolean))];
+	return all;
+}
+
+async function my_conversations(ctx: Ctx) {
+	const uid = actor_id(ctx);
+	const { rows } = await ctx.store.find_many('messages', {
+		take: 500,
+		include_inactive: true,
+	});
+	const groups = new Map<string, ImperiumDoc[]>();
+	for (const m of rows) {
+		const parts = message_participants(m, uid);
+		if (!parts.includes(uid)) continue;
+		const others = parts.filter((p) => p !== uid).sort();
+		const key = others.join(',') || `self:${String(m._id ?? m.id ?? '')}`;
+		const list = groups.get(key) ?? [];
+		list.push(m);
+		groups.set(key, list);
+	}
+	const summaries = [...groups.entries()].map(([conversation_key, msgs]) => {
+		const latest = [...msgs].sort((a, b) =>
+			String(b.createdAt ?? b.updatedAt ?? '').localeCompare(
+				String(a.createdAt ?? a.updatedAt ?? ''),
+			),
+		)[0]!;
+		const participant_user_ids = message_participants(latest, uid);
+		const other_id = participant_user_ids.find((p) => p !== uid);
+		return {
+			conversation_key,
+			participant_user_ids,
+			other_participant: other_id
+				? { _id: other_id, name: String(latest.name ?? latest.title ?? other_id) }
+				: undefined,
+			latest_message: latest,
+			unread_count: 0,
+		};
+	});
+	return ok(summaries, 'Conversaciones');
 }
 
 async function my_messages(ctx: Ctx) {
