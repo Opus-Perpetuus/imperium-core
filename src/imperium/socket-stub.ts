@@ -14,6 +14,7 @@ type Session = {
 	queue: string[];
 	waiting: Waiter | null;
 	expires: number;
+	rooms: Set<string>;
 };
 
 const PING_MS = 25_000;
@@ -43,7 +44,13 @@ export function handle_socket_io(
 	}
 	if (req.method === 'GET' && !sid) {
 		const id = crypto.randomUUID().replace(/-/g, '');
-		sessions.set(id, { id, queue: [], waiting: null, expires: Date.now() + 120_000 });
+		sessions.set(id, {
+			id,
+			queue: [],
+			waiting: null,
+			expires: Date.now() + 120_000,
+			rooms: new Set(),
+		});
 		const open = `0${JSON.stringify({
 			sid: id,
 			upgrades: [],
@@ -121,7 +128,7 @@ function handle_client_packets(session: Session, raw: string) {
 			continue;
 		}
 		if (chunk.startsWith('42')) {
-			// eventos de app: el stub no emite rooms
+			handle_socket_event(session, chunk);
 			continue;
 		}
 	}
@@ -139,3 +146,73 @@ setInterval(() => {
 		}
 	}
 }, 60_000).unref?.();
+
+function handle_socket_event(session: Session, chunk: string) {
+	const match = chunk.match(/^42\d*(\[.*\])$/);
+	if (!match) return;
+	let args: unknown[];
+	try {
+		args = JSON.parse(match[1]!) as unknown[];
+	} catch {
+		return;
+	}
+	const event = String(args[0] ?? '');
+	if (event === 'joinRoom' && typeof args[1] === 'string') {
+		session.rooms.add(args[1]);
+		return;
+	}
+	if (event === 'leaveRoom' && typeof args[1] === 'string') {
+		session.rooms.delete(args[1]);
+		return;
+	}
+	if (event === 'messageToRoom' && args[1] && typeof args[1] === 'object') {
+		const data = args[1] as { room?: string; msg?: string };
+		const room = String(data.room ?? '');
+		if (room) emit_to_room(room, 'message', { room, msg: String(data.msg ?? '') });
+		return;
+	}
+	if (event === 'driverLocation' && args[1] && typeof args[1] === 'object') {
+		const data = args[1] as { route_id?: string };
+		const route_id = String(data.route_id ?? '').trim();
+		if (route_id) emit_to_room(`route:${route_id}:driver`, 'driver_location', args[1]);
+	}
+}
+
+function packet_event(event: string, data: unknown): string {
+	return `42${JSON.stringify([event, data])}`;
+}
+
+export function emit_to_room(room: string, event: string, data: unknown): void {
+	if (!room) return;
+	const packet = packet_event(event, data);
+	for (const session of sessions.values()) {
+		if (session.rooms.has(room)) enqueue(session, packet);
+	}
+}
+
+export function broadcast_event(event: string, data: unknown): void {
+	const packet = packet_event(event, data);
+	for (const session of sessions.values()) enqueue(session, packet);
+}
+
+export function emit_messages_refresh(
+	user_ids: string[],
+	payload: {
+		reason: string;
+		conversation_key?: string;
+		message_ids?: string[];
+		message?: unknown;
+	},
+): void {
+	for (const uid of [...new Set(user_ids)].filter(Boolean)) {
+		emit_to_room(`messages:user:${uid}`, 'update', {
+			action: 'messages_refresh',
+			data: [
+				{
+					recipient_id: uid,
+					...payload,
+				},
+			],
+		});
+	}
+}

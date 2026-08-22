@@ -4,6 +4,7 @@
  */
 import type { ImperiumDoc } from './envelope.ts';
 import type { ImperiumStore } from './store.ts';
+import { broadcast_event } from './socket-stub.ts';
 
 export async function persist_request_log(
 	store: ImperiumStore,
@@ -69,7 +70,7 @@ export async function persist_request_log(
 		},
 	};
 	try {
-		await store.insert('debug-log', {
+		const logged = await store.insert('debug-log', {
 			name: `${req.method} ${strip_api(url.pathname)}`,
 			message,
 			formatted_message: message,
@@ -97,6 +98,7 @@ export async function persist_request_log(
 				.join(' ')
 				.toLowerCase(),
 		});
+		broadcast_event('new_log', logged);
 	} catch {
 		/* logging must never fail the request */
 	}

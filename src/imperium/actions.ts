@@ -74,6 +74,7 @@ import {
 	recreate_indexes,
 } from './module-data.ts';
 import { is_upload, persist_upload_as_attachment } from './uploads.ts';
+import { emit_messages_refresh } from './socket-stub.ts';
 
 type Ctx = {
 	store: ImperiumStore;
@@ -3295,6 +3296,12 @@ async function create_chat_message(ctx: Ctx) {
 		fecha: now(),
 	});
 	if (!files.length) {
+		emit_messages_refresh([sender_user_id, recipient_user_id], {
+			reason: 'created',
+			conversation_key,
+			message_ids: created._id ? [String(created._id)] : undefined,
+			message: created,
+		});
 		return ok([created], 'Mensaje del chat enviado correctamente.');
 	}
 	const infos = [];
@@ -3317,7 +3324,14 @@ async function create_chat_message(ctx: Ctx) {
 	const updated = await ctx.store.update('messages', String(created._id ?? ''), {
 		attachments: infos,
 	});
-	return ok([updated ?? created], 'Mensaje del chat enviado correctamente.');
+	const sent = updated ?? created;
+	emit_messages_refresh([sender_user_id, recipient_user_id], {
+		reason: 'created',
+		conversation_key,
+		message_ids: sent._id ? [String(sent._id)] : undefined,
+		message: sent,
+	});
+	return ok([sent], 'Mensaje del chat enviado correctamente.');
 }
 
 async function create_internal_message(ctx: Ctx) {
