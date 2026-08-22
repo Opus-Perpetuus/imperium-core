@@ -119,6 +119,21 @@ import {
 	is_pos_session_open,
 	preview_pos_consecutive,
 } from './pos-session-flow.ts';
+import {
+	create_error_ticket,
+	create_interinstance_ticket,
+	create_internal_ticket,
+	create_log_ticket,
+	create_public_ticket,
+	read_my_tickets,
+	read_received_interinstance_tickets,
+	receive_interinstance_ticket,
+	tickets_admin_list,
+	tickets_admin_one,
+	tickets_field_values,
+	tickets_public_metadata,
+	update_ticket,
+} from './tickets-flow.ts';
 
 type Ctx = {
 	store: ImperiumStore;
@@ -451,16 +466,19 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'tickets:read_admin_tickets':
 			return tickets_admin_list(ctx);
 		case 'tickets:read_admin_ticket':
-			return one(ctx, 'tickets', ctx.params.id);
+			return tickets_admin_one(ctx);
 		case 'tickets:read_ticket_field_values':
-			return field_values(ctx, 'tickets', ctx.params.field_name);
+			return tickets_field_values(ctx);
 		case 'tickets:read_public_metadata':
 			return tickets_public_metadata(ctx);
 		case 'tickets:create_public_ticket':
+			return create_public_ticket(ctx);
 		case 'tickets:create_internal_ticket':
+			return create_internal_ticket(ctx);
 		case 'tickets:create_error_ticket':
+			return create_error_ticket(ctx);
 		case 'tickets:create_log_ticket':
-			return create_ticket(ctx);
+			return create_log_ticket(ctx);
 		case 'tickets:create_interinstance_ticket':
 			return create_interinstance_ticket(ctx);
 		case 'tickets:receive_interinstance_ticket':
@@ -470,7 +488,7 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'tickets:update_ticket':
 			return update_ticket(ctx);
 		case 'tickets:read_my_tickets':
-			return list_where(ctx, 'tickets', { created_by: String(ctx.actor?._id ?? '') });
+			return read_my_tickets(ctx);
 		case 'user:recovery_link':
 			return user_recovery(ctx);
 		case 'user:unlock_auth':
@@ -4220,326 +4238,6 @@ async function attachment_view(ctx: Ctx) {
 async function field_values(ctx: Ctx, resource: string, field: string) {
 	const values = await ctx.store.distinct(resource, field, ctx.url.searchParams.get('termino') ?? '');
 	return ok(values.map((v) => ({ value: v, label: String(v) })), 'Valores');
-}
-
-function ticket_should_forward(ctx: Ctx) {
-	const value = ctx.body.should_forward_interinstance;
-	if (value === true || value === 1) return true;
-	if (typeof value === 'string') {
-		const raw = value.trim().toLowerCase();
-		return raw === 'true' || raw === '1';
-	}
-	return false;
-}
-
-async function tickets_public_metadata(ctx: Ctx) {
-	const settings = await messaging_settings(ctx.store);
-	const endpoint = settings.interinstance_endpoint.trim();
-	return ok(
-		[
-			{
-				settings: {
-					public_enabled: settings.public_enabled,
-					rate_limit_window_minutes: settings.rate_limit_window_minutes,
-					rate_limit_max: settings.rate_limit_max,
-					messaging_enabled: settings.messaging_enabled,
-					interinstance_enabled: settings.interinstance_enabled,
-					interinstance_outbound_ready:
-						settings.interinstance_enabled &&
-						Boolean(endpoint) &&
-						Boolean(settings.interinstance_api_key),
-				},
-			},
-		],
-		'Metadata pública de tickets cargada correctamente.',
-	);
-}
-
-async function tickets_admin_list(ctx: Ctx) {
-	const termino = String(ctx.url.searchParams.get('termino') ?? '').trim().toLowerCase();
-	const desde = Math.max(0, Number(ctx.url.searchParams.get('desde') ?? 0) || 0);
-	const limite = Math.min(500, Math.max(1, Number(ctx.url.searchParams.get('limite') ?? 50) || 50));
-	const { rows } = await ctx.store.find_many('tickets', {
-		take: 5000,
-		include_inactive: true,
-	});
-	const matched = rows
-		.filter((row) => {
-			if (!termino) return true;
-			const reporter = as_object(row.reporter);
-			const hay = [
-				row.title,
-				row.name,
-				row.description,
-				row.sourceType,
-				row.source_type,
-				row.status,
-				row.estado,
-				reporter.name,
-				reporter.email,
-			]
-				.map((v) => String(v ?? '').toLowerCase())
-				.join(' ');
-			return hay.includes(termino);
-		})
-		.sort((a, b) => created_ms(b) - created_ms(a));
-	const page = matched.slice(desde, desde + limite);
-	return {
-		...ok(page, 'Tickets cargados correctamente.', matched.length),
-		tipo_de_instancia: {
-			title: 'String',
-			description: 'String',
-			status: 'String',
-			sourceType: 'String',
-			reporter_name: 'String',
-			isLockedByAssignment: 'Boolean',
-			createdAt: 'Date',
-		},
-	};
-}
-
-async function create_ticket(ctx: Ctx) {
-	if (ticket_should_forward(ctx)) {
-		await assert_interinstance_outbound(ctx.store, 'tickets');
-		return forward_created_ticket(ctx, infer_ticket_source(ctx.action));
-	}
-	const title = String(ctx.body.title ?? ctx.body.subject ?? ctx.body.name ?? 'Ticket');
-	const assigned = String(ctx.body.assigned_user_id ?? ctx.body.assignedUserId ?? '').trim();
-	const created = await ctx.store.insert('tickets', {
-		...ctx.body,
-		name: title,
-		title,
-		status: ctx.body.status ?? 'open',
-		estado: ctx.body.estado ?? ctx.body.status ?? 'open',
-		sourceType: ctx.body.sourceType ?? infer_ticket_source(ctx.action),
-		assignedUserId: assigned || undefined,
-		assigned_user_id: assigned || undefined,
-		created_by: actor_id(ctx),
-	});
-	return ok([created], 'Ticket creado');
-}
-
-async function create_interinstance_ticket(ctx: Ctx) {
-	const settings = await messaging_settings(ctx.store);
-	if (!settings.interinstance_enabled) {
-		return deny_interinstance('La recepción interinstancia no está habilitada.', 403);
-	}
-	await assert_interinstance_outbound(ctx.store, 'tickets');
-	const title = interinstance_text(ctx.body.title);
-	const description = interinstance_text(ctx.body.description);
-	if (!title || !description) {
-		throw new Error(
-			'Debes proporcionar título y descripción para crear el ticket interinstancia.',
-		);
-	}
-	return forward_created_ticket(ctx, 'internal', {
-		success: 'Ticket interinstancia enviado correctamente.',
-	});
-}
-
-async function forward_created_ticket(
-	ctx: Ctx,
-	source_type: string,
-	messages?: { success?: string },
-) {
-	const { settings, endpoint } = await assert_interinstance_outbound(ctx.store, 'tickets');
-	const title = interinstance_text(ctx.body.title ?? ctx.body.subject ?? ctx.body.name);
-	const description = interinstance_text(ctx.body.description ?? ctx.body.message);
-	const assigned = interinstance_text(ctx.body.assigned_user_id ?? ctx.body.assignedUserId);
-	const assigned_personal_task_ids = interinstance_recipients(ctx.body.assigned_personal_task_ids);
-	const assigned_project_ids = interinstance_recipients(ctx.body.assigned_project_ids);
-	const payload = {
-		title,
-		description,
-		source_type,
-		reporter: {
-			_id: actor_id(ctx),
-			name: actor_name(ctx),
-			email: String(ctx.actor?.email ?? ''),
-		},
-		assigned_user_id: assigned_personal_task_ids.length || assigned_project_ids.length ? undefined : assigned,
-		assigned_personal_task_ids,
-		assigned_project_ids,
-		payload:
-			ctx.body.payload && typeof ctx.body.payload === 'object'
-				? as_object(ctx.body.payload)
-				: undefined,
-		instance_data: {
-			label: settings.instance_label,
-			version: settings.instance_version,
-			generatedAt: now(),
-		},
-	};
-	const forward_result = await forward_interinstance(
-		endpoint,
-		settings.interinstance_api_key,
-		payload,
-	);
-	if (!forward_result.delivered) {
-		const status_segment = forward_result.status ? ` (${forward_result.status})` : '';
-		const response_message = interinstance_text(forward_result.responseMessage);
-		throw new Error(
-			response_message
-				? `No se pudo enviar el ticket interinstancia${status_segment}: ${response_message}`
-				: `No se pudo enviar el ticket interinstancia${status_segment}.`,
-		);
-	}
-	let remote: ImperiumDoc = {};
-	try {
-		const parsed = JSON.parse(String(forward_result.responseMessage ?? '')) as {
-			data?: ImperiumDoc[];
-		};
-		if (parsed?.data?.[0] && typeof parsed.data[0] === 'object') remote = parsed.data[0]!;
-	} catch {
-		remote = {};
-	}
-	const ticket: ImperiumDoc = {
-		...remote,
-		_id: remote._id ?? undefined,
-		title: remote.title ?? title,
-		description: remote.description ?? description,
-		name: String(remote.title ?? title),
-		sourceType: 'interinstance',
-		status: remote.status ?? 'open',
-		reporter: remote.reporter ?? payload.reporter,
-		assignedUserId: remote.assignedUserId ?? payload.assigned_user_id,
-		assignedPersonalTaskIds: remote.assignedPersonalTaskIds ?? assigned_personal_task_ids,
-		assignedProjectIds: remote.assignedProjectIds ?? assigned_project_ids,
-		payload: remote.payload ?? payload.payload,
-		instanceData: remote.instanceData ?? payload.instance_data,
-		interinstance: {
-			...as_object(remote.interinstance),
-			endpoint,
-			forwarded: true,
-			responseStatus: forward_result.status,
-			responseMessage: forward_result.responseMessage,
-			externalTicketId: remote._id,
-		},
-	};
-	return ok(
-		[ticket],
-		messages?.success ??
-			(source_type === 'error'
-				? 'Ticket de error interinstancia enviado correctamente.'
-				: source_type === 'log'
-					? 'Ticket de log interinstancia enviado correctamente.'
-					: 'Ticket interinstancia enviado correctamente.'),
-	);
-}
-
-async function receive_interinstance_ticket(ctx: Ctx) {
-	const settings = await messaging_settings(ctx.store);
-	if (!settings.interinstance_enabled) {
-		return deny_interinstance('La recepción interinstancia no está habilitada.', 403);
-	}
-	let matched: ImperiumDoc;
-	try {
-		matched = await validate_interinstance_api_key(
-			ctx.store,
-			interinstance_key_from_req(ctx.req),
-		);
-	} catch (error) {
-		return deny_interinstance(
-			error instanceof Error ? error.message : 'Clave interinstancia inválida.',
-			401,
-		);
-	}
-	const title = interinstance_text(ctx.body.title);
-	const description = interinstance_text(ctx.body.description);
-	if (!title || !description) {
-		throw new Error('La recepción interinstancia requiere título y descripción.');
-	}
-	const created = await ctx.store.insert('tickets', {
-		name: title,
-		title,
-		description,
-		status: 'open',
-		estado: 'open',
-		sourceType: 'interinstance',
-		reporter:
-			ctx.body.reporter && typeof ctx.body.reporter === 'object'
-				? as_object(ctx.body.reporter)
-				: undefined,
-		assignedPersonalTaskIds: interinstance_recipients(ctx.body.assigned_personal_task_ids),
-		assignedProjectIds: interinstance_recipients(ctx.body.assigned_project_ids),
-		payload:
-			ctx.body.payload && typeof ctx.body.payload === 'object'
-				? as_object(ctx.body.payload)
-				: undefined,
-		instanceData:
-			ctx.body.instance_data && typeof ctx.body.instance_data === 'object'
-				? as_object(ctx.body.instance_data)
-				: undefined,
-		interinstance: {
-			forwarded: false,
-			receivedFromKeyId: String(matched._id),
-			receivedFromDomain: matched.domain,
-			receivedFromClient: matched.client,
-		},
-		created_by: actor_id(ctx),
-	});
-	return ok([created], 'Ticket interinstancia recibido correctamente.');
-}
-
-async function read_received_interinstance_tickets(ctx: Ctx) {
-	const settings = await messaging_settings(ctx.store);
-	if (!settings.interinstance_enabled) {
-		return deny_interinstance('La recepción interinstancia no está habilitada.', 403);
-	}
-	let matched: ImperiumDoc;
-	try {
-		matched = await validate_interinstance_api_key(
-			ctx.store,
-			interinstance_key_from_req(ctx.req),
-		);
-	} catch (error) {
-		return deny_interinstance(
-			error instanceof Error ? error.message : 'Clave interinstancia inválida.',
-			401,
-		);
-	}
-	const { rows, total } = await ctx.store.find_many('tickets', {
-		where: { sourceType: 'interinstance' },
-		q: ctx.url.searchParams.get('termino') ?? '',
-		skip: Number(ctx.url.searchParams.get('desde') ?? 0),
-		take: Number(ctx.url.searchParams.get('limite') ?? 50),
-	});
-	const filtered = rows.filter((row) => {
-		const meta = as_object(row.interinstance);
-		return String(meta.receivedFromKeyId ?? '') === String(matched._id);
-	});
-	return ok(
-		filtered,
-		'Tickets interinstancia recibidos cargados correctamente.',
-		filtered.length === rows.length ? total : filtered.length,
-	);
-}
-
-function infer_ticket_source(action: string) {
-	if (action.includes('public')) return 'public';
-	if (action.includes('error')) return 'error';
-	if (action.includes('log')) return 'log';
-	if (action.includes('interinstance')) return 'interinstance';
-	return 'internal';
-}
-
-async function update_ticket(ctx: Ctx) {
-	const assigned = String(ctx.body.assigned_user_id ?? ctx.body.assignedUserId ?? '').trim();
-	const patch: ImperiumDoc = { ...ctx.body };
-	delete patch.signature;
-	if (assigned) {
-		patch.assignedUserId = assigned;
-		patch.assigned_user_id = assigned;
-	}
-	if (ctx.body.status) {
-		patch.status = ctx.body.status;
-		patch.estado = ctx.body.status;
-	}
-	if (ctx.body.title) {
-		patch.title = ctx.body.title;
-		patch.name = ctx.body.title;
-	}
-	return patch_doc(ctx, 'tickets', ctx.params.id, patch, 'Ticket actualizado');
 }
 
 async function save_delivery_signature(ctx: Ctx, package_id: string): Promise<string> {
