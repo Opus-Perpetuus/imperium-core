@@ -68,11 +68,15 @@ async function build_product_map(
 		const unidad = as_object(product.unidad);
 		const unidad_id = ref_id(product.unidad);
 		let unidad_doc = Object.keys(unidad).length ? unidad : null;
-		if (!unidad_doc && unidad_id && store.has('unidad')) {
-			unidad_doc = (await store.find_id('unidad', unidad_id)) ?? null;
-		}
-		if (!unidad_doc && unidad_id && store.has('uom')) {
-			unidad_doc = (await store.find_id('uom', unidad_id)) ?? null;
+		if (unidad_id && !text(unidad_doc?.clave_unidad)) {
+			for (const resource of ['unit-of-measure', 'unidad', 'uom']) {
+				if (!store.has(resource)) continue;
+				const loaded = await store.find_id(resource, unidad_id);
+				if (loaded) {
+					unidad_doc = loaded;
+					break;
+				}
+			}
 		}
 		map[id] = {
 			clave_prod_serv: text(product.clave_prod_serv) || undefined,

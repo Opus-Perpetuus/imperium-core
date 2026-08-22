@@ -1,7 +1,8 @@
 {
   "fields": {
     "products": {
-      "ubicacion_preferida": "InventoryInternalLocation"
+      "ubicacion_preferida": "InventoryInternalLocation",
+      "unidad": "UnitOfMeasure"
     },
     "inventory-internal-location": {
       "parent": "InventoryInternalLocation"
