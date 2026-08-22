@@ -91,6 +91,7 @@ import {
 	cancel_delivery_package,
 	list_packages_by_pedido,
 } from './delivery-package-flow.ts';
+import { recibir_delivery_return } from './delivery-return-flow.ts';
 
 type Ctx = {
 	store: ImperiumStore;
@@ -213,12 +214,15 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 				'Bulto anulado. Las cantidades quedan disponibles para reempacar.',
 			);
 		}
-		case 'delivery-return:recibir':
-			return patch_doc(ctx, 'delivery-return', ctx.params.id, {
-				estado: 'recibido',
-				fecha_recepcion: now(),
-				recibido_por: actor_name(ctx),
-			}, 'Devolución recibida');
+		case 'delivery-return:recibir': {
+			const received = await recibir_delivery_return(
+				ctx.store,
+				ctx.params.id,
+				String(ctx.body.ubicacion ?? ctx.body.ubicacion_id ?? ''),
+				ctx.actor,
+			);
+			return ok([received], 'Devolución recibida en almacén correctamente');
+		}
 		case 'delivery-route:read_route_map':
 			return delivery_route_map(ctx);
 		case 'delivery-route:read_chofer_routes':

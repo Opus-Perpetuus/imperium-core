@@ -17,6 +17,10 @@ import {
 	prepare_delivery_package_create,
 	prepare_delivery_package_update,
 } from './delivery-package-flow.ts';
+import {
+	prepare_delivery_return_create,
+	prepare_delivery_return_update,
+} from './delivery-return-flow.ts';
 import { build_access } from './auth.ts';
 import { is_seed_admin } from './group-access.ts';
 import {
@@ -182,6 +186,9 @@ export async function handle_crud(
 		if (resource === 'delivery-package') {
 			throw new Error('No se eliminan bultos. Usa «Anular bulto» para liberar el empaque.');
 		}
+		if (resource === 'delivery-return') {
+			throw new Error('Las devoluciones no se pueden eliminar manualmente');
+		}
 		const scope = await record_rule_scope(store, actor, resource, method);
 		await assert_id_in_scope(store, resource, segs[1], scope, method);
 		const deleted = await store.remove(resource, segs[1]);
@@ -223,7 +230,14 @@ export async function handle_crud(
 		const [populated] = await store.populate_docs(resource, [doc]);
 		return json(
 			resource,
-			ok([populated], resource === 'delivery-package' ? 'Bulto encontrado' : 'Ruta encontrada'),
+			ok(
+				[populated],
+				resource === 'delivery-package'
+					? 'Bulto encontrado'
+					: resource === 'delivery-return'
+						? 'Devolución encontrada'
+						: 'Ruta encontrada',
+			),
 		);
 	}
 	if (method === 'POST' && segs.length === 0) {
@@ -239,6 +253,9 @@ export async function handle_crud(
 		}
 		if (resource === 'delivery-package') {
 			incoming = await prepare_delivery_package_create(store, incoming);
+		}
+		if (resource === 'delivery-return') {
+			incoming = await prepare_delivery_return_create(incoming);
 		}
 		if (resource === 'pos-tickets') {
 			await assert_pos_pin(
@@ -268,7 +285,9 @@ export async function handle_crud(
 					? 'Pedido creado'
 					: resource === 'delivery-package'
 						? 'Bulto creado correctamente'
-						: 'Ruta creada';
+						: resource === 'delivery-return'
+							? 'Devolución creada correctamente'
+							: 'Ruta creada';
 		return json(
 			resource,
 			notice ? { ...ok([populated], message), user_pin_notice: notice } : ok([populated], message),
@@ -306,6 +325,9 @@ export async function handle_crud(
 		if (resource === 'delivery-package') {
 			b = await prepare_delivery_package_update(store, b, previous);
 		}
+		if (resource === 'delivery-return') {
+			b = await prepare_delivery_return_update(b, previous);
+		}
 		const updated = await store.update(resource, id, b);
 		if (updated) await link_attachments_to_record(store, resource, updated);
 		if (!updated) return json(resource, fail('No encontrado', 404).body, 404);
@@ -327,7 +349,9 @@ export async function handle_crud(
 					? 'Pedido actualizado'
 					: resource === 'delivery-package'
 						? 'Bulto actualizado correctamente'
-						: 'Actualizado correctamente',
+						: resource === 'delivery-return'
+							? 'Devolución actualizada correctamente'
+							: 'Actualizado correctamente',
 			),
 		);
 	}
@@ -350,6 +374,9 @@ export async function handle_crud(
 		if (resource === 'delivery-package') {
 			patched = await prepare_delivery_package_update(store, patched, previous);
 		}
+		if (resource === 'delivery-return') {
+			patched = await prepare_delivery_return_update(patched, previous);
+		}
 		const updated = await store.update(resource, segs[0]!, patched);
 		if (updated) await link_attachments_to_record(store, resource, updated);
 		if (!updated) return json(resource, fail('No encontrado', 404).body, 404);
@@ -370,7 +397,9 @@ export async function handle_crud(
 					? 'Pedido actualizado'
 					: resource === 'delivery-package'
 						? 'Bulto actualizado correctamente'
-						: 'Actualizado correctamente',
+						: resource === 'delivery-return'
+							? 'Devolución actualizada correctamente'
+							: 'Actualizado correctamente',
 			),
 		);
 	}
