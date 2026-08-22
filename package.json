@@ -1,0 +1,14 @@
+{
+  "name": "imperium-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/server.ts",
+    "dev": "bun --watch run src/server.ts",
+    "docker:build": "docker build --build-context kit=../kit -t ghcr.io/opus-perpetuus/imperium-core:0.1.0 ."
+  },
+  "dependencies": {
+    "@opus-perpetuus/imperium-core-kit": "file:./vendor/kit"
+  }
+}

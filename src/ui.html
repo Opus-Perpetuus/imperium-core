@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Imperium modular</title>
+  <style>
+    :root { color-scheme: dark; --bg:#12141a; --panel:#1c2028; --line:#2c3340; --fg:#e8edf5; --muted:#9aa6b8; --acc:#6ea8fe; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 15px/1.45 system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+    header { padding: 12px 16px; border-bottom: 1px solid var(--line); display: flex; gap: 12px; align-items: center; }
+    header strong { font-size: 16px; }
+    header button { background: var(--acc); color: #0b1220; border: 0; border-radius: 8px; padding: 6px 10px; cursor: pointer; }
+    .layout { display: grid; grid-template-columns: 280px 1fr; min-height: calc(100vh - 52px); }
+    nav { border-right: 1px solid var(--line); padding: 10px; overflow: auto; }
+    nav h3 { margin: 14px 0 6px; font-size: 12px; color: var(--muted); text-transform: uppercase; }
+    nav a { display: block; color: var(--fg); text-decoration: none; padding: 5px 8px; border-radius: 6px; }
+    nav a:hover, nav a.active { background: var(--panel); }
+    main { padding: 16px 20px; overflow: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid var(--line); text-align: left; padding: 6px 8px; vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; }
+    input, textarea { width: 100%; background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+    .row { margin: 8px 0; }
+    .muted { color: var(--muted); }
+    .err { color: #ff8a8a; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>Imperium modular</strong>
+    <span class="muted" id="status">cargando…</span>
+    <button type="button" id="install">Instalar schemas SQL</button>
+  </header>
+  <div class="layout">
+    <nav id="nav"></nav>
+    <main id="main"></main>
+  </div>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let catalog = [];
+    let current = null;
+
+    async function j(url, opt) {
+      const r = await fetch(url, opt);
+      const t = await r.text();
+      let body = null;
+      try { body = t ? JSON.parse(t) : null; } catch { body = t; }
+      if (!r.ok) throw new Error((body && body.error) || t || r.status);
+      return body;
+    }
+
+    function flatten(subjects) {
+      const items = [];
+      for (const s of subjects) {
+        for (const m of (s.modules || [])) {
+          items.push({ subject: s, module: m });
+        }
+      }
+      return items;
+    }
+
+    function renderNav() {
+      const by = new Map();
+      for (const s of catalog) by.set(s.slug, s);
+      $("nav").innerHTML = [...by.values()].map((s) => {
+        const mods = (s.modules || []).map((m) =>
+          `<a href="#/${s.slug}/${m.resource}" data-s="${s.slug}" data-r="${m.resource}">${m.name}</a>`
+        ).join("");
+        return `<h3>${s.name}</h3>${mods}`;
+      }).join("");
+    }
+
+    function colsOf(mod) {
+      const base = ["id", "name", "is_active", "ref"];
+      const extra = (mod.columns || []).map((c) => c.name || c);
+      return [...base, ...extra].slice(0, 10);
+    }
+
+    async function showList(slug, resource) {
+      const s = catalog.find((x) => x.slug === slug);
+      const m = (s?.modules || []).find((x) => x.resource === resource);
+      if (!s || !m) { $("main").innerHTML = "<p>No encontrado</p>"; return; }
+      current = { s, m };
+      const cols = colsOf(m);
+      let rows = [];
+      try {
+        const res = await j(`/api/m/${s.technical_id}/${m.resource}`);
+        rows = res.data || res || [];
+        if (!Array.isArray(rows)) rows = rows.items || [];
+      } catch (e) {
+        $("main").innerHTML = `<h2>${m.name}</h2><p class="err">${e.message}</p>`;
+        return;
+      }
+      const head = cols.map((c) => `<th>${c}</th>`).join("") + "<th></th>";
+      const body = rows.map((r) =>
+        `<tr>${cols.map((c) => `<td>${esc(r[c])}</td>`).join("")}<td><a href="#/${slug}/${resource}/${r.id}">editar</a></td></tr>`
+      ).join("");
+      $("main").innerHTML = `
+        <h2>${s.name} · ${m.name}</h2>
+        <p class="muted">${rows.length} registros · <a href="#/${slug}/${resource}/nuevo">crear</a></p>
+        <table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+      highlight();
+    }
+
+    function fieldInputs(m, row) {
+      const extras = m.columns || [];
+      const fields = [
+        { name: "name", label: "Nombre" },
+        { name: "description", label: "Descripción" },
+        { name: "ref", label: "Ref" },
+        ...extras.map((c) => ({ name: c.name, label: c.label || c.name })),
+      ];
+      return fields.map((f) => {
+        const v = row[f.name] == null ? "" : (typeof row[f.name] === "object" ? JSON.stringify(row[f.name]) : row[f.name]);
+        return `<div class="row"><label>${f.label}<br><input name="${f.name}" value="${esc(v)}" /></label></div>`;
+      }).join("");
+    }
+
+    async function showForm(slug, resource, id) {
+      const s = catalog.find((x) => x.slug === slug);
+      const m = (s?.modules || []).find((x) => x.resource === resource);
+      let row = { name: "", is_active: true };
+      if (id && id !== "nuevo") {
+        const res = await j(`/api/m/${s.technical_id}/${m.resource}/${id}`);
+        row = res.data || res;
+      }
+      $("main").innerHTML = `
+        <h2>${id === "nuevo" ? "Crear" : "Editar"} ${m.name}</h2>
+        <form id="f">${fieldInputs(m, row)}
+          <button type="submit">Guardar</button>
+          <a href="#/${slug}/${resource}">volver</a>
+        </form>
+        <p class="err" id="ferr"></p>`;
+      $("f").onsubmit = async (ev) => {
+        ev.preventDefault();
+        const fd = new FormData(ev.target);
+        const body = { is_active: true };
+        for (const [k, v] of fd.entries()) body[k] = v;
+        try {
+          if (id === "nuevo") await j(`/api/m/${s.technical_id}/${m.resource}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+          else await j(`/api/m/${s.technical_id}/${m.resource}/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+          location.hash = `#/${slug}/${resource}`;
+        } catch (e) { $("ferr").textContent = e.message; }
+      };
+      highlight();
+    }
+
+    function esc(v) {
+      return String(v ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+    }
+
+    function highlight() {
+      const hash = location.hash;
+      for (const a of document.querySelectorAll("nav a")) {
+        a.classList.toggle("active", hash.startsWith(`#/${a.dataset.s}/${a.dataset.r}`));
+      }
+    }
+
+    async function route() {
+      const p = location.hash.replace(/^#\/?/, "").split("/");
+      if (p[0] && p[1] && p[2]) return showForm(p[0], p[1], p[2]);
+      if (p[0] && p[1]) return showList(p[0], p[1]);
+      $("main").innerHTML = "<p>Elige un módulo. Los datos vienen de SQL (migrados desde Mongo).</p>";
+    }
+
+    $("install").onclick = async () => {
+      $("status").textContent = "instalando…";
+      try {
+        const r = await j("/api/subjects/install-schemas", { method: "POST" });
+        $("status").textContent = "schemas: " + (r.data || []).filter((x) => x.ok).length + " ok";
+      } catch (e) { $("status").textContent = e.message; }
+    };
+
+    (async () => {
+      const res = await j("/api/subjects");
+      catalog = res.data || res;
+      $("status").textContent = catalog.length + " súbditos";
+      renderNav();
+      window.addEventListener("hashchange", route);
+      route();
+    })();
+  </script>
+</body>
+</html>
