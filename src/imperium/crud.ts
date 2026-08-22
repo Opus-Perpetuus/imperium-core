@@ -38,6 +38,7 @@ import {
 } from './pos-session-flow.ts';
 import { decorate_product, prepare_product_write } from './products-flow.ts';
 import { decorate_vehicle, prepare_vehicle_write } from './vehicle-flow.ts';
+import { is_location_resource, prepare_location_write } from './location-flow.ts';
 import {
 	decorate_physical_count,
 	is_physical_count_resource,
@@ -271,6 +272,9 @@ export async function handle_crud(
 		if (is_physical_count_resource(resource)) {
 			throw new Error('Los conteos físicos no se pueden eliminar manualmente');
 		}
+		if (is_location_resource(resource)) {
+			throw new Error('Las ubicaciones no soportan borrado manual');
+		}
 		const scope = await record_rule_scope(store, actor, resource, method);
 		await assert_id_in_scope(store, resource, segs[1], scope, method);
 		const deleted = await store.remove(resource, segs[1]);
@@ -385,7 +389,9 @@ export async function handle_crud(
 						? 'Devolución encontrada'
 						: resource === 'vehicle'
 							? 'Vehículo encontrado'
-							: is_physical_count_resource(resource)
+							: is_location_resource(resource)
+								? 'Ubicación encontrada'
+								: is_physical_count_resource(resource)
 								? 'Conteo encontrado'
 								: 'Ruta encontrada',
 			),
@@ -432,6 +438,9 @@ export async function handle_crud(
 		}
 		if (resource === 'vehicle') {
 			incoming = await prepare_vehicle_write(store, incoming);
+		}
+		if (is_location_resource(resource)) {
+			incoming = await prepare_location_write(store, incoming);
 		}
 		if (is_physical_count_resource(resource)) {
 			incoming = await prepare_physical_count_create(store, incoming);
@@ -517,6 +526,8 @@ export async function handle_crud(
 								? 'Orden de compra creada correctamente'
 								: resource === 'vehicle'
 									? 'Vehículo creado correctamente'
+									: is_location_resource(resource)
+										? 'Ubicación creada correctamente'
 									: is_physical_count_resource(resource)
 										? 'Conteo creado correctamente'
 										: is_project_resource(resource)
@@ -591,6 +602,9 @@ export async function handle_crud(
 		}
 		if (resource === 'vehicle') {
 			b = await prepare_vehicle_write(store, b, previous);
+		}
+		if (is_location_resource(resource)) {
+			b = await prepare_location_write(store, b, previous);
 		}
 		if (is_physical_count_resource(resource)) {
 			b = await prepare_physical_count_update(store, b, previous);
@@ -671,6 +685,8 @@ export async function handle_crud(
 								? 'Orden de compra actualizada correctamente'
 								: resource === 'vehicle'
 									? 'Vehículo actualizado correctamente'
+									: is_location_resource(resource)
+										? 'Ubicación actualizada correctamente'
 									: is_physical_count_resource(resource)
 										? 'Conteo actualizado correctamente'
 										: is_project_resource(resource)
@@ -719,6 +735,9 @@ export async function handle_crud(
 		}
 		if (resource === 'vehicle') {
 			patched = await prepare_vehicle_write(store, patched, previous);
+		}
+		if (is_location_resource(resource)) {
+			patched = await prepare_location_write(store, patched, previous);
 		}
 		if (is_physical_count_resource(resource)) {
 			patched = await prepare_physical_count_update(store, patched, previous);
@@ -799,6 +818,8 @@ export async function handle_crud(
 								? 'Orden de compra actualizada correctamente'
 								: resource === 'vehicle'
 									? 'Vehículo actualizado correctamente'
+									: is_location_resource(resource)
+										? 'Ubicación actualizada correctamente'
 									: is_physical_count_resource(resource)
 										? 'Conteo actualizado correctamente'
 										: is_project_resource(resource)

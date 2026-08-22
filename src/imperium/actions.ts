@@ -18,6 +18,7 @@ import {
 	normalize_alias_map,
 	sanitize_location_segment,
 } from './location-path.ts';
+import { compose_location_code } from './location-flow.ts';
 import { AguaMssqlService } from './agua-mssql.ts';
 import { calcular_importe } from './agua-importe.ts';
 import { looks_like_canonical, serialize_cfdi_to_xml, type CfdiCanonical } from './cfdi-xml.ts';
@@ -2350,31 +2351,45 @@ async function upsert_location_line(
 	dry_run: boolean,
 ) {
 	const segmento = sanitize_location_segment(line.segmento_codigo || line.name);
-	const parent = sanitize_location_segment(line.parent_codigo ?? '');
-	const codigo = parent ? `${parent}${segmento}` : segmento;
-	const existing = await find_location_by_codigo(ctx, codigo);
+	const parent_codigo = sanitize_location_segment(line.parent_codigo ?? '');
+	const parent_doc = parent_codigo ? await find_location_by_codigo(ctx, parent_codigo) : null;
+	const parent_id = parent_doc ? String(parent_doc._id) : '';
+	const composed = parent_id
+		? await compose_location_code(ctx.store, parent_id, segmento)
+		: {
+				codigo: parent_codigo ? `${parent_codigo}${segmento}` : segmento,
+				nivel: 0,
+				parent: null as string | null,
+				parent_codigo,
+			};
+	const existing = await find_location_by_codigo(ctx, composed.codigo);
 	if (existing) {
 		if (!dry_run) {
 			await ctx.store.update('inventory-internal-location', String(existing._id), {
 				name: line.name || existing.name,
 				permite_almacenaje: line.permite_almacenaje ?? existing.permite_almacenaje,
+				parent: composed.parent ?? existing.parent ?? null,
+				parent_codigo: composed.parent_codigo || parent_codigo || existing.parent_codigo,
+				nivel: existing.nivel ?? composed.nivel,
+				segmento_codigo: existing.segmento_codigo || segmento,
 			});
 		}
-		return { codigo, accion: 'exists' as const, id: existing._id };
+		return { codigo: composed.codigo, accion: 'exists' as const, id: existing._id };
 	}
 	if (!dry_run) {
 		const created = await ctx.store.insert('inventory-internal-location', {
-			name: line.name || codigo,
-			codigo,
+			name: line.name || composed.codigo,
+			codigo: composed.codigo,
 			segmento_codigo: segmento,
-			parent: parent || null,
-			parent_codigo: parent || null,
+			parent: composed.parent,
+			parent_codigo: composed.parent_codigo || parent_codigo || null,
+			nivel: composed.nivel,
 			permite_almacenaje: line.permite_almacenaje !== false,
-			tipo: 'interna',
+			tipo: 'almacen',
 		});
-		return { codigo, accion: 'create' as const, id: created._id };
+		return { codigo: composed.codigo, accion: 'create' as const, id: created._id };
 	}
-	return { codigo, accion: 'create' as const, id: null };
+	return { codigo: composed.codigo, accion: 'create' as const, id: null };
 }
 
 async function ensure_location_path(
