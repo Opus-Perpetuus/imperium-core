@@ -104,7 +104,12 @@ import {
 	list_packages_by_pedido,
 } from './delivery-package-flow.ts';
 import { register_package_delivery_exit } from './inventory-logistics-flow.ts';
-import { recibir_delivery_return } from './delivery-return-flow.ts';
+import {
+	apply_quant_delta,
+	find_quant_for_pair,
+	recibir_delivery_return,
+	recompute_product_existencia,
+} from './delivery-return-flow.ts';
 import { apply_purchase_receipt_stock } from './purchase-order-flow.ts';
 import {
 	acomodar_reception,
@@ -2487,24 +2492,13 @@ async function register_transfer(ctx: Ctx) {
 	};
 }
 
-async function adjust_quant(ctx: Ctx, producto: string, ubicacion: string, delta: number) {
-	if (!ubicacion || !ctx.store.has('inventory-stock-quant')) return;
-	const existing = (await ctx.store.find_many('inventory-stock-quant', {
-		where: { producto },
-		take: 50,
-		include_inactive: true,
-	})).rows.find((r) => String(r.ubicacion ?? r.location) === ubicacion);
-	const qty = Number(existing?.cantidad ?? existing?.qty ?? 0) + delta;
-	if (existing) {
-		await ctx.store.update('inventory-stock-quant', String(existing._id), { cantidad: qty });
-	} else {
-		await ctx.store.insert('inventory-stock-quant', {
-			name: `${producto}@${ubicacion}`,
-			producto,
-			ubicacion,
-			cantidad: qty,
-		});
-	}
+function location_allows_storage(loc: ImperiumDoc | null) {
+	if (!loc) return false;
+	return Boolean(loc.permite_almacenaje) && loc.permite_almacenaje !== 'false' && loc.permite_almacenaje !== 0;
+}
+
+function opening_qty(value: unknown) {
+	return Number((Number(value ?? 0) || 0).toFixed(4));
 }
 
 async function import_apertura(ctx: Ctx) {
@@ -2514,30 +2508,26 @@ async function import_apertura(ctx: Ctx) {
 		ctx.body.crear_ubicaciones === undefined ? true : Boolean(ctx.body.crear_ubicaciones);
 	const root = sanitize_location_segment(ctx.body.root_parent_codigo ?? 'ALMACEN') || 'ALMACEN';
 	const alias_map = normalize_alias_map(ctx.body.alias_map);
-	const lineas = Array.isArray(ctx.body)
-		? ctx.body
-		: as_array(ctx.body.lineas);
+	const lineas = Array.isArray(ctx.body) ? ctx.body : as_array(ctx.body.lineas);
 	if (!lineas.length) {
 		throw new Error(
 			'Debes enviar lineas[] con producto_codigo, ubicación (codigo o path) y cantidad',
 		);
 	}
 	if (lineas.length > 500) {
-		throw new Error(
-			'Máximo 500 líneas por request. Usa el wizard de apertura (lotes de 100)',
-		);
+		throw new Error('Máximo 500 líneas por request. Usa el wizard de apertura (lotes de 100)');
 	}
 	const errores: ImperiumDoc[] = [];
-	const preview: ImperiumDoc[] = [];
-	const applied: ImperiumDoc[] = [];
+	const resolved: ImperiumDoc[] = [];
 	const ubicaciones_creadas: string[] = [];
+	const preview_ubicaciones: ImperiumDoc[] = [];
 	for (let i = 0; i < lineas.length; i++) {
 		const row = as_object(lineas[i]);
 		const fila = Number(row.fila ?? i + 2);
 		const raw_qty = row.cantidad ?? row.qty;
 		const cantidad =
 			raw_qty === undefined || raw_qty === null || raw_qty === '' ? 1 : Number(raw_qty);
-		if (!Number.isFinite(cantidad) || cantidad < 0) {
+		if (!Number.isFinite(cantidad) || (modo === 'set' && cantidad < 0)) {
 			errores.push({
 				fila,
 				mensaje: Number.isFinite(cantidad)
@@ -2557,26 +2547,29 @@ async function import_apertura(ctx: Ctx) {
 				null;
 		}
 		if (!prod) {
-			errores.push({ fila, mensaje: 'Falta producto o producto_codigo', raw: row });
+			errores.push({ fila, mensaje: `Producto no encontrado (${pid || pcod || 'sin clave'})`, raw: row });
 			continue;
 		}
-		let ubicacion = String(row.ubicacion_codigo ?? '').trim().toUpperCase();
+		let codigo = String(row.ubicacion_codigo ?? '').trim().toUpperCase();
 		const alias = String(row.ubicacion_alias ?? '').trim();
-		if (!ubicacion && alias) {
-			ubicacion = alias_map.get(alias) || alias_map.get(alias.toUpperCase()) || '';
+		if (!codigo && alias) {
+			codigo = alias_map.get(alias) || alias_map.get(alias.toUpperCase()) || '';
 		}
 		const path = extract_path_from_row(row);
-		if (!ubicacion && path) {
-			ubicacion = composed_codigo_from_path(path, root);
+		if (!codigo && path) {
+			codigo = composed_codigo_from_path(path, root);
 			if (crear_ubicaciones) {
 				const ensured = await ensure_location_path(ctx, path, root, dry_run, fila);
-				ubicacion = ensured.leaf_codigo;
+				codigo = ensured.leaf_codigo;
 				ubicaciones_creadas.push(...ensured.creadas);
+				for (const created of ensured.creadas) {
+					preview_ubicaciones.push({ codigo: created, path, accion: 'create' });
+				}
 			}
-		} else if (!ubicacion) {
-			ubicacion = String(row.ubicacion ?? '').trim();
+		} else if (!codigo) {
+			codigo = String(row.ubicacion ?? '').trim().toUpperCase();
 		}
-		if (!ubicacion) {
+		if (!codigo) {
 			errores.push({
 				fila,
 				mensaje: alias
@@ -2586,61 +2579,164 @@ async function import_apertura(ctx: Ctx) {
 			});
 			continue;
 		}
-		const loc = await find_location_by_codigo(ctx, ubicacion);
-		if (!loc && !crear_ubicaciones && !dry_run) {
+		const loc = await find_location_by_codigo(ctx, codigo);
+		if (!loc) {
 			errores.push({
 				fila,
-				mensaje: `Ubicación no encontrada (${ubicacion}). Activa crear_ubicaciones o importa el árbol antes`,
+				mensaje: crear_ubicaciones
+					? `Ubicación no encontrada ni creable (${codigo}). Indica ubicacion_path (ej. "Zona 1 / Bin A") o parent_codigo+segmento_codigo`
+					: `Ubicación no encontrada (${codigo}). Activa crear_ubicaciones o importa el árbol antes`,
 				raw: row,
 			});
 			continue;
 		}
-		const current = ctx.store.has('inventory-stock-quant')
-			? (
-					await ctx.store.find_many('inventory-stock-quant', {
-						where: { producto: String(prod._id) },
-						take: 50,
-					})
-				).rows.find((r) => String(r.ubicacion ?? r.location) === ubicacion)
-			: null;
-		const actual = Number(current?.cantidad ?? current?.qty ?? 0);
-		const objetivo = modo === 'delta' ? actual + cantidad : cantidad;
-		const diferencia = Number((objetivo - actual).toFixed(4));
-		preview.push({
+		if (!location_allows_storage(loc)) {
+			errores.push({
+				fila,
+				mensaje: `La ubicación ${loc.codigo ?? codigo} no permite almacenaje (no es hoja). Usa el último nivel del path como hoja`,
+				raw: row,
+			});
+			continue;
+		}
+		resolved.push({
 			fila,
-			producto: prod._id,
-			producto_codigo: prod.codigo ?? pcod,
-			ubicacion_codigo: ubicacion,
-			cantidad_actual: actual,
-			cantidad_objetivo: objetivo,
-			diferencia,
+			producto_id: String(prod._id),
+			producto_codigo: String(prod.codigo ?? pcod),
+			producto_nombre: String(prod.name ?? ''),
+			ubicacion_id: String(loc._id),
+			ubicacion_codigo: String(loc.codigo ?? codigo),
+			cantidad,
 		});
-		if (!diferencia || dry_run) continue;
-		await adjust_quant(ctx, String(prod._id), ubicacion, diferencia);
-		await ctx.store.update('products', String(prod._id), {
-			existencia: Number((Number(prod.existencia ?? 0) + diferencia).toFixed(4)),
-		});
-		applied.push({ fila, diferencia });
 	}
-	const a_aplicar = preview.filter((p) => Number(p.diferencia) !== 0).length;
+	const aggregated = new Map<string, ImperiumDoc>();
+	for (const line of resolved) {
+		const key = `${line.producto_id}::${line.ubicacion_id}`;
+		const existing = aggregated.get(key);
+		if (!existing) {
+			aggregated.set(key, { ...line });
+			continue;
+		}
+		if (modo === 'delta') {
+			existing.cantidad = opening_qty(Number(existing.cantidad) + Number(line.cantidad));
+		} else {
+			existing.cantidad = line.cantidad;
+			existing.fila = line.fila;
+		}
+	}
+	const preview: ImperiumDoc[] = [];
+	const adjustments: ImperiumDoc[] = [];
+	for (const line of aggregated.values()) {
+		const current = await find_quant_for_pair(
+			ctx.store,
+			String(line.producto_id),
+			String(line.ubicacion_id),
+			String(line.ubicacion_codigo),
+		);
+		const cantidad_actual = opening_qty(current?.cantidad ?? 0);
+		const diferencia =
+			modo === 'delta'
+				? opening_qty(line.cantidad)
+				: opening_qty(Number(line.cantidad) - cantidad_actual);
+		const item = {
+			fila: line.fila,
+			producto: line.producto_id,
+			producto_codigo: line.producto_codigo,
+			ubicacion_codigo: line.ubicacion_codigo,
+			cantidad_actual,
+			cantidad_objetivo: modo === 'delta' ? opening_qty(cantidad_actual + Number(line.cantidad)) : opening_qty(line.cantidad),
+			diferencia,
+		};
+		preview.push(item);
+		if (diferencia) {
+			adjustments.push({
+				...line,
+				...item,
+			});
+		}
+	}
+	if (!dry_run && adjustments.length) {
+		const running = new Map<string, number>();
+		const fecha = new Date();
+		for (const adj of adjustments) {
+			const product_id = String(adj.producto_id);
+			const prod = await ctx.store.find_id('products', product_id);
+			if (!prod) continue;
+			const previo = running.get(product_id) ?? opening_qty(prod.existencia);
+			const resultante = opening_qty(previo + Number(adj.diferencia));
+			running.set(product_id, resultante);
+			await apply_quant_delta(ctx.store, {
+				producto: product_id,
+				producto_nombre: String(adj.producto_nombre || prod.name || ''),
+				producto_codigo: String(adj.producto_codigo || prod.codigo || ''),
+				ubicacion: String(adj.ubicacion_id),
+				ubicacion_codigo: String(adj.ubicacion_codigo),
+				delta: Number(adj.diferencia),
+			});
+			await recompute_product_existencia(ctx.store, product_id);
+			if (ctx.store.has('inventory-movement')) {
+				const apartado = opening_qty(prod.existenciaApartada);
+				const delta = Number(adj.diferencia);
+				await ctx.store.insert('inventory-movement', {
+					name: `Apertura ${adj.producto_codigo || product_id}`,
+					description: 'Ajuste manual de inventario por apertura',
+					tipo: 'ajuste_manual',
+					tipo_movimiento: 'ajuste_manual',
+					producto: product_id,
+					producto_id: product_id,
+					producto_nombre: String(adj.producto_nombre || prod.name || ''),
+					producto_codigo: String(adj.producto_codigo || prod.codigo || ''),
+					ubicacion_origen: delta < 0 ? adj.ubicacion_id : undefined,
+					ubicacion_origen_nombre: delta < 0 ? adj.ubicacion_codigo : '',
+					ubicacion_destino: delta > 0 ? adj.ubicacion_id : undefined,
+					ubicacion_destino_nombre: delta > 0 ? adj.ubicacion_codigo : '',
+					documento_tipo: 'inventory-opening-import',
+					documento_modelo: 'InventoryPhysicalCount',
+					documento_nombre: 'Importación apertura de inventario',
+					documento_referencia: `${adj.ubicacion_codigo}:${adj.producto_codigo || product_id}`,
+					cantidad: Math.abs(delta),
+					stock_total_previo: previo,
+					stock_total_resultante: resultante,
+					stock_apartado_previo: apartado,
+					stock_apartado_resultante: apartado,
+					fecha_movimiento: fecha.toISOString(),
+				});
+			}
+		}
+	}
+	const a_aplicar = adjustments.length;
+	const sin_cambio = preview.length - a_aplicar;
+	const unique_created = [...new Set(ubicaciones_creadas)];
 	return ok(
 		[
 			{
 				dry_run,
 				modo,
+				crear_ubicaciones,
 				total_filas: lineas.length,
-				validas: preview.length,
-				a_aplicar,
-				aplicados: dry_run ? 0 : applied.length,
-				errores,
-				preview,
-				ubicaciones_creadas: [...new Set(ubicaciones_creadas)],
+				validas: resolved.length,
+				a_aplicar: dry_run ? a_aplicar : undefined,
+				aplicados: dry_run ? 0 : a_aplicar,
+				sin_cambio,
+				ubicaciones_creadas: unique_created,
+				preview_ubicaciones,
+				preview: preview.filter((row) => Number(row.diferencia) !== 0),
+				preview_sin_cambio: preview.filter((row) => Number(row.diferencia) === 0),
+				aplicados_detalle: dry_run
+					? []
+					: adjustments.map((adj) => ({
+							fila: adj.fila,
+							producto_codigo: adj.producto_codigo,
+							ubicacion_codigo: adj.ubicacion_codigo,
+							diferencia: adj.diferencia,
+						})),
+				puede_aplicar: errores.length === 0 && (a_aplicar > 0 || unique_created.length > 0),
 				ok: errores.length === 0,
+				errores,
 			},
 		],
 		dry_run
-			? `Simulación: ${a_aplicar} ajuste(s), ${errores.length} error(es)`
-			: `Apertura aplicada: ${applied.length} ajuste(s), ${errores.length} error(es)`,
+			? `Simulación: ${a_aplicar} ajuste(s), ${unique_created.length} ubicación(es) a crear, ${errores.length} error(es)`
+			: `Apertura aplicada: ${a_aplicar} ajuste(s), ${unique_created.length} ubicación(es) creada(s), ${errores.length} error(es)`,
 	);
 }
 

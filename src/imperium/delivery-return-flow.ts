@@ -154,6 +154,29 @@ async function register_return_receipt(
 	}
 }
 
+export async function find_quant_for_pair(
+	store: ImperiumStore,
+	producto: string,
+	ubicacion: string,
+	ubicacion_codigo?: string,
+): Promise<ImperiumDoc | null> {
+	if (!store.has('inventory-stock-quant') || !producto) return null;
+	const codigo = String(ubicacion_codigo ?? '').trim().toUpperCase();
+	const { rows } = await store.find_many('inventory-stock-quant', {
+		where: { producto },
+		take: 500,
+		include_inactive: true,
+		populate: false,
+	});
+	return (
+		rows.find((row) => {
+			const uid = ref_id(row.ubicacion) || text(row.ubicacion_id);
+			const ucode = text(row.ubicacion_codigo).toUpperCase();
+			return uid === ubicacion || uid === codigo || (codigo && ucode === codigo);
+		}) ?? null
+	);
+}
+
 export async function apply_quant_delta(
 	store: ImperiumStore,
 	params: {
@@ -166,13 +189,12 @@ export async function apply_quant_delta(
 	},
 ) {
 	if (!store.has('inventory-stock-quant')) return;
-	const { rows } = await store.find_many('inventory-stock-quant', {
-		where: { producto: params.producto, ubicacion: params.ubicacion },
-		take: 8,
-		include_inactive: true,
-		populate: false,
-	});
-	const current = rows[0];
+	const current = await find_quant_for_pair(
+		store,
+		params.producto,
+		params.ubicacion,
+		params.ubicacion_codigo,
+	);
 	const cantidad = round_qty(Number(current?.cantidad ?? 0) + params.delta);
 	const apartada = round_qty(Number(current?.cantidad_apartada ?? 0));
 	const disponible = round_qty(cantidad - apartada);
