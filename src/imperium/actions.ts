@@ -74,7 +74,7 @@ import {
 	recreate_indexes,
 } from './module-data.ts';
 import { is_upload, persist_upload_as_attachment } from './uploads.ts';
-import { emit_messages_refresh } from './socket-stub.ts';
+import { broadcast_event, emit_messages_refresh } from './socket-stub.ts';
 
 type Ctx = {
 	store: ImperiumStore;
@@ -3743,26 +3743,95 @@ async function lista_de_precios_sync_offline(ctx: Ctx) {
 	return Response.json({ listasDePrecios });
 }
 
-async function reclamar_surtir(ctx: Ctx) {
-	const pedido = await need(ctx, 'pedidos', ctx.params.id);
-	if (pedido.surtidor && String(pedido.surtidor) !== actor_id(ctx)) {
-		throw new Error('El pedido ya fue reclamado por otro usuario');
-	}
-	const updated = await ctx.store.update('pedidos', String(pedido._id), {
-		estado: 'surtido_en_proceso',
-		surtidor: actor_id(ctx),
-		surtidor_nombre: actor_name(ctx),
-		fecha_reclamo: now(),
+const SEED_ADMIN_REF = 'user-menu-management-0';
+const GROUP_REF_ALMACEN = 'user-group-almacen';
+const GROUP_REF_SURTIDORES = 'user-group-surtidores';
+
+function is_seed_admin(ctx: Ctx) {
+	return String(ctx.actor?._ref ?? ctx.actor?.ref ?? '') === SEED_ADMIN_REF;
+}
+
+function session_employee_id(ctx: Ctx) {
+	const raw = ctx.actor?.employee;
+	if (raw == null || raw === '') return '';
+	if (typeof raw === 'object') return String((raw as { _id?: unknown })._id ?? '');
+	return String(raw).trim();
+}
+
+async function actor_group_refs(ctx: Ctx): Promise<string[]> {
+	if (!ctx.store.has('user-group')) return [];
+	const uid = actor_id(ctx);
+	if (!uid) return [];
+	const { rows } = await ctx.store.find_many('user-group', {
+		take: 500,
+		include_inactive: false,
 	});
-	if (ctx.store.has('pedidos-surtir')) {
-		await ctx.store.insert('pedidos-surtir', {
-			name: `Surtir ${pedido.name}`,
-			pedido: pedido._id,
-			surtidor: actor_id(ctx),
-			estado: 'en_proceso',
-		});
+	return rows
+		.filter((group) => id_list(group.user_ids).includes(uid))
+		.map((group) => String(group._ref ?? group.ref ?? ''))
+		.filter(Boolean);
+}
+
+function emit_pedidos_updated() {
+	broadcast_event('update', { action: 'pedidos_updated', data: [] });
+}
+
+async function reclamar_surtir(ctx: Ctx) {
+	if (!is_seed_admin(ctx)) {
+		const refs = await actor_group_refs(ctx);
+		if (!refs.includes(GROUP_REF_ALMACEN) && !refs.includes(GROUP_REF_SURTIDORES)) {
+			throw new Error('No tienes permiso para reclamar pedidos para surtir.');
+		}
 	}
-	return ok([updated], 'Pedido reclamado para surtir');
+	const employee_id = session_employee_id(ctx);
+	if (!employee_id || !/^[a-f0-9]{24}$/i.test(employee_id)) {
+		throw new Error(
+			'Tu usuario no tiene un empleado vinculado. Configúralo en Usuarios antes de surtir.',
+		);
+	}
+	const id = String(ctx.params.id ?? '').trim();
+	if (!id || !/^[a-f0-9]{24}$/i.test(id)) {
+		throw new Error('Identificador de pedido no válido.');
+	}
+	const pedido = await ctx.store.find_id('pedidos', id);
+	if (!pedido) throw new Error('Pedido no encontrado.');
+	const assigned = ref_id(pedido.assigned_employee);
+	const estado = String(pedido.estado ?? '');
+	if (estado === 'surtiendo') {
+		if (assigned && assigned !== employee_id) {
+			throw new Error('Este pedido ya lo está surtiendo otro empleado.');
+		}
+		if (!assigned) {
+			const updated = await ctx.store.update('pedidos', id, {
+				assigned_employee: employee_id,
+				init_time: pedido.init_time ?? now(),
+			});
+			emit_pedidos_updated();
+			return ok([updated ?? pedido], 'Pedido ya asignado a ti');
+		}
+		return ok([pedido], 'Pedido ya asignado a ti');
+	}
+	if (estado !== 'por_surtir') {
+		throw new Error(`Este pedido no está disponible para surtir (estado: ${estado}).`);
+	}
+	if (assigned && assigned !== employee_id) {
+		throw new Error('Este pedido ya está asignado a otro empleado.');
+	}
+	if (!is_seed_admin(ctx)) {
+		const refs = await actor_group_refs(ctx);
+		if (!refs.includes(GROUP_REF_ALMACEN) && !refs.includes(GROUP_REF_SURTIDORES)) {
+			throw new Error(
+				'No tienes permiso para cambiar el pedido de "por_surtir" a "surtiendo". Esta acción está reservada al grupo correspondiente.',
+			);
+		}
+	}
+	const updated = await ctx.store.update('pedidos', id, {
+		estado: 'surtiendo',
+		assigned_employee: employee_id,
+		init_time: now(),
+	});
+	emit_pedidos_updated();
+	return ok([updated ?? pedido], 'Pedido reclamado para surtir');
 }
 
 async function pos_next_consecutive(ctx: Ctx) {
