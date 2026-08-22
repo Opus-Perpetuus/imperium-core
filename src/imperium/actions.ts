@@ -100,6 +100,13 @@ import {
 	register_internal_transfer,
 	reservar_reception,
 } from './inventory-reception-flow.ts';
+import {
+	authorize_invoice_request,
+	cancel_invoice_request,
+	generate_invoice_from_order,
+	mark_invoice_request,
+	send_invoice_to_commercial,
+} from './invoice-request-flow.ts';
 
 type Ctx = {
 	store: ImperiumStore;
@@ -317,10 +324,10 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'invoice-request:request_cfdi_draft':
 			return invoice_cfdi_draft(ctx);
 		case 'invoice-request:cancel_request':
-			return patch_doc(ctx, 'invoice-request', ctx.params.id, {
-				estado: 'cancelado',
-				fecha_cancelacion: now(),
-			}, 'Solicitud cancelada');
+			return ok(
+				[await cancel_invoice_request(ctx.store, ctx.params.id, ctx.body.motivo)],
+				'Solicitud cancelada',
+			);
 		case 'messages:read_my_messages':
 			return my_messages(ctx);
 		case 'messages:read_my_conversations':
@@ -2884,17 +2891,6 @@ async function stock_consistency(ctx: Ctx) {
 	);
 }
 
-const IR_PENDING = 'pendiente_autorizacion_cobranza';
-const IR_READY = 'listo_para_comercial';
-const IR_SENT = 'enviado_a_comercial';
-const IR_INVOICED = 'facturado';
-const IR_CANCELED = 'cancelado';
-const IR_PENDING_ALIASES = new Set([IR_PENDING, 'pendiente_autorizacion']);
-const IR_READY_ALIASES = new Set([IR_READY, 'lista_comercial']);
-const IR_SENT_ALIASES = new Set([IR_SENT, 'enviada_comercial']);
-const IR_INVOICED_ALIASES = new Set([IR_INVOICED, 'facturada']);
-const IR_CANCELED_ALIASES = new Set([IR_CANCELED, 'cancelada']);
-
 async function violation_challenge(ctx: Ctx) {
 	const rec = await need(ctx, 'violation', ctx.params.id);
 	const reason = String(ctx.body.reason ?? ctx.body.motivo ?? '').trim();
@@ -2924,70 +2920,38 @@ async function violation_challenge(ctx: Ctx) {
 }
 
 async function invoice_from_order(ctx: Ctx) {
-	const order = await need(ctx, 'pedidos', ctx.params.orderId);
-	const created = await ctx.store.insert('invoice-request', {
-		name: `Factura ${order.name}`,
-		pedido: order._id,
-		estado: IR_PENDING,
-		requiere_autorizacion_cobranza: true,
-		articulos: order.articulos ?? order.items,
-		total: order.total ?? order.importe,
-		monto_total: order.total ?? order.importe,
-	});
-	return ok([created], 'Solicitud generada desde pedido');
+	const generated = await generate_invoice_from_order(ctx.store, ctx.params.orderId);
+	return ok([generated.record], generated.message);
 }
 
 async function invoice_authorize(ctx: Ctx) {
-	const rec = await need(ctx, 'invoice-request', ctx.params.id);
-	if (!rec.requiere_autorizacion_cobranza) {
-		throw new Error('Esta solicitud no requiere autorización de cobranza.');
-	}
-	const estado = String(rec.estado ?? '');
-	if (IR_CANCELED_ALIASES.has(estado)) throw new Error('La solicitud está cancelada.');
-	if (IR_INVOICED_ALIASES.has(estado)) throw new Error('La solicitud ya fue marcada como facturada.');
-	if (IR_SENT_ALIASES.has(estado)) {
-		throw new Error('La solicitud ya fue enviada a comercial.');
-	}
-	if (estado && !IR_PENDING_ALIASES.has(estado)) {
-		throw new Error('Solo se puede autorizar una solicitud pendiente de cobranza.');
-	}
-	const updated = await ctx.store.update('invoice-request', String(rec._id), {
-		autorizado_cobranza: true,
-		autorizado_cobranza_fecha: now(),
-		autorizado_cobranza_usuario_nombre: actor_name(ctx),
-		autorizado_cobranza_notas: ctx.body.notas,
-		estado: IR_READY,
-	});
+	const updated = await authorize_invoice_request(
+		ctx.store,
+		ctx.params.id,
+		ctx.actor,
+		ctx.body.notas,
+	);
 	return ok([updated], 'Autorización de cobranza registrada');
 }
 
 async function invoice_send_commercial(ctx: Ctx) {
-	const rec = await need(ctx, 'invoice-request', ctx.params.id);
-	if (rec.estado && !IR_READY_ALIASES.has(String(rec.estado))) {
-		throw new Error('La solicitud debe estar lista para comercial antes de enviarse.');
-	}
-	return patch_doc(ctx, 'invoice-request', String(rec._id), {
-		estado: IR_SENT,
-		enviado_a_comercial_fecha: now(),
-		enviado_a_comercial_usuario_nombre: actor_name(ctx),
-		comercial_referencia: ctx.body.comercial_referencia,
-	}, 'Solicitud enviada a comercial');
+	const updated = await send_invoice_to_commercial(
+		ctx.store,
+		ctx.params.id,
+		ctx.actor,
+		ctx.body.comercial_referencia,
+	);
+	return ok([updated], 'Solicitud enviada a comercial');
 }
 
 async function invoice_mark(ctx: Ctx) {
-	const rec = await need(ctx, 'invoice-request', ctx.params.id);
-	if (rec.estado && !IR_SENT_ALIASES.has(String(rec.estado))) {
-		throw new Error(
-			'La solicitud debe haberse enviado a comercial antes de marcarse como facturada.',
-		);
-	}
-	return patch_doc(ctx, 'invoice-request', String(rec._id), {
-		estado: IR_INVOICED,
-		fecha_facturacion: now(),
-		facturado_fecha: now(),
-		cfdi_id: ctx.body.cfdi_id,
-		factura_referencia: ctx.body.factura_referencia,
-	}, 'Solicitud marcada como facturada');
+	const updated = await mark_invoice_request(
+		ctx.store,
+		ctx.params.id,
+		ctx.actor,
+		ctx.body.factura_referencia,
+	);
+	return ok([updated], 'Solicitud marcada como facturada');
 }
 
 async function invoice_link_cfdi(ctx: Ctx) {
