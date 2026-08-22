@@ -12,6 +12,7 @@ import {
 	to_imperium,
 	type ImperiumDoc,
 } from './envelope.ts';
+import { SearchEngine, search_text_from_doc } from './search-engine.ts';
 
 export type ExtraCol = { name: string; mongo?: string; pg?: string };
 
@@ -304,6 +305,14 @@ export class ImperiumStore {
 		const params: unknown[] = [];
 		const clauses: string[] = [];
 		if (!opts.include_inactive) clauses.push(`is_active IS DISTINCT FROM false`);
+		if (opts.q && SearchEngine.is_enabled()) {
+			const ids = await SearchEngine.search_ids(loc.collection, opts.q);
+			if (ids !== null) {
+				const wanted = opts.ids?.length ? ids.filter((id) => opts.ids!.includes(id)) : ids;
+				if (!wanted.length) return { rows: [], total: 0 };
+				opts = { ...opts, q: '', ids: wanted };
+			}
+		}
 		if (opts.ids?.length) {
 			const start = params.length + 1;
 			params.push(...opts.ids);
@@ -420,7 +429,9 @@ export class ImperiumStore {
 			`INSERT INTO ${qt} (${keys.map(qident).join(', ')}) VALUES (${keys.map((_, i) => `$${i + 1}`).join(', ')}) RETURNING *`,
 			values,
 		);
-		return this.flatten(inserted[0] as Record<string, unknown>, resource)!;
+		const created = this.flatten(inserted[0] as Record<string, unknown>, resource)!;
+		await this.sync_search(resource, created);
+		return created;
 	}
 
 	async update(
@@ -449,7 +460,22 @@ export class ImperiumStore {
 			`UPDATE ${this.qt(resource)} SET ${set} WHERE id = $${keys.length + 1} RETURNING *`,
 			values,
 		);
-		return this.flatten((updated[0] as Record<string, unknown>) ?? null, resource);
+		const saved = this.flatten((updated[0] as Record<string, unknown>) ?? null, resource);
+		if (saved) await this.sync_search(resource, saved);
+		return saved;
+	}
+
+	async sync_search(resource: string, doc: ImperiumDoc) {
+		const collection = this.loc(resource).collection;
+		const id = String(doc._id ?? '');
+		if (!id) return;
+		if (doc.is_active === false) {
+			await SearchEngine.delete_documents(collection, [id]);
+			return;
+		}
+		const search_text = search_text_from_doc(doc);
+		if (!search_text) return;
+		await SearchEngine.index_documents(collection, [{ id, search_text }]);
 	}
 
 	async remove(resource: string, id: string): Promise<ImperiumDoc | null> {

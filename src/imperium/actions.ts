@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path';
 import { as_array, as_object, fail, ok, type ImperiumDoc } from './envelope.ts';
 import { read_imperium_body } from './body.ts';
 import { qident, type ImperiumStore } from './store.ts';
+import { SearchEngine, search_text_from_doc } from './search-engine.ts';
 import { assert_pos_pin, verify_user_pin } from './user-pin.ts';
 import { stamp_with_pac } from './pac.ts';
 import {
@@ -5059,25 +5060,9 @@ async function model_tracker_all_models(ctx: Ctx) {
 }
 
 async function model_tracker_search_status() {
-	const host = String(
-		process.env.MEILI_HOST ??
-			process.env.MEILISEARCH_HOST ??
-			process.env.SEARCH_ENGINE_URL ??
-			'',
-	).trim();
-	let active = false;
-	if (host) {
-		try {
-			const res = await fetch(`${host.replace(/\/+$/, '')}/health`, {
-				signal: AbortSignal.timeout(1500),
-			});
-			active = res.ok;
-		} catch {
-			active = false;
-		}
-	}
+	const active = await SearchEngine.ensure_available(true);
 	return ok(
-		[{ active, configured: Boolean(host) }],
+		[{ active, configured: SearchEngine.is_enabled() }],
 		active
 			? 'Motor de búsqueda externo activo.'
 			: 'Motor de búsqueda externo no disponible.',
@@ -5103,16 +5088,30 @@ async function model_tracker_reindex(ctx: Ctx) {
 		const resource = ctx.store.resource_for_model(model_id);
 		if (!resource || !ctx.store.has(resource)) continue;
 		const docs = await ctx.store.find_many(resource, {
-			take: 2000,
+			take: 5000,
 			include_inactive: true,
 		});
-		for (const doc of docs.rows) {
-			const search = [doc.name, doc.description, doc._ref]
-				.map((part) => String(part ?? '').trim())
-				.filter(Boolean)
-				.join(' ');
-			if (search && (force || String(doc.search_field ?? '') !== search)) {
-				await ctx.store.update(resource, String(doc._id), { search_field: search });
+		const collection = ctx.store.loc(resource).collection;
+		const meili = await SearchEngine.ensure_available();
+		if (meili) {
+			await SearchEngine.clear_index(collection);
+			const search_docs = docs.rows
+				.filter((doc) => doc.is_active !== false)
+				.map((doc) => ({
+					id: String(doc._id),
+					search_text: search_text_from_doc(doc),
+				}))
+				.filter((doc) => doc.search_text);
+			for (let i = 0; i < search_docs.length; i += 200) {
+				await SearchEngine.index_documents(collection, search_docs.slice(i, i + 200));
+			}
+		}
+		if (!meili || force) {
+			for (const doc of docs.rows) {
+				const search = search_text_from_doc(doc);
+				if (search && (force || String(doc.search_field ?? '') !== search)) {
+					await ctx.store.update(resource, String(doc._id), { search_field: search });
+				}
 			}
 		}
 	}
