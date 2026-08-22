@@ -269,7 +269,7 @@ function with_cookie(res: Response, sid: string, clear = false): Response {
 	return new Response(res.body, { status: res.status, headers });
 }
 
-async function build_access(store: ImperiumStore, user: ImperiumDoc) {
+export async function build_access(store: ImperiumStore, user: ImperiumDoc) {
 	const is_admin = user._ref === SEED_ADMIN_REF;
 	if (is_admin) {
 		const models = [...new Set(store.all_locs.map((l) => l.resource))];

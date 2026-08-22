@@ -58,6 +58,7 @@ import {
 	notification_update_read,
 	register_comment_mentions,
 } from './notifications.ts';
+import { build_access } from './auth.ts';
 import {
 	normalize_state_values,
 	resolve_spurious_options,
@@ -230,7 +231,7 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'dynamic-dashboard:ai_query':
 			return dashboard_ai_query(ctx);
 		case 'interactive-manual:board':
-			return list_resource(ctx, 'interactive-manual');
+			return interactive_manual_board(ctx);
 		case 'inventory-internal-location:import_tree':
 			return import_location_tree(ctx);
 		case 'inventory-movement:register_transfer':
@@ -427,8 +428,9 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'user-settings:delete_custom_theme':
 			return custom_themes_delete(ctx);
 		case 'view-config-preset:available':
+			return view_available(ctx);
 		case 'view-config-preset:baseline':
-			return list_resource(ctx, 'view-config-preset');
+			return view_baseline(ctx);
 		case 'view-config-preset:assign':
 			return view_assign(ctx);
 		case 'cobranza-payment:apply_payment':
@@ -523,6 +525,58 @@ function actor_name(ctx: Ctx) {
 }
 function actor_id(ctx: Ctx) {
 	return String(ctx.actor?._id ?? '');
+}
+
+function id_list(value: unknown): string[] {
+	return as_array(value)
+		.map((item) => {
+			if (item && typeof item === 'object') {
+				const rec = item as Record<string, unknown>;
+				return String(rec._id ?? rec.id ?? '');
+			}
+			return String(item ?? '');
+		})
+		.filter(Boolean);
+}
+
+function has_id(value: unknown, id: string): boolean {
+	return Boolean(id) && id_list(value).includes(id);
+}
+
+function intersects_ids(value: unknown, ids: string[]): boolean {
+	if (!ids.length) return false;
+	const set = new Set(id_list(value));
+	return ids.some((id) => set.has(id));
+}
+
+function merge_unique_ids(...lists: unknown[]): string[] {
+	return [...new Set(lists.flatMap((list) => id_list(list)))];
+}
+
+function updated_ms(doc: ImperiumDoc): number {
+	const t = new Date(String(doc.updatedAt ?? doc.updated_at ?? '')).getTime();
+	return Number.isFinite(t) ? t : 0;
+}
+
+function sort_by_name(rows: ImperiumDoc[]): ImperiumDoc[] {
+	return [...rows].sort((a, b) =>
+		String(a.name ?? '').localeCompare(String(b.name ?? ''), 'es'),
+	);
+}
+
+function sort_by_updated_desc(rows: ImperiumDoc[]): ImperiumDoc[] {
+	return [...rows].sort((a, b) => updated_ms(b) - updated_ms(a));
+}
+
+async function actor_access(ctx: Ctx) {
+	if (!ctx.actor) {
+		return {
+			has_full_access: false,
+			user_group_ids: [] as string[],
+			models: [] as string[],
+		};
+	}
+	return build_access(ctx.store, ctx.actor);
 }
 
 async function one(ctx: Ctx, resource: string, id: string) {
@@ -3935,12 +3989,88 @@ async function user_settings_global_theme(ctx: Ctx) {
 	return ok([{ theme, updated_users }], 'Tema predeterminado del sistema guardado');
 }
 
-async function view_assign(ctx: Ctx) {
-	const preset = String(ctx.body.preset_id ?? ctx.body.preset ?? '');
-	if (ctx.store.has('user-settings')) {
-		await user_settings_upsert({ ...ctx, body: { view_preset: preset } });
+async function interactive_manual_board(ctx: Ctx) {
+	const user_id = actor_id(ctx);
+	const access = await actor_access(ctx);
+	if (!user_id && !access.has_full_access) {
+		return ok([], 'Sin guías');
 	}
-	return ok([{ preset_id: preset }], 'Vista asignada');
+	const { rows } = await ctx.store.find_many('interactive-manual', {
+		take: 5000,
+		include_inactive: false,
+	});
+	const readable = new Set(access.models.map(String));
+	const group_ids = access.user_group_ids;
+	const filtered = access.has_full_access
+		? rows
+		: rows.filter((doc) => {
+				if (has_id(doc.assigned_user_ids, user_id)) return true;
+				if (intersects_ids(doc.assigned_group_ids, group_ids)) return true;
+				if (doc.is_default_for_module !== true) return false;
+				const model = String(doc.module_model_id ?? '').trim();
+				return !model || readable.has(model);
+			});
+	return ok(sort_by_name(filtered), 'Guías disponibles');
+}
+
+async function view_available(ctx: Ctx) {
+	const user_id = actor_id(ctx);
+	if (!user_id) throw new Error('No estás autenticado');
+	const access = await actor_access(ctx);
+	const group_ids = access.user_group_ids;
+	const { rows } = await ctx.store.find_many('view-config-preset', {
+		take: 5000,
+		include_inactive: false,
+	});
+	const filtered = rows.filter((doc) => {
+		if (String(doc.created_by ?? '') === user_id) return true;
+		if (String(doc.scope ?? '') === 'global') return true;
+		if (doc.is_template === true) return true;
+		if (has_id(doc.assigned_user_ids, user_id)) return true;
+		return intersects_ids(doc.assigned_user_group_ids, group_ids);
+	});
+	return ok(sort_by_updated_desc(filtered), 'Configuraciones disponibles');
+}
+
+async function view_baseline(ctx: Ctx) {
+	const user_id = actor_id(ctx);
+	if (!user_id) throw new Error('No estás autenticado');
+	const { rows } = await ctx.store.find_many('view-config-preset', {
+		take: 5000,
+		include_inactive: false,
+	});
+	const direct = sort_by_updated_desc(
+		rows.filter((doc) => has_id(doc.assigned_user_ids, user_id)),
+	)[0];
+	if (direct) return ok([direct], 'Configuración base asignada');
+	const access = await actor_access(ctx);
+	const by_group = sort_by_updated_desc(
+		rows.filter((doc) => intersects_ids(doc.assigned_user_group_ids, access.user_group_ids)),
+	)[0];
+	return by_group
+		? ok([by_group], 'Configuración base asignada')
+		: ok([], 'Sin configuración base asignada');
+}
+
+async function view_assign(ctx: Ctx) {
+	if (!actor_id(ctx)) throw new Error('No estás autenticado');
+	const preset_id = String(ctx.body.preset_id ?? ctx.body.preset ?? '').trim();
+	if (!preset_id) throw new Error('Se requiere preset_id');
+	const preset = await ctx.store.find_id('view-config-preset', preset_id);
+	if (!preset) throw new Error('Configuración no encontrada');
+	const assigned_user_ids = merge_unique_ids(preset.assigned_user_ids, ctx.body.user_ids);
+	const assigned_user_group_ids = merge_unique_ids(
+		preset.assigned_user_group_ids,
+		ctx.body.user_group_ids,
+	);
+	const scope = String(preset.scope ?? '') === 'private' ? 'shared' : preset.scope;
+	return patch_doc(
+		ctx,
+		'view-config-preset',
+		preset_id,
+		{ assigned_user_ids, assigned_user_group_ids, scope },
+		'Configuración asignada',
+	);
 }
 
 async function cobranza_apply(ctx: Ctx) {
