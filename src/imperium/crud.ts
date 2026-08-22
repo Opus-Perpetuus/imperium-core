@@ -53,6 +53,15 @@ import {
 	prepare_incidencia_write,
 } from './registro-incidencias-flow.ts';
 import {
+	apply_lista_asistencia_list_where,
+	apply_registro_asistencia_list_where,
+	is_lista_asistencia_resource,
+	is_registro_asistencia_resource,
+	prepare_lista_asistencia_write,
+	prepare_registro_asistencia_write,
+	snapshot_attendance_entries,
+} from './lista-asistencia-flow.ts';
+import {
 	dashboard_access,
 	dashboard_can_manage,
 	dashboard_is_visible,
@@ -288,6 +297,12 @@ export async function handle_crud(
 		if (is_incidencia_resource(resource)) {
 			q.where = apply_incidencia_list_where(q.where);
 		}
+		if (is_registro_asistencia_resource(resource)) {
+			q.where = apply_registro_asistencia_list_where(q.where);
+		}
+		if (is_lista_asistencia_resource(resource)) {
+			q.where = apply_lista_asistencia_list_where(q.where);
+		}
 		if (resource === 'reports') {
 			q.where = apply_report_list_where(store, q.where);
 		}
@@ -299,7 +314,17 @@ export async function handle_crud(
 			mongo_match: scope.match,
 			take: q.where.parent_task === '__root__' || q.where.parent_task_id === '__root__' ? 2000 : q.take,
 		});
-		const filtered = apply_root_parent_filter(resource, q.where, found.rows);
+		let filtered = apply_root_parent_filter(resource, q.where, found.rows);
+		if (is_lista_asistencia_resource(resource) && !url.searchParams.get('campoSort')) {
+			filtered = [...filtered].sort((a, b) => {
+				const by_number = Number(a.numero_lista ?? 0) - Number(b.numero_lista ?? 0);
+				if (by_number) return by_number;
+				return String(a.alumno_nombre_snapshot ?? a.name ?? '').localeCompare(
+					String(b.alumno_nombre_snapshot ?? b.name ?? ''),
+					'es',
+				);
+			});
+		}
 		const { rows, total } = {
 			rows: filtered,
 			total:
@@ -440,6 +465,12 @@ export async function handle_crud(
 		if (is_incidencia_resource(resource)) {
 			incoming = prepare_incidencia_write(incoming, true);
 		}
+		if (is_registro_asistencia_resource(resource)) {
+			incoming = prepare_registro_asistencia_write(incoming, actor, true);
+		}
+		if (is_lista_asistencia_resource(resource)) {
+			incoming = await prepare_lista_asistencia_write(store, incoming);
+		}
 		if (resource === 'reports') {
 			await assert_report_template_write(store, incoming);
 		}
@@ -462,6 +493,9 @@ export async function handle_crud(
 		if (is_project_resource(resource)) {
 			result = (await store.find_id(resource, String(created._id))) ?? created;
 			result = await hydrate_project(store, result);
+		}
+		if (is_registro_asistencia_resource(resource)) {
+			result = await snapshot_attendance_entries(store, created);
 		}
 		const [populated] = decorate_rows(resource, await store.populate_docs(resource, [result]));
 		const message =
@@ -497,7 +531,11 @@ export async function handle_crud(
 																? 'Asociación registrada correctamente'
 																: is_incidencia_resource(resource)
 																	? 'Incidencia registrada'
-																	: 'Ruta creada';
+																	: is_registro_asistencia_resource(resource)
+																		? 'Registro de asistencia creado'
+																		: is_lista_asistencia_resource(resource)
+																			? 'Fila de asistencia creada'
+																			: 'Ruta creada';
 		return json(
 			resource,
 			notice ? { ...ok([populated], message), user_pin_notice: notice } : ok([populated], message),
@@ -580,6 +618,14 @@ export async function handle_crud(
 		if (is_incidencia_resource(resource)) {
 			b = prepare_incidencia_write(b, false);
 		}
+		if (is_registro_asistencia_resource(resource)) {
+			if (!previous) throw new Error('No se encontró el registro de asistencia a actualizar');
+			b = prepare_registro_asistencia_write({ ...previous, ...b }, actor, false);
+		}
+		if (is_lista_asistencia_resource(resource)) {
+			if (!previous) throw new Error('No se encontró la fila de asistencia a actualizar');
+			b = await prepare_lista_asistencia_write(store, { ...previous, ...b });
+		}
 		if (resource === 'reports') {
 			await assert_report_template_write(store, { ...previous, ...b });
 		}
@@ -628,7 +674,11 @@ export async function handle_crud(
 												? 'Tarea personal actualizada correctamente'
 												: is_incidencia_resource(resource)
 													? 'Incidencia actualizada correctamente'
-													: 'Actualizado correctamente',
+													: is_registro_asistencia_resource(resource)
+														? 'Actualizado correctamente'
+														: is_lista_asistencia_resource(resource)
+															? 'Fila de asistencia actualizada correctamente'
+															: 'Actualizado correctamente',
 			),
 		);
 	}
@@ -693,6 +743,14 @@ export async function handle_crud(
 		if (is_incidencia_resource(resource)) {
 			patched = prepare_incidencia_write(patched, false);
 		}
+		if (is_registro_asistencia_resource(resource)) {
+			if (!previous) throw new Error('No se encontró el registro de asistencia a actualizar');
+			patched = prepare_registro_asistencia_write({ ...previous, ...patched }, actor, false);
+		}
+		if (is_lista_asistencia_resource(resource)) {
+			if (!previous) throw new Error('No se encontró la fila de asistencia a actualizar');
+			patched = await prepare_lista_asistencia_write(store, { ...previous, ...patched });
+		}
 		if (resource === 'reports') {
 			await assert_report_template_write(store, { ...previous, ...patched });
 		}
@@ -741,7 +799,11 @@ export async function handle_crud(
 												? 'Tarea personal actualizada correctamente'
 												: is_incidencia_resource(resource)
 													? 'Incidencia actualizada correctamente'
-													: 'Actualizado correctamente',
+													: is_registro_asistencia_resource(resource)
+														? 'Actualizado correctamente'
+														: is_lista_asistencia_resource(resource)
+															? 'Fila de asistencia actualizada correctamente'
+															: 'Actualizado correctamente',
 			),
 		);
 	}

@@ -116,6 +116,7 @@ import {
 	reservar_reception,
 } from './inventory-reception-flow.ts';
 import { apply_physical_count as apply_physical_count_doc } from './inventory-physical-count-flow.ts';
+import { mark_lista_asistencia } from './lista-asistencia-flow.ts';
 import { lookup_cobranza } from './cobranza-lookup-flow.ts';
 import {
 	apply_cobranza_payment,
@@ -4981,47 +4982,8 @@ async function reverse_geocode(ctx: Ctx) {
 }
 
 async function mark_attendance(ctx: Ctx) {
-	const entry = await need(ctx, 'lista-asistencia', ctx.params.id);
-	const estado = String(ctx.body.estado ?? 'pendiente').trim();
-	if (!['pendiente', 'presente', 'ausente'].includes(estado)) {
-		throw new Error('El estado de asistencia no es válido');
-	}
-	const justificada = estado === 'ausente' ? Boolean(ctx.body.justificada) : false;
-	const evidencia = estado === 'ausente' ? String(ctx.body.evidencia ?? '') : '';
-	const description = String(ctx.body.description ?? '');
-	const registro_id = String(entry.registro_asistencia_id ?? '');
-	let attendance: ImperiumDoc | null = null;
-	if (registro_id && ctx.store.has('registro-asistencias')) {
-		attendance = await ctx.store.find_id('registro-asistencias', registro_id);
-		if (!attendance) throw new Error('No se encontró el registro de asistencia');
-		const estatus = String(attendance.estatus ?? attendance.estado ?? '');
-		if (estatus === 'cerrada') {
-			throw new Error('La asistencia ya está cerrada y no permite modificar sus alumnos');
-		}
-	}
-	const patch: ImperiumDoc = {
-		estado,
-		justificada,
-		evidencia,
-		description,
-	};
-	if (estado === 'ausente' && ctx.store.has('registro-incidencias')) {
-		const incident = await ctx.store.insert('registro-incidencias', {
-			name: `Ausencia ${entry.alumno_nombre_snapshot ?? entry.name ?? ''}`.trim(),
-			description,
-			alumno_id: entry.alumno_id,
-			grupo_id: entry.grupo_id,
-			registro_asistencia_id: entry.registro_asistencia_id,
-			lista_asistencia_id: entry._id,
-			materia_id: attendance?.materia_id,
-			tipo: 'ausencia',
-			justificada,
-			evidencia,
-			fecha_asistencia: attendance?.fecha_asistencia ?? now(),
-		});
-		patch.registro_incidencia_id = incident._id;
-	}
-	return patch_doc(ctx, 'lista-asistencia', String(entry._id), patch, 'Asistencia actualizada correctamente');
+	const saved = await mark_lista_asistencia(ctx.store, ctx.params.id, ctx.body);
+	return ok([saved], 'Asistencia actualizada correctamente');
 }
 
 async function medical_list(
