@@ -20,6 +20,15 @@ import { AguaMssqlService } from './agua-mssql.ts';
 import { calcular_importe } from './agua-importe.ts';
 import { looks_like_canonical, serialize_cfdi_to_xml, type CfdiCanonical } from './cfdi-xml.ts';
 import { seal_canonical_with_csd } from './cfdi-seal.ts';
+import { extract_structured, generate_text } from './ai-extraction.ts';
+import { get_pdf_direct_target, send_pdf } from './pdf-direct.ts';
+import {
+	geocode_address,
+	google_maps_api_key,
+	optimize_google_routes,
+	warehouse_origin,
+	type GeoPoint,
+} from './route-optimize.ts';
 
 type Ctx = {
 	store: ImperiumStore;
@@ -174,7 +183,7 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'dynamic-dashboard:widget_data':
 			return widget_data(ctx);
 		case 'dynamic-dashboard:ai_query':
-			return ok([{ answer: 'Consulta no disponible sin motor IA' }], 'IA');
+			return dashboard_ai_query(ctx);
 		case 'interactive-manual:board':
 			return list_resource(ctx, 'interactive-manual');
 		case 'inventory-internal-location:import_tree':
@@ -321,9 +330,9 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'reports:process_preview':
 			return report_pdf(ctx);
 		case 'reports:get_pdf_direct_target':
-			return ok([{ target: 'browser' }], 'Destino de impresión');
+			return reports_pdf_direct_target(ctx);
 		case 'reports:print_pdf_direct':
-			return report_pdf(ctx);
+			return reports_print_pdf_direct(ctx);
 		case 'tickets:read_admin_tickets':
 			return list_resource(ctx, 'tickets');
 		case 'tickets:read_admin_ticket':
@@ -733,37 +742,90 @@ async function cfdi_export(ctx: Ctx, kind: 'xml' | 'json') {
 	return ok([{ json: canonical, filename: `cfdi_${doc._id}.json` }], 'JSON CFDI generado correctamente');
 }
 
-async function ai_config_text(ctx: Ctx, ref: string) {
-	return cfg_text((await ctx.store.find_where('configuration', { ref }))?.value);
+async function ai_generate_text(ctx: Ctx) {
+	const text = await generate_text(ctx.store, {
+		instruction: String(ctx.body.instruction ?? ctx.body.prompt ?? ''),
+		context_text: ctx.body.context_text ? String(ctx.body.context_text) : undefined,
+	});
+	return ok([{ text }], 'Texto generado correctamente');
 }
 
-async function ai_generate_text(ctx: Ctx) {
-	const provider = (await ai_config_text(ctx, 'configuration-ai-extraction-provider')) || 'opencode';
-	if (provider.toLowerCase() === 'anthropic') {
-		const key = await ai_config_text(ctx, 'configuration-ai-extraction-anthropic-api-key');
-		if (!key) {
-			throw new Error(
-				'Configura la API key de Anthropic (configuration-ai-extraction-anthropic-api-key).',
-			);
-		}
-	} else {
-		const key = await ai_config_text(ctx, 'configuration-ai-extraction-opencode-api-key');
-		if (!key) {
-			throw new Error(
-				'Configura la API key de opencode (configuration-ai-extraction-opencode-api-key).',
-			);
-		}
-	}
-	throw new Error('Motor de IA no disponible en el núcleo');
-}
+const PO_PARSE_SCHEMA: Record<string, unknown> = {
+	type: 'object',
+	required: ['proveedor_nombre', 'articulos'],
+	properties: {
+		proveedor_nombre: { type: 'string' },
+		proveedor_rfc: { type: 'string' },
+		referencia_origen: { type: 'string' },
+		uuid_xml: { type: 'string' },
+		fecha_documento: { type: 'string' },
+		articulos: {
+			type: 'array',
+			items: {
+				type: 'object',
+				required: ['producto_nombre', 'cantidad', 'costo_unitario'],
+				properties: {
+					producto_codigo: { type: 'string' },
+					producto_nombre: { type: 'string' },
+					cantidad: { type: 'number' },
+					costo_unitario: { type: 'number' },
+					importe: { type: 'number' },
+				},
+			},
+		},
+	},
+};
 
 async function purchase_order_parse_document(ctx: Ctx) {
 	const content_base64 = String(ctx.body.content_base64 ?? '').trim();
 	if (!content_base64) {
 		throw new Error('Se necesita el contenido del documento (base64)');
 	}
-	await ai_generate_text(ctx);
-	return ok([], 'Documento analizado correctamente');
+	const filename = String(ctx.body.filename ?? 'documento.pdf');
+	const mime = String(ctx.body.mime ?? 'application/pdf');
+	const extracted = await extract_structured(ctx.store, {
+		instructions:
+			'Extrae los datos de esta factura/documento de compra (CFDI o equivalente). ' +
+			'Identifica al EMISOR/proveedor (nombre y RFC), la referencia (serie+folio), ' +
+			'el UUID fiscal si existe, la fecha del documento y cada partida/concepto ' +
+			'con su código (NoIdentificacion o SKU del proveedor), descripción, cantidad, ' +
+			'precio unitario e importe. Usa números (no strings) en cantidades y montos.',
+		json_schema: PO_PARSE_SCHEMA,
+		files: [{ filename, mime, content_base64 }],
+	});
+	const raw_items = Array.isArray(extracted.articulos)
+		? (extracted.articulos as Record<string, unknown>[])
+		: [];
+	if (!raw_items.length) {
+		throw new Error('El documento no contiene partidas para importar');
+	}
+	const articulos = raw_items.map((item) => {
+		const cantidad = Number(item.cantidad ?? 0);
+		const costo_unitario = Number(item.costo_unitario ?? 0);
+		const importe = Number(item.importe ?? Number((cantidad * costo_unitario).toFixed(2)));
+		return {
+			producto: undefined,
+			producto_nombre: String(item.producto_nombre ?? ''),
+			producto_codigo: String(item.producto_codigo ?? ''),
+			descripcion_origen: String(item.producto_nombre ?? ''),
+			cantidad,
+			costo_unitario,
+			importe,
+		};
+	});
+	return ok(
+		[
+			{
+				proveedor_nombre: String(extracted.proveedor_nombre ?? ''),
+				proveedor_rfc: String(extracted.proveedor_rfc ?? ''),
+				referencia_origen: String(extracted.referencia_origen ?? ''),
+				uuid_xml: String(extracted.uuid_xml ?? ''),
+				fecha_documento: String(extracted.fecha_documento ?? ''),
+				articulos,
+			},
+		],
+		'Documento analizado correctamente',
+	);
 }
 
 async function increment_counter(ctx: Ctx) {
@@ -1089,13 +1151,100 @@ async function logistics_event(ctx: Ctx) {
 }
 
 async function optimize_route(ctx: Ctx) {
-	const route = await need(ctx, 'delivery-route', ctx.params.id);
-	const stops = as_array(route.paradas ?? route.stops);
-	return patch_doc(ctx, 'delivery-route', String(route._id), {
-		paradas: stops,
-		optimizada: true,
-		fecha_optimizacion: now(),
-	}, 'Ruta optimizada');
+	const route_id = String(ctx.params.id ?? '').trim();
+	if (!route_id) throw new Error('Se necesita el id de la ruta a optimizar.');
+	const route = await ctx.store.find_id('delivery-route', route_id);
+	if (!route) throw new Error('No se encontró la ruta indicada.');
+	const body_origin = as_object(ctx.body.origin);
+	const has_driver_gps =
+		Number.isFinite(Number(body_origin.latitude)) &&
+		Number.isFinite(Number(body_origin.longitude));
+	let origin: GeoPoint;
+	if (has_driver_gps) {
+		origin = { latitude: Number(body_origin.latitude), longitude: Number(body_origin.longitude) };
+	} else {
+		const warehouse = warehouse_origin();
+		if (!warehouse) {
+			throw new Error(
+				'No hay origen para la ruta: configura WAREHOUSE_LAT/WAREHOUSE_LNG o envía la ubicación del chofer.',
+			);
+		}
+		origin = warehouse;
+	}
+	const { rows: packages } = ctx.store.has('delivery-package')
+		? await ctx.store.find_many('delivery-package', {
+				where: { delivery_route: route_id },
+				take: 5000,
+			})
+		: { rows: [] };
+	const grouped = new Map<
+		string,
+		{ id: string; location: GeoPoint; label: string; demand_kg: number; pedido?: string; package_ids: string[] }
+	>();
+	for (const pkg of packages) {
+		const coords = as_object(pkg.delivery_address_coordinates);
+		let location: GeoPoint | null =
+			Number.isFinite(Number(coords.latitude)) && Number.isFinite(Number(coords.longitude))
+				? { latitude: Number(coords.latitude), longitude: Number(coords.longitude) }
+				: null;
+		if (!location && pkg.pedido_contacto_domicilio) {
+			location = await geocode_address(String(pkg.pedido_contacto_domicilio));
+		}
+		if (!location) continue;
+		const key = String(pkg.pedido ?? pkg._id);
+		if (!grouped.has(key)) {
+			grouped.set(key, {
+				id: key,
+				location,
+				label: String(pkg.pedido_contacto_nombre || pkg.pedido_folio || 'Parada'),
+				demand_kg: 0,
+				pedido: pkg.pedido ? String(pkg.pedido) : undefined,
+				package_ids: [],
+			});
+		}
+		const entry = grouped.get(key)!;
+		entry.package_ids.push(String(pkg._id));
+		entry.demand_kg += Number(pkg.peso_kg ?? 0);
+	}
+	const stops = [...grouped.values()];
+	if (!stops.length) {
+		throw new Error('La ruta no tiene paradas georreferenciadas para optimizar.');
+	}
+	google_maps_api_key();
+	const result = await optimize_google_routes({
+		origin,
+		stops,
+		traffic_aware: ctx.body.traffic_aware !== false,
+		depart_at: ctx.body.depart_at ? String(ctx.body.depart_at) : undefined,
+	});
+	const stop_meta = new Map(stops.map((stop) => [stop.id, stop]));
+	const ordered_stops = result.ordered_stops.map((optimized) => {
+		const meta = stop_meta.get(optimized.id);
+		return {
+			id: optimized.id,
+			pedido: meta?.pedido,
+			package_ids: meta?.package_ids ?? [],
+			location: optimized.location,
+			label: meta?.label ?? optimized.label ?? '',
+			demand_kg: optimized.demand_kg ?? 0,
+			sequence: optimized.sequence,
+			cumulative_distance_meters: optimized.cumulative_distance_meters,
+			cumulative_duration_seconds: optimized.cumulative_duration_seconds,
+			eta: optimized.eta,
+		};
+	});
+	const optimization = {
+		origin,
+		origin_source: has_driver_gps ? 'driver_gps' : 'warehouse',
+		ordered_stops,
+		total_distance_meters: result.total_distance_meters,
+		total_duration_seconds: result.total_duration_seconds,
+		encoded_polyline: result.encoded_polyline,
+		provider: result.provider,
+		optimized_at: now(),
+	};
+	await ctx.store.update('delivery-route', route_id, { optimization });
+	return ok([optimization], 'Ruta optimizada correctamente');
 }
 
 async function create_history_comment(ctx: Ctx) {
@@ -1150,6 +1299,91 @@ async function dashboard_catalog(ctx: Ctx) {
 		});
 	}
 	return ok(entries, 'Catálogo de modelos disponible');
+}
+
+const AI_QUERY_JSON_SCHEMA: Record<string, unknown> = {
+	type: 'object',
+	required: ['answer', 'widgets'],
+	properties: {
+		answer: { type: 'string' },
+		widgets: { type: 'array' },
+	},
+};
+
+async function dashboard_ai_query(ctx: Ctx) {
+	const question = String(ctx.body.question ?? '').trim();
+	if (!question) throw new Error('Escribe una pregunta para el asistente.');
+	const catalog = await dashboard_catalog(ctx);
+	const entries = as_array((catalog as { data?: unknown }).data);
+	if (!entries.length) {
+		throw new Error('No tienes módulos consultables para el asistente.');
+	}
+	const catalog_text = entries
+		.map((raw) => {
+			const entry = as_object(raw);
+			const fields = as_array(entry.fields)
+				.map((field) => {
+					const f = as_object(field);
+					return `${f.path}:${f.type}`;
+				})
+				.join(', ');
+			return `- ${entry.model_id} (${entry.module_name}): ${fields}`;
+		})
+		.join('\n');
+	const history = as_array(ctx.body.history)
+		.map((turn) => {
+			const t = as_object(turn);
+			return `${t.role === 'user' ? 'Usuario' : 'Asistente'}: ${t.content ?? ''}`;
+		})
+		.filter((line) => line.includes(': ') && !line.endsWith(': '));
+	const raw = await extract_structured(ctx.store, {
+		instructions: [
+			'Eres el asistente de reportes de un ERP. El usuario pide información en lenguaje natural y tú respondes con `answer` (texto en español) y, cuando aplica, con `widgets`: especificaciones de consulta que el sistema ejecutará por ti.',
+			'Solo puedes usar los modelos y campos del catálogo. Si lo pedido no existe, explícalo en `answer` y devuelve `widgets` vacío.',
+			'CATÁLOGO DE MODELOS DISPONIBLES:',
+			catalog_text,
+		].join('\n\n'),
+		json_schema: AI_QUERY_JSON_SCHEMA,
+		text: [...history, `Usuario: ${question}`].join('\n\n'),
+	});
+	const answer = String(raw.answer ?? '');
+	const raw_widgets = Array.isArray(raw.widgets) ? raw.widgets : [];
+	const widgets = [];
+	for (const raw_widget of raw_widgets) {
+		const spec = as_object(raw_widget);
+		try {
+			const inner: Ctx = { ...ctx, body: { spec } };
+			const result = await widget_data(inner);
+			widgets.push({ spec, result: (result as { data?: unknown }).data ?? result });
+		} catch (error) {
+			widgets.push({
+				spec,
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
+	}
+	return ok([{ answer, widgets }], 'Consulta procesada');
+}
+
+async function reports_pdf_direct_target(ctx: Ctx) {
+	const target = await get_pdf_direct_target(ctx.store);
+	return ok([target], 'ok');
+}
+
+async function reports_print_pdf_direct(ctx: Ctx) {
+	const pdf_b64 = String(ctx.body.pdfBase64 ?? '').trim();
+	let bytes: Uint8Array;
+	if (pdf_b64) {
+		bytes = Buffer.from(pdf_b64, 'base64');
+	} else {
+		const generated = await report_pdf(ctx);
+		if (!(generated instanceof Response)) {
+			throw new Error('No se pudo generar el PDF para imprimir.');
+		}
+		bytes = new Uint8Array(await generated.arrayBuffer());
+	}
+	await send_pdf(ctx.store, bytes);
+	return ok([{ ok: true }], 'Enviado a la impresora PDF Direct');
 }
 
 function to_model_id(resource: string) {
