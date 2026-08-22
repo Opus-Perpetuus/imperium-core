@@ -703,23 +703,36 @@ export class ImperiumStore {
 		if (resource === 'ticketing-system-turn') return this.turn_stats();
 		if (resource === 'citizen-report') return this.citizen_report_stats(url);
 		const qt = this.qt(resource);
+		const from = new Date();
+		from.setDate(from.getDate() - 30);
+		const from_iso = from.toISOString();
 		const rows = await this.sql.unsafe(
 			`SELECT
         count(*)::int AS total_records,
         count(*) FILTER (WHERE is_active IS DISTINCT FROM false)::int AS active_records,
-        count(*) FILTER (WHERE is_active = false)::int AS inactive_records
+        count(*) FILTER (WHERE is_active = false)::int AS inactive_records,
+        count(*) FILTER (WHERE created_at >= $1)::int AS recent_records
       FROM ${qt}`,
+			[from_iso],
 		);
 		const r = (rows[0] ?? {}) as Record<string, number>;
+		const total_records = r.total_records ?? 0;
+		const active_records = r.active_records ?? 0;
+		const inactive_records = r.inactive_records ?? 0;
+		const recent_records_30d = r.recent_records ?? 0;
 		return {
-			total_records: r.total_records ?? 0,
-			active_records: r.active_records ?? 0,
-			inactive_records: r.inactive_records ?? 0,
+			model_name: resource,
+			total_records,
+			active_records,
+			inactive_records,
+			recent_records_30d,
+			date_range_30d: { from, to: new Date() },
 			last_updated: new Date(),
 			kpis: {
-				total_records: { label: 'Total', value: r.total_records ?? 0 },
-				active_records: { label: 'Activos', value: r.active_records ?? 0 },
-				inactive_records: { label: 'Inactivos', value: r.inactive_records ?? 0 },
+				total_records: { label: 'Total', value: total_records },
+				active_records: { label: 'Activos', value: active_records },
+				inactive_records: { label: 'Inactivos', value: inactive_records },
+				recent_records_30d: { label: 'Últimos 30 días', value: recent_records_30d },
 			},
 		};
 	}
