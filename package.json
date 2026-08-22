@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@opus-perpetuus/imperium-core-kit": "file:./vendor/kit",
-    "argon2": "^0.45.1"
+    "argon2": "^0.45.1",
+    "mssql": "^12.5.5"
   }
 }

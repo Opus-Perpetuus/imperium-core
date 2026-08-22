@@ -16,6 +16,9 @@ import {
 	normalize_alias_map,
 	sanitize_location_segment,
 } from './location-path.ts';
+import { AguaMssqlService } from './agua-mssql.ts';
+import { calcular_importe } from './agua-importe.ts';
+import { looks_like_canonical, serialize_cfdi_to_xml } from './cfdi-xml.ts';
 
 type Ctx = {
 	store: ImperiumStore;
@@ -409,18 +412,19 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'agua:sync_estado':
 			return agua_sync_estado(ctx);
 		case 'agua:sync_catalogos':
+			return agua_sync_catalogos(ctx);
 		case 'agua:sync_contratos':
+			return agua_sync_contratos(ctx);
 		case 'agua:sync_rutas':
+			return agua_sync_rutas(ctx);
 		case 'agua:sync_tarifas':
-			return agua_require_mssql(ctx);
+			return agua_sync_tarifas(ctx);
 		case 'agua:push_lectura':
 			return agua_push_lectura(ctx);
 		case 'agua:push_lecturas_lote':
 			return agua_push_lecturas_lote(ctx);
 		case 'agua:campo_contratos':
-			return list_where(ctx, 'contrato', {
-				estado: String(ctx.url.searchParams.get('estado') ?? ''),
-			});
+			return agua_campo_contratos(ctx);
 		case 'agua:archivar_periodo':
 			return agua_archivar_periodo(ctx);
 		case 'agua:metricas':
@@ -634,7 +638,10 @@ async function cfdi_stamp(ctx: Ctx) {
 	if (!Object.keys(canonical).length) {
 		throw new Error('El documento no tiene payload canónico para timbrar.');
 	}
-	const xml = String(doc.xml ?? canonical.xml ?? '');
+	let xml = String(doc.xml ?? canonical.xml ?? '');
+	if (!xml.trim() && looks_like_canonical(canonical)) {
+		xml = serialize_cfdi_to_xml(canonical);
+	}
 	await ctx.store.update('cfdi-document', String(doc._id), {
 		status: 'stamping',
 		estado: 'stamping',
@@ -665,11 +672,46 @@ async function cfdi_stamp(ctx: Ctx) {
 
 async function cfdi_export(ctx: Ctx, kind: 'xml' | 'json') {
 	const doc = await need(ctx, 'cfdi-document', ctx.params.id);
+	const canonical = as_object(doc.canonical ?? doc.payload_canonico);
 	if (kind === 'xml') {
-		const xml = String(doc.xml ?? `<?xml version="1.0"?><cfdi:Comprobante UUID="${doc.uuid ?? ''}"/>`);
-		return new Response(xml, { headers: { 'content-type': 'application/xml; charset=utf-8' } });
+		if (!looks_like_canonical(canonical)) {
+			throw new Error('El documento no tiene un payload canónico para exportar a XML.');
+		}
+		const xml = serialize_cfdi_to_xml(canonical);
+		const serie = String(canonical.comprobante?.serie ?? '');
+		const folio = String(canonical.comprobante?.folio ?? '');
+		const base =
+			serie || folio
+				? `cfdi_${serie}${serie && folio ? '-' : ''}${folio}`
+				: `cfdi_${doc._id}`;
+		const filename = `${base}.xml`;
+		const as_download =
+			ctx.url.searchParams.get('download') === '1' ||
+			ctx.url.searchParams.get('raw') === '1';
+		if (as_download) {
+			return new Response(xml, {
+				headers: {
+					'content-type': 'application/xml; charset=utf-8',
+					'content-disposition': `attachment; filename="${filename}"`,
+				},
+			});
+		}
+		return ok([{ xml, filename }], 'XML CFDI generado correctamente');
 	}
-	return Response.json(ok([doc], 'Exportación JSON'));
+	if (!Object.keys(canonical).length) {
+		throw new Error('El documento no tiene un payload canónico para exportar a JSON.');
+	}
+	const as_download =
+		ctx.url.searchParams.get('download') === '1' || ctx.url.searchParams.get('raw') === '1';
+	if (as_download) {
+		return new Response(JSON.stringify(canonical), {
+			headers: {
+				'content-type': 'application/json; charset=utf-8',
+				'content-disposition': `attachment; filename="cfdi_${doc._id}.json"`,
+			},
+		});
+	}
+	return ok([{ json: canonical, filename: `cfdi_${doc._id}.json` }], 'JSON CFDI generado correctamente');
 }
 
 async function increment_counter(ctx: Ctx) {
@@ -3409,110 +3451,326 @@ async function payments_webhook(ctx: Ctx) {
 	return ok(updated ? [updated] : [], 'Webhook aplicado');
 }
 
+const AGUA_PUBLIC_WINDOW_MS = 60_000;
+const AGUA_PUBLIC_MAX = 30;
+const agua_public_hits = new Map<string, { count: number; reset_at: number }>();
+
+function agua_public_throttled(ip: string) {
+	const stamp = Date.now();
+	const bucket = agua_public_hits.get(ip);
+	if (!bucket || bucket.reset_at <= stamp) {
+		agua_public_hits.set(ip, { count: 1, reset_at: stamp + AGUA_PUBLIC_WINDOW_MS });
+		return false;
+	}
+	bucket.count += 1;
+	return bucket.count > AGUA_PUBLIC_MAX;
+}
+
+function agua_next_periodo_state(periodo_actual?: number, vigencia_actual?: number) {
+	const year = vigencia_actual ?? new Date().getFullYear();
+	const siguiente = (periodo_actual ?? 1) + 1;
+	if (siguiente > 6) return { periodo_actual: 1, vigencia_actual: year + 1 };
+	return { periodo_actual: siguiente, vigencia_actual: year };
+}
+
+const CONTRATO_FLAGS_ON_ARCHIVE = {
+	tomada: false,
+	sincronizada: false,
+	recibe_lectura: false,
+	sincronizado_simapa: false,
+} as const;
+
+function agua_pick(doc: ImperiumDoc, keys: string[]) {
+	const out: ImperiumDoc = { _id: doc._id };
+	for (const key of keys) if (doc[key] !== undefined) out[key] = doc[key];
+	return out;
+}
+
+function is_tomada(doc: ImperiumDoc) {
+	return doc.tomada === true || doc.tomada === 'true' || doc.tomada === 1;
+}
+
+function is_sync_simapa(doc: ImperiumDoc) {
+	return (
+		doc.sincronizado_simapa === true ||
+		doc.sincronizado_simapa === 'true' ||
+		doc.sincronizado_simapa === 1
+	);
+}
+
+async function agua_all(ctx: Ctx, resource: string) {
+	if (!ctx.store.has(resource)) return { rows: [] as ImperiumDoc[], total: 0 };
+	return ctx.store.find_many(resource, { take: 20_000 });
+}
+
+async function agua_build_metricas(ctx: Ctx) {
+	const contratos = await agua_all(ctx, 'contrato');
+	const lecturas = await agua_all(ctx, 'lectura');
+	const parametros = ctx.store.has('agua')
+		? (
+				await ctx.store.find_many('agua', {
+					take: 1,
+					sort: 'created_at:asc',
+				})
+			).rows[0]
+		: null;
+	const contratos_tomados = contratos.rows.filter(is_tomada).length;
+	const total_contratos = contratos.total || contratos.rows.length;
+	const contratos_pendientes = Math.max(total_contratos - contratos_tomados, 0);
+	const importe_total = lecturas.rows.reduce((s, l) => s + Number(l.importe ?? 0), 0);
+	const promedio_by_contrato = new Map(
+		contratos.rows.map((c) => [String(c.contrato ?? ''), Number(c.promedio ?? 0)]),
+	);
+	let lecturas_anormales = 0;
+	for (const lectura of lecturas.rows) {
+		const promedio = promedio_by_contrato.get(String(lectura.contrato ?? '')) ?? 0;
+		if (promedio <= 0) continue;
+		const consumo = Number(lectura.consumo_mts3 ?? 0);
+		if (consumo > promedio * 1.5 || consumo < promedio * 0.5) lecturas_anormales += 1;
+	}
+	return {
+		total_contratos,
+		contratos_tomados,
+		contratos_pendientes,
+		avance_porcentaje: total_contratos
+			? Math.round((contratos_tomados / total_contratos) * 100)
+			: 0,
+		total_lecturas: lecturas.total || lecturas.rows.length,
+		importe_total,
+		importe_periodo: importe_total,
+		lecturas_anormales,
+		vigencia_actual: parametros?.vigencia_actual ?? null,
+		periodo_actual: parametros?.periodo_actual ?? null,
+	};
+}
+
 async function agua_public_contrato(ctx: Ctx) {
+	const ip =
+		ctx.req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+		ctx.req.headers.get('x-real-ip') ||
+		'unknown';
+	if (agua_public_throttled(ip)) {
+		return Response.json(
+			{ data: [], total_elementos: 0, message: 'Demasiadas consultas públicas. Intenta de nuevo en un minuto.' },
+			{ status: 429 },
+		);
+	}
 	const numero = String(ctx.url.searchParams.get('numero') ?? '').trim();
-	if (!numero) throw new Error('Falta el número de contrato');
-	const hit =
-		(await ctx.store.find_where('contrato', { contrato: numero })) ??
-		(await ctx.store.find_where('contrato', { name: numero }));
-	return ok(hit ? [hit] : [], hit ? 'Contrato encontrado' : 'Contrato no encontrado');
+	if (!numero) {
+		return Response.json(
+			{ data: [], total_elementos: 0, message: 'Falta el número de contrato' },
+			{ status: 400 },
+		);
+	}
+	const hit = await ctx.store.find_where('contrato', { contrato: numero });
+	const active = hit && hit.is_active !== false ? hit : null;
+	const public_doc = active
+		? agua_pick(active, [
+				'contrato',
+				'contribuyente',
+				'calle',
+				'colonia',
+				'poblacion',
+				'exterior',
+				'interior',
+				'saldo',
+				'adeudo',
+			])
+		: null;
+	return ok(
+		public_doc ? [public_doc] : [],
+		public_doc ? 'Contrato encontrado' : 'Contrato no encontrado',
+	);
 }
 
 async function agua_public_url(ctx: Ctx) {
 	const doc = await ctx.store.find_where('configuration', {
 		ref: 'configuration-agua-public-url',
 	});
-	return ok([{ url: String(doc?.value ?? '') }], 'URL pública de consulta');
+	return ok([{ url: cfg_text(doc?.value) }], 'URL pública de consulta');
 }
 
 async function agua_push_lectura(ctx: Ctx) {
-	const created = await ctx.store.insert('lectura', {
-		name: String(ctx.body.name ?? ctx.body.contrato ?? 'Lectura'),
-		...ctx.body,
-		fecha: now(),
+	const id = String(ctx.params.id ?? '');
+	const lectura = id ? await ctx.store.find_id('lectura', id) : null;
+	if (!lectura) {
+		return Response.json(
+			{ data: [], total_elementos: 0, message: 'Lectura no encontrada' },
+			{ status: 404 },
+		);
+	}
+	await new AguaMssqlService(ctx.store).push_lectura(lectura);
+	const updated = await ctx.store.update('lectura', String(lectura._id), {
+		sincronizado_simapa: true,
 	});
-	return ok([created], 'Lectura registrada');
+	return ok(updated ? [updated] : [lectura], 'Lectura enviada a MSSQL');
 }
 
 async function agua_push_lecturas_lote(ctx: Ctx) {
-	const lecturas = as_array(ctx.body.lecturas);
-	const created = [];
-	for (const raw of lecturas) {
-		const row = as_object(raw);
-		created.push(
-			await ctx.store.insert('lectura', {
-				name: String(row.name ?? row.contrato ?? 'Lectura'),
-				...row,
-				fecha: now(),
-			}),
+	const items = as_array(ctx.body.lecturas);
+	const saved = [];
+	for (const raw of items) {
+		const item = as_object(raw);
+		const { consumo_mts3, importe } = await calcular_importe(
+			ctx.store,
+			Number(item.lectura_actual ?? 0),
+			Number(item.lectura_anterior ?? 0),
+			item.id_tarifa ? String(item.id_tarifa) : undefined,
 		);
+		const payload = {
+			...item,
+			consumo_mts3,
+			importe,
+			sincronizado_simapa: false,
+		};
+		delete payload._id;
+		const created = await ctx.store.insert('lectura', {
+			name: String(payload.name ?? payload.contrato ?? 'Lectura'),
+			...payload,
+		});
+		saved.push(created);
+		if (item.contrato) {
+			const contrato = await ctx.store.find_where('contrato', {
+				contrato: String(item.contrato),
+			});
+			if (contrato) {
+				await ctx.store.update('contrato', String(contrato._id), {
+					tomada: true,
+					sincronizada: true,
+				});
+			}
+		}
 	}
-	return ok(created, `${created.length} lecturas registradas`);
+	return ok(saved, `Se registraron ${saved.length} lecturas`);
 }
 
-async function agua_archivar_periodo(ctx: Ctx) {
-	const { rows } = await ctx.store.find_many('periodo', { take: 50 });
-	const actual = rows.find((r) => String(r.estado) === 'vigente' || r.actual === true) ?? rows[0];
-	if (!actual) throw new Error('No hay periodo para archivar');
-	const updated = await ctx.store.update('periodo', String(actual._id), {
-		estado: 'archivado',
-		fecha_archivo: now(),
+async function agua_campo_contratos(ctx: Ctx) {
+	const estado = String(ctx.url.searchParams.get('estado') ?? 'pendientes');
+	const id_ruta = String(ctx.url.searchParams.get('id_ruta') ?? '').trim();
+	const { rows } = await ctx.store.find_many('contrato', {
+		where: id_ruta ? { id_ruta } : undefined,
+		take: 20_000,
+		sort: 'consecutivo_ruta:asc',
 	});
-	return ok([updated], 'Periodo archivado');
-}
-
-async function agua_metricas(ctx: Ctx) {
-	const contratos = ctx.store.has('contrato')
-		? await ctx.store.find_many('contrato', { take: 5000 })
-		: { rows: [], total: 0 };
-	const lecturas = ctx.store.has('lectura')
-		? await ctx.store.find_many('lectura', { take: 5000 })
-		: { rows: [], total: 0 };
-	const tomados = contratos.rows.filter((c) =>
-		['tomado', 'asignado'].includes(String(c.estado ?? '')),
-	).length;
-	const pendientes = contratos.rows.filter((c) =>
-		['pendiente', ''].includes(String(c.estado ?? '')),
-	).length;
-	const importe = lecturas.rows.reduce((s, l) => s + Number(l.importe ?? 0), 0);
+	const filtered = rows.filter((c) => {
+		if (estado === 'tomadas') return is_tomada(c);
+		if (estado === 'por_sincronizar') return is_tomada(c) && !is_sync_simapa(c);
+		return !is_tomada(c);
+	});
+	filtered.sort(
+		(a, b) =>
+			Number(a.consecutivo_ruta ?? 0) - Number(b.consecutivo_ruta ?? 0) ||
+			String(a.contrato ?? '').localeCompare(String(b.contrato ?? '')),
+	);
 	return ok(
-		[
-			{
-				total_contratos: contratos.total,
-				contratos_tomados: tomados,
-				contratos_pendientes: pendientes,
-				avance_porcentaje: contratos.total
-					? Math.round((tomados / contratos.total) * 100)
-					: 0,
-				total_lecturas: lecturas.total,
-				importe_total: importe,
-				vigencia_actual: null,
-				periodo_actual: null,
-			},
-		],
-		'Métricas de agua',
+		filtered.map((c) =>
+			agua_pick(c, [
+				'name',
+				'contrato',
+				'contribuyente',
+				'colonia',
+				'id_ruta',
+				'tomada',
+				'sincronizada',
+				'sincronizado_simapa',
+				'lectura_anterior',
+				'promedio',
+				'saldo',
+			]),
+		),
+		'Contratos de captura de campo',
 	);
 }
 
+async function agua_archivar_periodo(ctx: Ctx) {
+	const confirm =
+		ctx.body.confirm === true || ctx.url.searchParams.get('confirm') === 'true';
+	if (!confirm) {
+		return Response.json(
+			{
+				data: [],
+				total_elementos: 0,
+				message:
+					'Confirma el archivo del periodo (confirm: true). El historial de lecturas no se borra.',
+			},
+			{ status: 400 },
+		);
+	}
+	const { rows: contratos } = await agua_all(ctx, 'contrato');
+	let contratos_reiniciados = 0;
+	for (const contrato of contratos) {
+		await ctx.store.update('contrato', String(contrato._id), { ...CONTRATO_FLAGS_ON_ARCHIVE });
+		contratos_reiniciados += 1;
+	}
+	const parametros = ctx.store.has('agua')
+		? (await ctx.store.find_many('agua', { take: 1, sort: 'created_at:asc' })).rows[0]
+		: null;
+	let vigencia_actual = parametros?.vigencia_actual ?? null;
+	let periodo_actual = parametros?.periodo_actual ?? null;
+	if (parametros) {
+		const next = agua_next_periodo_state(
+			Number(parametros.periodo_actual ?? 1),
+			Number(parametros.vigencia_actual ?? new Date().getFullYear()),
+		);
+		await ctx.store.update('agua', String(parametros._id), next);
+		vigencia_actual = next.vigencia_actual;
+		periodo_actual = next.periodo_actual;
+	}
+	return ok(
+		[{ contratos_reiniciados, vigencia_actual, periodo_actual }],
+		'Periodo archivado y avanzado correctamente',
+	);
+}
+
+async function agua_metricas(ctx: Ctx) {
+	return ok([await agua_build_metricas(ctx)], 'Métricas del módulo de agua');
+}
+
 async function agua_reportes(ctx: Ctx) {
-	const tipo = ctx.params.tipo ?? 'pendientes';
+	const tipo = String(ctx.params.tipo ?? '');
+	const metricas_data = await agua_build_metricas(ctx);
 	if (tipo === 'pendientes') {
-		return list_where(ctx, 'contrato', { estado: 'pendiente' });
+		const { rows } = await agua_all(ctx, 'contrato');
+		const data = rows
+			.filter((c) => !is_tomada(c))
+			.map((c) => agua_pick(c, ['contrato', 'contribuyente', 'id_ruta', 'colonia']));
+		return ok(data, 'Contratos pendientes de lectura');
 	}
 	if (tipo === 'anormales') {
-		return list_where(ctx, 'lectura', { anormal: true });
+		return ok(
+			[{ lecturas_anormales: metricas_data.lecturas_anormales }],
+			'Lecturas anormales vs promedio',
+		);
 	}
-	const { rows } = await ctx.store.find_many('lectura', { take: 2000 });
-	const total = rows.reduce((s, l) => s + Number(l.importe ?? 0), 0);
-	return ok([{ tipo, total, lecturas: rows.length }], 'Reporte de importe');
+	if (tipo === 'importe') {
+		return ok(
+			[
+				{
+					importe_periodo: metricas_data.importe_periodo,
+					periodo_actual: metricas_data.periodo_actual,
+					vigencia_actual: metricas_data.vigencia_actual,
+				},
+			],
+			'Importe del periodo',
+		);
+	}
+	return Response.json(
+		{
+			data: [],
+			total_elementos: 0,
+			message: 'Tipo de reporte no válido (pendientes | anormales | importe)',
+		},
+		{ status: 400 },
+	);
 }
 
 async function agua_print_mode(ctx: Ctx) {
 	const doc = await ctx.store.find_where('configuration', {
 		ref: 'configuration-agua-print-mode',
 	});
-	const mode = cfg_text(doc?.value, 'escpos');
-	return ok([{ mode }], 'Modo de impresión');
+	const value = cfg_text(doc?.value, 'escpos').toLowerCase();
+	const mode = value === 'zpl' ? 'zpl' : 'escpos';
+	return ok([{ mode }], 'Tecnología de impresión');
 }
 
 function cfg_text(value: unknown, fallback = '') {
@@ -3520,11 +3778,7 @@ function cfg_text(value: unknown, fallback = '') {
 }
 
 async function agua_is_mssql_enabled(ctx: Ctx) {
-	const doc = await ctx.store.find_where('configuration', {
-		ref: 'configuration-agua-mssql-enabled',
-	});
-	const raw = cfg_text(doc?.value, 'false');
-	return raw === 'true' || raw === '1';
+	return new AguaMssqlService(ctx.store).is_enabled();
 }
 
 async function agua_sync_estado(ctx: Ctx) {
@@ -3535,24 +3789,34 @@ async function agua_sync_estado(ctx: Ctx) {
 	);
 }
 
-async function agua_require_mssql(ctx: Ctx) {
-	if (!(await agua_is_mssql_enabled(ctx))) {
-		throw new Error(
-			'La conexión MSSQL (SIMAPA) está deshabilitada. Actívala en Configuración para sincronizar.',
-		);
-	}
-	const server = cfg_text(
-		(await ctx.store.find_where('configuration', { ref: 'configuration-agua-mssql-server' }))
-			?.value,
+async function agua_sync_catalogos(ctx: Ctx) {
+	const svc = new AguaMssqlService(ctx.store);
+	await svc.assert_enabled();
+	const data = [
+		await svc.sync_impedimentos(),
+		await svc.sync_incidencias(),
+		await svc.sync_periodos(),
+	];
+	return ok(data, 'Catálogos sincronizados desde MSSQL');
+}
+
+async function agua_sync_contratos(ctx: Ctx) {
+	const id_ruta = String(ctx.url.searchParams.get('id_ruta') ?? ctx.body.id_ruta ?? '').trim();
+	const svc = new AguaMssqlService(ctx.store);
+	const result = await svc.sync_contratos(id_ruta || undefined);
+	return ok([result], result.message);
+}
+
+async function agua_sync_rutas(ctx: Ctx) {
+	const result = await new AguaMssqlService(ctx.store).sync_rutas(
+		String(ctx.params.idLecturista ?? ''),
 	);
-	const database = cfg_text(
-		(await ctx.store.find_where('configuration', { ref: 'configuration-agua-mssql-database' }))
-			?.value,
+	return ok([result], 'Rutas sincronizadas');
+}
+
+async function agua_sync_tarifas(ctx: Ctx) {
+	const result = await new AguaMssqlService(ctx.store).sync_tarifas(
+		String(ctx.params.idLecturista ?? ''),
 	);
-	if (!server || !database) {
-		throw new Error(
-			'Configuración MSSQL incompleta: define al menos servidor y base de datos.',
-		);
-	}
-	throw new Error('Origen MSSQL no disponible en el núcleo SQL');
+	return ok([result], 'Tarifas sincronizadas');
 }
