@@ -3,8 +3,9 @@
  * El front manda multipart (`File` + `imperium-sic__data__`); sin esto el SQL
  * serializa el File a `{}` y GET /media no tiene bytes.
  */
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import sharp from 'sharp';
 import type { ImperiumDoc } from './envelope.ts';
 import type { ImperiumStore } from './store.ts';
 
@@ -50,6 +51,25 @@ const EXT_PERMITIDAS = new Set([
 
 const LIMITE_IMAGEN = 10 * 1024 * 1024;
 const LIMITE_OTROS = 50 * 1024 * 1024;
+const IMAGEN_ANCHO_MAXIMO = 4000;
+const IMAGEN_ALTO_MAXIMO = 4000;
+const IMAGEN_TIMEOUT_MS = 30_000;
+const EXTS_OPTIMIZABLES = new Set([
+	'jpg',
+	'jpeg',
+	'jpe',
+	'jif',
+	'jfif',
+	'jfi',
+	'pjpeg',
+	'pjp',
+	'png',
+	'gif',
+	'webp',
+	'bmp',
+	'tiff',
+	'tif',
+]);
 
 export function resolve_upload_folders(): string[] {
 	return [
@@ -77,18 +97,20 @@ export async function apply_uploads(
 	resource: string,
 	doc: ImperiumDoc,
 	actor: ImperiumDoc | null,
-	opts: { method?: string; record_id?: string } = {},
+	opts: { method?: string; record_id?: string; previous?: ImperiumDoc | null } = {},
 ): Promise<ImperiumDoc> {
 	const out: ImperiumDoc = { ...doc };
 	delete out['imperium-sic__data__'];
 	const actor_id = String(actor?._id ?? actor?.id ?? '').trim();
 	const record_id = String(opts.record_id ?? out._id ?? out.id ?? '').trim();
+	const replacing = ['PUT', 'PATCH'].includes(String(opts.method ?? '').toUpperCase());
 
 	if (resource === 'attachment-management') {
 		const file = take_upload(out, 'file') ?? first_upload(out);
 		if (file) {
 			const saved = await persist_blob(file, {
 				related_model: String(out.related_model ?? 'AttachmentManagement'),
+				field: String(out.field ?? 'file'),
 			});
 			const name = filename_without_extension(file_name(file));
 			const fallback = String(out.name ?? '').trim() || name || 'archivo';
@@ -112,6 +134,9 @@ export async function apply_uploads(
 
 	for (const [key, value] of Object.entries(out)) {
 		if (is_upload(value)) {
+			if (replacing) {
+				await delete_attachments_of(store, opts.previous?.[key]);
+			}
 			const att = await persist_upload_as_attachment(store, value, {
 				actor_id,
 				related_model: resource,
@@ -123,6 +148,11 @@ export async function apply_uploads(
 			out[key] = String(att._id);
 			continue;
 		}
+		if (replacing && is_cleared_attachment(value)) {
+			await delete_attachments_of(store, opts.previous?.[key]);
+			out[key] = Array.isArray(value) ? [] : '';
+			continue;
+		}
 		if (!Array.isArray(value)) continue;
 		const next: unknown[] = [];
 		for (let i = 0; i < value.length; i++) {
@@ -130,6 +160,10 @@ export async function apply_uploads(
 			if (!is_upload(item)) {
 				next.push(item);
 				continue;
+			}
+			if (replacing) {
+				const prev_list = as_list(opts.previous?.[key]);
+				await delete_attachments_of(store, prev_list[i]);
 			}
 			const att = await persist_upload_as_attachment(store, item, {
 				actor_id,
@@ -144,6 +178,29 @@ export async function apply_uploads(
 		out[key] = next;
 	}
 	return out;
+}
+
+export async function link_attachments_to_record(
+	store: ImperiumStore,
+	resource: string,
+	doc: ImperiumDoc,
+): Promise<void> {
+	if (!store.has('attachment-management')) return;
+	const record_id = String(doc._id ?? doc.id ?? '').trim();
+	if (!record_id) return;
+	for (const value of Object.values(doc)) {
+		for (const id of attachment_ids_of(value)) {
+			const att = await store.find_id('attachment-management', id);
+			if (!att) continue;
+			if (String(att.related_record_id ?? '').trim()) continue;
+			const model = String(att.related_model ?? '');
+			if (model && model !== resource) continue;
+			await store.update('attachment-management', id, {
+				related_record_id: record_id,
+				related_model: resource,
+			});
+		}
+	}
 }
 
 function take_upload(doc: ImperiumDoc, key: string): Blob | null {
@@ -183,7 +240,10 @@ export async function persist_upload_as_attachment(
 	if (!store.has('attachment-management')) {
 		throw new Error('Sin adjuntos');
 	}
-	const saved = await persist_blob(file, { related_model: meta.related_model });
+	const saved = await persist_blob(file, {
+		related_model: meta.related_model,
+		field: meta.field,
+	});
 	const name = filename_without_extension(file_name(file));
 	return store.insert('attachment-management', {
 		name: name.length >= 4 ? name : `file-${name ? name : 'adjunto'}`,
@@ -203,7 +263,7 @@ export async function persist_upload_as_attachment(
 
 async function persist_blob(
 	file: Blob,
-	opts: { related_model: string },
+	opts: { related_model: string; field?: string },
 ): Promise<{ filename: string; bytes: Buffer; mime: string; ext: string }> {
 	const name = file_name(file);
 	const ext = name.includes('.') ? name.split('.').pop()!.toLowerCase() : '';
@@ -214,8 +274,101 @@ async function persist_blob(
 	const filename = crypto.randomUUID();
 	const folder = writable_upload_folder();
 	mkdirSync(folder, { recursive: true });
-	writeFileSync(join(folder, filename), bytes);
+	const path = join(folder, filename);
+	writeFileSync(path, bytes);
+	const optimized = await maybe_optimize_image(path, ext, mime, opts.field ?? '');
+	if (optimized) {
+		return {
+			filename,
+			bytes: optimized.bytes,
+			mime: 'image/webp',
+			ext: 'webp',
+		};
+	}
 	return { filename, bytes, mime: file.type || mime, ext };
+}
+
+async function maybe_optimize_image(
+	path: string,
+	ext: string,
+	mime: string,
+	field: string,
+): Promise<{ bytes: Buffer } | null> {
+	const is_image = mime.startsWith('image/') || EXTS_OPTIMIZABLES.has(ext);
+	if (!is_image || ext === 'svg' || !EXTS_OPTIMIZABLES.has(ext)) return null;
+	try {
+		const metadata = await sharp(path).metadata();
+		if (metadata.width && metadata.width > IMAGEN_ANCHO_MAXIMO) {
+			throw new Error(`Ancho de imagen excede el límite máximo: ${IMAGEN_ANCHO_MAXIMO}px`);
+		}
+		if (metadata.height && metadata.height > IMAGEN_ALTO_MAXIMO) {
+			throw new Error(`Alto de imagen excede el límite máximo: ${IMAGEN_ALTO_MAXIMO}px`);
+		}
+		const withoutEnlargement = Boolean(
+			metadata.width &&
+				metadata.height &&
+				metadata.width < IMAGEN_ANCHO_MAXIMO &&
+				metadata.height < IMAGEN_ALTO_MAXIMO,
+		);
+		const pipeline = sharp(path).resize({
+			width: IMAGEN_ANCHO_MAXIMO,
+			height: IMAGEN_ALTO_MAXIMO,
+			fit: 'inside',
+			withoutEnlargement,
+		});
+		const lossless = field.toLowerCase().includes('signature');
+		const result_path = `${path}.result`;
+		const work = lossless
+			? pipeline.webp({ lossless: true, quality: 100 }).toFile(result_path)
+			: pipeline.webp({ quality: 70 }).toFile(result_path);
+		const timeout = new Promise<never>((_, reject) => {
+			setTimeout(() => reject(new Error('Timeout en procesamiento de imagen')), IMAGEN_TIMEOUT_MS);
+		});
+		await Promise.race([work, timeout]);
+		unlinkSync(path);
+		renameSync(result_path, path);
+		return { bytes: readFileSync(path) };
+	} catch (error) {
+		throw new Error(`No se ha podido procesar el fichero: ${error}`);
+	}
+}
+
+function is_cleared_attachment(value: unknown): boolean {
+	if (value === '') return true;
+	if (Array.isArray(value) && value.length === 0) return true;
+	return false;
+}
+
+function as_list(value: unknown): unknown[] {
+	return Array.isArray(value) ? value : [];
+}
+
+function attachment_ids_of(value: unknown): string[] {
+	if (typeof value === 'string' && /^[a-f0-9]{16,}$/i.test(value.trim())) {
+		return [value.trim()];
+	}
+	if (Array.isArray(value)) return value.flatMap(attachment_ids_of);
+	if (value && typeof value === 'object') {
+		const id = String((value as { _id?: unknown })._id ?? '');
+		return attachment_ids_of(id);
+	}
+	return [];
+}
+
+async function delete_attachments_of(store: ImperiumStore, value: unknown): Promise<void> {
+	if (!store.has('attachment-management')) return;
+	for (const id of attachment_ids_of(value)) {
+		const att = await store.find_id('attachment-management', id);
+		if (!att) continue;
+		const stored = String(att.name_stored ?? '').trim();
+		if (stored) {
+			for (const folder of resolve_upload_folders()) {
+				const full = join(folder, stored);
+				if (existsSync(full)) unlinkSync(full);
+			}
+		}
+		await store.remove('attachment-management', id);
+	}
 }
 
 function validate_upload(

@@ -6,7 +6,7 @@ import { query_list, read_imperium_body } from './body.ts';
 import type { ImperiumStore } from './store.ts';
 import { assert_pos_pin, maybe_create_pos_session_pin } from './user-pin.ts';
 import { register_document_mentions } from './notifications.ts';
-import { apply_uploads } from './uploads.ts';
+import { apply_uploads, link_attachments_to_record } from './uploads.ts';
 
 export async function handle_crud(
 	store: ImperiumStore,
@@ -152,6 +152,7 @@ export async function handle_crud(
 		}
 		const doc = await before_create(store, resource, incoming, actor);
 		const created = await store.insert(resource, doc);
+		await link_attachments_to_record(store, resource, created);
 		await maybe_register_mentions(store, actor, resource, created);
 		const notice = await after_create(store, resource, created, actor);
 		const [populated] = await store.populate_docs(resource, [created]);
@@ -178,8 +179,10 @@ export async function handle_crud(
 		const b = await apply_uploads(store, resource, raw, actor, {
 			method: 'PUT',
 			record_id: id,
+			previous,
 		});
 		const updated = await store.update(resource, id, b);
+		if (updated) await link_attachments_to_record(store, resource, updated);
 		if (!updated) return json(fail('No encontrado', 404).body, 404);
 		await maybe_register_mentions(store, actor, resource, updated, previous);
 		const [populated] = await store.populate_docs(resource, [updated]);
@@ -190,8 +193,10 @@ export async function handle_crud(
 		const patched = await apply_uploads(store, resource, await body(), actor, {
 			method: 'PATCH',
 			record_id: segs[0],
+			previous,
 		});
 		const updated = await store.update(resource, segs[0]!, patched);
+		if (updated) await link_attachments_to_record(store, resource, updated);
 		if (!updated) return json(fail('No encontrado', 404).body, 404);
 		await maybe_register_mentions(store, actor, resource, updated, previous);
 		return json(ok([updated], 'Actualizado correctamente'));
