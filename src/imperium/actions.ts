@@ -173,7 +173,7 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'debug-log:read_log_by_id':
 			return one(ctx, 'debug-log', ctx.params.id);
 		case 'delivery-package:read_offline_catalog':
-			return list_resource(ctx, 'delivery-package');
+			return delivery_offline_catalog(ctx);
 		case 'delivery-package:read_load_manifest':
 			return read_load_manifest(ctx);
 		case 'delivery-package:read_by_pedido':
@@ -196,8 +196,9 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 				recibido_por: actor_name(ctx),
 			}, 'Devolución recibida');
 		case 'delivery-route:read_route_map':
+			return delivery_route_map(ctx);
 		case 'delivery-route:read_chofer_routes':
-			return list_resource(ctx, 'delivery-route');
+			return delivery_chofer_routes(ctx);
 		case 'delivery-route:optimize_route':
 			return optimize_route(ctx);
 		case 'delivery-route:read_driver_location':
@@ -205,7 +206,7 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'document-change-history:create_comment':
 			return create_history_comment(ctx);
 		case 'document-change-history:read_history':
-			return list_resource(ctx, 'document-change-history');
+			return read_history(ctx);
 		case 'document-change-history:read_history_by_id':
 			return one(ctx, 'document-change-history', ctx.params.id);
 		case 'documentation-page:read_all':
@@ -282,7 +283,7 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'messages:read_conversation':
 			return conversation(ctx);
 		case 'messages:search_chat_messages':
-			return list_resource(ctx, 'messages');
+			return search_chat_messages(ctx);
 		case 'messages:create_chat_message':
 		case 'messages:create_internal_message':
 			return create_message(ctx);
@@ -383,7 +384,7 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'reports:print_pdf_direct':
 			return reports_print_pdf_direct(ctx);
 		case 'tickets:read_admin_tickets':
-			return list_resource(ctx, 'tickets');
+			return tickets_admin_list(ctx);
 		case 'tickets:read_admin_ticket':
 			return one(ctx, 'tickets', ctx.params.id);
 		case 'tickets:read_ticket_field_values':
@@ -1223,6 +1224,104 @@ async function read_load_manifest(ctx: Ctx) {
 	return ok(data, 'Manifiesto de carga generado correctamente', data.length);
 }
 
+async function delivery_offline_catalog(ctx: Ctx) {
+	const route_id = String(ctx.url.searchParams.get('route_id') ?? '').trim();
+	const { rows } = await ctx.store.find_many('delivery-package', { take: 5000 });
+	const records = rows
+		.filter((row) => {
+			const route = ref_id(row.delivery_route);
+			if (!route) return false;
+			if (route_id && route !== route_id) return false;
+			return true;
+		})
+		.sort((a, b) => {
+			const route = String(a.delivery_route_nombre ?? '').localeCompare(
+				String(b.delivery_route_nombre ?? ''),
+				'es',
+			);
+			if (route) return route;
+			const num = Number(a.numero_bulto ?? 0) - Number(b.numero_bulto ?? 0);
+			if (num) return num;
+			return String(a.name ?? '').localeCompare(String(b.name ?? ''), 'es');
+		});
+	return ok(records, 'Catálogo logístico offline cargado correctamente');
+}
+
+async function delivery_route_map(ctx: Ctx) {
+	const route_id = String(ctx.url.searchParams.get('route_id') ?? '').trim();
+	const { rows } = await ctx.store.find_many('delivery-package', { take: 5000 });
+	const packages = rows.filter((row) => {
+		const coords = as_object(row.delivery_address_coordinates);
+		const lat = Number(coords.latitude ?? coords.lat);
+		const lon = Number(coords.longitude ?? coords.lng ?? coords.lon);
+		if (!Number.isFinite(lat) || !Number.isFinite(lon)) return false;
+		if (route_id && ref_id(row.delivery_route) !== route_id) return false;
+		return true;
+	});
+	const groups = new Map<string, ImperiumDoc>();
+	for (const pkg of packages) {
+		const key = ref_id(pkg.delivery_route) || 'sin-ruta';
+		let group = groups.get(key);
+		if (!group) {
+			group = {
+				delivery_route: pkg.delivery_route ?? null,
+				delivery_route_nombre: String(pkg.delivery_route_nombre ?? 'Sin ruta'),
+				points: [] as ImperiumDoc[],
+				optimization: null,
+			};
+			groups.set(key, group);
+		}
+		const coords = as_object(pkg.delivery_address_coordinates);
+		(as_array(group.points) as ImperiumDoc[]).push({
+			_id: pkg._id,
+			codigo_bulto: pkg.codigo_bulto,
+			pedido: pkg.pedido,
+			pedido_folio: pkg.pedido_folio,
+			pedido_contacto_nombre: pkg.pedido_contacto_nombre,
+			domicilio: pkg.pedido_contacto_domicilio,
+			estado: pkg.estado,
+			vehicle_nombre: pkg.vehicle_nombre,
+			latitude: coords.latitude ?? coords.lat,
+			longitude: coords.longitude ?? coords.lng ?? coords.lon,
+		});
+	}
+	for (const [key, group] of groups) {
+		if (key === 'sin-ruta') continue;
+		const route = await ctx.store.find_id('delivery-route', key);
+		group.optimization = route?.optimization ?? null;
+	}
+	return ok([...groups.values()], 'Mapa de rutas generado correctamente');
+}
+
+async function delivery_chofer_routes(ctx: Ctx) {
+	const employee_raw = ctx.actor?.employee;
+	const employee_id =
+		employee_raw && typeof employee_raw === 'object'
+			? ref_id(employee_raw)
+			: String(employee_raw ?? '').trim();
+	if (!employee_id) {
+		return ok([], 'El usuario no tiene un empleado vinculado para identificar al chofer.');
+	}
+	const vehicles = ctx.store.has('vehicle')
+		? (
+				await ctx.store.find_many('vehicle', {
+					take: 2000,
+					include_inactive: false,
+				})
+			).rows.filter((v) => ref_id(v.chofer) === employee_id)
+		: [];
+	if (!vehicles.length) {
+		return ok([], 'El chofer no tiene vehículos asignados.');
+	}
+	const vehicle_ids = new Set(vehicles.map((v) => String(v._id)));
+	const { rows } = await ctx.store.find_many('delivery-route', {
+		take: 2000,
+		include_inactive: false,
+	});
+	const routes = sort_by_name(rows.filter((r) => vehicle_ids.has(ref_id(r.vehicle))));
+	return ok(routes, 'Rutas del chofer cargadas correctamente');
+}
+
 async function logistics_event(ctx: Ctx) {
 	const doc = await need(ctx, 'delivery-package', ctx.params.id);
 	const event_type = String(ctx.body.event_type ?? ctx.body.event ?? ctx.body.tipo ?? '').trim();
@@ -1449,6 +1548,56 @@ async function create_history_comment(ctx: Ctx) {
 		entity_label: String(ctx.body.source_entity_label ?? ctx.body.sourceEntityLabel ?? ''),
 	});
 	return ok([created], 'Comentario registrado correctamente');
+}
+
+async function read_history(ctx: Ctx) {
+	const document_id = String(
+		ctx.url.searchParams.get('document_id') ?? ctx.url.searchParams.get('documentId') ?? '',
+	).trim();
+	const collection_name = String(
+		ctx.url.searchParams.get('collection_name') ??
+			ctx.url.searchParams.get('collectionName') ??
+			'',
+	).trim();
+	const model_name = String(
+		ctx.url.searchParams.get('model_name') ?? ctx.url.searchParams.get('modelName') ?? '',
+	).trim();
+	if (!document_id) throw new Error('Se requiere document_id para consultar el historial.');
+	if (!collection_name && !model_name) {
+		throw new Error('Se requiere collection_name o model_name para consultar el historial.');
+	}
+	const legacy_size = Number(ctx.url.searchParams.get('size') ?? 0);
+	const limite = Math.min(
+		50,
+		Math.max(1, Number(ctx.url.searchParams.get('limite') ?? 0) || legacy_size || 15),
+	);
+	const desde = Math.max(0, Number(ctx.url.searchParams.get('desde') ?? 0) || 0);
+	const { rows } = await ctx.store.find_many('document-change-history', {
+		take: 5000,
+		include_inactive: true,
+	});
+	const matched = rows
+		.filter((row) => {
+			const same_doc =
+				String(row.documentId ?? row.document_id ?? row.record_id ?? '') === document_id;
+			if (!same_doc) return false;
+			if (model_name) {
+				return String(row.modelName ?? row.model_name ?? row.model ?? '') === model_name;
+			}
+			return String(row.collectionName ?? row.collection_name ?? '') === collection_name;
+		})
+		.sort((a, b) => created_ms(b) - created_ms(a));
+	const page = matched.slice(desde, desde + limite);
+	return ok(
+		page,
+		page.length ? 'Historial obtenido correctamente' : 'No se encontraron cambios para este registro',
+		matched.length,
+	);
+}
+
+function created_ms(doc: ImperiumDoc): number {
+	const t = new Date(String(doc.createdAt ?? doc.created_at ?? '')).getTime();
+	return Number.isFinite(t) ? t : 0;
 }
 
 async function documentation_adjacent(ctx: Ctx) {
@@ -2633,6 +2782,80 @@ async function my_conversations(ctx: Ctx) {
 	return ok(summaries, 'Conversaciones');
 }
 
+async function search_chat_messages(ctx: Ctx) {
+	const uid = actor_id(ctx);
+	const participant_id = String(
+		ctx.url.searchParams.get('participant_id') ??
+			ctx.url.searchParams.get('participantId') ??
+			'',
+	).trim();
+	const raw_term = String(
+		ctx.url.searchParams.get('term') ?? ctx.url.searchParams.get('termino') ?? '',
+	).trim();
+	if (!raw_term) {
+		return ok([], 'Debes indicar un texto para buscar en el chat.');
+	}
+	const needle = raw_term.toLowerCase();
+	const limit = Math.min(100, Math.max(1, Number(ctx.url.searchParams.get('limit') ?? 25) || 25));
+	const { rows } = await ctx.store.find_many('messages', {
+		take: 5000,
+		include_inactive: true,
+	});
+	const hits = rows
+		.filter((row) => {
+			const source = String(row.sourceType ?? row.source_type ?? 'chat');
+			if (source && source !== 'chat') return false;
+			const parts = message_participants(row, uid);
+			if (uid && !parts.includes(uid)) return false;
+			if (participant_id && !parts.includes(participant_id)) return false;
+			const hay = [
+				row.search_field,
+				row.message,
+				row.name,
+				row.senderName,
+				row.senderEmail,
+				row.sender_name,
+				row.sender_email,
+				as_object(row.participantSnapshot).name,
+				as_object(row.participantSnapshot).email,
+			]
+				.map((v) => String(v ?? '').toLowerCase())
+				.join(' ');
+			return hay.includes(needle);
+		})
+		.sort((a, b) => created_ms(b) - created_ms(a))
+		.slice(0, limit)
+		.map((row) => {
+			const parts = message_participants(row, uid);
+			const other = parts.find((p) => p !== uid) ?? '';
+			const conversation_key =
+				String(row.conversationKey ?? row.conversation_key ?? '') ||
+				[uid, other].filter(Boolean).sort().join('::');
+			return {
+				conversation_key,
+				other_participant: other
+					? {
+							_id: other,
+							name: String(
+								row.senderName ??
+									as_object(row.participantSnapshot).name ??
+									row.name ??
+									other,
+							),
+						}
+					: undefined,
+				message: row,
+			};
+		})
+		.filter((row) => row.conversation_key);
+	return ok(
+		hits,
+		participant_id
+			? 'Coincidencias del chat cargadas correctamente.'
+			: 'Coincidencias globales del chat cargadas correctamente.',
+	);
+}
+
 async function my_messages(ctx: Ctx) {
 	const uid = actor_id(ctx);
 	const { rows, total } = await ctx.store.find_many('messages', { take: 200 });
@@ -3536,6 +3759,49 @@ function ticket_should_forward(ctx: Ctx) {
 		return raw === 'true' || raw === '1';
 	}
 	return false;
+}
+
+async function tickets_admin_list(ctx: Ctx) {
+	const termino = String(ctx.url.searchParams.get('termino') ?? '').trim().toLowerCase();
+	const desde = Math.max(0, Number(ctx.url.searchParams.get('desde') ?? 0) || 0);
+	const limite = Math.min(500, Math.max(1, Number(ctx.url.searchParams.get('limite') ?? 50) || 50));
+	const { rows } = await ctx.store.find_many('tickets', {
+		take: 5000,
+		include_inactive: true,
+	});
+	const matched = rows
+		.filter((row) => {
+			if (!termino) return true;
+			const reporter = as_object(row.reporter);
+			const hay = [
+				row.title,
+				row.name,
+				row.description,
+				row.sourceType,
+				row.source_type,
+				row.status,
+				row.estado,
+				reporter.name,
+				reporter.email,
+			]
+				.map((v) => String(v ?? '').toLowerCase())
+				.join(' ');
+			return hay.includes(termino);
+		})
+		.sort((a, b) => created_ms(b) - created_ms(a));
+	const page = matched.slice(desde, desde + limite);
+	return {
+		...ok(page, 'Tickets cargados correctamente.', matched.length),
+		tipo_de_instancia: {
+			title: 'String',
+			description: 'String',
+			status: 'String',
+			sourceType: 'String',
+			reporter_name: 'String',
+			isLockedByAssignment: 'Boolean',
+			createdAt: 'Date',
+		},
+	};
 }
 
 async function create_ticket(ctx: Ctx) {
