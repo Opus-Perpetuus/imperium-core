@@ -6,7 +6,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { as_array, as_object, fail, ok, type ImperiumDoc } from './envelope.ts';
-import { read_imperium_body } from './body.ts';
+import { query_list, read_imperium_body } from './body.ts';
 import { qident, type ImperiumStore } from './store.ts';
 import { SearchEngine, search_text_from_doc } from './search-engine.ts';
 import { assert_pos_pin, verify_user_pin } from './user-pin.ts';
@@ -4996,30 +4996,36 @@ async function mark_attendance(ctx: Ctx) {
 	return patch_doc(ctx, 'lista-asistencia', String(entry._id), patch, 'Asistencia actualizada correctamente');
 }
 
+async function medical_list(
+	ctx: Ctx,
+	where: Record<string, unknown>,
+	message: string,
+) {
+	const q = query_list(ctx.url);
+	return ctx.store.find_many('medical-file', {
+		...q,
+		where: { ...q.where, ...where },
+	}).then((found) => ok(found.rows, message, found.total));
+}
+
 async function medical_for_doctor(ctx: Ctx) {
-	const by_status = await ctx.store.find_many('medical-file', {
-		where: { status: { in: ['pendiente', 'en_consulta'] } },
-		take: 500,
-	});
-	if (by_status.rows.length) return ok(by_status.rows, 'Expedientes del médico', by_status.total);
-	const by_estado = await ctx.store.find_many('medical-file', {
-		where: { estado: { in: ['pendiente', 'en_consulta'] } },
-		take: 500,
-	});
-	return ok(by_estado.rows, 'Expedientes del médico', by_estado.total);
+	const by_status = await medical_list(
+		ctx,
+		{ status: { in: ['pendiente', 'en_consulta'] } },
+		'Expedientes del médico',
+	);
+	if (as_array(by_status.data).length) return by_status;
+	return medical_list(
+		ctx,
+		{ estado: { in: ['pendiente', 'en_consulta'] } },
+		'Expedientes del médico',
+	);
 }
 
 async function medical_pending(ctx: Ctx) {
-	const by_status = await ctx.store.find_many('medical-file', {
-		where: { status: 'pendiente' },
-		take: 500,
-	});
-	if (by_status.rows.length) return ok(by_status.rows, 'Pendientes', by_status.total);
-	const by_estado = await ctx.store.find_many('medical-file', {
-		where: { estado: 'pendiente' },
-		take: 500,
-	});
-	return ok(by_estado.rows, 'Pendientes', by_estado.total);
+	const by_status = await medical_list(ctx, { status: 'pendiente' }, 'Pendientes');
+	if (as_array(by_status.data).length) return by_status;
+	return medical_list(ctx, { estado: 'pendiente' }, 'Pendientes');
 }
 
 async function need(ctx: Ctx, resource: string, id?: string) {
@@ -5029,19 +5035,23 @@ async function need(ctx: Ctx, resource: string, id?: string) {
 	return doc;
 }
 
-async function payments_catalog(ctx: Ctx) {
+async function disabled_model_ids(ctx: Ctx) {
 	const disabled = new Set<string>();
-	if (ctx.store.has('module-management')) {
-		const { rows } = await ctx.store.find_many('module-management', {
-			take: 500,
-			include_inactive: true,
-		});
-		for (const row of rows) {
-			if (row.is_enable === false || row.is_active === false) {
-				disabled.add(String(row.model_id ?? row.name ?? ''));
-			}
+	if (!ctx.store.has('module-management')) return disabled;
+	const { rows } = await ctx.store.find_many('module-management', {
+		take: 500,
+		include_inactive: true,
+	});
+	for (const row of rows) {
+		if (row.is_enable === false || row.is_active === false) {
+			disabled.add(String(row.model_id ?? row.name ?? ''));
 		}
 	}
+	return disabled;
+}
+
+async function payments_catalog(ctx: Ctx) {
+	const disabled = await disabled_model_ids(ctx);
 	const cfdi_on = !disabled.has('CfdiDocument') && ctx.store.has('cfdi-document');
 	const services = payable_services();
 	const data = services
@@ -5180,6 +5190,10 @@ async function payments_checkout(ctx: Ctx) {
 	const slug = String(ctx.body.service_slug ?? '');
 	const service = payable_services().find((s) => s.slug === slug);
 	if (!service) throw new Error('Servicio de pago no encontrado.');
+	const disabled = await disabled_model_ids(ctx);
+	if (service.required_model_id && disabled.has(service.required_model_id)) {
+		throw new Error('Este servicio no está disponible.');
+	}
 	const lookup = String(ctx.body.lookup ?? '').trim();
 	if (service.lookup_label && !lookup) {
 		throw new Error(`Se requiere: ${service.lookup_label}.`);
@@ -5188,6 +5202,8 @@ async function payments_checkout(ctx: Ctx) {
 	if (!Number.isFinite(amount) || amount <= 0) {
 		throw new Error('El monto debe ser mayor a cero.');
 	}
+	const cfdi_on = !disabled.has('CfdiDocument') && ctx.store.has('cfdi-document');
+	const invoice_requested = Boolean(ctx.body.invoice) && cfdi_on && service.billable;
 	const secret = await payments_stripe_secret(ctx);
 	const currency =
 		(await payments_config_text(ctx, 'configuration-payments-currency', 'STRIPE_CURRENCY')) ||
@@ -5200,12 +5216,12 @@ async function payments_checkout(ctx: Ctx) {
 		description: service.title,
 		service_slug: slug,
 		amount,
-		status: 'pendiente',
+		status: 'PENDIENTE',
 		provider: 'stripe',
 		currency,
 		external_ref: lookup,
 		customer_email: ctx.body.email ? String(ctx.body.email) : '',
-		invoice_requested: Boolean(ctx.body.invoice),
+		invoice_requested,
 	});
 	const session = await stripe_create_checkout({
 		secret_key: secret,
@@ -5227,12 +5243,15 @@ async function payments_checkout(ctx: Ctx) {
 }
 
 async function payments_session(ctx: Ctx) {
-	const id = String(ctx.url.searchParams.get('session_id') ?? ctx.params.session_id ?? '');
-	const doc = id ? await ctx.store.find_id('payments', id) : null;
-	if (!doc) return ok([], 'Sesión no encontrada');
+	const id = String(ctx.url.searchParams.get('session_id') ?? ctx.params.session_id ?? '').trim();
+	if (!id) throw new Error('No se encontró la sesión de pago.');
+	const doc =
+		(await ctx.store.find_where('payments', { provider_ref: id })) ??
+		(await ctx.store.find_id('payments', id));
+	if (!doc) throw new Error('No se encontró la sesión de pago.');
 	return ok(
-		[{ status: String(doc.status ?? doc.estado ?? 'pendiente'), service_slug: doc.service_slug }],
-		'Sesión de pago',
+		[{ status: String(doc.status ?? doc.estado ?? 'PENDIENTE'), service_slug: doc.service_slug }],
+		'',
 	);
 }
 
