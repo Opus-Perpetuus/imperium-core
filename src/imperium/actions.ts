@@ -167,6 +167,8 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return mark_attendance(ctx);
 		case 'debug-log:read_logs':
 			return debug_read_logs(ctx);
+		case 'debug-log:get_statistics':
+			return debug_statistics(ctx);
 		case 'debug-log:read_related_request_log':
 			return debug_read_related(ctx);
 		case 'debug-log:read_log_by_id':
@@ -1689,11 +1691,7 @@ async function documentation_read_one(
 	return ok([doc], 'Documento obtenido correctamente.');
 }
 
-async function debug_read_logs(ctx: Ctx) {
-	const page = Math.max(1, Number(ctx.url.searchParams.get('page') ?? 1) || 1);
-	const size = Math.min(200, Math.max(1, Number(ctx.url.searchParams.get('size') ?? 50) || 50));
-	const sort_field = ctx.url.searchParams.get('sort') || 'createdAt';
-	const sort_dir = ctx.url.searchParams.get('dir') === 'asc' ? 1 : -1;
+async function collect_debug_logs(ctx: Ctx): Promise<ImperiumDoc[]> {
 	const levels = String(ctx.url.searchParams.get('level') ?? '')
 		.split(',')
 		.map((s) => s.trim())
@@ -1705,11 +1703,13 @@ async function debug_read_logs(ctx: Ctx) {
 		.split(',')
 		.map((s) => s.trim().toLowerCase())
 		.filter(Boolean);
+	const date_from = Date.parse(String(ctx.url.searchParams.get('date_from') ?? ''));
+	const date_to = Date.parse(String(ctx.url.searchParams.get('date_to') ?? ''));
 	const { rows } = await ctx.store.find_many('debug-log', {
 		take: 5000,
 		include_inactive: true,
 	});
-	const filtered = rows.filter((row) => {
+	return rows.filter((row) => {
 		if (levels.length && !levels.includes(String(row.level ?? ''))) return false;
 		if (search) {
 			const hay = [row.message, row.name, row.search_field, row.origin]
@@ -1737,8 +1737,24 @@ async function debug_read_logs(ctx: Ctx) {
 		if (request_results.length && !debug_matches_request_result(row, request_results)) {
 			return false;
 		}
+		if (Number.isFinite(date_from) || Number.isFinite(date_to)) {
+			const ms = created_ms(row);
+			const from = Number.isFinite(date_from) ? date_from : -Infinity;
+			const to = Number.isFinite(date_to) ? date_to : Infinity;
+			const lo = Math.min(from, to);
+			const hi = Math.max(from, to);
+			if (ms < lo || ms > hi) return false;
+		}
 		return true;
 	});
+}
+
+async function debug_read_logs(ctx: Ctx) {
+	const page = Math.max(1, Number(ctx.url.searchParams.get('page') ?? 1) || 1);
+	const size = Math.min(200, Math.max(1, Number(ctx.url.searchParams.get('size') ?? 50) || 50));
+	const sort_field = ctx.url.searchParams.get('sort') || 'createdAt';
+	const sort_dir = ctx.url.searchParams.get('dir') === 'asc' ? 1 : -1;
+	const filtered = await collect_debug_logs(ctx);
 	const allowed = new Set([
 		'createdAt',
 		'level',
@@ -1763,6 +1779,58 @@ async function debug_read_logs(ctx: Ctx) {
 		size,
 		total_pages: Math.ceil(total / size) || 0,
 	};
+}
+
+async function debug_statistics(ctx: Ctx) {
+	const rows = await collect_debug_logs(ctx);
+	const total = rows.length;
+	const by_level_map = new Map<string, number>();
+	const by_origin_map = new Map<string, { file: string; display: string; count: number }>();
+	const timeline_map = new Map<string, { level: string; hour: string; count: number }>();
+	for (const row of rows) {
+		const level = String(row.level ?? 'log');
+		by_level_map.set(level, (by_level_map.get(level) ?? 0) + 1);
+		const origin = as_object(row.origin);
+		const file = String(origin.file ?? 'unknown');
+		const current = by_origin_map.get(file) ?? {
+			file,
+			display: String(origin.display ?? file),
+			count: 0,
+		};
+		current.count += 1;
+		by_origin_map.set(file, current);
+		const hour = debug_hour_mexico(row);
+		const key = `${level}|${hour}`;
+		const slot = timeline_map.get(key) ?? { level, hour, count: 0 };
+		slot.count += 1;
+		timeline_map.set(key, slot);
+	}
+	const by_level = [...by_level_map.entries()]
+		.map(([level, count]) => ({
+			level,
+			count,
+			percentage: total ? parseFloat(((count / total) * 100).toFixed(2)) : 0,
+		}))
+		.sort((a, b) => b.count - a.count);
+	const by_origin = [...by_origin_map.values()]
+		.map((item) => ({
+			...item,
+			percentage: total ? parseFloat(((item.count / total) * 100).toFixed(2)) : 0,
+		}))
+		.sort((a, b) => b.count - a.count)
+		.slice(0, 50);
+	const timeline = [...timeline_map.values()].sort((a, b) => a.hour.localeCompare(b.hour));
+	return {
+		data: { total, by_level, by_origin, timeline },
+		message: 'Estadísticas de logs',
+	};
+}
+
+function debug_hour_mexico(row: ImperiumDoc): string {
+	const ms = created_ms(row);
+	const stamp = Number.isFinite(ms) ? new Date(ms) : new Date();
+	const local = stamp.toLocaleString('sv-SE', { timeZone: 'America/Mexico_City' });
+	return `${local.slice(0, 13)}:00`;
 }
 
 function debug_sort_value(row: ImperiumDoc, field: string): string | number {

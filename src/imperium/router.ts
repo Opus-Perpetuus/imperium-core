@@ -10,6 +10,7 @@ import { serve_media } from './media.ts';
 import { ImperiumStore, load_catalog_path } from './store.ts';
 import { fail } from './envelope.ts';
 import { PinChallengeError } from './user-pin.ts';
+import { persist_request_log } from './debug-request-log.ts';
 
 type ExtraRoute = {
 	resource: string;
@@ -36,8 +37,26 @@ export function create_imperium_layer(sql: Bun.SQL) {
 		store,
 		async handle(req: Request): Promise<Response | null> {
 			await boot();
+			const started_ms = Date.now();
 			const url = new URL(req.url);
 			const path = strip_api_prefix(url.pathname);
+			const out = await dispatch(store, sql, req, url, path);
+			if (out && req.method !== 'OPTIONS') {
+				const actor = await current_user(sql, req).catch(() => null);
+				await persist_request_log(store, req, out.clone(), actor, started_ms);
+			}
+			return out;
+		},
+	};
+}
+
+async function dispatch(
+	store: ImperiumStore,
+	sql: Bun.SQL,
+	req: Request,
+	url: URL,
+	path: string,
+): Promise<Response | null> {
 			if (path === '/media' || path.startsWith('/media/')) {
 				const id = path.slice('/media/'.length).split('/')[0] ?? '';
 				const actor = await current_user(sql, req);
@@ -119,8 +138,6 @@ export function create_imperium_layer(sql: Bun.SQL) {
 				const message = err instanceof Error ? err.message : String(err);
 				return add_cors(req, Response.json(fail(message).body, { status: 400 }));
 			}
-		},
-	};
 }
 
 function strip_api_prefix(path: string): string {

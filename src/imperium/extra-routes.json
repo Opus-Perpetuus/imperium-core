@@ -146,6 +146,12 @@
   {
     "resource": "debug-log",
     "method": "get",
+    "path": "/statistics",
+    "action": "get_statistics"
+  },
+  {
+    "resource": "debug-log",
+    "method": "get",
     "path": "/related-request",
     "action": "read_related_request_log"
   },
