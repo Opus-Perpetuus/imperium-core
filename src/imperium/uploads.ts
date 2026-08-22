@@ -112,7 +112,7 @@ export async function apply_uploads(
 
 	for (const [key, value] of Object.entries(out)) {
 		if (is_upload(value)) {
-			const att = await persist_and_insert(store, value, {
+			const att = await persist_upload_as_attachment(store, value, {
 				actor_id,
 				related_model: resource,
 				related_record_id: record_id,
@@ -131,7 +131,7 @@ export async function apply_uploads(
 				next.push(item);
 				continue;
 			}
-			const att = await persist_and_insert(store, item, {
+			const att = await persist_upload_as_attachment(store, item, {
 				actor_id,
 				related_model: resource,
 				related_record_id: record_id,
@@ -168,7 +168,7 @@ function strip_uploads(doc: ImperiumDoc) {
 	}
 }
 
-async function persist_and_insert(
+export async function persist_upload_as_attachment(
 	store: ImperiumStore,
 	file: Blob,
 	meta: {

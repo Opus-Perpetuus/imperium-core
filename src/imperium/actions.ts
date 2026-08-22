@@ -73,6 +73,7 @@ import {
 	migrate_legacy_modules,
 	recreate_indexes,
 } from './module-data.ts';
+import { is_upload, persist_upload_as_attachment } from './uploads.ts';
 
 type Ctx = {
 	store: ImperiumStore;
@@ -285,8 +286,9 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'messages:search_chat_messages':
 			return search_chat_messages(ctx);
 		case 'messages:create_chat_message':
+			return create_chat_message(ctx);
 		case 'messages:create_internal_message':
-			return create_message(ctx);
+			return create_internal_message(ctx);
 		case 'messages:create_interinstance_message':
 			return create_interinstance_message(ctx);
 		case 'messages:receive_interinstance_message':
@@ -2739,10 +2741,22 @@ async function invoice_cfdi_draft(ctx: Ctx) {
 }
 
 function message_participants(doc: ImperiumDoc, uid: string): string[] {
-	const parts = as_array(doc.participants ?? doc.participant_user_ids).map(String).filter(Boolean);
-	const extra = [doc.from, doc.to, doc.created_by].map((v) => String(v ?? '')).filter(Boolean);
-	const all = [...new Set([...parts, ...extra, uid].filter(Boolean))];
-	return all;
+	const parts = as_array(
+		doc.participants ?? doc.participant_user_ids ?? doc.participantUserIds,
+	)
+		.map(String)
+		.filter(Boolean);
+	const extra = [
+		doc.from,
+		doc.to,
+		doc.created_by,
+		doc.senderUserId,
+		doc.sender_user_id,
+		...as_array(doc.recipientUserIds ?? doc.recipient_user_ids),
+	]
+		.map((v) => String(v ?? ''))
+		.filter(Boolean);
+	return [...new Set([...parts, ...extra, uid].filter(Boolean))];
 }
 
 async function my_conversations(ctx: Ctx) {
@@ -2870,33 +2884,207 @@ async function my_messages(ctx: Ctx) {
 }
 
 async function conversation(ctx: Ctx) {
-	const other = ctx.params.participantId;
+	const other = String(ctx.params.participantId ?? '').trim();
 	const uid = actor_id(ctx);
-	const { rows } = await ctx.store.find_many('messages', { take: 500 });
-	const mine = rows.filter((m) => {
-		const parts = as_array(m.participants).map(String);
-		return (
-			parts.includes(uid) && parts.includes(other) ||
-			(String(m.from) === uid && String(m.to) === other) ||
-			(String(m.from) === other && String(m.to) === uid)
-		);
+	const expected_key = conversation_key_for([uid, other]);
+	const { rows } = await ctx.store.find_many('messages', {
+		take: 500,
+		include_inactive: true,
 	});
+	const mine = rows
+		.filter((m) => {
+			const key = String(m.conversationKey ?? m.conversation_key ?? '');
+			if (expected_key && key === expected_key) return true;
+			const parts = message_participants(m, uid);
+			return Boolean(other) && parts.includes(uid) && parts.includes(other);
+		})
+		.sort((a, b) => created_ms(a) - created_ms(b));
 	return ok(mine, 'Conversación');
 }
 
-async function create_message(ctx: Ctx) {
-	const settings = await messaging_settings(ctx.store);
-	if (!settings.messaging_enabled) {
-		return deny_interinstance('La mensajería está deshabilitada.', 403);
+function conversation_key_for(ids: string[]): string {
+	return [...new Set(ids.map((id) => id.trim()).filter(Boolean))].sort().join('::');
+}
+
+function take_chat_attachment_files(body: Record<string, unknown>): Blob[] {
+	const files: Blob[] = [];
+	const attachments = body.attachments;
+	if (Array.isArray(attachments)) {
+		for (const item of attachments) {
+			if (is_upload(item)) files.push(item);
+		}
+	} else if (is_upload(attachments)) {
+		files.push(attachments);
+	}
+	delete body.attachments;
+	for (const [key, value] of Object.entries(body)) {
+		if (!/^attachments\[\d+\]$/.test(key) || !is_upload(value)) continue;
+		files.push(value);
+		delete body[key];
+	}
+	return files;
+}
+
+function chat_attachment_info(doc: ImperiumDoc) {
+	const mime = String(doc.mimetype ?? doc.mime ?? '');
+	const size = Number(doc.size_in_kb);
+	return {
+		attachmentId: String(doc._id ?? ''),
+		name: String(doc.name ?? ''),
+		fileExt: String(doc.file_ext ?? '') || undefined,
+		mimetype: mime || undefined,
+		sizeInKb: Number.isFinite(size) ? size : undefined,
+		isImage: mime.startsWith('image/'),
+	};
+}
+
+async function participant_snapshot(ctx: Ctx, ids: string[]) {
+	const current = {
+		_id: actor_id(ctx),
+		name: actor_name(ctx) || undefined,
+		email: String(ctx.actor?.email ?? '') || undefined,
+		img: String(ctx.actor?.img ?? '') || undefined,
+	};
+	const others: ImperiumDoc[] = [];
+	for (const id of ids) {
+		if (!id || id === current._id) continue;
+		const user = await ctx.store.find_id('user', id);
+		if (!user) continue;
+		others.push({
+			_id: String(user._id ?? id),
+			name: String(user.name ?? '').trim() || undefined,
+			email: String(user.email ?? '').trim() || undefined,
+			img: String(user.img ?? '').trim() || undefined,
+		});
+	}
+	return [current, ...others];
+}
+
+async function create_chat_message(ctx: Ctx) {
+	const sender_user_id = actor_id(ctx);
+	const files = take_chat_attachment_files(ctx.body);
+	const recipient_user_id = String(
+		ctx.body.recipient_user_id ?? ctx.body.recipientUserId ?? ctx.body.recipient_id ?? '',
+	).trim();
+	const message = String(ctx.body.message ?? '').trim();
+	if (!recipient_user_id) {
+		throw new Error('Debes indicar el usuario destinatario del chat.');
+	}
+	if (!message && !files.length) {
+		throw new Error('Debes escribir un mensaje o adjuntar al menos un archivo.');
+	}
+	const recipient = await ctx.store.find_id('user', recipient_user_id);
+	if (!recipient?._id) {
+		throw new Error('No se encontró el destinatario solicitado.');
+	}
+	const participant_user_ids = [...new Set([sender_user_id, recipient_user_id].filter(Boolean))];
+	const conversation_key = conversation_key_for(participant_user_ids);
+	if (!conversation_key) {
+		throw new Error('No fue posible crear la conversación solicitada.');
+	}
+	const reply_to = String(
+		ctx.body.reply_to_message_id ?? ctx.body.replyToMessageId ?? '',
+	).trim();
+	let reply_preview: ImperiumDoc | undefined;
+	if (reply_to) {
+		const replied = await ctx.store.find_id('messages', reply_to);
+		const replied_key = String(replied?.conversationKey ?? replied?.conversation_key ?? '');
+		if (!replied || replied_key !== conversation_key) {
+			throw new Error(
+				'El mensaje que intentas responder no pertenece a esta conversación.',
+			);
+		}
+		reply_preview = {
+			messageId: String(replied._id ?? ''),
+			senderUserId: String(replied.senderUserId ?? replied.sender_user_id ?? ''),
+			senderName: String(replied.senderName ?? replied.sender_name ?? ''),
+			textPreview: String(replied.message ?? replied.name ?? 'Mensaje enviado').slice(0, 160),
+		};
 	}
 	const created = await ctx.store.insert('messages', {
-		name: String(ctx.body.subject ?? ctx.body.name ?? 'mensaje'),
-		...ctx.body,
-		from: ctx.body.from ?? actor_id(ctx),
-		created_by: actor_id(ctx),
+		name:
+			String(recipient.name ?? '').trim() ||
+			String(recipient.email ?? '').trim() ||
+			'Chat interno',
+		title:
+			String(recipient.name ?? '').trim() ||
+			String(recipient.email ?? '').trim() ||
+			'Chat interno',
+		message,
+		senderUserId: sender_user_id,
+		senderName: actor_name(ctx),
+		senderEmail: String(ctx.actor?.email ?? ''),
+		recipientUserIds: [recipient_user_id],
+		direction: 'internal',
+		sourceType: 'chat',
+		participantUserIds: participant_user_ids,
+		participantSnapshot: await participant_snapshot(ctx, participant_user_ids),
+		conversationKey: conversation_key,
+		replyToMessageId: reply_to || undefined,
+		replyPreview: reply_preview,
+		readByUserIds: sender_user_id ? [sender_user_id] : [],
+		from: sender_user_id,
+		to: recipient_user_id,
+		created_by: sender_user_id,
 		fecha: now(),
 	});
-	return ok([created], 'Mensaje creado');
+	if (!files.length) {
+		return ok([created], 'Mensaje del chat enviado correctamente.');
+	}
+	const infos = [];
+	try {
+		for (const file of files) {
+			const attachment = await persist_upload_as_attachment(ctx.store, file, {
+				actor_id: sender_user_id,
+				related_model: 'Message',
+				related_record_id: String(created._id ?? ''),
+				field: 'attachments',
+				index_if_is_array: infos.length,
+				inside_array: true,
+			});
+			infos.push(chat_attachment_info(attachment));
+		}
+	} catch (error) {
+		await ctx.store.remove('messages', String(created._id ?? ''));
+		throw error;
+	}
+	const updated = await ctx.store.update('messages', String(created._id ?? ''), {
+		attachments: infos,
+	});
+	return ok([updated ?? created], 'Mensaje del chat enviado correctamente.');
+}
+
+async function create_internal_message(ctx: Ctx) {
+	const title = String(ctx.body.title ?? '').trim();
+	const message = String(ctx.body.message ?? '').trim();
+	const sender_user_id = actor_id(ctx);
+	const recipient_user_ids = interinstance_recipients(
+		ctx.body.recipient_user_ids ?? ctx.body.recipient_ids,
+	);
+	if (!title || !message) {
+		throw new Error('Debes definir título y mensaje para enviar.');
+	}
+	if (!recipient_user_ids.length) {
+		throw new Error('Debes definir al menos un destinatario.');
+	}
+	const created = await ctx.store.insert('messages', {
+		name: title,
+		title,
+		message,
+		senderUserId: sender_user_id,
+		senderName: actor_name(ctx),
+		senderEmail: String(ctx.actor?.email ?? ''),
+		recipientUserIds: recipient_user_ids,
+		direction: 'internal',
+		sourceType: 'internal',
+		participantUserIds: [...new Set([sender_user_id, ...recipient_user_ids].filter(Boolean))],
+		readByUserIds: sender_user_id ? [sender_user_id] : [],
+		relatedTicketId: String(ctx.body.related_ticket_id ?? '').trim() || undefined,
+		from: sender_user_id,
+		created_by: sender_user_id,
+		fecha: now(),
+	});
+	return ok([created], 'Mensaje interno enviado correctamente.');
 }
 
 function interinstance_text(value: unknown) {
