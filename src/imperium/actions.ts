@@ -707,9 +707,11 @@ async function close_empaque(ctx: Ctx) {
 	});
 	const updated = [];
 	for (const p of rows) {
+		const st = String(p.estado ?? '');
+		if (st === 'cancelado') continue;
 		updated.push(
 			await ctx.store.update('delivery-package', String(p._id), {
-				estado: 'cerrado',
+				estado: st === 'pendiente' || st === 'incidencia' || !st ? 'asignado' : st,
 				fecha_cierre: now(),
 			}),
 		);
@@ -906,19 +908,52 @@ async function widget_data(ctx: Ctx) {
 }
 
 async function import_location_tree(ctx: Ctx) {
-	const nodes = as_array(ctx.body.tree ?? ctx.body.nodos ?? ctx.body);
-	const created: ImperiumDoc[] = [];
-	for (const raw of nodes) {
-		const n = as_object(raw);
-		created.push(
-			await ctx.store.insert('inventory-internal-location', {
-				name: n.name ?? n.nombre,
-				parent_id: n.parent_id,
-				...n,
-			}),
+	const dry_run = Boolean(ctx.body.dry_run);
+	const lineas = as_array(ctx.body.lineas ?? ctx.body.tree ?? ctx.body.nodos);
+	if (!lineas.length) {
+		throw new Error(
+			"Debes enviar lineas[] con name+segmento_codigo o ubicacion_path (ej. 'Zona 1 / Zona 1-A')",
 		);
 	}
-	return ok(created, 'Árbol importado');
+	const preview: ImperiumDoc[] = [];
+	const created: ImperiumDoc[] = [];
+	const errores: ImperiumDoc[] = [];
+	for (const raw of lineas) {
+		const n = as_object(raw);
+		const name = String(n.name ?? n.nombre ?? '').trim();
+		const codigo = String(n.segmento_codigo ?? n.codigo ?? name).trim();
+		if (!name && !codigo) {
+			errores.push({ mensaje: 'Fila sin name ni segmento_codigo' });
+			continue;
+		}
+		const row: ImperiumDoc = {
+			name: name || codigo,
+			segmento_codigo: codigo,
+			parent_id: n.parent_id,
+			parent_codigo: n.parent_codigo,
+			...n,
+		};
+		preview.push({ ...row, accion: 'create', codigo });
+		if (!dry_run) {
+			created.push(await ctx.store.insert('inventory-internal-location', row));
+		}
+	}
+	const summary = {
+		dry_run,
+		total_filas: lineas.length,
+		creadas: dry_run ? preview.length : created.length,
+		actualizadas: 0,
+		codigos_creados: preview.map((p) => String(p.codigo ?? p.segmento_codigo ?? '')),
+		codigos_actualizados: [] as string[],
+		errores,
+		preview: dry_run ? preview : undefined,
+	};
+	return ok(
+		[summary],
+		dry_run
+			? `Simulación árbol: ${preview.length} fila(s) OK, ${errores.length} error(es)`
+			: `Árbol importado: ${created.length} creada(s), 0 actualizada(s), ${errores.length} error(es)`,
+	);
 }
 
 async function register_transfer(ctx: Ctx) {
@@ -1179,24 +1214,71 @@ async function picking_route(ctx: Ctx) {
 }
 
 async function stock_consistency(ctx: Ctx) {
-	const products = (await ctx.store.find_many('products', { take: 5000 })).rows;
+	const solo_inconsistentes = ctx.url.searchParams.get('solo_inconsistentes') !== '0';
+	const reparar = ctx.url.searchParams.get('reparar') === '1';
+	const products = (await ctx.store.find_many('products', { take: 5000, populate: false })).rows;
 	const quants = ctx.store.has('inventory-stock-quant')
-		? (await ctx.store.find_many('inventory-stock-quant', { take: 10000 })).rows
+		? (await ctx.store.find_many('inventory-stock-quant', { take: 10000, populate: false })).rows
 		: [];
-	const by_prod = new Map<string, number>();
+	const by_prod = new Map<string, { suma: number; ubicaciones: number }>();
 	for (const q of quants) {
 		const id = String(q.producto ?? '');
-		by_prod.set(id, (by_prod.get(id) ?? 0) + Number(q.cantidad ?? 0));
+		if (!id) continue;
+		const cur = by_prod.get(id) ?? { suma: 0, ubicaciones: 0 };
+		cur.suma += Number(q.cantidad ?? 0);
+		cur.ubicaciones += 1;
+		by_prod.set(id, cur);
 	}
-	const mismatches = products
-		.filter((p) => Math.abs(Number(p.existencia ?? 0) - (by_prod.get(String(p._id)) ?? 0)) > 0.0001)
-		.map((p) => ({
-			producto: p._id,
-			nombre: p.name,
-			existencia: p.existencia,
-			quants: by_prod.get(String(p._id)) ?? 0,
-		}));
-	return ok([{ ok: mismatches.length === 0, mismatches }], 'Consistencia de inventario');
+	const ids = new Set([
+		...products.filter((p) => Number(p.existencia ?? 0) !== 0).map((p) => String(p._id)),
+		...by_prod.keys(),
+	]);
+	const by_id = new Map(products.map((p) => [String(p._id), p]));
+	const filas: ImperiumDoc[] = [];
+	let inconsistentes = 0;
+	for (const id of ids) {
+		const product = by_id.get(id);
+		const quant = by_prod.get(id);
+		const suma_quants = Number((quant?.suma ?? 0).toFixed(4));
+		const existencia = Number(Number(product?.existencia ?? 0).toFixed(4));
+		const delta = Number((existencia - suma_quants).toFixed(4));
+		const consistente = delta === 0;
+		if (solo_inconsistentes && consistente) continue;
+		if (!consistente) inconsistentes += 1;
+		filas.push({
+			producto_id: id,
+			producto_nombre: product?.name ?? '',
+			producto_codigo: product?.codigo ?? '',
+			existencia,
+			suma_quants,
+			delta,
+			ubicaciones: quant?.ubicaciones ?? 0,
+			consistente,
+		});
+	}
+	let reparados = 0;
+	if (reparar) {
+		for (const fila of filas) {
+			if (fila.consistente) continue;
+			await ctx.store.update('products', String(fila.producto_id), {
+				existencia: fila.suma_quants,
+			});
+			reparados += 1;
+		}
+	}
+	return ok(
+		[
+			{
+				total_productos_revisados: ids.size,
+				inconsistentes,
+				reparados,
+				filas,
+			},
+		],
+		reparar
+			? `Consistencia: ${inconsistentes} inconsistente(s), ${reparados} reparado(s)`
+			: `Consistencia: ${inconsistentes} inconsistente(s) de ${ids.size} producto(s)`,
+	);
 }
 
 const IR_PENDING = 'pendiente_autorizacion_cobranza';
@@ -1410,27 +1492,84 @@ async function create_message(ctx: Ctx) {
 
 async function payroll_drafts(ctx: Ctx) {
 	const period = await need(ctx, 'payroll-period', ctx.params.id);
+	await ctx.store.update('payroll-period', String(period._id), { estado: 'generating' });
 	const employees = ctx.store.has('employee')
-		? (await ctx.store.find_many('employee', { take: 2000 })).rows
+		? (await ctx.store.find_many('employee', { take: 2000, populate: false })).rows
 		: [];
-	const created: ImperiumDoc[] = [];
-	for (const emp of employees) {
-		created.push(
-			await ctx.store.insert('payroll-receipt', {
-				name: `Recibo ${emp.name} · ${period.name}`.slice(0, 200),
-				description: 'Borrador de nómina generado automáticamente',
-				employee: emp._id,
-				payroll_period: period._id,
-				estado: 'calculated',
-			}),
-		);
+	const existing = ctx.store.has('payroll-receipt')
+		? (
+				await ctx.store.find_many('payroll-receipt', {
+					where: { payroll_period: String(period._id) },
+					take: 5000,
+					populate: false,
+					include_inactive: true,
+				})
+			).rows
+		: [];
+	const by_emp = new Map<string, ImperiumDoc>();
+	for (const rec of existing) {
+		const emp_id = String(as_object(rec.employee)._id ?? rec.employee ?? '');
+		if (emp_id) by_emp.set(emp_id, rec);
 	}
+	let created = 0;
+	let updated = 0;
+	const errors: Array<{ employee_id?: string; message: string }> = [];
+	for (const emp of employees) {
+		const emp_id = String(emp._id ?? '');
+		if (!emp_id) continue;
+		if (emp.salario_diario != null && !(Number(emp.salario_diario) > 0)) continue;
+		const hit = by_emp.get(emp_id);
+		const estado = String(hit?.estado ?? '');
+		if (estado === 'stamped' || estado === 'stamping') continue;
+		try {
+			if (hit) {
+				await ctx.store.update('payroll-receipt', String(hit._id), {
+					name: `Recibo ${emp.name} · ${period.name}`.slice(0, 200),
+					estado: estado === 'ready_to_stamp' ? estado : 'calculated',
+					payroll_period: period._id,
+					employee: emp_id,
+				});
+				updated += 1;
+			} else {
+				await ctx.store.insert('payroll-receipt', {
+					name: `Recibo ${emp.name} · ${period.name}`.slice(0, 200),
+					description: 'Borrador de nómina generado automáticamente',
+					employee: emp_id,
+					payroll_period: period._id,
+					estado: 'calculated',
+				});
+				created += 1;
+			}
+		} catch (err) {
+			errors.push({
+				employee_id: emp_id,
+				message: err instanceof Error ? err.message : 'Error al calcular recibo',
+			});
+		}
+	}
+	const after = ctx.store.has('payroll-receipt')
+		? (
+				await ctx.store.find_many('payroll-receipt', {
+					where: { payroll_period: String(period._id) },
+					take: 5000,
+					populate: false,
+				})
+			).rows
+		: [];
+	const calculated_count = after.filter((r) =>
+		['calculated', 'ready_to_stamp'].includes(String(r.estado)),
+	).length;
 	await ctx.store.update('payroll-period', String(period._id), {
 		estado: 'open',
+		receipts_count: after.length,
+		calculated_count,
 		borradores_generados: true,
 		fecha_borradores: now(),
 	});
-	return ok(created, 'Borradores de nómina generados');
+	return ok(
+		[{ created, updated, errors, receipts_count: after.length, calculated_count }],
+		`Borradores generados: ${created} creados, ${updated} actualizados`,
+	);
 }
 
 async function payroll_prepare_stamp(ctx: Ctx) {
