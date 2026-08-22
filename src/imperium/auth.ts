@@ -508,6 +508,22 @@ const SESSION_SCOPED_EXTRAS = new Set([
 	'lista-asistencia:mark_attendance',
 	'cobranza:lookup',
 	'cobranza:checkout',
+	'inventory-internal-location:import_tree',
+	'inventory-movement:register_transfer',
+	'inventory-physical-count:import_apertura',
+	'inventory-physical-count:aplicar',
+	'inventory-reception:read_in_transit',
+	'inventory-reception:read_pending_for_product',
+	'inventory-reception:create_from_purchase_order',
+	'inventory-reception:confirm_reception',
+	'inventory-reception:create_backorder',
+	'inventory-reception:acomodar',
+	'inventory-reception:reservar',
+	'inventory-stock-quant:read_picking_route',
+	'inventory-stock-quant:validar_consistencia',
+	'payroll-period:generate_drafts',
+	'payroll-receipt:prepare_stamp',
+	'payroll-receipt:export_payload',
 ]);
 
 function is_session_scoped_extra(resource?: string, action?: string) {
