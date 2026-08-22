@@ -20,10 +20,21 @@ function cfg_bool(value: unknown, fallback = false) {
 	return !['0', 'false', 'off', 'no'].includes(raw);
 }
 
+function cfg_num(value: unknown, fallback: number) {
+	const n = typeof value === 'number' ? value : Number(cfg_text(value));
+	return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 export async function messaging_settings(store: ImperiumStore) {
 	const get = async (ref: string) =>
 		(await store.find_where('configuration', { ref }))?.value;
 	return {
+		public_enabled: cfg_bool(await get('configuration-support-public-enabled'), true),
+		rate_limit_window_minutes: cfg_num(
+			await get('configuration-support-public-rate-limit-window-minutes'),
+			15,
+		),
+		rate_limit_max: cfg_num(await get('configuration-support-public-rate-limit-max'), 10),
 		messaging_enabled: cfg_bool(await get('configuration-messaging-enabled'), true),
 		interinstance_enabled: cfg_bool(
 			await get('configuration-messaging-interinstance-enabled'),

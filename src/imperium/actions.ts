@@ -390,7 +390,7 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'tickets:read_ticket_field_values':
 			return field_values(ctx, 'tickets', ctx.params.field_name);
 		case 'tickets:read_public_metadata':
-			return ok([{ public: true }], 'Metadata pública');
+			return tickets_public_metadata(ctx);
 		case 'tickets:create_public_ticket':
 		case 'tickets:create_internal_ticket':
 		case 'tickets:create_error_ticket':
@@ -3759,6 +3759,29 @@ function ticket_should_forward(ctx: Ctx) {
 		return raw === 'true' || raw === '1';
 	}
 	return false;
+}
+
+async function tickets_public_metadata(ctx: Ctx) {
+	const settings = await messaging_settings(ctx.store);
+	const endpoint = settings.interinstance_endpoint.trim();
+	return ok(
+		[
+			{
+				settings: {
+					public_enabled: settings.public_enabled,
+					rate_limit_window_minutes: settings.rate_limit_window_minutes,
+					rate_limit_max: settings.rate_limit_max,
+					messaging_enabled: settings.messaging_enabled,
+					interinstance_enabled: settings.interinstance_enabled,
+					interinstance_outbound_ready:
+						settings.interinstance_enabled &&
+						Boolean(endpoint) &&
+						Boolean(settings.interinstance_api_key),
+				},
+			},
+		],
+		'Metadata pública de tickets cargada correctamente.',
+	);
 }
 
 async function tickets_admin_list(ctx: Ctx) {
