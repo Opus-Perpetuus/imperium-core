@@ -612,6 +612,18 @@
     "action": "reclamar_surtir"
   },
   {
+    "resource": "pedidos",
+    "method": "post",
+    "path": "/offline/sincronizar",
+    "action": "sync_offline"
+  },
+  {
+    "resource": "lista-de-precios",
+    "method": "get",
+    "path": "/offline/sincronizar",
+    "action": "sync_offline"
+  },
+  {
     "resource": "pos-session",
     "method": "get",
     "path": "/next-consecutive",

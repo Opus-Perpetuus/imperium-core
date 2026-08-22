@@ -212,7 +212,7 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return invoice_cfdi_draft(ctx);
 		case 'invoice-request:cancel_request':
 			return patch_doc(ctx, 'invoice-request', ctx.params.id, {
-				estado: 'cancelada',
+				estado: 'cancelado',
 				fecha_cancelacion: now(),
 			}, 'Solicitud cancelada');
 		case 'messages:read_my_messages':
@@ -272,6 +272,10 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return delete_one(ctx, 'notifications', ctx.params.id);
 		case 'pedidos:reclamar_surtir':
 			return reclamar_surtir(ctx);
+		case 'pedidos:sync_offline':
+			return pedidos_sync_offline(ctx);
+		case 'lista-de-precios:sync_offline':
+			return lista_de_precios_sync_offline(ctx);
 		case 'pos-session:get_next_consecutive':
 			return pos_next_consecutive(ctx);
 		case 'pos-session:get_last_closure_reference':
@@ -1204,15 +1208,27 @@ async function stock_consistency(ctx: Ctx) {
 	return ok([{ ok: mismatches.length === 0, mismatches }], 'Consistencia de inventario');
 }
 
+const IR_PENDING = 'pendiente_autorizacion_cobranza';
+const IR_READY = 'listo_para_comercial';
+const IR_SENT = 'enviado_a_comercial';
+const IR_INVOICED = 'facturado';
+const IR_CANCELED = 'cancelado';
+const IR_PENDING_ALIASES = new Set([IR_PENDING, 'pendiente_autorizacion']);
+const IR_READY_ALIASES = new Set([IR_READY, 'lista_comercial']);
+const IR_SENT_ALIASES = new Set([IR_SENT, 'enviada_comercial']);
+const IR_INVOICED_ALIASES = new Set([IR_INVOICED, 'facturada']);
+const IR_CANCELED_ALIASES = new Set([IR_CANCELED, 'cancelada']);
+
 async function invoice_from_order(ctx: Ctx) {
 	const order = await need(ctx, 'pedidos', ctx.params.orderId);
 	const created = await ctx.store.insert('invoice-request', {
 		name: `Factura ${order.name}`,
 		pedido: order._id,
-		estado: 'pendiente_autorizacion',
+		estado: IR_PENDING,
 		requiere_autorizacion_cobranza: true,
 		articulos: order.articulos ?? order.items,
 		total: order.total ?? order.importe,
+		monto_total: order.total ?? order.importe,
 	});
 	return ok([created], 'Solicitud generada desde pedido');
 }
@@ -1222,31 +1238,32 @@ async function invoice_authorize(ctx: Ctx) {
 	if (!rec.requiere_autorizacion_cobranza) {
 		throw new Error('Esta solicitud no requiere autorización de cobranza.');
 	}
-	if (String(rec.estado) === 'cancelada') throw new Error('La solicitud está cancelada.');
-	if (String(rec.estado) === 'facturada') throw new Error('La solicitud ya fue marcada como facturada.');
-	if (String(rec.estado) === 'enviada_comercial') {
+	const estado = String(rec.estado ?? '');
+	if (IR_CANCELED_ALIASES.has(estado)) throw new Error('La solicitud está cancelada.');
+	if (IR_INVOICED_ALIASES.has(estado)) throw new Error('La solicitud ya fue marcada como facturada.');
+	if (IR_SENT_ALIASES.has(estado)) {
 		throw new Error('La solicitud ya fue enviada a comercial.');
 	}
-	if (String(rec.estado) !== 'pendiente_autorizacion' && rec.estado) {
-		/* allow if empty after migrate */
+	if (estado && !IR_PENDING_ALIASES.has(estado)) {
+		throw new Error('Solo se puede autorizar una solicitud pendiente de cobranza.');
 	}
 	const updated = await ctx.store.update('invoice-request', String(rec._id), {
 		autorizado_cobranza: true,
 		autorizado_cobranza_fecha: now(),
 		autorizado_cobranza_usuario_nombre: actor_name(ctx),
 		autorizado_cobranza_notas: ctx.body.notas,
-		estado: 'lista_comercial',
+		estado: IR_READY,
 	});
 	return ok([updated], 'Autorización de cobranza registrada');
 }
 
 async function invoice_send_commercial(ctx: Ctx) {
 	const rec = await need(ctx, 'invoice-request', ctx.params.id);
-	if (rec.estado && String(rec.estado) !== 'lista_comercial') {
+	if (rec.estado && !IR_READY_ALIASES.has(String(rec.estado))) {
 		throw new Error('La solicitud debe estar lista para comercial antes de enviarse.');
 	}
 	return patch_doc(ctx, 'invoice-request', String(rec._id), {
-		estado: 'enviada_comercial',
+		estado: IR_SENT,
 		enviado_a_comercial_fecha: now(),
 		enviado_a_comercial_usuario_nombre: actor_name(ctx),
 		comercial_referencia: ctx.body.comercial_referencia,
@@ -1254,11 +1271,19 @@ async function invoice_send_commercial(ctx: Ctx) {
 }
 
 async function invoice_mark(ctx: Ctx) {
-	return patch_doc(ctx, 'invoice-request', ctx.params.id, {
-		estado: 'facturada',
+	const rec = await need(ctx, 'invoice-request', ctx.params.id);
+	if (rec.estado && !IR_SENT_ALIASES.has(String(rec.estado))) {
+		throw new Error(
+			'La solicitud debe haberse enviado a comercial antes de marcarse como facturada.',
+		);
+	}
+	return patch_doc(ctx, 'invoice-request', String(rec._id), {
+		estado: IR_INVOICED,
 		fecha_facturacion: now(),
+		facturado_fecha: now(),
 		cfdi_id: ctx.body.cfdi_id,
-	}, 'Marcada como facturada');
+		factura_referencia: ctx.body.factura_referencia,
+	}, 'Solicitud marcada como facturada');
 }
 
 async function invoice_link_cfdi(ctx: Ctx) {
@@ -1423,6 +1448,120 @@ async function clear_notifications(ctx: Ctx) {
 		if (String(r.user ?? r.to ?? '') === uid) await ctx.store.remove('notifications', String(r._id));
 	}
 	return ok([], 'Notificaciones borradas');
+}
+
+const PEDIDO_ESTADOS = new Set([
+	'borrador',
+	'confirmado',
+	'por_surtir',
+	'surtiendo',
+	'surtido',
+	'enviado',
+	'cancelado',
+]);
+
+/**
+ * Sync-back de pedidos capturados offline. Mismo contrato que
+ * `POST /pedidos/offline/sincronizar` del backend original: `{ ok, total, resultados }`
+ * con dedupe por `offline_uuid`.
+ */
+async function pedidos_sync_offline(ctx: Ctx) {
+	const incoming = as_array(ctx.body.pedidos);
+	const resultados: Array<{
+		offline_uuid: string;
+		_id?: string;
+		folio_interno?: unknown;
+		status: 'creado' | 'duplicado' | 'error';
+		error?: string;
+	}> = [];
+	for (const raw of incoming) {
+		const pedido = as_object(raw);
+		const offline_uuid = String(pedido.offline_uuid ?? pedido._id ?? '').trim();
+		if (!offline_uuid) {
+			resultados.push({
+				offline_uuid: '',
+				status: 'error',
+				error: 'Falta el identificador local del pedido',
+			});
+			continue;
+		}
+		try {
+			const existing = await ctx.store.find_where('pedidos', { offline_uuid });
+			if (existing) {
+				resultados.push({
+					offline_uuid,
+					_id: String(existing._id),
+					folio_interno: existing.folio_interno,
+					status: 'duplicado',
+				});
+				continue;
+			}
+			const estado = PEDIDO_ESTADOS.has(String(pedido.estado))
+				? String(pedido.estado)
+				: 'confirmado';
+			const created = await ctx.store.insert('pedidos', {
+				name: String(pedido.name ?? pedido.folio ?? `Pedido ${offline_uuid.slice(0, 8)}`),
+				articulos: Array.isArray(pedido.articulos) ? pedido.articulos : [],
+				contacto: pedido.contacto,
+				usuario: actor_id(ctx) || pedido.usuario,
+				observaciones: pedido.observaciones ?? '',
+				listaDePreciosId: pedido.listaDePreciosId,
+				total: pedido.total ?? 0,
+				iva: pedido.iva ?? 0,
+				importe: pedido.importe ?? 0,
+				folio: pedido.folio ?? '',
+				ubicacion: pedido.ubicacion,
+				estado,
+				sincronizado: true,
+				offline_uuid,
+				is_active: true,
+			});
+			resultados.push({
+				offline_uuid,
+				_id: String(created._id),
+				folio_interno: created.folio_interno,
+				status: 'creado',
+			});
+		} catch (item_error) {
+			resultados.push({
+				offline_uuid,
+				status: 'error',
+				error:
+					item_error instanceof Error
+						? item_error.message
+						: 'Error al sincronizar el pedido',
+			});
+		}
+	}
+	return Response.json({ ok: true, total: resultados.length, resultados });
+}
+
+/**
+ * Descarga de listas de precio para PouchDB. Mismo contrato que el original:
+ * `{ listasDePrecios }` con name, iva y product[] (sin popular).
+ */
+async function lista_de_precios_sync_offline(ctx: Ctx) {
+	const { rows } = await ctx.store.find_many('lista-de-precios', {
+		take: 5000,
+		populate: false,
+	});
+	const listasDePrecios = rows.map((row) => {
+		let product = row.product ?? row.productos ?? [];
+		if (typeof product === 'string') {
+			try {
+				product = JSON.parse(product);
+			} catch {
+				product = [];
+			}
+		}
+		return {
+			_id: row._id,
+			name: row.name,
+			iva: Number(row.iva ?? 0),
+			product: Array.isArray(product) ? product : [],
+		};
+	});
+	return Response.json({ listasDePrecios });
 }
 
 async function reclamar_surtir(ctx: Ctx) {

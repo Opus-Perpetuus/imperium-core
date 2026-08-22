@@ -270,6 +270,14 @@ export class ImperiumStore {
 			if (!(k in parsed)) continue;
 			parsed[k] = parse_json_cell(parsed[k]);
 		}
+		/* Columnas extra mal tipadas como text (p. ej. lista-de-precios.product)
+		 * llegan como JSON serializado; el original las devolvía como arreglo. */
+		if (resource) {
+			for (const col of this.loc(resource).columns) {
+				if (jsons.has(col.name)) continue;
+				parsed[col.name] = parse_json_cell(parsed[col.name]);
+			}
+		}
 		return to_imperium(parsed);
 	}
 
