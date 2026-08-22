@@ -296,18 +296,34 @@ export async function build_access(store: ImperiumStore, user: ImperiumDoc) {
 				(g) => as_array(g.user_ids).map(String).includes(String(user._id)),
 			)
 		: [];
-	const rights_ids = new Set<string>();
+	const user_group_reference_ids = new Set(
+		groups.flatMap((g) => [String(g._id ?? ''), String(g._ref ?? '')].filter(Boolean)),
+	);
+	const user_group_access_right_ids = new Set<string>();
 	for (const g of groups) {
-		for (const id of as_array(g.access_rights_ids)) rights_ids.add(String(id));
+		for (const id of as_array(g.access_rights_ids)) user_group_access_right_ids.add(String(id));
+	}
+	const all_groups = store.has('user-group')
+		? (await store.find_many('user-group', { take: 500, include_inactive: false })).rows
+		: [];
+	const access_right_ids_assigned_to_any_group = new Set<string>();
+	for (const g of all_groups) {
+		for (const id of as_array(g.access_rights_ids)) {
+			access_right_ids_assigned_to_any_group.add(String(id));
+		}
 	}
 	const rights = store.has('access-rights')
 		? (await store.find_many('access-rights', { take: 2000, include_inactive: false })).rows
 		: [];
-	const mine = rights.filter(
-		(r) =>
-			rights_ids.has(String(r._id)) ||
-			groups.some((g) => String(r.group_id) === String(g._id)),
-	);
+	const mine = rights.filter((r) => {
+		const rid = String(r._id ?? '');
+		const gid = String(r.group_id ?? '').trim();
+		const belongs =
+			user_group_access_right_ids.has(rid) ||
+			(Boolean(gid) && user_group_reference_ids.has(gid));
+		if (groups.length) return belongs;
+		return !gid && !access_right_ids_assigned_to_any_group.has(rid);
+	});
 	const models = [...new Set(mine.filter((r) => r.allow_read).map((r) => String(r.model_id)))];
 	const permissions_by_model: Record<string, Record<string, boolean>> = {};
 	for (const r of mine) {

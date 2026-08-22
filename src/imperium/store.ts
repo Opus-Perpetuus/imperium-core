@@ -15,7 +15,14 @@ import {
 import { SearchEngine, search_text_from_doc } from './search-engine.ts';
 import { mongo_match_to_sql } from './record-rules.ts';
 
-export type ExtraCol = { name: string; mongo?: string; pg?: string };
+export type ExtraCol = {
+	name: string;
+	mongo?: string;
+	pg?: string;
+	crud?: string;
+	label?: string;
+	component?: string;
+};
 
 export type ModuleLoc = {
 	slug: string;
@@ -387,6 +394,10 @@ export class ImperiumStore {
 	column_names(resource: string): Set<string> {
 		const loc = this.loc(resource);
 		return new Set([...GENERAL, ...loc.columns.map((c) => c.name)]);
+	}
+
+	field_refs(resource: string): Record<string, string> {
+		return REFS.fields[resource] ?? {};
 	}
 
 	json_cols(resource: string): Set<string> {

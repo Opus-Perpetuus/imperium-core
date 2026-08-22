@@ -173,6 +173,65 @@ export function is_rule_effective(params: {
 	return Boolean(linked || is_global);
 }
 
+export type RecordRuleAccessLike = {
+	has_full_access?: boolean;
+	record_rules_by_model?: Record<string, ImperiumDoc[] | undefined>;
+	user_group_ids?: string[];
+	user_group_refs?: string[];
+};
+
+export function record_rule_lookup_keys(resource: string, model_id?: string): string[] {
+	const pascal = resource
+		.split('-')
+		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+		.join('');
+	return [...new Set([resource, model_id, pascal].filter(Boolean))] as string[];
+}
+
+export function record_rule_scope_from_access(
+	access: RecordRuleAccessLike,
+	actor: ImperiumDoc | null,
+	lookup_keys: string[],
+	operation: RecordRuleOperationFlag,
+): RecordRuleMatchResult {
+	if (!actor || access.has_full_access) return { match: null, applicable_rules: [] };
+	let rules: ImperiumDoc[] | undefined;
+	for (const key of lookup_keys) {
+		const hit = access.record_rules_by_model?.[key];
+		if (hit?.length) {
+			rules = hit;
+			break;
+		}
+	}
+	const group_ids = [
+		...((access.user_group_ids as string[]) ?? []),
+		...((access.user_group_refs as string[]) ?? []),
+	];
+	return build_record_rule_match(rules, operation, context_from_actor(actor, group_ids));
+}
+
+export async function assert_record_in_scope(
+	store: ImperiumStore,
+	resource: string,
+	id: string,
+	scope: RecordRuleMatchResult,
+	method: string,
+): Promise<void> {
+	if (!scope.match) return;
+	const { total } = await store.find_many(resource, {
+		ids: [id],
+		take: 1,
+		include_inactive: true,
+		populate: false,
+		mongo_match: scope.match,
+	});
+	if (!total) {
+		throw new RecordRuleDeniedError(
+			build_record_denied_message(method, resource, scope.applicable_rules),
+		);
+	}
+}
+
 export function build_record_rule_match(
 	rules: ImperiumDoc[] | undefined,
 	operation: RecordRuleOperationFlag,

@@ -6,8 +6,13 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { as_object, ok, type ImperiumDoc } from './envelope.ts';
 import { read_imperium_body } from './body.ts';
 import { build_access, current_user } from './auth.ts';
-import type { ImperiumStore } from './store.ts';
+import type { ExtraCol, ImperiumStore } from './store.ts';
 import { register_comment_mentions } from './notifications.ts';
+import {
+	assert_record_in_scope,
+	record_rule_lookup_keys,
+	record_rule_scope_from_access,
+} from './record-rules.ts';
 
 const MODEL_ID = 'McpAgent';
 const TOKEN_PREFIX = 'isic_';
@@ -165,17 +170,17 @@ async function handle_v1(
 		}
 		if (method === 'POST' && segs[0] === 'search' && segs.length === 1) {
 			const body = await read_imperium_body(req);
-			return json(await search_records(store, access, body));
+			return json(await search_records(store, access, user, body));
 		}
 		if (method === 'POST' && segs[0] === 'count' && segs.length === 1) {
 			const body = await read_imperium_body(req);
-			return json(await count_records(store, access, body));
+			return json(await count_records(store, access, user, body));
 		}
 		if (method === 'GET' && segs[0] === 'statistics' && segs[1] && segs.length === 2) {
-			return json(await statistics(store, access, segs[1]));
+			return json(await statistics(store, access, user, segs[1]));
 		}
 		if (method === 'GET' && segs[0] === 'records' && segs[1] && segs[2] && segs.length === 3) {
-			return json(await get_record(store, access, segs[1], segs[2]));
+			return json(await get_record(store, access, user, segs[1], segs[2]));
 		}
 		if (method === 'POST' && segs[0] === 'records' && segs[1] && segs.length === 2) {
 			const body = await read_imperium_body(req);
@@ -185,7 +190,7 @@ async function handle_v1(
 		if (method === 'PATCH' && segs[0] === 'records' && segs[1] && segs[2] && segs.length === 3) {
 			const body = await read_imperium_body(req);
 			const values = as_object(body.values ?? body);
-			return json(await update_record(store, access, segs[1], segs[2], values));
+			return json(await update_record(store, access, user, segs[1], segs[2], values));
 		}
 		if (
 			method === 'GET' &&
@@ -195,7 +200,7 @@ async function handle_v1(
 			segs[2]
 		) {
 			const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit') ?? 50) || 50));
-			return json(await get_history(store, access, segs[1], segs[2], limit));
+			return json(await get_history(store, access, user, segs[1], segs[2], limit));
 		}
 		if (
 			method === 'POST' &&
@@ -523,22 +528,102 @@ async function capabilities(store: ImperiumStore, access: Access) {
 	return ok(list, `${list.length} modelos operables con tus permisos`);
 }
 
+function title_label(field: string, label?: string) {
+	if (label?.trim()) return label.trim();
+	return field.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function describe_type(
+	col: ExtraCol | undefined,
+	ref?: string,
+): { type: string; is_array: boolean } {
+	if (ref) {
+		const arr =
+			/ids$|_ids$/i.test(col?.name ?? '') ||
+			Boolean(col?.component?.includes('array')) ||
+			col?.pg === 'json';
+		return arr
+			? { type: 'array<objectid>', is_array: true }
+			: { type: 'objectid', is_array: false };
+	}
+	const hint = `${col?.crud ?? ''} ${col?.pg ?? ''} ${col?.component ?? ''}`.toLowerCase();
+	if (hint.includes('boolean') || hint.includes('checkbox')) {
+		return { type: 'boolean', is_array: false };
+	}
+	if (
+		hint.includes('number') ||
+		hint.includes('int') ||
+		hint.includes('numeric') ||
+		hint.includes('double')
+	) {
+		return { type: 'number', is_array: false };
+	}
+	if (hint.includes('date') || hint.includes('time')) return { type: 'date', is_array: false };
+	if (hint.includes('json')) return { type: 'mixed', is_array: false };
+	return { type: 'string', is_array: false };
+}
+
 function describe_fields(store: ImperiumStore, resource: string) {
-	const cols = [...store.column_names(resource)].filter(
-		(name) => !INTERNAL.has(name) && !SENSITIVE.test(name) && name !== 'payload' && name !== 'custom_data',
+	const loc = store.loc(resource);
+	const refs = store.field_refs(resource);
+	const by_name = new Map(loc.columns.map((col) => [col.name, col]));
+	const names = ['name', 'description', 'is_active', ...loc.columns.map((col) => col.name)].filter(
+		(name, i, all) =>
+			all.indexOf(name) === i &&
+			!INTERNAL.has(name) &&
+			!SENSITIVE.test(name) &&
+			name !== 'payload' &&
+			name !== 'custom_data',
 	);
-	const fields = cols.map((field) => ({
-		field,
-		label: field.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
-		type: 'string',
-		required: field === 'name',
-		is_array: false,
-	}));
+	const fields = names.map((field) => {
+		const col = by_name.get(field);
+		const ref = refs[field];
+		const typed = describe_type(col, ref);
+		return {
+			field,
+			label: title_label(field, col?.label),
+			type: typed.type,
+			required: field === 'name',
+			ref,
+			is_array: typed.is_array,
+		};
+	});
 	fields.sort((a, b) => {
 		if (a.required !== b.required) return a.required ? -1 : 1;
 		return a.field.localeCompare(b.field);
 	});
 	return fields;
+}
+
+function mcp_read_scope(access: Access, actor: ImperiumDoc, resource: string, model_id: string) {
+	return record_rule_scope_from_access(
+		access,
+		actor,
+		record_rule_lookup_keys(resource, model_id),
+		'allow_read',
+	);
+}
+
+function split_mcp_filters(filters: Record<string, unknown>) {
+	const where: Record<string, unknown> = {};
+	const extra: Record<string, unknown> = {};
+	for (const [key, value] of Object.entries(filters)) {
+		if (key === 'is_active' || value === undefined) continue;
+		if (key.startsWith('$') || (value && typeof value === 'object')) extra[key] = value;
+		else where[key] = value;
+	}
+	return { where, extra };
+}
+
+function merge_mongo_match(
+	rule: Record<string, unknown> | null,
+	extra: Record<string, unknown>,
+): Record<string, unknown> | null {
+	const has_extra = Object.keys(extra).length > 0;
+	if (rule && has_extra) return { $and: [rule, extra] };
+	if (rule) return rule;
+	if (has_extra) return extra;
+	return null;
 }
 
 async function describe_model(store: ImperiumStore, access: Access, model_id: string) {
@@ -605,61 +690,80 @@ async function prepare_create(
 	);
 }
 
-function matches_filters(row: ImperiumDoc, filters: Record<string, unknown>, q: string) {
-	for (const [key, value] of Object.entries(filters)) {
-		if (value === undefined) continue;
-		if (String(row[key] ?? '') !== String(value)) return false;
-	}
-	if (!q) return true;
-	const hay = [row.name, row.description, row.search_field].map((v) => String(v ?? '').toLowerCase()).join(' ');
-	return hay.includes(q.toLowerCase());
-}
-
-async function search_records(store: ImperiumStore, access: Access, body: Record<string, unknown>) {
-	const resource = resolve_resource(store, String(body.model ?? ''));
+async function search_records(
+	store: ImperiumStore,
+	access: Access,
+	user: ImperiumDoc,
+	body: Record<string, unknown>,
+) {
+	const model_id = String(body.model ?? '');
+	const resource = resolve_resource(store, model_id);
 	require_perm(access, resource, 'read');
 	const limit_raw = Number(body.limit);
 	const limit = !Number.isFinite(limit_raw) || limit_raw <= 0 ? 20 : Math.min(Math.floor(limit_raw), 100);
 	const skip = Math.max(0, Number(body.skip) || 0);
 	const filters = as_object(body.filters);
-	const q = String(body.q ?? '').trim();
-	const { rows } = await store.find_many(resource, {
-		q,
-		take: 2000,
+	const { where, extra } = split_mcp_filters(filters);
+	const scope = mcp_read_scope(access, user, resource, model_id);
+	const { rows, total } = await store.find_many(resource, {
+		q: String(body.q ?? '').trim(),
+		skip,
+		take: limit,
 		include_inactive: filters.is_active === false,
+		where: Object.keys(where).length ? where : undefined,
+		mongo_match: merge_mongo_match(scope.match, extra),
 	});
-	const matched = rows.filter((row) => matches_filters(row, filters, ''));
-	const page = matched.slice(skip, skip + limit);
-	return ok(page, `${page.length} de ${matched.length} registros`, matched.length);
+	return ok(rows, `${rows.length} de ${total} registros`, total);
 }
 
-async function count_records(store: ImperiumStore, access: Access, body: Record<string, unknown>) {
+async function count_records(
+	store: ImperiumStore,
+	access: Access,
+	user: ImperiumDoc,
+	body: Record<string, unknown>,
+) {
 	const model_id = String(body.model ?? '');
 	const resource = resolve_resource(store, model_id);
 	require_perm(access, resource, 'read');
 	const filters = as_object(body.filters);
-	const q = String(body.q ?? '').trim();
-	const { rows } = await store.find_many(resource, {
-		q,
-		take: 5000,
+	const { where, extra } = split_mcp_filters(filters);
+	const scope = mcp_read_scope(access, user, resource, model_id);
+	const { total } = await store.find_many(resource, {
+		q: String(body.q ?? '').trim(),
+		take: 1,
 		include_inactive: filters.is_active === false,
+		where: Object.keys(where).length ? where : undefined,
+		mongo_match: merge_mongo_match(scope.match, extra),
 	});
-	const count = rows.filter((row) => matches_filters(row, filters, '')).length;
-	return ok([{ model: model_id, count }], `${count} registro(s) en ${model_id}`);
+	return ok([{ model: model_id, count: total }], `${total} registro(s) en ${model_id}`);
 }
 
-async function statistics(store: ImperiumStore, access: Access, model_id: string) {
+async function statistics(
+	store: ImperiumStore,
+	access: Access,
+	user: ImperiumDoc,
+	model_id: string,
+) {
 	const resource = resolve_resource(store, model_id);
 	require_perm(access, resource, 'read');
-	const stats = await store.stats(resource, new URL('http://local/'));
+	const scope = mcp_read_scope(access, user, resource, model_id);
+	const stats = await store.stats(resource, new URL('http://local/'), scope.match);
 	return ok([stats], 'Estadísticas obtenidas correctamente');
 }
 
-async function get_record(store: ImperiumStore, access: Access, model_id: string, id: string) {
+async function get_record(
+	store: ImperiumStore,
+	access: Access,
+	user: ImperiumDoc,
+	model_id: string,
+	id: string,
+) {
 	const resource = resolve_resource(store, model_id);
 	require_perm(access, resource, 'read');
 	const doc = await store.find_id(resource, id);
 	if (!doc) deny(404, 'not_found', 'Registro no encontrado');
+	const scope = mcp_read_scope(access, user, resource, model_id);
+	await assert_record_in_scope(store, resource, id, scope, 'GET');
 	return ok([doc], 'Registro encontrado');
 }
 
@@ -682,12 +786,22 @@ async function create_record(
 async function update_record(
 	store: ImperiumStore,
 	access: Access,
+	user: ImperiumDoc,
 	model_id: string,
 	id: string,
 	values: Record<string, unknown>,
 ) {
 	const resource = resolve_resource(store, model_id);
 	require_perm(access, resource, 'update');
+	const existing = await store.find_id(resource, id);
+	if (!existing) deny(404, 'not_found', 'Registro no encontrado');
+	const scope = record_rule_scope_from_access(
+		access,
+		user,
+		record_rule_lookup_keys(resource, model_id),
+		'allow_update',
+	);
+	await assert_record_in_scope(store, resource, id, scope, 'PATCH');
 	const updated = await store.update(resource, id, sanitize(values));
 	if (!updated) deny(404, 'not_found', 'Registro no encontrado');
 	return ok([updated], 'Actualizado correctamente');
@@ -696,11 +810,12 @@ async function update_record(
 async function get_history(
 	store: ImperiumStore,
 	access: Access,
+	user: ImperiumDoc,
 	model_id: string,
 	id: string,
 	limit: number,
 ) {
-	await get_record(store, access, model_id, id);
+	await get_record(store, access, user, model_id, id);
 	const resource = resolve_resource(store, model_id);
 	const { rows } = await store.find_many('document-change-history', {
 		take: 2000,
@@ -731,7 +846,7 @@ async function post_comment(
 	id: string,
 	comment_text: string,
 ) {
-	await get_record(store, access, model_id, id);
+	await get_record(store, access, user, model_id, id);
 	const text = comment_text.trim();
 	if (!text) deny(400, 'empty_comment', 'El comentario no puede estar vacío.');
 	const resource = resolve_resource(store, model_id);

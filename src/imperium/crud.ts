@@ -38,11 +38,10 @@ import {
 import { build_access } from './auth.ts';
 import { is_seed_admin } from './group-access.ts';
 import {
-	RecordRuleDeniedError,
-	build_record_denied_message,
-	build_record_rule_match,
-	context_from_actor,
+	assert_record_in_scope,
 	operation_flag,
+	record_rule_lookup_keys,
+	record_rule_scope_from_access,
 	type RecordRuleMatchResult,
 } from './record-rules.ts';
 
@@ -54,20 +53,12 @@ async function record_rule_scope(
 ): Promise<RecordRuleMatchResult> {
 	if (!actor || is_seed_admin(actor)) return { match: null, applicable_rules: [] };
 	const access = await build_access(store, actor);
-	if (access.has_full_access) return { match: null, applicable_rules: [] };
-	const rules =
-		access.record_rules_by_model?.[resource] ??
-		access.record_rules_by_model?.[
-			resource
-				.split('-')
-				.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-				.join('')
-		];
-	const group_ids = [
-		...((access.user_group_ids as string[]) ?? []),
-		...((access.user_group_refs as string[]) ?? []),
-	];
-	return build_record_rule_match(rules, operation_flag(method), context_from_actor(actor, group_ids));
+	return record_rule_scope_from_access(
+		access,
+		actor,
+		record_rule_lookup_keys(resource),
+		operation_flag(method),
+	);
 }
 
 async function assert_id_in_scope(
@@ -77,17 +68,7 @@ async function assert_id_in_scope(
 	scope: RecordRuleMatchResult,
 	method: string,
 ) {
-	if (!scope.match) return;
-	const { total } = await store.find_many(resource, {
-		ids: [id],
-		take: 1,
-		include_inactive: true,
-		populate: false,
-		mongo_match: scope.match,
-	});
-	if (!total) {
-		throw new RecordRuleDeniedError(build_record_denied_message(method, resource, scope.applicable_rules));
-	}
+	await assert_record_in_scope(store, resource, id, scope, method);
 }
 
 export async function handle_crud(
