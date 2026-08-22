@@ -81,6 +81,8 @@ import { is_upload, persist_upload_as_attachment } from './uploads.ts';
 import { emit_messages_refresh } from './socket-stub.ts';
 import {
 	assert_report_template_write,
+	hydrate_loose_product_references,
+	interpolate_report_records,
 	interpolate_report_template,
 	report_validation_ok,
 	resolve_report_records,
@@ -4378,11 +4380,28 @@ async function report_preview(ctx: Ctx) {
 			/* keep client record */
 		}
 	}
-	if (!Object.keys(record).length) {
+	const raw_list = Array.isArray(ctx.body.recordData)
+		? ctx.body.recordData
+		: Array.isArray(ctx.body.record)
+			? ctx.body.record
+			: Object.keys(record).length
+				? [record]
+				: [];
+	if (!raw_list.length) {
 		throw new Error('No se pudo obtener el registro para la vista previa');
 	}
+	const hydrated: Record<string, unknown>[] = [];
+	for (const row of raw_list) {
+		hydrated.push(await hydrate_loose_product_references(ctx.store, as_object(row)));
+	}
 	return {
-		html: interpolate_report_template(html, record, actor_name(ctx) || 'USER'),
+		html: await interpolate_report_records(
+			html,
+			hydrated,
+			actor_name(ctx) || 'USER',
+			new Date(),
+			{ store: ctx.store, model_name },
+		),
 		processed: true,
 	};
 }
@@ -4401,13 +4420,14 @@ async function report_full_pdf(ctx: Ctx) {
 	}
 	const user_name = actor_name(ctx) || 'USER';
 	const now = new Date();
-	const rendered = records.length === 1
-		? interpolate_report_template(html_content, records[0]!, user_name, now)
-		: records
-			.map((row) => interpolate_report_template(html_content, row, user_name, now))
-			.join('<hr />');
+	const hydrated: Record<string, unknown>[] = [];
+	for (const row of records) {
+		hydrated.push(await hydrate_loose_product_references(ctx.store, row));
+	}
+	const opts = { store: ctx.store, model_name };
+	const rendered = await interpolate_report_records(html_content, hydrated, user_name, now, opts);
 	const gen_name = String(report.generated_report_name || '{{name}}_{{timestamp_actual}}');
-	const filename = `${interpolate_report_template(gen_name, records[0]!, user_name, now) || 'REPORTE_GENERADO'}${
+	const filename = `${(await interpolate_report_template(gen_name, hydrated[0]!, user_name, now, opts)) || 'REPORTE_GENERADO'}${
 		records.length > 1 ? `_LOTE_${records.length}` : ''
 	}.pdf`;
 	return html_to_pdf_response(rendered, filename);
@@ -4472,10 +4492,16 @@ async function html_to_pdf_response(html: string, filename?: string) {
 }
 
 async function report_pdf(ctx: Ctx) {
-	const html = interpolate_report_template(
+	const record = as_object(ctx.body.record ?? ctx.body.recordData ?? ctx.body.data ?? ctx.body);
+	const html = await interpolate_report_template(
 		String(ctx.body.htmlContent ?? ctx.body.html ?? ctx.body.template ?? '<html><body>{{name}}</body></html>'),
-		as_object(ctx.body.record ?? ctx.body.recordData ?? ctx.body.data ?? ctx.body),
+		await hydrate_loose_product_references(ctx.store, record),
 		actor_name(ctx) || String(ctx.body.user_name ?? 'USER'),
+		new Date(),
+		{
+			store: ctx.store,
+			model_name: String(ctx.body.model_name ?? ctx.body.related_model ?? ''),
+		},
 	);
 	const filename = String(ctx.body.fileName ?? ctx.body.filename ?? 'report.pdf');
 	return html_to_pdf_response(html, filename);

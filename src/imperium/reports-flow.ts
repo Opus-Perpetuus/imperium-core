@@ -2,6 +2,12 @@
  * Reportes: validación de plantilla e interpolación como el service original.
  */
 import { as_array, as_object, ok, type ImperiumDoc } from './envelope.ts';
+import { serve_attachment_bytes } from './media.ts';
+import {
+	build_report_qr_payload,
+	qr_payload_to_data_url,
+	render_qr_img_tag,
+} from './report-qr.ts';
 import type { ImperiumStore } from './store.ts';
 
 const STATIC_PLACEHOLDERS = new Set([
@@ -146,38 +152,304 @@ function runtime_value(path: string, now: Date, user_name: string): string | nul
 
 function display_value(value: unknown): string {
 	if (value == null) return '';
-	if (value instanceof Date) return value.toISOString().slice(0, 10);
+	if (value instanceof Date) return value.toISOString().split('T')[0] ?? '';
 	if (Array.isArray(value)) {
 		return value.map(display_value).filter(Boolean).join(', ');
 	}
 	if (typeof value === 'object') {
-		const obj = as_object(value);
-		return String(obj.name ?? obj._name ?? obj.description ?? obj._id ?? obj.id ?? '');
+		const obj = value as { _bsontype?: string; toHexString?: () => string };
+		if (obj._bsontype === 'ObjectId' || typeof obj.toHexString === 'function') {
+			if (!('name' in obj) && !('_name' in obj)) return String(value);
+		}
+		const rec = as_object(value);
+		return String(
+			rec.name ??
+				rec._name ??
+				rec.codigo ??
+				rec.code ??
+				rec.description ??
+				rec.descripcion ??
+				rec.label ??
+				rec.title ??
+				rec._id ??
+				rec.id ??
+				'',
+		);
 	}
 	return String(value);
 }
 
 function resolve_path(record: Record<string, unknown>, path: string): unknown {
-	return path.split('.').reduce<unknown>((acc, key) => {
-		if (acc == null) return undefined;
-		if (typeof acc !== 'object') return undefined;
-		return as_object(acc)[key];
-	}, record);
+	const segments = path
+		.split('.')
+		.map((segment) => segment.trim())
+		.filter(Boolean);
+	let current: unknown = record;
+	for (let index = 0; index < segments.length; index++) {
+		if (current == null || typeof current !== 'object') return undefined;
+		current = as_object(current)[segments[index]!];
+		if (Array.isArray(current) && index < segments.length - 1) {
+			current = current.length > 0 ? current[0] : undefined;
+		}
+	}
+	return current;
 }
 
-export function interpolate_report_template(
+function is_truthy(value: unknown): boolean {
+	if (Array.isArray(value)) return value.length > 0;
+	if (typeof value === 'boolean') return value;
+	if (value == null) return false;
+	if (typeof value === 'number') return value !== 0;
+	if (typeof value === 'string') return value.length > 0;
+	return Boolean(value);
+}
+
+function evaluate_condition(condition: string, record: Record<string, unknown>): boolean {
+	const trimmed = condition.trim();
+	const eq_match = trimmed.match(/^(!)?(\w+(?:\.\w+)*)\s*(==|!=)?\s*(.*)$/);
+	if (eq_match) {
+		const negated = eq_match[1] === '!';
+		const path = eq_match[2] ?? '';
+		const operator = eq_match[3];
+		const compare_value = eq_match[4]?.trim().replace(/['"]/g, '');
+		const value = resolve_path(record, path);
+		if (!operator) return negated ? !is_truthy(value) : is_truthy(value);
+		const str_val = String(value ?? '');
+		if (operator === '==') return negated ? str_val !== compare_value : str_val === compare_value;
+		if (operator === '!=') return negated ? str_val === compare_value : str_val !== compare_value;
+	}
+	return is_truthy(resolve_path(record, trimmed));
+}
+
+function process_if_blocks(template: string, record: Record<string, unknown>): string {
+	return template.replace(
+		/\{\{\s*#if\s+([^}]+)\s*\}\}([\s\S]*?)\{\{\s*\/if\s*\}\}/g,
+		(_match, condition: string, content: string) =>
+			evaluate_condition(condition, record) ? content : '',
+	);
+}
+
+function process_each_blocks(template: string, record: Record<string, unknown>): string {
+	return template.replace(
+		/\{\{\s*#each\s+([a-zA-Z0-9_.]+)\s*\}\}([\s\S]*?)\{\{\s*\/each\s*\}\}/g,
+		(_match, array_path: string, content: string) => {
+			const array = resolve_path(record, String(array_path || '').trim());
+			if (!Array.isArray(array) || array.length === 0) return '';
+			return array
+				.map((item) => {
+					const scope =
+						item && typeof item === 'object'
+							? { ...record, ...as_object(item), this: item }
+							: { ...record, this: item };
+					let item_content = process_each_blocks(content, scope);
+					item_content = item_content.replace(
+						/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g,
+						(raw, field: string) => {
+							const clean = String(field || '').trim();
+							if (!clean || clean.startsWith('#') || clean.startsWith('/')) return raw;
+							if (clean === 'this') return display_value(item);
+							let val =
+								item && typeof item === 'object'
+									? resolve_path(as_object(item), clean)
+									: undefined;
+							if (val == null) val = resolve_path(record, clean);
+							if (val == null) return '';
+							return Array.isArray(val)
+								? val.map(display_value).filter(Boolean).join(', ')
+								: display_value(val);
+						},
+					);
+					return item_content;
+				})
+				.join('');
+		},
+	);
+}
+
+function process_handlebars_blocks(template: string, record: Record<string, unknown>): string {
+	return process_each_blocks(process_if_blocks(template, record), record);
+}
+
+function extract_reference_id(value: unknown): string {
+	if (value == null) return '';
+	if (typeof value === 'string' || typeof value === 'number') return String(value).trim();
+	if (typeof value === 'object') {
+		const rec = as_object(value);
+		return String(rec._id ?? rec.id ?? '').trim();
+	}
+	return '';
+}
+
+function is_product_like_key(key: string): boolean {
+	const name = String(key || '')
+		.trim()
+		.toLowerCase();
+	return (
+		name === 'product' ||
+		name === 'product_id' ||
+		name === 'producto' ||
+		name === 'producto_id' ||
+		name.endsWith('_product') ||
+		name.endsWith('product_id')
+	);
+}
+
+export async function hydrate_loose_product_references(
+	store: ImperiumStore,
+	record: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+	if (!store.has('products')) return record;
+	const ids = new Set<string>();
+	const collect = (node: unknown) => {
+		if (!node || typeof node !== 'object') return;
+		if (Array.isArray(node)) {
+			node.forEach(collect);
+			return;
+		}
+		for (const [key, value] of Object.entries(as_object(node))) {
+			if (is_product_like_key(key)) {
+				const id = extract_reference_id(value);
+				const raw =
+					typeof value === 'string' ||
+					typeof value === 'number' ||
+					(typeof value === 'object' &&
+						value !== null &&
+						!as_object(value).name &&
+						!as_object(value).codigo);
+				if (id && raw) ids.add(id);
+			} else if (value && typeof value === 'object') {
+				collect(value);
+			}
+		}
+	};
+	collect(record);
+	if (!ids.size) return record;
+	const by_id = new Map<string, ImperiumDoc>();
+	for (const id of ids) {
+		const product = await store.find_id('products', id);
+		if (product) by_id.set(id, product);
+	}
+	if (!by_id.size) return record;
+	const replace = (node: unknown) => {
+		if (!node || typeof node !== 'object') return;
+		if (Array.isArray(node)) {
+			node.forEach(replace);
+			return;
+		}
+		const obj = as_object(node);
+		for (const [key, value] of Object.entries(obj)) {
+			if (is_product_like_key(key)) {
+				const hydrated = by_id.get(extract_reference_id(value));
+				if (hydrated) {
+					obj[key] = hydrated;
+					continue;
+				}
+			}
+			if (value && typeof value === 'object') replace(value);
+		}
+	};
+	replace(record);
+	return record;
+}
+
+async function attachment_data_url(store: ImperiumStore | undefined, attach_id: string) {
+	if (!store?.has('attachment-management') || !attach_id) return '';
+	const attach = await store.find_id('attachment-management', attach_id);
+	if (!attach || attach.is_active === false) return '';
+	const served = await serve_attachment_bytes(attach);
+	if (!served?.body?.length) return '';
+	const mime = served.mime || 'image/jpeg';
+	return `data:${mime};base64,${Buffer.from(served.body).toString('base64')}`;
+}
+
+export type InterpolateReportOpts = {
+	store?: ImperiumStore;
+	model_name?: string;
+};
+
+export async function interpolate_report_template(
 	template: string,
 	record: Record<string, unknown>,
 	user_name: string,
 	now = new Date(),
-): string {
+	opts: InterpolateReportOpts = {},
+): Promise<string> {
 	if (!template) return '';
-	return template.replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (_match, path: string) => {
+	let result = process_handlebars_blocks(template, record);
+	for (const match of result.matchAll(/\{\{\s*image:([a-zA-Z0-9_.]+)\s*\}\}/g)) {
+		const field = String(match[1] ?? '').trim();
+		const attach_id = extract_reference_id(resolve_path(record, field));
+		let replacement = '';
+		if (attach_id && opts.store) {
+			try {
+				const data_url = await attachment_data_url(opts.store, attach_id);
+				if (data_url.length > 50) {
+					replacement = `<img src="${data_url}" alt="${field}" style="max-width:100%;height:auto;display:block;margin:10px auto;" />`;
+				}
+			} catch {
+				replacement = '';
+			}
+		}
+		result = result.replace(match[0], replacement);
+	}
+	for (const match of result.matchAll(/\{\{\s*qr(?::([a-zA-Z0-9_.]+))?\s*\}\}/g)) {
+		const field = match[1]?.trim();
+		try {
+			const payload = build_report_qr_payload(record, opts.model_name, field || undefined);
+			const data_url = await qr_payload_to_data_url(payload);
+			result = result.replace(match[0], render_qr_img_tag(data_url));
+		} catch {
+			result = result.replace(match[0], '');
+		}
+	}
+	return result.replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (_match, path: string) => {
 		const clean = String(path ?? '').trim();
 		const runtime = runtime_value(clean, now, user_name);
 		if (runtime != null) return runtime;
-		return display_value(resolve_path(record, clean));
+		const value = resolve_path(record, clean);
+		if (value == null) return '';
+		return Array.isArray(value)
+			? value.map(display_value).filter(Boolean).join(', ')
+			: display_value(value);
 	});
+}
+
+function delimiter_token(template: string): string {
+	for (const token of ['{{report_item_delimiter}}', '{{reporte_delimitador}}']) {
+		if (template.includes(token)) return token;
+	}
+	return '';
+}
+
+export async function interpolate_report_records(
+	template: string,
+	records: Record<string, unknown>[],
+	user_name: string,
+	now = new Date(),
+	opts: InterpolateReportOpts = {},
+	depth = 0,
+): Promise<string> {
+	const token = delimiter_token(template);
+	if (!token) {
+		return interpolate_report_template(template, records[0] ?? {}, user_name, now, opts);
+	}
+	if (!records.length) return template.replaceAll(token, '');
+	if (depth > 5000) {
+		throw new Error(
+			'La plantilla contiene un delimitador recursivo con demasiados niveles de expansión',
+		);
+	}
+	const [current, ...rest] = records;
+	const current_html = await interpolate_report_template(
+		template,
+		current ?? {},
+		user_name,
+		now,
+		opts,
+	);
+	if (!rest.length) return current_html.replaceAll(token, '');
+	const next_html = await interpolate_report_records(template, rest, user_name, now, opts, depth + 1);
+	return current_html.replace(token, next_html);
 }
 
 function fields_from_store(store: ImperiumStore, resource: string): ReportFieldLike[] {
