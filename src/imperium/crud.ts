@@ -18,7 +18,12 @@ export async function handle_crud(
 	const body = async () => read_imperium_body(req);
 
 	if (method === 'GET' && segs[0] === 'statistics' && segs.length === 1) {
-		return json(ok([await store.stats(resource)], 'Estadísticas obtenidas correctamente'));
+		const stats = await store.stats(resource);
+		return json(
+			ok([stats], resource === 'ticketing-system-turn'
+				? 'Estadísticas obtenidas con información completa'
+				: 'Estadísticas obtenidas correctamente'),
+		);
 	}
 	if (method === 'GET' && segs[0] === 'field-values' && segs[1]) {
 		const { q } = query_list(url);
@@ -110,14 +115,16 @@ export async function handle_crud(
 	if (method === 'GET' && segs.length === 1) {
 		const doc = await store.find_id(resource, segs[0]!);
 		if (!doc) return json(fail('No encontrado', 404).body, 404);
-		return json(ok([doc], 'Ruta encontrada'));
+		const [populated] = await store.populate_docs(resource, [doc]);
+		return json(ok([populated], 'Ruta encontrada'));
 	}
 	if (method === 'POST' && segs.length === 0) {
 		const doc = await before_create(store, resource, await body(), actor);
 		const created = await store.insert(resource, doc);
 		await after_create(store, resource, created);
+		const [populated] = await store.populate_docs(resource, [created]);
 		const message = resource === 'pos-tickets' ? 'Ticket creado' : 'Ruta creada';
-		return json(ok([created], message), 201);
+		return json(ok([populated], message), 201);
 	}
 	if (method === 'PUT' && segs.length === 0) {
 		const b = await body();
@@ -125,11 +132,8 @@ export async function handle_crud(
 		if (!id) return json(fail('Se necesita un id para actualizar').body, 400);
 		const updated = await store.update(resource, id, b);
 		if (!updated) return json(fail('No encontrado', 404).body, 404);
-		return json({
-			data: null,
-			total_elementos: 1,
-			message: 'Actualizado correctamente',
-		});
+		const [populated] = await store.populate_docs(resource, [updated]);
+		return json(ok([populated], 'Actualizado correctamente'));
 	}
 	if (method === 'PATCH' && segs.length === 1) {
 		const updated = await store.update(resource, segs[0]!, await body());

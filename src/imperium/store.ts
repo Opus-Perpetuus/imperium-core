@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pg_schema_name } from '@opus-perpetuus/imperium-core-kit';
 import {
+	as_array,
 	as_object,
 	from_imperium,
 	to_imperium,
@@ -507,6 +508,7 @@ export class ImperiumStore {
 	}
 
 	async stats(resource: string): Promise<Record<string, unknown>> {
+		if (resource === 'ticketing-system-turn') return this.turn_stats();
 		const qt = this.qt(resource);
 		const rows = await this.sql.unsafe(
 			`SELECT
@@ -528,6 +530,190 @@ export class ImperiumStore {
 			},
 		};
 	}
+
+	async turn_stats(): Promise<Record<string, unknown>> {
+		const { rows } = await this.find_many('ticketing-system-turn', {
+			take: 5000,
+			include_inactive: true,
+		});
+		const completed = rows.filter(
+			(r) => String(r.status ?? r.state ?? '') === 'completado',
+		);
+		const day_of = (r: ImperiumDoc) => {
+			const d = new Date(String(r.createdAt ?? r.created_at ?? ''));
+			return Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
+		};
+		const by_day = new Map<string, ImperiumDoc[]>();
+		for (const r of completed) {
+			const k = day_of(r);
+			if (!k) continue;
+			const list = by_day.get(k) ?? [];
+			list.push(r);
+			by_day.set(k, list);
+		}
+		const today_key = new Date().toISOString().slice(0, 10);
+		let ref_key = today_key;
+		if (!(by_day.get(today_key)?.length)) {
+			let best = '';
+			let n = 0;
+			for (const [k, list] of by_day) {
+				if (list.length > n) {
+					n = list.length;
+					best = k;
+				}
+			}
+			if (best) ref_key = best;
+		}
+		const today_rows = by_day.get(ref_key) ?? [];
+		const box_label = (r: ImperiumDoc) => {
+			const b = as_object(r.assigned_box);
+			return String(b.name ?? 'Sin nombre');
+		};
+		const box_ref = (r: ImperiumDoc) => {
+			const b = as_object(r.assigned_box);
+			return b._id ? b : { _id: ref_id(r.assigned_box), name: box_label(r) };
+		};
+		const daily_map = new Map<
+			string,
+			{ box_id: unknown; box_name: string; turns_attended: number }
+		>();
+		for (const r of today_rows) {
+			const id = ref_id(r.assigned_box) || 'none';
+			const cur = daily_map.get(id) ?? {
+				box_id: box_ref(r),
+				box_name: box_label(r),
+				turns_attended: 0,
+			};
+			cur.turns_attended += 1;
+			daily_map.set(id, cur);
+		}
+		const daily_stats = [...daily_map.values()];
+		const ref_date = new Date(`${ref_key}T00:00:00.000Z`);
+		const seven_keys: string[] = [];
+		for (let i = 6; i >= 0; i--) {
+			const d = new Date(ref_date);
+			d.setUTCDate(d.getUTCDate() - i);
+			seven_keys.push(d.toISOString().slice(0, 10));
+		}
+		const box_ids = new Set<string>();
+		for (const k of seven_keys) {
+			for (const r of by_day.get(k) ?? []) box_ids.add(ref_id(r.assigned_box) || 'none');
+		}
+		const seven_days_stats = [...box_ids].map((id) => {
+			const sample =
+				seven_keys.flatMap((k) => by_day.get(k) ?? []).find(
+					(r) => (ref_id(r.assigned_box) || 'none') === id,
+				) ?? today_rows[0];
+			const daily = seven_keys.map((k) => {
+				const day_rows = (by_day.get(k) ?? []).filter(
+					(r) => (ref_id(r.assigned_box) || 'none') === id,
+				);
+				const mins = day_rows.map(turn_duration_minutes).filter((n) => n > 0);
+				return {
+					day: k,
+					total_turns: day_rows.length,
+					avg_time_minutes: mins.length
+						? Number((mins.reduce((a, b) => a + b, 0) / mins.length).toFixed(2))
+						: 0,
+				};
+			});
+			return {
+				box_id: sample ? box_ref(sample) : { _id: id, name: 'Sin nombre' },
+				box_name: sample ? box_label(sample) : 'Sin nombre',
+				daily_stats: daily,
+			};
+		});
+		const average_times = seven_days_stats.map((box) => {
+			const mins = box.daily_stats
+				.map((d) => Number(d.avg_time_minutes))
+				.filter((n) => n > 0);
+			return {
+				box_id: box.box_id,
+				box_name: box.box_name,
+				average_time_minutes: mins.length
+					? Number((mins.reduce((a, b) => a + b, 0) / mins.length).toFixed(2))
+					: 0,
+			};
+		});
+		const service_map = new Map<
+			string,
+			{ service_type_name: string; turn_count: number; minutes: number[] }
+		>();
+		for (const r of today_rows) {
+			const services = as_array(r.services);
+			const name = String(
+				as_object(services[0]).name ?? r.service_type ?? 'Sin servicio',
+			);
+			const cur = service_map.get(name) ?? {
+				service_type_name: name,
+				turn_count: 0,
+				minutes: [],
+			};
+			cur.turn_count += 1;
+			const m = turn_duration_minutes(r);
+			if (m > 0) cur.minutes.push(m);
+			service_map.set(name, cur);
+		}
+		const services_stats = [...service_map.values()].map((s) => ({
+			service_type_name: s.service_type_name,
+			turn_count: s.turn_count,
+			average_time_minutes: s.minutes.length
+				? Number((s.minutes.reduce((a, b) => a + b, 0) / s.minutes.length).toFixed(2))
+				: 0,
+		}));
+		const ctype_map = new Map<
+			string,
+			{ customer_type_name: string; customer_type_id: unknown; turn_count: number; minutes: number[] }
+		>();
+		for (const r of today_rows) {
+			const c = as_object(r.customer_type);
+			const name = String(c.name ?? 'Sin tipo');
+			const cur = ctype_map.get(name) ?? {
+				customer_type_name: name,
+				customer_type_id: c._id ? c : { _id: ref_id(r.customer_type), name },
+				turn_count: 0,
+				minutes: [],
+			};
+			cur.turn_count += 1;
+			const m = turn_duration_minutes(r);
+			if (m > 0) cur.minutes.push(m);
+			ctype_map.set(name, cur);
+		}
+		const customer_types_stats = [...ctype_map.values()].map((s) => ({
+			customer_type_name: s.customer_type_name,
+			customer_type_id: s.customer_type_id,
+			turn_count: s.turn_count,
+			average_time_minutes: s.minutes.length
+				? Number((s.minutes.reduce((a, b) => a + b, 0) / s.minutes.length).toFixed(2))
+				: 0,
+		}));
+		return {
+			daily_stats,
+			average_times,
+			raw_turns_today: today_rows,
+			total_turns_today: today_rows.length,
+			seven_days_stats,
+			services_stats,
+			customer_types_stats,
+			__export_data: {},
+		};
+	}
+}
+
+function turn_duration_minutes(row: ImperiumDoc): number {
+	let raw: unknown = row.time_box;
+	if (typeof raw === 'string') {
+		try {
+			raw = JSON.parse(raw);
+		} catch {
+			return 0;
+		}
+	}
+	if (!Array.isArray(raw) || raw.length < 2) return 0;
+	const a = new Date(String(raw[0])).getTime();
+	const b = new Date(String(raw[1])).getTime();
+	if (!Number.isFinite(a) || !Number.isFinite(b) || b <= a) return 0;
+	return (b - a) / 60000;
 }
 
 function ref_id(value: unknown): string {

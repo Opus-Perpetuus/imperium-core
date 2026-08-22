@@ -70,7 +70,7 @@ export function from_imperium(
 			row.updated_at = iso(v);
 			continue;
 		}
-		if (column_names.has(k)) row[k] = v;
+		if (column_names.has(k)) row[k] = scalar_ref(v);
 		else payload[k] = v;
 	}
 	if (id) row.id = id;
@@ -112,6 +112,18 @@ export function as_array(v: unknown): unknown[] {
 		}
 	}
 	return [];
+}
+
+function scalar_ref(v: unknown): unknown {
+	if (!v || typeof v !== 'object' || Array.isArray(v) || v instanceof Date) {
+		return v;
+	}
+	const o = v as Record<string, unknown>;
+	const id = o._id ?? o.id;
+	if (id == null || id === '') return v;
+	const allowed = new Set(['_id', 'id', 'name', 'description', 'is_active']);
+	if (Object.keys(o).every((k) => allowed.has(k))) return String(id);
+	return v;
 }
 
 function omit(row: Record<string, unknown>, keys: string[]) {
