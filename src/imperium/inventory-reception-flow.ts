@@ -40,6 +40,98 @@ function is_object_id(value: string): boolean {
 	return /^[a-fA-F0-9]{24}$/.test(value);
 }
 
+function pending_lines_from_po(po: ImperiumDoc, strict_product: boolean) {
+	return as_array(po.articulos)
+		.map((raw, index) => {
+			const item = as_object(raw);
+			const producto = ref_id(item.producto ?? item.product_id);
+			if (!producto || !is_object_id(producto)) {
+				if (strict_product) {
+					throw new Error(
+						`La línea ${index + 1} de la recepción necesita un producto válido`,
+					);
+				}
+				return null;
+			}
+			const cantidad_esperada = round_qty(
+				Number(item.cantidad ?? item.cantidad_esperada ?? 0) -
+					Number(item.cantidad_recibida ?? 0),
+			);
+			if (cantidad_esperada <= 0) return null;
+			return {
+				producto,
+				producto_nombre: text(item.producto_nombre ?? item.name),
+				producto_codigo: text(item.producto_codigo ?? item.codigo),
+				codigo_proveedor: text(item.codigo_proveedor),
+				cantidad_esperada,
+				cantidad_recibida: 0,
+				cantidad_acomodada: 0,
+				costo_unitario: Number(item.costo_unitario ?? item.costo ?? 0),
+				reservas: [],
+			};
+		})
+		.filter((line): line is NonNullable<typeof line> => Boolean(line));
+}
+
+async function find_open_reception(store: ImperiumStore, po_id: string) {
+	for (const field of ['purchase_order', 'orden_compra'] as const) {
+		const { rows } = await store.find_many('inventory-reception', {
+			where: { [field]: po_id },
+			take: 50,
+			populate: false,
+		});
+		const open = rows.find(
+			(row) => row.is_active !== false && OPEN_STATES.has(text(row.estado)),
+		);
+		if (open) return open;
+	}
+	return null;
+}
+
+async function insert_reception_from_po(
+	store: ImperiumStore,
+	po: ImperiumDoc,
+	articulos: ReturnType<typeof pending_lines_from_po>,
+	extra: ImperiumDoc = {},
+) {
+	return store.insert('inventory-reception', {
+		name: `Recepción ${po.name}`,
+		description: text(extra.description),
+		estado: 'pendiente',
+		purchase_order: po._id,
+		orden_compra: po._id,
+		purchase_order_nombre: po.name,
+		purchase_order_folio: po.folio_interno,
+		proveedor: po.proveedor,
+		proveedor_nombre: po.proveedor_nombre ?? '',
+		proveedor_rfc: po.proveedor_rfc ?? '',
+		uuid_xml: text(extra.uuid_xml) || text(po.uuid_xml),
+		referencia: text(extra.referencia) || text(po.referencia_origen),
+		fecha_esperada: extra.fecha_esperada,
+		articulos,
+		total_esperado: articulos.reduce((sum, line) => sum + line.cantidad_esperada, 0),
+		total_recibido: 0,
+	});
+}
+
+/**
+ * Co-crea (o reutiliza) la recepción pendiente al guardar una OC,
+ * igual que `ensure_pending_reception_from_purchase_order` del original.
+ */
+export async function ensure_pending_reception_from_purchase_order(
+	store: ImperiumStore,
+	purchase_order: ImperiumDoc,
+): Promise<ImperiumDoc | null> {
+	const po_id = text(purchase_order?._id);
+	if (!po_id || !is_object_id(po_id) || !store.has('inventory-reception')) return null;
+	if (text(purchase_order.estado) === 'archivada') return null;
+	const existing = await find_open_reception(store, po_id);
+	if (existing) return existing;
+	const articulos = pending_lines_from_po(purchase_order, false);
+	if (!articulos.length) return null;
+	return insert_reception_from_po(store, purchase_order, articulos);
+}
+
 export async function create_reception_from_purchase_order(
 	store: ImperiumStore,
 	purchase_order_id: string,

@@ -110,6 +110,7 @@ import {
 	acomodar_reception,
 	create_reception_backorder,
 	create_reception_from_purchase_order,
+	ensure_pending_reception_from_purchase_order,
 	in_transit_for_product,
 	list_pending_for_product,
 	register_internal_transfer,
@@ -3842,15 +3843,7 @@ async function po_approve(ctx: Ctx) {
 		aprobado_por: actor_id(ctx),
 		aprobado_por_nombre: actor_name(ctx),
 	});
-	if (ctx.store.has('inventory-reception')) {
-		const existing = (await ctx.store.find_many('inventory-reception', {
-			where: { purchase_order: String(po._id) },
-			take: 5,
-		})).rows[0];
-		if (!existing) {
-			await reception_from_po({ ...ctx, params: { purchase_order_id: String(po._id) } });
-		}
-	}
+	await ensure_pending_reception_from_purchase_order(ctx.store, updated ?? po);
 	return ok([updated], 'Orden de compra aprobada correctamente');
 }
 

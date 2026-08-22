@@ -26,6 +26,7 @@ import {
 	prepare_purchase_order_update,
 } from './purchase-order-flow.ts';
 import { sync_inbound_supplier_invoice } from './cfdi-from-purchase.ts';
+import { ensure_pending_reception_from_purchase_order } from './inventory-reception-flow.ts';
 import {
 	notify_ticketing_rooms,
 	prepare_ticketing_turn_create,
@@ -481,7 +482,10 @@ export async function handle_crud(
 		const notice = await after_create(store, resource, created, actor);
 		if (resource === 'pedidos') await after_pedido_mutate(store, 'create', created);
 		if (resource === 'ticketing-system-turn') await notify_ticketing_rooms(store);
-		if (resource === 'purchase-order') await sync_inbound_supplier_invoice(store, created);
+		if (resource === 'purchase-order') {
+			await sync_inbound_supplier_invoice(store, created);
+			await ensure_pending_reception_from_purchase_order(store, created);
+		}
 		if (is_project_resource(resource)) {
 			await after_project_write(store, created, project_seed, actor);
 		}
@@ -633,7 +637,10 @@ export async function handle_crud(
 		if (updated) await link_attachments_to_record(store, resource, updated);
 		if (!updated) return json(resource, fail('No encontrado', 404).body, 404);
 		if (resource === 'pedidos') await after_pedido_mutate(store, 'update', updated, previous);
-		if (resource === 'purchase-order') await sync_inbound_supplier_invoice(store, updated);
+		if (resource === 'purchase-order') {
+			await sync_inbound_supplier_invoice(store, updated);
+			await ensure_pending_reception_from_purchase_order(store, updated);
+		}
 		if (is_project_resource(resource)) {
 			await after_project_write(store, updated, project_seed, actor, previous);
 		}
@@ -758,7 +765,10 @@ export async function handle_crud(
 		if (updated) await link_attachments_to_record(store, resource, updated);
 		if (!updated) return json(resource, fail('No encontrado', 404).body, 404);
 		if (resource === 'pedidos') await after_pedido_mutate(store, 'update', updated, previous);
-		if (resource === 'purchase-order') await sync_inbound_supplier_invoice(store, updated);
+		if (resource === 'purchase-order') {
+			await sync_inbound_supplier_invoice(store, updated);
+			await ensure_pending_reception_from_purchase_order(store, updated);
+		}
 		if (is_project_resource(resource)) {
 			await after_project_write(store, updated, project_seed, actor, previous);
 		}
