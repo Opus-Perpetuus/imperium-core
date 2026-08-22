@@ -10,6 +10,7 @@ import {
 	send_password_reset_email,
 } from './email.ts';
 import { find_user_by_reset_token, generate_password_reset } from './password-reset.ts';
+import { load_record_rules_by_model } from './record-rules.ts';
 
 const COOKIE = 'connect.sid';
 const SECRET = process.env.SESSION_SECRET ?? 'imperium-modular-dev-session';
@@ -333,7 +334,7 @@ export async function build_access(store: ImperiumStore, user: ImperiumDoc) {
 		user_group_ids: groups.map((g) => String(g._id)),
 		user_group_refs: groups.map((g) => String(g._ref ?? '')).filter(Boolean),
 		permissions_by_model,
-		record_rules_by_model: {},
+		record_rules_by_model: await load_record_rules_by_model(store, groups),
 		user_group_names: groups.map((g) => String(g.name ?? '')),
 		allowed_groups: [] as string[],
 		message: 'Permisos del usuario calculados correctamente',

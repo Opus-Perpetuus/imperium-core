@@ -12,6 +12,60 @@ import {
 	prepare_pedido_create,
 	prepare_pedido_update,
 } from './pedidos-flow.ts';
+import { build_access } from './auth.ts';
+import { is_seed_admin } from './group-access.ts';
+import {
+	RecordRuleDeniedError,
+	build_record_denied_message,
+	build_record_rule_match,
+	context_from_actor,
+	operation_flag,
+	type RecordRuleMatchResult,
+} from './record-rules.ts';
+
+async function record_rule_scope(
+	store: ImperiumStore,
+	actor: ImperiumDoc | null,
+	resource: string,
+	method: string,
+): Promise<RecordRuleMatchResult> {
+	if (!actor || is_seed_admin(actor)) return { match: null, applicable_rules: [] };
+	const access = await build_access(store, actor);
+	if (access.has_full_access) return { match: null, applicable_rules: [] };
+	const rules =
+		access.record_rules_by_model?.[resource] ??
+		access.record_rules_by_model?.[
+			resource
+				.split('-')
+				.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+				.join('')
+		];
+	const group_ids = [
+		...((access.user_group_ids as string[]) ?? []),
+		...((access.user_group_refs as string[]) ?? []),
+	];
+	return build_record_rule_match(rules, operation_flag(method), context_from_actor(actor, group_ids));
+}
+
+async function assert_id_in_scope(
+	store: ImperiumStore,
+	resource: string,
+	id: string,
+	scope: RecordRuleMatchResult,
+	method: string,
+) {
+	if (!scope.match) return;
+	const { total } = await store.find_many(resource, {
+		ids: [id],
+		take: 1,
+		include_inactive: true,
+		populate: false,
+		mongo_match: scope.match,
+	});
+	if (!total) {
+		throw new RecordRuleDeniedError(build_record_denied_message(method, resource, scope.applicable_rules));
+	}
+}
 
 export async function handle_crud(
 	store: ImperiumStore,
@@ -48,12 +102,14 @@ export async function handle_crud(
 	}
 	if (method === 'GET' && segs[0] === 'export.csv' && segs.length === 1) {
 		const { q, include_inactive, where, ids } = query_list(url);
+		const scope = await record_rule_scope(store, actor, resource, method);
 		const { rows } = await store.find_many(resource, {
 			q,
 			take: 5000,
 			include_inactive,
 			where: Object.keys(where).length ? where : undefined,
 			ids,
+			mongo_match: scope.match,
 		});
 		const keys = new Set<string>();
 		for (const r of rows) for (const k of Object.keys(r)) keys.add(k);
@@ -118,6 +174,8 @@ export async function handle_crud(
 		return json(resource, ok(arr as ImperiumDoc[], 'Campo arreglo'));
 	}
 	if (method === 'DELETE' && segs[0] === 'id' && segs[1] && segs.length === 2) {
+		const scope = await record_rule_scope(store, actor, resource, method);
+		await assert_id_in_scope(store, resource, segs[1], scope, method);
 		const deleted = await store.remove(resource, segs[1]);
 		if (!deleted) return json(resource, fail('No encontrado', 404).body, 404);
 		if (resource === 'pedidos') await after_pedido_mutate(store, 'delete', deleted);
@@ -128,9 +186,11 @@ export async function handle_crud(
 	}
 	if (method === 'GET' && segs.length === 0) {
 		const q = query_list(url);
+		const scope = await record_rule_scope(store, actor, resource, method);
 		const { rows, total } = await store.find_many(resource, {
 			...q,
 			where: Object.keys(q.where).length ? q.where : undefined,
+			mongo_match: scope.match,
 		});
 		return json(resource, {
 			...ok(rows, 'Ruta encontrada', total),
@@ -150,6 +210,8 @@ export async function handle_crud(
 		}
 		const doc = await store.find_id(resource, segs[0]!);
 		if (!doc) return json(resource, fail('No encontrado', 404).body, 404);
+		const scope = await record_rule_scope(store, actor, resource, method);
+		await assert_id_in_scope(store, resource, segs[0]!, scope, method);
 		const [populated] = await store.populate_docs(resource, [doc]);
 		return json(resource, ok([populated], 'Ruta encontrada'));
 	}
@@ -206,6 +268,8 @@ export async function handle_crud(
 			);
 		}
 		const previous = await store.find_id(resource, id);
+		const scope = await record_rule_scope(store, actor, resource, method);
+		await assert_id_in_scope(store, resource, id, scope, method);
 		let b = await prepare_user_write(
 			resource,
 			await apply_uploads(store, resource, raw, actor, {
@@ -231,6 +295,8 @@ export async function handle_crud(
 	}
 	if (method === 'PATCH' && segs.length === 1) {
 		const previous = await store.find_id(resource, segs[0]!);
+		const scope = await record_rule_scope(store, actor, resource, method);
+		await assert_id_in_scope(store, resource, segs[0]!, scope, method);
 		let patched = await prepare_user_write(
 			resource,
 			await apply_uploads(store, resource, await body(), actor, {

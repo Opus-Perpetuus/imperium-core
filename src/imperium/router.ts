@@ -135,8 +135,15 @@ async function dispatch(
 						),
 					);
 				}
-				const message = err instanceof Error ? err.message : String(err);
-				return add_cors(req, Response.json(fail(message).body, { status: 400 }));
+				const e = err as Error & { status?: number; code?: string };
+				const message = e.message ?? String(err);
+				const status = e.status ?? 400;
+				return add_cors(
+					req,
+					Response.json(fail(message, status, e.code ? { code: e.code } : undefined).body, {
+						status,
+					}),
+				);
 			}
 }
 

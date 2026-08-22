@@ -13,6 +13,7 @@ import {
 	type ImperiumDoc,
 } from './envelope.ts';
 import { SearchEngine, search_text_from_doc } from './search-engine.ts';
+import { mongo_match_to_sql } from './record-rules.ts';
 
 export type ExtraCol = { name: string; mongo?: string; pg?: string };
 
@@ -477,6 +478,7 @@ export class ImperiumStore {
 			where?: Record<string, unknown>;
 			ids?: string[];
 			populate?: boolean;
+			mongo_match?: Record<string, unknown> | null;
 		} = {},
 	): Promise<{ rows: ImperiumDoc[]; total: number }> {
 		const loc = this.loc(resource);
@@ -521,6 +523,10 @@ export class ImperiumStore {
 				if (cols.has(k)) clauses.push(`${qident(k)} = $${params.length}`);
 				else clauses.push(payload_field_eq_sql(k, `$${params.length}`));
 			}
+		}
+		if (opts.mongo_match) {
+			const extra = mongo_match_to_sql(opts.mongo_match, cols, params);
+			if (extra) clauses.push(extra);
 		}
 		if (opts.q) {
 			const like = `%${opts.q}%`;
