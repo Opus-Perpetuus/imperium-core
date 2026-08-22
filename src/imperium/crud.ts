@@ -6,6 +6,7 @@ import { query_list, read_imperium_body } from './body.ts';
 import type { ImperiumStore } from './store.ts';
 import { assert_pos_pin, maybe_create_pos_session_pin } from './user-pin.ts';
 import { register_document_mentions } from './notifications.ts';
+import { apply_uploads } from './uploads.ts';
 
 export async function handle_crud(
 	store: ImperiumStore,
@@ -137,7 +138,9 @@ export async function handle_crud(
 		return json(ok([populated], 'Ruta encontrada'));
 	}
 	if (method === 'POST' && segs.length === 0) {
-		const incoming = await body();
+		const incoming = await apply_uploads(store, resource, await body(), actor, {
+			method: 'POST',
+		});
 		if (resource === 'pos-tickets') {
 			await assert_pos_pin(
 				store,
@@ -159,8 +162,8 @@ export async function handle_crud(
 		);
 	}
 	if (method === 'PUT' && segs.length === 0) {
-		const b = await body();
-		const id = String(b._id ?? b.id ?? '');
+		const raw = await body();
+		const id = String(raw._id ?? raw.id ?? '');
 		if (!id) return json(fail('Se necesita un id para actualizar').body, 400);
 		if (resource === 'pos-session') {
 			await assert_pos_pin(
@@ -172,6 +175,10 @@ export async function handle_crud(
 			);
 		}
 		const previous = await store.find_id(resource, id);
+		const b = await apply_uploads(store, resource, raw, actor, {
+			method: 'PUT',
+			record_id: id,
+		});
 		const updated = await store.update(resource, id, b);
 		if (!updated) return json(fail('No encontrado', 404).body, 404);
 		await maybe_register_mentions(store, actor, resource, updated, previous);
@@ -180,7 +187,11 @@ export async function handle_crud(
 	}
 	if (method === 'PATCH' && segs.length === 1) {
 		const previous = await store.find_id(resource, segs[0]!);
-		const updated = await store.update(resource, segs[0]!, await body());
+		const patched = await apply_uploads(store, resource, await body(), actor, {
+			method: 'PATCH',
+			record_id: segs[0],
+		});
+		const updated = await store.update(resource, segs[0]!, patched);
 		if (!updated) return json(fail('No encontrado', 404).body, 404);
 		await maybe_register_mentions(store, actor, resource, updated, previous);
 		return json(ok([updated], 'Actualizado correctamente'));

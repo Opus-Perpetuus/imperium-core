@@ -1,6 +1,29 @@
 /**
  * Cuerpo Imperium: JSON o multipart con `imperium-sic__data__`.
+ * El front serializa arreglos como `campo[0]`; se reconstruyen aquí
+ * (mismo `processArrayFields` del backend Express).
  */
+
+export function process_array_fields(
+	obj: Record<string, unknown>,
+): Record<string, unknown> {
+	const array_fields: Record<string, unknown[]> = {};
+	for (const key of Object.keys(obj)) {
+		const match = key.match(/^(\w+)\[(\d+)\]$/);
+		if (!match) continue;
+		const name = match[1]!;
+		const index = Number(match[2]);
+		if (!array_fields[name]) array_fields[name] = [];
+		array_fields[name][index] = obj[key];
+		delete obj[key];
+	}
+	for (const name of Object.keys(array_fields)) {
+		const arr = array_fields[name]!;
+		if (arr.length === 1 && arr[0] === '') array_fields[name] = [];
+	}
+	Object.assign(obj, array_fields);
+	return obj;
+}
 
 export async function read_imperium_body(
 	req: Request,
@@ -18,7 +41,10 @@ export async function read_imperium_body(
 			try {
 				const parsed = JSON.parse(packed);
 				if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-					return { ...(parsed as Record<string, unknown>), ...files };
+					return process_array_fields({
+						...(parsed as Record<string, unknown>),
+						...files,
+					});
 				}
 			} catch {
 				/* fall through */
@@ -28,12 +54,15 @@ export async function read_imperium_body(
 		for (const [k, v] of form.entries()) {
 			if (typeof v === 'string') out[k] = v;
 		}
-		return out;
+		return process_array_fields(out);
 	}
 	const raw = await req.text();
 	if (!raw.trim()) return {};
 	try {
 		const parsed = JSON.parse(raw);
+		if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+			return process_array_fields(parsed as Record<string, unknown>);
+		}
 		if (parsed && typeof parsed === 'object') return parsed as Record<string, unknown>;
 	} catch {
 		return {};

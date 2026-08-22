@@ -5,12 +5,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ImperiumDoc } from './envelope.ts';
 import type { ImperiumStore } from './store.ts';
-
-const UPLOAD_FOLDERS = [
-	process.env.MULTER_UPLOAD_FOLDER,
-	'/home/uploads',
-	join(import.meta.dir, '../../../../backend/uploads'),
-].filter((p): p is string => Boolean(p));
+import { resolve_upload_folders } from './uploads.ts';
 
 export async function serve_media(
 	store: ImperiumStore,
@@ -34,7 +29,7 @@ export async function serve_attachment_bytes(
 	const mime = String(doc.mimetype ?? doc.mime ?? 'application/octet-stream');
 	const stored = String(doc.name_stored ?? doc.filename ?? doc.name ?? '').trim();
 	if (stored) {
-		for (const folder of UPLOAD_FOLDERS) {
+		for (const folder of resolve_upload_folders()) {
 			const full = join(folder, stored);
 			if (existsSync(full)) {
 				return { body: readFileSync(full), mime };
