@@ -113,6 +113,7 @@ import {
 	register_internal_transfer,
 	reservar_reception,
 } from './inventory-reception-flow.ts';
+import { apply_physical_count as apply_physical_count_doc } from './inventory-physical-count-flow.ts';
 import { lookup_cobranza } from './cobranza-lookup-flow.ts';
 import {
 	apply_cobranza_payment,
@@ -2640,44 +2641,8 @@ async function import_apertura(ctx: Ctx) {
 }
 
 async function apply_physical_count(ctx: Ctx) {
-	const count = await need(ctx, 'inventory-physical-count', ctx.params.id);
-	if (String(count.estado) === 'aplicado') {
-		throw new Error('Este conteo ya fue aplicado');
-	}
-	const ubicacion = String(count.ubicacion ?? '');
-	const lines = as_array(count.lineas ?? count.articulos);
-	for (const raw of lines) {
-		const line = as_object(raw);
-		const producto = String(line.producto ?? '');
-		if (!producto) continue;
-		const sistema = Number(line.cantidad_sistema ?? line.sistema ?? 0);
-		const contada = Number(line.cantidad_contada ?? line.contado ?? line.cantidad ?? 0);
-		const diferencia = Number((contada - sistema).toFixed(4));
-		if (!diferencia) continue;
-		const prod = await ctx.store.find_id('products', producto);
-		if (!prod) continue;
-		if (ubicacion) await adjust_quant(ctx, producto, ubicacion, diferencia);
-		await ctx.store.update('products', producto, {
-			existencia: Number((Number(prod.existencia ?? 0) + diferencia).toFixed(4)),
-		});
-		if (ctx.store.has('inventory-movement')) {
-			await ctx.store.insert('inventory-movement', {
-				name: `Ajuste ${count.name ?? producto}`,
-				description: 'Ajuste manual de inventario por conteo físico',
-				tipo: 'ajuste_manual',
-				tipo_movimiento: 'ajuste_manual',
-				producto,
-				cantidad: Math.abs(diferencia),
-				ubicacion,
-				documento_tipo: 'inventory-physical-count',
-				documento_id: count._id,
-			});
-		}
-	}
-	return patch_doc(ctx, 'inventory-physical-count', String(count._id), {
-		estado: 'aplicado',
-		fecha_aplicacion: now(),
-	}, 'Conteo aplicado correctamente');
+	const saved = await apply_physical_count_doc(ctx.store, ctx.params.id);
+	return ok([saved], 'Conteo aplicado correctamente');
 }
 
 async function reception_from_po(ctx: Ctx) {

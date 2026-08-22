@@ -37,6 +37,12 @@ import {
 } from './pos-session-flow.ts';
 import { decorate_product, prepare_product_write } from './products-flow.ts';
 import { decorate_vehicle, prepare_vehicle_write } from './vehicle-flow.ts';
+import {
+	decorate_physical_count,
+	is_physical_count_resource,
+	prepare_physical_count_create,
+	prepare_physical_count_update,
+} from './inventory-physical-count-flow.ts';
 import { apply_cobranza_payment } from './cobranza-payment-flow.ts';
 import { is_citizen_report_resource, prepare_citizen_report_write } from './citizen-report-flow.ts';
 import { apply_report_list_where, assert_report_template_write } from './reports-flow.ts';
@@ -205,6 +211,9 @@ export async function handle_crud(
 		return json(resource, ok(decorate_rows(resource, rows), 'Consulta masiva', total));
 	}
 	if (method === 'PUT' && segs[0] === 'batch' && segs.length === 1) {
+		if (is_physical_count_resource(resource)) {
+			throw new Error('Los conteos físicos no soportan operaciones batch');
+		}
 		const b = await body();
 		const items = Array.isArray(b) ? b : Array.isArray(b.rows) ? b.rows : [];
 		const match = String(url.searchParams.get('batch_match_field') ?? '_id');
@@ -248,6 +257,9 @@ export async function handle_crud(
 		}
 		if (resource === 'delivery-return') {
 			throw new Error('Las devoluciones no se pueden eliminar manualmente');
+		}
+		if (is_physical_count_resource(resource)) {
+			throw new Error('Los conteos físicos no se pueden eliminar manualmente');
 		}
 		const scope = await record_rule_scope(store, actor, resource, method);
 		await assert_id_in_scope(store, resource, segs[1], scope, method);
@@ -347,7 +359,9 @@ export async function handle_crud(
 						? 'Devolución encontrada'
 						: resource === 'vehicle'
 							? 'Vehículo encontrado'
-							: 'Ruta encontrada',
+							: is_physical_count_resource(resource)
+								? 'Conteo encontrado'
+								: 'Ruta encontrada',
 			),
 		);
 	}
@@ -392,6 +406,9 @@ export async function handle_crud(
 		}
 		if (resource === 'vehicle') {
 			incoming = await prepare_vehicle_write(store, incoming);
+		}
+		if (is_physical_count_resource(resource)) {
+			incoming = await prepare_physical_count_create(store, incoming);
 		}
 		const project_seed = incoming;
 		if (is_project_resource(resource)) {
@@ -462,7 +479,9 @@ export async function handle_crud(
 								? 'Orden de compra creada correctamente'
 								: resource === 'vehicle'
 									? 'Vehículo creado correctamente'
-									: is_project_resource(resource)
+									: is_physical_count_resource(resource)
+										? 'Conteo creado correctamente'
+										: is_project_resource(resource)
 										? 'Proyecto creado'
 										: is_project_task_resource(resource)
 											? 'Tarea de proyecto creada'
@@ -531,6 +550,9 @@ export async function handle_crud(
 		if (resource === 'vehicle') {
 			b = await prepare_vehicle_write(store, b, previous);
 		}
+		if (is_physical_count_resource(resource)) {
+			b = await prepare_physical_count_update(store, b, previous);
+		}
 		const project_seed = b;
 		if (is_project_resource(resource)) {
 			b = prepare_project_write(b, actor, previous);
@@ -596,7 +618,9 @@ export async function handle_crud(
 								? 'Orden de compra actualizada correctamente'
 								: resource === 'vehicle'
 									? 'Vehículo actualizado correctamente'
-									: is_project_resource(resource)
+									: is_physical_count_resource(resource)
+										? 'Conteo actualizado correctamente'
+										: is_project_resource(resource)
 										? 'Proyecto actualizado correctamente'
 										: is_project_task_resource(resource)
 											? 'Tarea de proyecto actualizada correctamente'
@@ -638,6 +662,9 @@ export async function handle_crud(
 		}
 		if (resource === 'vehicle') {
 			patched = await prepare_vehicle_write(store, patched, previous);
+		}
+		if (is_physical_count_resource(resource)) {
+			patched = await prepare_physical_count_update(store, patched, previous);
 		}
 		const project_seed = patched;
 		if (is_project_resource(resource)) {
@@ -704,7 +731,9 @@ export async function handle_crud(
 								? 'Orden de compra actualizada correctamente'
 								: resource === 'vehicle'
 									? 'Vehículo actualizado correctamente'
-									: is_project_resource(resource)
+									: is_physical_count_resource(resource)
+										? 'Conteo actualizado correctamente'
+										: is_project_resource(resource)
 										? 'Proyecto actualizado correctamente'
 										: is_project_task_resource(resource)
 											? 'Tarea de proyecto actualizada correctamente'
@@ -722,6 +751,7 @@ export async function handle_crud(
 function decorate_rows(resource: string, rows: ImperiumDoc[]): ImperiumDoc[] {
 	if (resource === 'products') return rows.map(decorate_product);
 	if (resource === 'vehicle') return rows.map(decorate_vehicle);
+	if (is_physical_count_resource(resource)) return rows.map(decorate_physical_count);
 	return rows;
 }
 
