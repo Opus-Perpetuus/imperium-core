@@ -202,6 +202,45 @@ export class ImperiumStore {
 				}
 			}
 		}
+		if (process.env.AUTO_REINDEX_SEARCH_ON_STARTUP !== 'false') {
+			void this.warmup_search_indexes();
+		}
+	}
+
+	async warmup_search_indexes(): Promise<void> {
+		if (!(await SearchEngine.ensure_available())) return;
+		const seen = new Set<string>();
+		let processed = 0;
+		for (const loc of this.all_locs) {
+			if (seen.has(loc.collection)) continue;
+			seen.add(loc.collection);
+			if (!(await SearchEngine.index_is_empty(loc.collection))) continue;
+			let skip = 0;
+			for (;;) {
+				const { rows, total } = await this.find_many(loc.resource, {
+					take: 200,
+					skip,
+					include_inactive: false,
+					populate: false,
+				});
+				if (!rows.length) break;
+				await SearchEngine.index_documents(
+					loc.collection,
+					rows
+						.map((doc) => ({
+							id: String(doc._id),
+							search_text: search_text_from_doc(doc),
+						}))
+						.filter((doc) => doc.search_text),
+				);
+				processed += rows.length;
+				skip += rows.length;
+				if (skip >= total) break;
+			}
+		}
+		if (processed) {
+			console.log(`[search] Indexado inicial al motor: ${processed} documentos`);
+		}
 	}
 
 	async ensure_orphan_tables(): Promise<void> {

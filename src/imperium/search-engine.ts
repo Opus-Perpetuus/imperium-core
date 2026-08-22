@@ -106,6 +106,18 @@ class SearchEngineService {
 		}
 	}
 
+	async index_is_empty(collection: string) {
+		if (!this.is_enabled()) return true;
+		try {
+			const res = await this.request('GET', `/indexes/${this.uid(collection)}/stats`);
+			if (!res?.ok) return true;
+			const stats = (await res.json()) as { numberOfDocuments?: number };
+			return (stats.numberOfDocuments ?? 0) === 0;
+		} catch {
+			return true;
+		}
+	}
+
 	async clear_index(collection: string) {
 		if (!this.is_enabled()) return;
 		try {
