@@ -524,6 +524,13 @@ const SESSION_SCOPED_EXTRAS = new Set([
 	'payroll-period:generate_drafts',
 	'payroll-receipt:prepare_stamp',
 	'payroll-receipt:export_payload',
+	'configuration:ai_generate_text',
+	'model-tracker:get_all_models',
+	'model-tracker:get_search_engine_status',
+	'model-tracker:read_field_values_globally',
+	'auto-increment-control:preview',
+	'auto-increment-control:get_available_models',
+	'custom-pattern-increment-sequence-parts:get_by_counter_config',
 ]);
 
 function is_session_scoped_extra(resource?: string, action?: string) {
