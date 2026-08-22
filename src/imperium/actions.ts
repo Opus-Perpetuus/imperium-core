@@ -4294,14 +4294,50 @@ async function payments_session(ctx: Ctx) {
 }
 
 async function payments_webhook(ctx: Ctx) {
-	const id = String(ctx.body.session_id ?? ctx.body.id ?? '');
-	if (!id) return ok([], 'Webhook recibido');
-	const updated = await ctx.store.update('payments', id, {
-		status: 'pagado',
-		estado: 'pagado',
-		fecha_pago: now(),
-	});
-	return ok(updated ? [updated] : [], 'Webhook aplicado');
+	const secret = await payments_config_text(
+		ctx,
+		'configuration-payments-stripe-webhook-secret',
+		'STRIPE_WEBHOOK_SECRET',
+	);
+	const raw = JSON.stringify(ctx.body ?? {});
+	if (secret && !stripe_verify_webhook(raw, ctx.req.headers.get('stripe-signature'), secret)) {
+		throw new Error('Firma de webhook Stripe inválida.');
+	}
+	const event = ctx.body as {
+		id?: string;
+		type?: string;
+		data?: { object?: { id?: string; metadata?: { payment_id?: string } } };
+	};
+	if (event.id) {
+		const already = await ctx.store.find_where('payments', { webhook_event_id: event.id });
+		if (already) return { received: true };
+	}
+	const session_id = event.data?.object?.id;
+	const payment_id = event.data?.object?.metadata?.payment_id;
+	const payment = payment_id
+		? await ctx.store.find_id('payments', payment_id)
+		: session_id
+			? await ctx.store.find_where('payments', { provider_ref: session_id })
+			: null;
+	if (!payment) return { received: true };
+	if (event.type === 'checkout.session.completed') {
+		await ctx.store.update('payments', String(payment._id), {
+			status: 'PAGADO',
+			estado: 'pagado',
+			webhook_event_id: event.id,
+			fecha_pago: now(),
+		});
+	} else if (
+		event.type === 'checkout.session.expired' ||
+		event.type === 'checkout.session.async_payment_failed'
+	) {
+		await ctx.store.update('payments', String(payment._id), {
+			status: 'FALLIDO',
+			estado: 'fallido',
+			webhook_event_id: event.id,
+		});
+	}
+	return { received: true };
 }
 
 const AGUA_PUBLIC_WINDOW_MS = 60_000;
