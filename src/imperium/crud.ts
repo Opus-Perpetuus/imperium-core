@@ -37,6 +37,16 @@ import {
 } from './pos-session-flow.ts';
 import { decorate_product, prepare_product_write } from './products-flow.ts';
 import { decorate_vehicle, prepare_vehicle_write } from './vehicle-flow.ts';
+import { is_citizen_report_resource, prepare_citizen_report_write } from './citizen-report-flow.ts';
+import {
+	dashboard_access,
+	dashboard_can_manage,
+	dashboard_is_visible,
+	is_dashboard_resource,
+	is_view_preset_resource,
+	prepare_dashboard_write,
+	prepare_view_preset_create,
+} from './dashboard-flow.ts';
 import {
 	after_project_write,
 	apply_root_parent_filter,
@@ -201,6 +211,13 @@ export async function handle_crud(
 		if (resource === 'delivery-package') {
 			throw new Error('No se eliminan bultos. Usa «Anular bulto» para liberar el empaque.');
 		}
+		if (is_dashboard_resource(resource)) {
+			const existing = await store.find_id(resource, segs[1]!);
+			const access = await dashboard_access(store, actor);
+			if (!dashboard_can_manage(existing, access)) {
+				throw new Error('Solo el dueño del tablero puede eliminarlo');
+			}
+		}
 		if (resource === 'delivery-return') {
 			throw new Error('Las devoluciones no se pueden eliminar manualmente');
 		}
@@ -244,9 +261,17 @@ export async function handle_crud(
 					? found.total
 					: filtered.length,
 		};
-		const decorated = decorate_rows(resource, rows);
+		let decorated = decorate_rows(resource, rows);
+		let visible_total = total;
+		if (is_dashboard_resource(resource)) {
+			const access = await dashboard_access(store, actor);
+			if (!access.full) {
+				decorated = decorated.filter((doc) => dashboard_is_visible(doc, access));
+				visible_total = decorated.length;
+			}
+		}
 		return json(resource, {
-			...ok(decorated, 'Ruta encontrada', total),
+			...ok(decorated, 'Ruta encontrada', visible_total),
 			tipo_de_instancia: instance_type(store, resource, decorated),
 			module_info: { name: resource, model: resource, model_id: resource },
 		});
@@ -263,6 +288,12 @@ export async function handle_crud(
 		}
 		const doc = await store.find_id(resource, segs[0]!);
 		if (!doc) return json(resource, fail('No encontrado', 404).body, 404);
+		if (is_dashboard_resource(resource)) {
+			const access = await dashboard_access(store, actor);
+			if (!dashboard_is_visible(doc, access)) {
+				return json(resource, fail('Tablero no encontrado', 404).body, 404);
+			}
+		}
 		const scope = await record_rule_scope(store, actor, resource, method);
 		await assert_id_in_scope(store, resource, segs[0]!, scope, method);
 		const [populated] = decorate_rows(
@@ -338,6 +369,20 @@ export async function handle_crud(
 		if (is_personal_task_resource(resource)) {
 			incoming = prepare_personal_task_write(incoming, actor);
 		}
+		if (is_citizen_report_resource(resource)) {
+			incoming = await prepare_citizen_report_write(store, incoming, true);
+		}
+		if (is_dashboard_resource(resource)) {
+			incoming = prepare_dashboard_write(
+				incoming,
+				actor,
+				await dashboard_access(store, actor),
+				true,
+			);
+		}
+		if (is_view_preset_resource(resource)) {
+			incoming = prepare_view_preset_create(incoming, actor);
+		}
 		const doc = await before_create(store, resource, incoming, actor);
 		const created = await store.insert(resource, doc);
 		await link_attachments_to_record(store, resource, created);
@@ -380,7 +425,13 @@ export async function handle_crud(
 											? 'Tarea de proyecto creada'
 											: is_personal_task_resource(resource)
 												? 'Tarea personal creada'
-												: 'Ruta creada';
+												: is_citizen_report_resource(resource)
+													? 'Reporte ciudadano creado'
+													: is_dashboard_resource(resource)
+														? 'Tablero creado'
+														: is_view_preset_resource(resource)
+															? 'Configuración creada'
+															: 'Ruta creada';
 		return json(
 			resource,
 			notice ? { ...ok([populated], message), user_pin_notice: notice } : ok([populated], message),
@@ -443,6 +494,16 @@ export async function handle_crud(
 		if (is_personal_task_resource(resource)) {
 			assert_personal_task_owner(previous, actor);
 			b = prepare_personal_task_write(b, actor);
+		}
+		if (is_citizen_report_resource(resource)) {
+			b = await prepare_citizen_report_write(store, b, false);
+		}
+		if (is_dashboard_resource(resource)) {
+			const access = await dashboard_access(store, actor);
+			if (!dashboard_can_manage(previous, access)) {
+				throw new Error('Solo el dueño del tablero puede modificarlo');
+			}
+			b = prepare_dashboard_write(b, actor, access, false);
 		}
 		const updated = await store.update(resource, id, b);
 		if (updated) await link_attachments_to_record(store, resource, updated);
@@ -530,6 +591,16 @@ export async function handle_crud(
 		if (is_personal_task_resource(resource)) {
 			assert_personal_task_owner(previous, actor);
 			patched = prepare_personal_task_write(patched, actor);
+		}
+		if (is_citizen_report_resource(resource)) {
+			patched = await prepare_citizen_report_write(store, patched, false);
+		}
+		if (is_dashboard_resource(resource)) {
+			const access = await dashboard_access(store, actor);
+			if (!dashboard_can_manage(previous, access)) {
+				throw new Error('Solo el dueño del tablero puede modificarlo');
+			}
+			patched = prepare_dashboard_write(patched, actor, access, false);
 		}
 		const updated = await store.update(resource, segs[0]!, patched);
 		if (updated) await link_attachments_to_record(store, resource, updated);
