@@ -484,6 +484,22 @@ const SESSION_SCOPED_EXTRAS = new Set([
 	'purchase-order:confirm',
 	'purchase-order:replenish_from_order',
 	'purchase-order:parse_document',
+	'cfdi-catalog:lookup',
+	'cfdi-catalog:search',
+	'cfdi-document:from_invoice_request',
+	'cfdi-document:from_payroll_receipt',
+	'cfdi-document:from_purchase_order',
+	'cfdi-document:validate_document',
+	'cfdi-document:stamp_document',
+	'cfdi-document:export_xml',
+	'cfdi-document:export_json',
+	'invoice-request:generate_from_order',
+	'invoice-request:authorize',
+	'invoice-request:send_to_commercial',
+	'invoice-request:mark_invoiced',
+	'invoice-request:link_cfdi_document',
+	'invoice-request:request_cfdi_draft',
+	'invoice-request:cancel_request',
 ]);
 
 function is_session_scoped_extra(resource?: string, action?: string) {
