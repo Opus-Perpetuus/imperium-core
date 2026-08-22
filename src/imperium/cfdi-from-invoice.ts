@@ -107,6 +107,10 @@ export async function create_cfdi_from_invoice_request(ctx: CfdiFromInvoiceCtx) 
 	if (!invoice_request || invoice_request.is_active === false) {
 		throw new Error('No se encontró la solicitud de facturación.');
 	}
+	const estado = text(invoice_request.estado).toLowerCase();
+	if (estado === 'cancelado' || estado === 'cancelada') {
+		throw new Error('No se puede generar un borrador CFDI desde una solicitud cancelada.');
+	}
 
 	const issuer = await load_issuer(ctx.store, text(ctx.body.issuer_profile_id) || undefined);
 	const contacto_id = ref_id(invoice_request.contacto);
@@ -116,12 +120,18 @@ export async function create_cfdi_from_invoice_request(ctx: CfdiFromInvoiceCtx) 
 		if (contacto?.is_active === false) contacto = null;
 	}
 
+	const lineas = as_array(invoice_request.lineas);
+	const articulos = as_array(invoice_request.articulos);
+	const subpedidos = as_array(invoice_request.subpedidos);
 	const product_ids: string[] = [];
-	for (const sub of as_array(invoice_request.subpedidos)) {
-		for (const art of as_array(as_object(sub).articulos)) {
-			const product = ref_id(as_object(art).product);
-			if (product) product_ids.push(product);
-		}
+	const collect_product = (raw: unknown) => {
+		const product = ref_id(as_object(raw).product);
+		if (product) product_ids.push(product);
+	};
+	for (const line of lineas) collect_product(line);
+	for (const line of articulos) collect_product(line);
+	for (const sub of subpedidos) {
+		for (const art of as_array(as_object(sub).articulos)) collect_product(art);
 	}
 	const product_map = await build_product_map(ctx.store, product_ids);
 	const iva_rate = resolve_iva_rate(invoice_request, ctx.body);
@@ -140,7 +150,8 @@ export async function create_cfdi_from_invoice_request(ctx: CfdiFromInvoiceCtx) 
 						uso_cfdi_default: text(contacto.uso_cfdi_default) || undefined,
 					}
 				: undefined,
-			subpedidos: as_array(invoice_request.subpedidos) as Array<{ articulos?: unknown[] }>,
+			lineas: (lineas.length ? lineas : articulos) as Array<Record<string, unknown>>,
+			subpedidos: subpedidos as Array<{ articulos?: unknown[] }>,
 			forma_pago: text(ctx.body.forma_pago) || undefined,
 			metodo_pago: text(ctx.body.metodo_pago) || undefined,
 			moneda: text(ctx.body.moneda) || undefined,

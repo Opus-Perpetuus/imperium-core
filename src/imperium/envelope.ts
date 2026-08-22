@@ -36,9 +36,10 @@ export function to_imperium(row: Record<string, unknown> | null): ImperiumDoc | 
 	if (!row) return null;
 	const payload = as_object(row.payload);
 	const custom = as_object(row.custom_data);
+	const columns = omit(row, ['payload']);
 	const out: ImperiumDoc = {
 		...payload,
-		...omit(row, ['payload']),
+		...columns,
 		_id: row.id ?? payload._id,
 		id: row.id,
 		_ref: row.ref ?? payload._ref ?? null,
@@ -46,6 +47,9 @@ export function to_imperium(row: Record<string, unknown> | null): ImperiumDoc | 
 		createdAt: row.created_at ?? payload.createdAt,
 		updatedAt: row.updated_at ?? payload.updatedAt,
 	};
+	for (const [key, value] of Object.entries(payload)) {
+		if (out[key] == null && value != null) out[key] = value;
+	}
 	return out;
 }
 

@@ -3004,16 +3004,20 @@ async function invoice_link_cfdi(ctx: Ctx) {
 
 async function invoice_cfdi_draft(ctx: Ctx) {
 	const rec = await need(ctx, 'invoice-request', ctx.params.id);
-	const created = await ctx.store.insert('cfdi-document', {
-		name: `Borrador ${rec.name}`,
-		status: 'draft',
-		estado: 'draft',
-		origen: 'invoice-request',
-		origen_id: rec._id,
-		payload_canonico: rec,
+	const estado = String(rec.estado ?? '').trim().toLowerCase();
+	if (estado === 'cancelado' || estado === 'cancelada') {
+		throw new Error('No se puede generar un borrador CFDI desde una solicitud cancelada.');
+	}
+	const draft = await create_cfdi_from_invoice_request({
+		store: ctx.store,
+		params: { invoiceRequestId: String(rec._id), id: String(rec._id) },
+		body: ctx.body,
 	});
-	await ctx.store.update('invoice-request', String(rec._id), { cfdi_draft: created._id });
-	return ok([created], 'Borrador CFDI creado');
+	const updated = await ctx.store.find_id('invoice-request', String(rec._id));
+	const message =
+		(draft as { message?: string }).message ||
+		'Borrador CFDI solicitado desde la solicitud de facturación';
+	return ok([updated ?? rec], message);
 }
 
 function message_participants(doc: ImperiumDoc, uid: string): string[] {
