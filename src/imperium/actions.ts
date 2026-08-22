@@ -119,6 +119,7 @@ import {
 	mark_invoice_request,
 	send_invoice_to_commercial,
 } from './invoice-request-flow.ts';
+import { resolve_widget_data } from './dashboard-flow.ts';
 import {
 	end_attending_turn as end_ticketing_turn,
 	notify_turn as notify_ticketing_turn,
@@ -2250,102 +2251,7 @@ function to_model_id(resource: string) {
 }
 
 async function widget_data(ctx: Ctx) {
-	const spec = as_object(ctx.body.spec ?? ctx.body);
-	const pagination = as_object(ctx.body.pagination ?? {});
-	const widget_type = String(spec.widget_type ?? '');
-	const model_id = String(spec.model_id ?? spec.model ?? spec.resource ?? '');
-	if (!widget_type || !model_id) {
-		throw new Error("La especificación del widget requiere 'widget_type' y 'model_id'.");
-	}
-	let resource: string;
-	try {
-		resource = resolve_model(ctx, model_id);
-	} catch {
-		throw new Error(`El modelo '${model_id}' no está disponible.`);
-	}
-	const take = Number(pagination.limite ?? 50);
-	const skip = Number(pagination.desde ?? 0);
-	const for_table = widget_type === 'table';
-	const { rows, total } = await ctx.store.find_many(resource, {
-		take: for_table ? take : 5000,
-		skip: for_table ? skip : 0,
-	});
-	const agg = as_object(spec.aggregation);
-	const op = String(agg.op ?? 'count');
-	const field = String(agg.field ?? '');
-	const numeric = (row: ImperiumDoc) => Number(row[field] ?? 0);
-	const scalar = () => {
-		if (op === 'sum') return rows.reduce((acc, row) => acc + numeric(row), 0);
-		if (op === 'avg') {
-			return rows.length
-				? rows.reduce((acc, row) => acc + numeric(row), 0) / rows.length
-				: 0;
-		}
-		if (op === 'min') return rows.length ? Math.min(...rows.map(numeric)) : 0;
-		if (op === 'max') return rows.length ? Math.max(...rows.map(numeric)) : 0;
-		return total;
-	};
-	if (widget_type === 'kpi') {
-		return ok(
-			[{ widget_type, denied: false, kpi: { value: scalar() } }],
-			'Datos del widget obtenidos',
-		);
-	}
-	if (widget_type === 'progress') {
-		const progress = as_object(spec.progress);
-		return ok(
-			[{
-				widget_type,
-				denied: false,
-				progress: {
-					value: scalar(),
-					target_value: progress.target_value,
-					target_date: progress.target_date,
-				},
-			}],
-			'Datos del widget obtenidos',
-		);
-	}
-	if (widget_type.startsWith('chart-')) {
-		const group_by = String(spec.group_by ?? '');
-		if (!group_by) throw new Error("Los widgets de gráfica requieren 'group_by'.");
-		const map = new Map<string, number>();
-		for (const row of rows) {
-			const raw = row[group_by];
-			const name =
-				raw && typeof raw === 'object'
-					? String(as_object(raw).name ?? 'Sin valor')
-					: String(raw ?? 'Sin valor');
-			map.set(name, (map.get(name) ?? 0) + (op === 'count' ? 1 : numeric(row)));
-		}
-		const series = [...map.entries()]
-			.map(([name, value]) => ({ name, value }))
-			.sort((a, b) => b.value - a.value)
-			.slice(0, 20);
-		return ok(
-			[{ widget_type, denied: false, chart: { series, truncated: map.size > 20 } }],
-			'Datos del widget obtenidos',
-		);
-	}
-	const fields = as_array(spec.fields).map(String);
-	const table_rows = rows.map((row) => {
-		if (!fields.length) return row;
-		const slim: Record<string, unknown> = {};
-		for (const key of fields) slim[key] = row[key];
-		return slim;
-	});
-	return ok(
-		[{
-			widget_type,
-			denied: false,
-			table: {
-				rows: table_rows,
-				total_elementos: total,
-				fields: fields.length ? fields : Object.keys(table_rows[0] ?? { name: 1 }),
-			},
-		}],
-		'Datos del widget obtenidos',
-	);
+	return resolve_widget_data(ctx.store, ctx.actor, ctx.body);
 }
 
 async function find_location_by_codigo(ctx: Ctx, codigo: string) {

@@ -393,7 +393,16 @@ function scalar(value: unknown): unknown {
 }
 
 function field_extract(field: string, cols: Set<string>): string {
-	const name = field === '_id' ? 'id' : field === '_ref' ? 'ref' : field;
+	const name =
+		field === '_id'
+			? 'id'
+			: field === '_ref'
+				? 'ref'
+				: field === 'createdAt'
+					? 'created_at'
+					: field === 'updatedAt'
+						? 'updated_at'
+						: field;
 	if (name === 'id' || cols.has(name)) return qident(name);
 	const key = literal(field);
 	return `(COALESCE(payload ->> ${key}, CASE WHEN jsonb_typeof(payload) = 'string' THEN ((payload #>> '{}')::jsonb) ->> ${key} END))`;
@@ -466,6 +475,33 @@ export function mongo_match_to_sql(
 			}
 			if ('$exists' in op) {
 				parts.push(op.$exists ? `${expr} IS NOT NULL` : `${expr} IS NULL`);
+				continue;
+			}
+			if ('$regex' in op) {
+				params.push(String(op.$regex ?? ''));
+				const insensitive = String(op.$options ?? '').includes('i');
+				parts.push(`${expr} ${insensitive ? '~*' : '~'} $${params.length}`);
+				continue;
+			}
+			const comparisons: string[] = [];
+			if ('$gte' in op) {
+				params.push(scalar(op.$gte));
+				comparisons.push(`${expr} >= $${params.length}`);
+			}
+			if ('$gt' in op) {
+				params.push(scalar(op.$gt));
+				comparisons.push(`${expr} > $${params.length}`);
+			}
+			if ('$lte' in op) {
+				params.push(scalar(op.$lte));
+				comparisons.push(`${expr} <= $${params.length}`);
+			}
+			if ('$lt' in op) {
+				params.push(scalar(op.$lt));
+				comparisons.push(`${expr} < $${params.length}`);
+			}
+			if (comparisons.length) {
+				parts.push(`(${comparisons.join(' AND ')})`);
 				continue;
 			}
 		}
