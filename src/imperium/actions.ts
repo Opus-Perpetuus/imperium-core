@@ -252,7 +252,7 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 				counter_config_id: ctx.params.counter_config_id,
 			});
 		case 'interface-restriction:runtime_read':
-			return list_where(ctx, 'interface-restriction', {});
+			return interface_restriction_runtime(ctx);
 		case 'status-option-control:save_module_configuration':
 			return save_status_config(ctx);
 		case 'status-option-control:normalize_state_values':
@@ -728,6 +728,23 @@ async function list_resource(ctx: Ctx, resource: string) {
 async function list_where(ctx: Ctx, resource: string, where: Record<string, unknown>) {
 	const clean = Object.fromEntries(Object.entries(where).filter(([, v]) => v !== ''));
 	const { rows, total } = await ctx.store.find_many(resource, { where: clean, take: 500 });
+	return ok(rows, 'Ruta encontrada', total);
+}
+
+/**
+ * Lista activa para el watcher de UI. Mismo contrato que el original:
+ * solo sesión (sin ACL del módulo) y los filtros/orden del query del front.
+ */
+async function interface_restriction_runtime(ctx: Ctx) {
+	const q = query_list(ctx.url);
+	const { rows, total } = await ctx.store.find_many('interface-restriction', {
+		q: q.q,
+		skip: q.skip,
+		take: q.take || 5000,
+		sort: q.sort || 'html_element_hash:asc',
+		where: Object.keys(q.where).length ? q.where : undefined,
+		include_inactive: q.include_inactive,
+	});
 	return ok(rows, 'Ruta encontrada', total);
 }
 

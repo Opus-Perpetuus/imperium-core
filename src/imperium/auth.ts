@@ -405,6 +405,7 @@ const SESSION_SCOPED_EXTRAS = new Set([
 	'interactive-manual:board',
 	'view-config-preset:available',
 	'view-config-preset:baseline',
+	'interface-restriction:runtime_read',
 	'user-pin:verify',
 	'tickets:read_my_tickets',
 	'tickets:create_internal_ticket',
