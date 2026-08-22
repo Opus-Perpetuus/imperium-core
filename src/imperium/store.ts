@@ -166,6 +166,27 @@ export class ImperiumStore {
 				});
 			}
 		}
+		if (this.has('employee')) {
+			const { total } = await this.find_many('employee', { take: 1, include_inactive: true });
+			if (!total) {
+				const employee = await this.insert('employee', {
+					name: 'Administrador',
+					_ref: 'employee-admin-0',
+					description: 'Empleado predeterminado',
+					is_active: true,
+				});
+				if (this.has('user') && employee?._id) {
+					const admin =
+						(await this.find_where('user', { _ref: 'user-menu-management-0' })) ??
+						(await this.find_where('user', { email: 'admin@admin.com' }));
+					if (admin?._id && !admin.employee) {
+						await this.update('user', String(admin._id), {
+							employee: employee._id,
+						});
+					}
+				}
+			}
+		}
 	}
 
 	async ensure_orphan_tables(): Promise<void> {
