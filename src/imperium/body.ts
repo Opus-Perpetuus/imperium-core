@@ -72,14 +72,31 @@ export function query_list(url: URL): {
 	let take = Number(url.searchParams.get('limite') ?? url.searchParams.get('take') ?? 100);
 	if (!Number.isFinite(take) || take < 1) take = 100;
 	take = Math.min(Math.floor(take), 10000);
-	const sort = (url.searchParams.get('sort') ?? url.searchParams.get('campoSort') ?? '').trim();
+	const campo = (url.searchParams.get('campoSort') ?? '').trim();
+	const sort_raw = (url.searchParams.get('sort') ?? '').trim();
+	let sort = '';
+	if (campo) {
+		const desc = sort_raw === '-1' || sort_raw.toLowerCase() === 'desc';
+		sort = `${campo}:${desc ? 'desc' : 'asc'}`;
+	} else if (sort_raw && !/^[-]?\d+$/.test(sort_raw)) {
+		sort = sort_raw;
+	}
 	const include_inactive =
 		url.searchParams.get('include_inactive') === '1' ||
 		url.searchParams.get('include_inactive') === 'true';
 	const where: Record<string, unknown> = {};
 	for (const [key, value] of url.searchParams.entries()) {
 		if (LIST_RESERVED.has(key) || value === '') continue;
-		where[key] = value;
+		if (key in where) {
+			const prev = where[key];
+			const arr = Array.isArray((prev as { in?: unknown[] })?.in)
+				? [...((prev as { in: unknown[] }).in)]
+				: [prev];
+			arr.push(value);
+			where[key] = { in: arr };
+		} else {
+			where[key] = value;
+		}
 	}
 	const ids_raw = (url.searchParams.get('ids') ?? '').trim();
 	const ids = ids_raw

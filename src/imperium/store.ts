@@ -310,6 +310,17 @@ export class ImperiumStore {
 			for (const [raw_key, v] of Object.entries(opts.where)) {
 				if (v === undefined) continue;
 				const k = raw_key === '_ref' ? 'ref' : raw_key;
+				if (v && typeof v === 'object' && !Array.isArray(v) && 'in' in v && Array.isArray((v as { in: unknown[] }).in)) {
+					const values = (v as { in: unknown[] }).in.map(String);
+					if (!values.length) continue;
+					const marks = values.map((item) => {
+						params.push(item);
+						return `$${params.length}`;
+					});
+					if (cols.has(k)) clauses.push(`${qident(k)} IN (${marks.join(', ')})`);
+					else clauses.push(`payload ->> ${literal(k)} IN (${marks.join(', ')})`);
+					continue;
+				}
 				params.push(v);
 				if (cols.has(k)) clauses.push(`${qident(k)} = $${params.length}`);
 				else clauses.push(`payload ->> ${literal(k)} = $${params.length}::text`);
@@ -337,7 +348,13 @@ export class ImperiumStore {
 		let order = ' ORDER BY name ASC NULLS LAST, id ASC';
 		if (opts.sort) {
 			const m = opts.sort.match(/^([a-zA-Z_][a-zA-Z0-9_]*)(?::(asc|desc))?$/i);
-			const campo = (m?.[1] ?? '').replace(/^_/, '');
+			const raw_campo = (m?.[1] ?? '').replace(/^_/, '');
+			const aliases: Record<string, string> = {
+				updatedAt: 'updated_at',
+				createdAt: 'created_at',
+				_id: 'id',
+			};
+			const campo = aliases[raw_campo] ?? raw_campo;
 			const dir = (m?.[2] ?? 'asc').toLowerCase() === 'desc' ? 'DESC' : 'ASC';
 			if (campo && cols.has(campo === 'ref' ? 'ref' : campo)) {
 				const col = campo === '_ref' ? 'ref' : campo;

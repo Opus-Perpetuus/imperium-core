@@ -108,15 +108,11 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'delivery-package:read_offline_catalog':
 			return list_resource(ctx, 'delivery-package');
 		case 'delivery-package:read_load_manifest':
-			return list_where(ctx, 'delivery-package', {
-				estado: String(ctx.url.searchParams.get('estado') ?? ''),
-			});
+			return read_load_manifest(ctx);
 		case 'delivery-package:read_by_pedido':
 			return list_where(ctx, 'delivery-package', { pedido: ctx.params.pedidoId });
 		case 'delivery-package:read_chofer_queue':
-			return list_where(ctx, 'delivery-package', {
-				chofer: String(ctx.actor?._id ?? ctx.url.searchParams.get('chofer') ?? ''),
-			});
+			return read_chofer_queue(ctx);
 		case 'delivery-package:close_empaque':
 			return close_empaque(ctx);
 		case 'delivery-package:apply_logistics_event':
@@ -173,7 +169,7 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'inventory-movement:register_transfer':
 			return register_transfer(ctx);
 		case 'inventory-physical-count:import_apertura':
-			return ok([], 'Importación de apertura registrada');
+			return import_apertura(ctx);
 		case 'inventory-physical-count:aplicar':
 			return apply_physical_count(ctx);
 		case 'inventory-reception:read_in_transit':
@@ -433,6 +429,11 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 
 function now() {
 	return new Date().toISOString();
+}
+function ref_id(value: unknown): string {
+	if (value == null) return '';
+	if (typeof value === 'object') return String((value as { _id?: unknown })._id ?? '');
+	return String(value).trim();
 }
 function actor_name(ctx: Ctx) {
 	return String(ctx.actor?.name ?? ctx.actor?.email ?? '');
@@ -701,39 +702,259 @@ async function save_status_config(ctx: Ctx) {
 
 async function close_empaque(ctx: Ctx) {
 	const pedido = await need(ctx, 'pedidos', ctx.params.pedidoId);
+	const estado = String(pedido.estado ?? '');
+	if (estado === 'cancelado') {
+		throw new Error('No se puede cerrar empaque de un pedido cancelado');
+	}
+	if (estado !== 'surtido' && estado !== 'enviado') {
+		throw new Error(
+			`El pedido debe estar en «surtido» para cerrar empaque (ahora: ${estado || 'sin estado'})`,
+		);
+	}
 	const { rows } = await ctx.store.find_many('delivery-package', {
 		where: { pedido: String(pedido._id) },
 		take: 200,
+		include_inactive: true,
 	});
-	const updated = [];
-	for (const p of rows) {
-		const st = String(p.estado ?? '');
-		if (st === 'cancelado') continue;
-		updated.push(
-			await ctx.store.update('delivery-package', String(p._id), {
-				estado: st === 'pendiente' || st === 'incidencia' || !st ? 'asignado' : st,
-				fecha_cierre: now(),
-			}),
+	const active = rows.filter(
+		(p) => p.is_active !== false && String(p.estado) !== 'cancelado',
+	);
+	const articulos = as_array(pedido.articulos);
+	let total_base = 0;
+	let total_remanente = 0;
+	for (let i = 0; i < articulos.length; i++) {
+		const art = as_object(articulos[i]);
+		const surtida = Number(art.cantidad_surtida ?? 0);
+		const base = surtida > 0 ? surtida : Math.max(0, Number(art.cantidad ?? 0));
+		const pid = ref_id(art.product);
+		let empacado = 0;
+		for (const pack of active) {
+			for (const raw of as_array(pack.contenido)) {
+				const item = as_object(raw);
+				const qty = Number(item.quantity ?? 0);
+				if (!(qty > 0)) continue;
+				if (item.articulo_index != null && String(item.articulo_index) !== '') {
+					if (Number(item.articulo_index) === i) empacado += qty;
+				} else if (pid && ref_id(item.product) === pid) {
+					empacado += qty;
+				}
+			}
+		}
+		total_base += base;
+		total_remanente += Math.max(0, base - empacado);
+	}
+	if (total_base <= 0) throw new Error('El pedido no tiene cantidades para empacar');
+	if (total_remanente > 1e-9) {
+		throw new Error(
+			`Aún hay remanente por empacar (${total_remanente} uds). Completa los bultos antes de cerrar.`,
 		);
+	}
+	if (!active.length) throw new Error('No hay bultos activos para cerrar el empaque');
+	const post = ['cargado', 'en_ruta', 'entregado'];
+	if (active.some((p) => post.includes(String(p.estado)))) {
+		return ok(active, 'El empaque ya avanzó a carga/entrega; no se requiere cerrar de nuevo.');
+	}
+	const missing_route: string[] = [];
+	const missing_vehicle: string[] = [];
+	for (const pack of active) {
+		const code = String(pack.codigo_bulto ?? pack.name ?? pack._id);
+		if (!ref_id(pack.delivery_route)) missing_route.push(code);
+		if (!ref_id(pack.vehicle)) missing_vehicle.push(code);
+	}
+	if (missing_route.length) {
+		throw new Error(
+			`Falta ruta en bulto(s): ${missing_route.join(', ')}. Asigna ruta antes de cerrar.`,
+		);
+	}
+	if (missing_vehicle.length) {
+		throw new Error(
+			`Falta vehículo en bulto(s): ${missing_vehicle.join(', ')}. Asigna vehículo (o ponlo en la ruta) antes de cerrar.`,
+		);
+	}
+	if (active.every((p) => String(p.estado) === 'asignado')) {
+		return ok(active, 'El empaque ya estaba cerrado (bultos asignados a carga).');
+	}
+	const updated: ImperiumDoc[] = [];
+	for (const pack of active) {
+		const st = String(pack.estado ?? '');
+		if (st === 'pendiente' || st === 'incidencia' || !st) {
+			const next = await ctx.store.update('delivery-package', String(pack._id), {
+				estado: 'asignado',
+				fecha_cierre: now(),
+			});
+			if (next) updated.push(next);
+		} else {
+			updated.push(pack);
+		}
 	}
 	await ctx.store.update('pedidos', String(pedido._id), {
 		estado_empaque: 'cerrado',
 		fecha_cierre_empaque: now(),
 	});
-	return ok(updated.filter(Boolean) as ImperiumDoc[], 'Empaque cerrado');
+	return ok(updated, 'Empaque cerrado');
+}
+
+async function read_chofer_queue(ctx: Ctx) {
+	const mode = String(ctx.url.searchParams.get('mode') ?? 'load').toLowerCase();
+	const employee = ref_id(ctx.actor?.employee);
+	if (!employee) {
+		return ok(
+			[],
+			'El usuario no tiene un empleado vinculado. Pide a admin ligar el usuario al empleado chofer.',
+		);
+	}
+	const vehicles = (
+		await ctx.store.find_many('vehicle', { where: { chofer: employee }, take: 200 })
+	).rows;
+	const vehicle_ids = new Set(vehicles.map((v) => String(v._id)));
+	if (!vehicle_ids.size) {
+		return ok([], 'No hay vehículos con este chofer asignado. Configura vehicle.chofer.');
+	}
+	const estados = mode === 'delivery' ? ['cargado', 'en_ruta'] : ['asignado'];
+	const { rows } = await ctx.store.find_many('delivery-package', { take: 500 });
+	const hit = rows.filter(
+		(p) => vehicle_ids.has(ref_id(p.vehicle)) && estados.includes(String(p.estado)),
+	);
+	return ok(
+		hit,
+		mode === 'delivery' ? 'Cola de entrega del chofer' : 'Cola de carga del chofer',
+		hit.length,
+	);
+}
+
+async function read_load_manifest(ctx: Ctx) {
+	const vehicle_id = String(ctx.url.searchParams.get('vehicle_id') ?? '').trim();
+	const route_id = String(ctx.url.searchParams.get('route_id') ?? '').trim();
+	const estado = String(ctx.url.searchParams.get('estado') ?? '').trim();
+	const { rows } = await ctx.store.find_many('delivery-package', { take: 500 });
+	const records = rows.filter((row) => {
+		if (row.is_active === false) return false;
+		if (vehicle_id && ref_id(row.vehicle) !== vehicle_id) return false;
+		if (route_id && ref_id(row.delivery_route) !== route_id) return false;
+		if (estado && String(row.estado) !== estado) return false;
+		return true;
+	});
+	const groups = new Map<
+		string,
+		{
+			vehicle: unknown;
+			vehicle_nombre: string;
+			delivery_route: unknown;
+			delivery_route_nombre: string;
+			packages: ImperiumDoc[];
+			pedidos: Set<string>;
+			total_bultos: number;
+			total_cargados: number;
+			peso_total: number;
+		}
+	>();
+	for (const record of records) {
+		const key = `${ref_id(record.vehicle) || 'sin-vehiculo'}__${ref_id(record.delivery_route) || 'sin-ruta'}`;
+		let group = groups.get(key);
+		if (!group) {
+			group = {
+				vehicle: record.vehicle ?? null,
+				vehicle_nombre: String(record.vehicle_nombre ?? 'Sin vehículo'),
+				delivery_route: record.delivery_route ?? null,
+				delivery_route_nombre: String(record.delivery_route_nombre ?? 'Sin ruta'),
+				packages: [],
+				pedidos: new Set<string>(),
+				total_bultos: 0,
+				total_cargados: 0,
+				peso_total: 0,
+			};
+			groups.set(key, group);
+		}
+		group.packages.push(record);
+		group.total_bultos += 1;
+		group.peso_total += Number(record.peso_kg ?? 0);
+		if (ref_id(record.pedido)) group.pedidos.add(ref_id(record.pedido));
+		if (['cargado', 'en_ruta', 'entregado'].includes(String(record.estado))) {
+			group.total_cargados += 1;
+		}
+	}
+	const data = [...groups.values()].map((group) => ({
+		vehicle: group.vehicle,
+		vehicle_nombre: group.vehicle_nombre,
+		delivery_route: group.delivery_route,
+		delivery_route_nombre: group.delivery_route_nombre,
+		packages: group.packages,
+		total_bultos: group.total_bultos,
+		total_cargados: group.total_cargados,
+		total_pedidos: group.pedidos.size,
+		peso_total: Math.round(group.peso_total * 100) / 100,
+	}));
+	return ok(data, 'Manifiesto de carga generado correctamente', data.length);
 }
 
 async function logistics_event(ctx: Ctx) {
-	const ev = String(ctx.body.event ?? ctx.body.tipo ?? 'evento');
 	const doc = await need(ctx, 'delivery-package', ctx.params.id);
-	const history = as_array(doc.eventos);
-	history.push({ tipo: ev, fecha: now(), actor: actor_name(ctx), ...ctx.body });
-	return patch_doc(ctx, 'delivery-package', String(doc._id), {
-		estado: ev,
-		eventos: history,
-		ultimo_evento: ev,
-		fecha_ultimo_evento: now(),
-	}, 'Evento logístico aplicado');
+	const event_type = String(ctx.body.event_type ?? ctx.body.event ?? ctx.body.tipo ?? '').trim();
+	const event_id = String(ctx.body.event_id ?? crypto.randomUUID());
+	const occurred_at = String(ctx.body.occurred_at ?? ctx.body.created_at ?? now());
+	const source = String(ctx.body.source ?? 'manual');
+	const history = as_array(doc.logistics_events ?? doc.eventos);
+	if (history.some((raw) => String(as_object(raw).event_id) === event_id)) {
+		return ok([doc], 'El evento logístico ya había sido aplicado previamente');
+	}
+	if (doc.is_active === false || String(doc.estado) === 'cancelado') {
+		throw new Error('No puedes operar logística sobre un bulto anulado');
+	}
+	const st = String(doc.estado ?? '');
+	const patch: ImperiumDoc = {};
+	if (event_type === 'load') {
+		if (st === 'pendiente') {
+			throw new Error('Este bulto aún no está listo para carga. Cierra el empaque del pedido primero.');
+		}
+		if (st !== 'asignado' && st !== 'cargado') {
+			throw new Error(`No puedes cargar un bulto en estado «${st}»`);
+		}
+		if (st === 'asignado') {
+			patch.estado = 'cargado';
+			patch.loaded_at = doc.loaded_at ?? occurred_at;
+		}
+	} else if (event_type === 'delivery') {
+		if (st === 'entregado') throw new Error('Este bulto ya fue entregado');
+		if (st === 'incidencia') {
+			throw new Error('No puedes confirmar entrega sobre un bulto marcado como incidencia');
+		}
+		if (st !== 'cargado' && st !== 'en_ruta') {
+			throw new Error('Solo puedes entregar bultos cargados (o en ruta). Registra la carga primero.');
+		}
+		const ticket = String(ctx.body.delivery_ticket_reference ?? '').trim();
+		if (!ticket) throw new Error('Debes capturar el ticket o referencia de entrega');
+		patch.estado = 'entregado';
+		patch.delivered_at = occurred_at;
+		patch.loaded_at = doc.loaded_at ?? occurred_at;
+		patch.delivery_ticket_reference = ticket;
+		if (ctx.body.delivery_signature_attachment_id) {
+			patch.delivery_signature_attachment_id = ctx.body.delivery_signature_attachment_id;
+		}
+		if (ctx.body.delivery_coordinates) {
+			patch.delivery_coordinates = ctx.body.delivery_coordinates;
+		}
+	} else {
+		throw new Error('El tipo de evento logístico no es válido');
+	}
+	history.push({
+		event_id,
+		event_type,
+		created_at: occurred_at,
+		source,
+		actor: actor_name(ctx),
+	});
+	return patch_doc(
+		ctx,
+		'delivery-package',
+		String(doc._id),
+		{
+			...patch,
+			logistics_events: history,
+			ultimo_evento: event_type,
+			fecha_ultimo_evento: occurred_at,
+		},
+		'Evento logístico aplicado',
+	);
 }
 
 async function optimize_route(ctx: Ctx) {
@@ -996,23 +1217,131 @@ async function adjust_quant(ctx: Ctx, producto: string, ubicacion: string, delta
 	}
 }
 
+async function import_apertura(ctx: Ctx) {
+	const dry_run = Boolean(ctx.body.dry_run);
+	const modo = String(ctx.body.modo ?? 'set') === 'delta' ? 'delta' : 'set';
+	const lineas = as_array(ctx.body.lineas);
+	if (!lineas.length) {
+		throw new Error(
+			'Debes enviar lineas[] con producto_codigo, ubicación (codigo o path) y cantidad',
+		);
+	}
+	const errores: ImperiumDoc[] = [];
+	const preview: ImperiumDoc[] = [];
+	const applied: ImperiumDoc[] = [];
+	for (let i = 0; i < lineas.length; i++) {
+		const row = as_object(lineas[i]);
+		const fila = Number(row.fila ?? i + 2);
+		const cantidad = Number(row.cantidad ?? row.qty ?? 0);
+		if (!Number.isFinite(cantidad)) {
+			errores.push({ fila, mensaje: 'Cantidad inválida', raw: row });
+			continue;
+		}
+		let prod: ImperiumDoc | null = null;
+		const pid = String(row.producto ?? '').trim();
+		const pcod = String(row.producto_codigo ?? '').trim();
+		if (pid) prod = await ctx.store.find_id('products', pid);
+		if (!prod && pcod) {
+			prod =
+				(await ctx.store.find_many('products', { where: { codigo: pcod }, take: 1 })).rows[0] ??
+				null;
+		}
+		if (!prod) {
+			errores.push({ fila, mensaje: 'Falta producto o producto_codigo', raw: row });
+			continue;
+		}
+		const ubicacion = String(row.ubicacion ?? row.ubicacion_codigo ?? '').trim();
+		if (!ubicacion) {
+			errores.push({ fila, mensaje: 'Falta ubicación', raw: row });
+			continue;
+		}
+		const current = ctx.store.has('inventory-stock-quant')
+			? (
+					await ctx.store.find_many('inventory-stock-quant', {
+						where: { producto: String(prod._id) },
+						take: 50,
+					})
+				).rows.find((r) => String(r.ubicacion ?? r.location) === ubicacion)
+			: null;
+		const actual = Number(current?.cantidad ?? current?.qty ?? 0);
+		const objetivo = modo === 'delta' ? actual + cantidad : cantidad;
+		const diferencia = Number((objetivo - actual).toFixed(4));
+		preview.push({
+			fila,
+			producto: prod._id,
+			producto_codigo: prod.codigo ?? pcod,
+			ubicacion_codigo: ubicacion,
+			cantidad_actual: actual,
+			cantidad_objetivo: objetivo,
+			diferencia,
+		});
+		if (!diferencia || dry_run) continue;
+		await adjust_quant(ctx, String(prod._id), ubicacion, diferencia);
+		await ctx.store.update('products', String(prod._id), {
+			existencia: Number((Number(prod.existencia ?? 0) + diferencia).toFixed(4)),
+		});
+		applied.push({ fila, diferencia });
+	}
+	const a_aplicar = preview.filter((p) => Number(p.diferencia) !== 0).length;
+	return ok(
+		[
+			{
+				dry_run,
+				modo,
+				total_filas: lineas.length,
+				validas: preview.length,
+				a_aplicar,
+				aplicados: dry_run ? 0 : applied.length,
+				errores,
+				preview,
+				ok: errores.length === 0,
+			},
+		],
+		dry_run
+			? `Simulación: ${a_aplicar} ajuste(s), ${errores.length} error(es)`
+			: `Apertura aplicada: ${applied.length} ajuste(s), ${errores.length} error(es)`,
+	);
+}
+
 async function apply_physical_count(ctx: Ctx) {
 	const count = await need(ctx, 'inventory-physical-count', ctx.params.id);
+	if (String(count.estado) === 'aplicado') {
+		throw new Error('Este conteo ya fue aplicado');
+	}
+	const ubicacion = String(count.ubicacion ?? '');
 	const lines = as_array(count.lineas ?? count.articulos);
 	for (const raw of lines) {
 		const line = as_object(raw);
 		const producto = String(line.producto ?? '');
-		const counted = Number(line.contado ?? line.cantidad ?? 0);
 		if (!producto) continue;
+		const sistema = Number(line.cantidad_sistema ?? line.sistema ?? 0);
+		const contada = Number(line.cantidad_contada ?? line.contado ?? line.cantidad ?? 0);
+		const diferencia = Number((contada - sistema).toFixed(4));
+		if (!diferencia) continue;
 		const prod = await ctx.store.find_id('products', producto);
-		if (prod) {
-			await ctx.store.update('products', producto, { existencia: counted });
+		if (!prod) continue;
+		if (ubicacion) await adjust_quant(ctx, producto, ubicacion, diferencia);
+		await ctx.store.update('products', producto, {
+			existencia: Number((Number(prod.existencia ?? 0) + diferencia).toFixed(4)),
+		});
+		if (ctx.store.has('inventory-movement')) {
+			await ctx.store.insert('inventory-movement', {
+				name: `Ajuste ${count.name ?? producto}`,
+				description: 'Ajuste manual de inventario por conteo físico',
+				tipo: 'ajuste_manual',
+				tipo_movimiento: 'ajuste_manual',
+				producto,
+				cantidad: Math.abs(diferencia),
+				ubicacion,
+				documento_tipo: 'inventory-physical-count',
+				documento_id: count._id,
+			});
 		}
 	}
 	return patch_doc(ctx, 'inventory-physical-count', String(count._id), {
 		estado: 'aplicado',
 		fecha_aplicacion: now(),
-	}, 'Conteo aplicado');
+	}, 'Conteo aplicado correctamente');
 }
 
 async function receptions_for_product(ctx: Ctx, producto: string, estados: string[]) {
