@@ -37,6 +37,19 @@ import {
 } from './pos-session-flow.ts';
 import { decorate_product, prepare_product_write } from './products-flow.ts';
 import { decorate_vehicle, prepare_vehicle_write } from './vehicle-flow.ts';
+import {
+	after_project_write,
+	apply_root_parent_filter,
+	assert_personal_task_owner,
+	hydrate_project,
+	is_personal_task_resource,
+	is_project_resource,
+	is_project_task_resource,
+	prepare_personal_task_write,
+	prepare_project_task_write,
+	prepare_project_write,
+	strip_root_parent_where,
+} from './planeacion-flow.ts';
 import { build_access } from './auth.ts';
 import { is_seed_admin } from './group-access.ts';
 import {
@@ -86,6 +99,9 @@ export async function handle_crud(
 	const body = async () => read_imperium_body(req);
 
 	if (method === 'GET' && segs[0] === 'statistics' && segs.length === 1) {
+		if (is_project_task_resource(resource) && !url.searchParams.get('project_id')) {
+			throw new Error('Debes indicar el proyecto a consultar');
+		}
 		const scope = await record_rule_scope(store, actor, resource, method);
 		const stats = await store.stats(resource, url, scope.match);
 		const message =
@@ -200,12 +216,34 @@ export async function handle_crud(
 	}
 	if (method === 'GET' && segs.length === 0) {
 		const q = query_list(url);
+		if (is_project_task_resource(resource) && !q.where.project_id) {
+			return json(resource, {
+				...ok([], 'Sin proyecto especificado', 0),
+				tipo_de_instancia: instance_type(store, resource, []),
+				module_info: { name: resource, model: resource, model_id: resource },
+			});
+		}
+		if (is_personal_task_resource(resource)) {
+			const uid = String(actor?._id ?? '');
+			if (!uid) throw new Error('No se pudo resolver el usuario actual');
+			q.where.owner_user = uid;
+		}
+		const where = strip_root_parent_where(q.where);
 		const scope = await record_rule_scope(store, actor, resource, method);
-		const { rows, total } = await store.find_many(resource, {
+		const found = await store.find_many(resource, {
 			...q,
-			where: Object.keys(q.where).length ? q.where : undefined,
+			where: Object.keys(where).length ? where : undefined,
 			mongo_match: scope.match,
+			take: q.where.parent_task === '__root__' || q.where.parent_task_id === '__root__' ? 2000 : q.take,
 		});
+		const filtered = apply_root_parent_filter(resource, q.where, found.rows);
+		const { rows, total } = {
+			rows: filtered,
+			total:
+				filtered.length === found.rows.length
+					? found.total
+					: filtered.length,
+		};
 		const decorated = decorate_rows(resource, rows);
 		return json(resource, {
 			...ok(decorated, 'Ruta encontrada', total),
@@ -231,10 +269,13 @@ export async function handle_crud(
 			resource,
 			await store.populate_docs(resource, [doc]),
 		);
+		const detail = is_project_resource(resource)
+			? await hydrate_project(store, populated)
+			: populated;
 		return json(
 			resource,
 			ok(
-				[populated],
+				[detail],
 				resource === 'delivery-package'
 					? 'Bulto encontrado'
 					: resource === 'delivery-return'
@@ -287,6 +328,16 @@ export async function handle_crud(
 		if (resource === 'vehicle') {
 			incoming = await prepare_vehicle_write(store, incoming);
 		}
+		const project_seed = incoming;
+		if (is_project_resource(resource)) {
+			incoming = prepare_project_write(incoming, actor);
+		}
+		if (is_project_task_resource(resource)) {
+			incoming = prepare_project_task_write(incoming, actor);
+		}
+		if (is_personal_task_resource(resource)) {
+			incoming = prepare_personal_task_write(incoming, actor);
+		}
 		const doc = await before_create(store, resource, incoming, actor);
 		const created = await store.insert(resource, doc);
 		await link_attachments_to_record(store, resource, created);
@@ -295,10 +346,17 @@ export async function handle_crud(
 		if (resource === 'pedidos') await after_pedido_mutate(store, 'create', created);
 		if (resource === 'ticketing-system-turn') await notify_ticketing_rooms(store);
 		if (resource === 'purchase-order') await sync_inbound_supplier_invoice(store, created);
+		if (is_project_resource(resource)) {
+			await after_project_write(store, created, project_seed, actor);
+		}
 		let result = created;
 		if (resource === 'delivery-package') {
 			await after_delivery_package_mutate(store, String(created.pedido ?? ''));
 			result = (await store.find_id(resource, String(created._id))) ?? created;
+		}
+		if (is_project_resource(resource)) {
+			result = (await store.find_id(resource, String(created._id))) ?? created;
+			result = await hydrate_project(store, result);
 		}
 		const [populated] = decorate_rows(resource, await store.populate_docs(resource, [result]));
 		const message =
@@ -316,7 +374,13 @@ export async function handle_crud(
 								? 'Orden de compra creada correctamente'
 								: resource === 'vehicle'
 									? 'Vehículo creado correctamente'
-									: 'Ruta creada';
+									: is_project_resource(resource)
+										? 'Proyecto creado'
+										: is_project_task_resource(resource)
+											? 'Tarea de proyecto creada'
+											: is_personal_task_resource(resource)
+												? 'Tarea personal creada'
+												: 'Ruta creada';
 		return json(
 			resource,
 			notice ? { ...ok([populated], message), user_pin_notice: notice } : ok([populated], message),
@@ -369,11 +433,25 @@ export async function handle_crud(
 		if (resource === 'vehicle') {
 			b = await prepare_vehicle_write(store, b, previous);
 		}
+		const project_seed = b;
+		if (is_project_resource(resource)) {
+			b = prepare_project_write(b, actor, previous);
+		}
+		if (is_project_task_resource(resource)) {
+			b = prepare_project_task_write({ ...previous, ...b }, actor);
+		}
+		if (is_personal_task_resource(resource)) {
+			assert_personal_task_owner(previous, actor);
+			b = prepare_personal_task_write(b, actor);
+		}
 		const updated = await store.update(resource, id, b);
 		if (updated) await link_attachments_to_record(store, resource, updated);
 		if (!updated) return json(resource, fail('No encontrado', 404).body, 404);
 		if (resource === 'pedidos') await after_pedido_mutate(store, 'update', updated, previous);
 		if (resource === 'purchase-order') await sync_inbound_supplier_invoice(store, updated);
+		if (is_project_resource(resource)) {
+			await after_project_write(store, updated, project_seed, actor, previous);
+		}
 		if (resource === 'delivery-package') {
 			await after_delivery_package_mutate(
 				store,
@@ -382,7 +460,11 @@ export async function handle_crud(
 			);
 		}
 		await maybe_register_mentions(store, actor, resource, updated, previous);
-		const [populated] = decorate_rows(resource, await store.populate_docs(resource, [updated]));
+		let shown = updated;
+		if (is_project_resource(resource)) {
+			shown = await hydrate_project(store, updated);
+		}
+		const [populated] = decorate_rows(resource, await store.populate_docs(resource, [shown]));
 		return json(
 			resource,
 			ok(
@@ -397,7 +479,13 @@ export async function handle_crud(
 								? 'Orden de compra actualizada correctamente'
 								: resource === 'vehicle'
 									? 'Vehículo actualizado correctamente'
-									: 'Actualizado correctamente',
+									: is_project_resource(resource)
+										? 'Proyecto actualizado correctamente'
+										: is_project_task_resource(resource)
+											? 'Tarea de proyecto actualizada correctamente'
+											: is_personal_task_resource(resource)
+												? 'Tarea personal actualizada correctamente'
+												: 'Actualizado correctamente',
 			),
 		);
 	}
@@ -432,11 +520,25 @@ export async function handle_crud(
 		if (resource === 'vehicle') {
 			patched = await prepare_vehicle_write(store, patched, previous);
 		}
+		const project_seed = patched;
+		if (is_project_resource(resource)) {
+			patched = prepare_project_write({ ...previous, ...patched }, actor, previous);
+		}
+		if (is_project_task_resource(resource)) {
+			patched = prepare_project_task_write({ ...previous, ...patched }, actor);
+		}
+		if (is_personal_task_resource(resource)) {
+			assert_personal_task_owner(previous, actor);
+			patched = prepare_personal_task_write(patched, actor);
+		}
 		const updated = await store.update(resource, segs[0]!, patched);
 		if (updated) await link_attachments_to_record(store, resource, updated);
 		if (!updated) return json(resource, fail('No encontrado', 404).body, 404);
 		if (resource === 'pedidos') await after_pedido_mutate(store, 'update', updated, previous);
 		if (resource === 'purchase-order') await sync_inbound_supplier_invoice(store, updated);
+		if (is_project_resource(resource)) {
+			await after_project_write(store, updated, project_seed, actor, previous);
+		}
 		if (resource === 'delivery-package') {
 			await after_delivery_package_mutate(
 				store,
@@ -445,7 +547,11 @@ export async function handle_crud(
 			);
 		}
 		await maybe_register_mentions(store, actor, resource, updated, previous);
-		const [decorated] = decorate_rows(resource, [updated]);
+		let shown = updated;
+		if (is_project_resource(resource)) {
+			shown = await hydrate_project(store, updated);
+		}
+		const [decorated] = decorate_rows(resource, [shown]);
 		return json(
 			resource,
 			ok(
@@ -460,7 +566,13 @@ export async function handle_crud(
 								? 'Orden de compra actualizada correctamente'
 								: resource === 'vehicle'
 									? 'Vehículo actualizado correctamente'
-									: 'Actualizado correctamente',
+									: is_project_resource(resource)
+										? 'Proyecto actualizado correctamente'
+										: is_project_task_resource(resource)
+											? 'Tarea de proyecto actualizada correctamente'
+											: is_personal_task_resource(resource)
+												? 'Tarea personal actualizada correctamente'
+												: 'Actualizado correctamente',
 			),
 		);
 	}

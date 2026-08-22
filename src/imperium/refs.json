@@ -111,7 +111,16 @@
       "pdf_setting": "ReportsPdfSetting"
     },
     "planeacion-mis-tareas": {
-      "parent_task": "MisTareas"
+      "parent_task": "MisTareas",
+      "owner_user": "User"
+    },
+    "planeacion-proyectos": {
+      "owner_user": "User"
+    },
+    "planeacion-proyectos-task": {
+      "project_id": "Proyectos",
+      "requested_by_user": "User",
+      "parent_task_id": "ProyectoTask"
     },
     "ticketing-system-turn": {
       "customer_type": "TicketingSystemCustomerType",
@@ -324,6 +333,8 @@
     "Ticket": "tickets",
     "InteractiveManual": "interactive-manual",
     "ModuleManagementReference": "module-management-reference",
+    "Proyectos": "planeacion-proyectos",
+    "ProyectoTask": "planeacion-proyectos-task",
     "planeacion-proyectos": "planeacion-proyectos",
     "planeacionproyectos": "planeacion-proyectos",
     "planeacion-mis-tareas": "planeacion-mis-tareas",

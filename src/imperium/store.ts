@@ -164,6 +164,7 @@ export class ImperiumStore {
 				'module-management-reference',
 				'font-awesome-icon-catalog',
 				'mcp-user-token',
+				'proyectos-time-log',
 			];
 			for (const resource of orphans) {
 				if (this.locs.has(resource)) continue;
@@ -181,6 +182,16 @@ export class ImperiumStore {
 			}
 			const icons = this.locs.get('font-awesome-icon-catalog');
 			if (icons) icons.collection = '__font_awesome_icon_catalog';
+			const time_logs = this.locs.get('proyectos-time-log');
+			if (time_logs) {
+				const planeacion = this.all_locs.find((l) => l.slug === 'planeacion');
+				if (planeacion) {
+					time_logs.slug = planeacion.slug;
+					time_logs.technical_id = planeacion.technical_id;
+				}
+				time_logs.table = 'proyectos_time_log';
+				time_logs.collection = 'proyectos-time-log';
+			}
 			const tokens = this.locs.get('mcp-user-token');
 			if (tokens) tokens.collection = 'mcp_user_tokens';
 		}
@@ -361,6 +372,7 @@ export class ImperiumStore {
 			'module-management-reference',
 			'font-awesome-icon-catalog',
 			'mcp-user-token',
+			'proyectos-time-log',
 		]) {
 			if (!this.locs.has(resource)) continue;
 			const qt = this.qt(resource);
