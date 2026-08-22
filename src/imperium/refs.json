@@ -152,6 +152,12 @@
     },
     "contacto": {
       "listaDePrecios": "ListaDePrecios"
+    },
+    "cobranza-payment": {
+      "method_id": "ViolationPaymentMethod",
+      "charge_id": "Cobranza",
+      "pos_session_id": "PosSession",
+      "cashier_id": "User"
     }
   },
   "models": {
@@ -294,6 +300,9 @@
     "violation-city-zone": "violation-city-zone",
     "violationcityzone": "violation-city-zone",
     "cobranza": "cobranza",
+    "cobranzapayment": "cobranza-payment",
+    "cobranza-payment": "cobranza-payment",
+    "CobranzaPayment": "cobranza-payment",
     "physical-device": "physical-device",
     "physicaldevice": "physical-device",
     "cfdi": "cfdi",

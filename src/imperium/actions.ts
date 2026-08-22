@@ -113,7 +113,12 @@ import {
 	register_internal_transfer,
 	reservar_reception,
 } from './inventory-reception-flow.ts';
-import { lookup_cobranza, sync_cobranza_sources } from './cobranza-lookup-flow.ts';
+import { lookup_cobranza } from './cobranza-lookup-flow.ts';
+import {
+	apply_cobranza_payment,
+	apply_online_cobranza_payment,
+	cancel_cobranza_payment,
+} from './cobranza-payment-flow.ts';
 import {
 	authorize_invoice_request,
 	cancel_invoice_request,
@@ -538,9 +543,9 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'view-config-preset:assign':
 			return view_assign(ctx);
 		case 'cobranza-payment:apply_payment':
-			return cobranza_apply(ctx);
+			return apply_cobranza_payment(ctx);
 		case 'cobranza-payment:cancel_payment':
-			return cobranza_cancel(ctx);
+			return cancel_cobranza_payment(ctx);
 		case 'cobranza:mitec_webhook':
 			return cobranza_mitec_webhook(ctx);
 		case 'cobranza:stripe_webhook':
@@ -4907,77 +4912,6 @@ async function view_assign(ctx: Ctx) {
 	);
 }
 
-async function cobranza_apply(ctx: Ctx) {
-	const charge_id = String(ctx.body.charge_id ?? ctx.body.cobranza ?? '');
-	const method_id = String(ctx.body.method_id ?? '');
-	const pos_session_id = String(ctx.body.pos_session_id ?? '');
-	const amount = Number(ctx.body.amount ?? ctx.body.importe ?? ctx.body.monto);
-	const provider = String(ctx.body.provider ?? 'CASH').toUpperCase();
-	if (!charge_id) throw new Error('Se requiere el cargo a abonar.');
-	if (!method_id) throw new Error('Se requiere el método de pago.');
-	if (!pos_session_id) throw new Error('Se requiere una sesión de caja abierta.');
-	if (!Number.isFinite(amount) || amount <= 0) {
-		throw new Error('El monto del pago debe ser mayor a cero.');
-	}
-	if (provider !== 'CASH') {
-		throw new Error('Los pagos con Stripe o Mitec se inician desde «Pagar en línea».');
-	}
-	const charge = await ctx.store.find_id('cobranza', charge_id);
-	if (!charge) throw new Error('No se encontró el cargo.');
-	if (cobranza_is_canceled(charge)) {
-		throw new Error('El cargo está cancelado; no admite pagos.');
-	}
-	const balance = Number(charge.balance ?? 0);
-	if (balance <= 0) throw new Error('El cargo ya está pagado.');
-	if (amount > balance + 0.009) {
-		throw new Error(`El monto excede el saldo pendiente (${balance.toFixed(2)}).`);
-	}
-	const session = await ctx.store.find_id('pos-session', pos_session_id);
-	if (!session) throw new Error('No se encontró la sesión de caja.');
-	if (!is_pos_session_open(session)) {
-		throw new Error('La sesión de caja no está abierta.');
-	}
-	const created = await ctx.store.insert('cobranza-payment', {
-		name: `Pago ${charge.reference ?? ''}`.trim(),
-		charge_id: charge._id,
-		amount,
-		method_id,
-		pos_session_id,
-		cashier_id: actor_id(ctx),
-		created_by: actor_id(ctx),
-		payment_date: now(),
-		status: 'APPLIED',
-		estado: 'aplicado',
-		provider: 'CASH',
-		sync: true,
-	});
-	const updated_charge = await cobranza_recompute(ctx, String(charge._id));
-	return {
-		...ok([created], 'Pago aplicado correctamente.'),
-		charge: updated_charge,
-	};
-}
-
-async function cobranza_cancel(ctx: Ctx) {
-	if (!ctx.params.id) throw new Error('Identificador de pago inválido.');
-	const payment = await ctx.store.find_id('cobranza-payment', ctx.params.id);
-	if (!payment) throw new Error('No se encontró el pago.');
-	const status = String(payment.status ?? payment.estado ?? '').toUpperCase();
-	if (status === 'CANCELED' || status === 'CANCELADO') {
-		throw new Error('El pago ya está cancelado.');
-	}
-	const updated = await ctx.store.update('cobranza-payment', String(payment._id), {
-		status: 'CANCELED',
-		estado: 'cancelado',
-	});
-	const charge_id = String(payment.charge_id ?? '');
-	const updated_charge = charge_id ? await cobranza_recompute(ctx, charge_id) : null;
-	return {
-		...ok([updated ?? payment], 'Pago cancelado correctamente.'),
-		charge: updated_charge,
-	};
-}
-
 async function cobranza_lookup(ctx: Ctx) {
 	const reference =
 		ctx.url.searchParams.get('reference') ??
@@ -4999,71 +4933,11 @@ function cobranza_origin(ctx: Ctx) {
 	return ctx.req.headers.get('origin') || (host ? `${proto}://${host}` : '');
 }
 
-function cobranza_is_canceled(charge: ImperiumDoc) {
-	const status = String(charge.status ?? charge.estado ?? '').toUpperCase();
-	return status === 'CANCELADO' || status === 'CANCELED';
-}
-
-async function cobranza_recompute(ctx: Ctx, charge_id: string) {
-	const charge = await ctx.store.find_id('cobranza', charge_id);
-	if (!charge || cobranza_is_canceled(charge)) return charge;
-	let paid_amount = Number(charge.paid_amount ?? 0);
-	if (ctx.store.has('cobranza-payment')) {
-		const { rows } = await ctx.store.find_many('cobranza-payment', {
-			where: { charge_id },
-			take: 5000,
-			include_inactive: true,
-		});
-		const applied = rows.filter((row) => {
-			const status = String(row.status ?? row.estado ?? 'APPLIED').toUpperCase();
-			return status === 'APPLIED' || status === 'APLICADO';
-		});
-		if (applied.length) {
-			paid_amount = applied.reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
-		}
-	}
-	const total = Number(charge.total_amount ?? 0);
-	const balance = Math.max(total - paid_amount, 0);
-	const status = balance <= 0 ? 'PAGADO' : paid_amount > 0 ? 'PARCIAL' : 'PENDIENTE';
-	const updated = await ctx.store.update('cobranza', charge_id, {
-		paid_amount,
-		balance,
-		status,
-		estado: status.toLowerCase(),
-	});
-	await sync_cobranza_sources(ctx.store, updated ?? { ...charge, paid_amount, balance, status });
-	return updated;
-}
-
 async function apply_online_payment(
 	ctx: Ctx,
 	params: { charge_id: string; amount: number; provider: string; provider_ref?: string },
 ) {
-	const charge = await ctx.store.find_id('cobranza', params.charge_id);
-	if (!charge) throw new Error('No se encontró el cargo.');
-	if (cobranza_is_canceled(charge)) {
-		throw new Error('El cargo está cancelado; no admite pagos.');
-	}
-	const amount = Math.min(params.amount, Number(charge.balance ?? params.amount));
-	if (!(amount > 0)) return;
-	const payment_name = `Pago ${charge.reference} ${params.provider_ref || params.provider}`;
-	if (params.provider_ref && ctx.store.has('cobranza-payment')) {
-		const already = await ctx.store.find_where('cobranza-payment', { name: payment_name });
-		if (already) return;
-	}
-	if (ctx.store.has('cobranza-payment')) {
-		await ctx.store.insert('cobranza-payment', {
-			name: payment_name,
-			charge_id: charge._id,
-			amount,
-			payment_date: now(),
-			status: 'APPLIED',
-			estado: 'aplicado',
-			provider: params.provider,
-			sync: true,
-		});
-	}
-	await cobranza_recompute(ctx, String(charge._id));
+	return apply_online_cobranza_payment(ctx.store, params);
 }
 
 async function cobranza_checkout(ctx: Ctx) {

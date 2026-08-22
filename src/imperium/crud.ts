@@ -37,6 +37,7 @@ import {
 } from './pos-session-flow.ts';
 import { decorate_product, prepare_product_write } from './products-flow.ts';
 import { decorate_vehicle, prepare_vehicle_write } from './vehicle-flow.ts';
+import { apply_cobranza_payment } from './cobranza-payment-flow.ts';
 import { is_citizen_report_resource, prepare_citizen_report_write } from './citizen-report-flow.ts';
 import { apply_report_list_where, assert_report_template_write } from './reports-flow.ts';
 import { is_asociacion_resource, prepare_asociacion_write } from './asociaciones-flow.ts';
@@ -114,6 +115,26 @@ export async function handle_crud(
 	const method = req.method.toUpperCase();
 	const segs = rest.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean);
 	const body = async () => read_imperium_body(req);
+
+	if (resource === 'cobranza-payment') {
+		if (method === 'POST' && segs.length === 0) {
+			return json(
+				resource,
+				await apply_cobranza_payment({
+					store,
+					actor,
+					body: await body(),
+					params: {},
+				}),
+				201,
+			);
+		}
+		if (method === 'PUT' || method === 'PATCH') {
+			if (segs[0] === 'batch') throw new Error('Método no implementado.');
+			throw new Error('Los pagos no se editan; usa cancelar para revertir un abono.');
+		}
+		if (method === 'DELETE') throw new Error('Método no implementado.');
+	}
 
 	if (method === 'GET' && segs[0] === 'statistics' && segs.length === 1) {
 		if (is_project_task_resource(resource) && !url.searchParams.get('project_id')) {
