@@ -142,6 +142,7 @@ export class ImperiumStore {
 			const orphans = [
 				'messages',
 				'notifications',
+				'mentions',
 				'user-settings',
 				'custom-user-themes',
 				'documentation-page',
@@ -205,6 +206,7 @@ export class ImperiumStore {
 		for (const resource of [
 			'messages',
 			'notifications',
+			'mentions',
 			'user-settings',
 			'custom-user-themes',
 			'documentation-page',

@@ -5,6 +5,7 @@ import { as_array, as_object, fail, ok, type ImperiumDoc } from './envelope.ts';
 import { query_list, read_imperium_body } from './body.ts';
 import type { ImperiumStore } from './store.ts';
 import { assert_pos_pin, maybe_create_pos_session_pin } from './user-pin.ts';
+import { register_document_mentions } from './notifications.ts';
 
 export async function handle_crud(
 	store: ImperiumStore,
@@ -148,6 +149,7 @@ export async function handle_crud(
 		}
 		const doc = await before_create(store, resource, incoming, actor);
 		const created = await store.insert(resource, doc);
+		await maybe_register_mentions(store, actor, resource, created);
 		const notice = await after_create(store, resource, created, actor);
 		const [populated] = await store.populate_docs(resource, [created]);
 		const message = resource === 'pos-tickets' ? 'Ticket creado' : 'Ruta creada';
@@ -169,14 +171,18 @@ export async function handle_crud(
 				actor,
 			);
 		}
+		const previous = await store.find_id(resource, id);
 		const updated = await store.update(resource, id, b);
 		if (!updated) return json(fail('No encontrado', 404).body, 404);
+		await maybe_register_mentions(store, actor, resource, updated, previous);
 		const [populated] = await store.populate_docs(resource, [updated]);
 		return json(ok([populated], 'Actualizado correctamente'));
 	}
 	if (method === 'PATCH' && segs.length === 1) {
+		const previous = await store.find_id(resource, segs[0]!);
 		const updated = await store.update(resource, segs[0]!, await body());
 		if (!updated) return json(fail('No encontrado', 404).body, 404);
+		await maybe_register_mentions(store, actor, resource, updated, previous);
 		return json(ok([updated], 'Actualizado correctamente'));
 	}
 	return null;
@@ -211,6 +217,22 @@ function csv(v: unknown): string {
 
 function actor_id(actor: ImperiumDoc | null): string {
 	return String(actor?._id ?? actor?.id ?? '').trim();
+}
+
+async function maybe_register_mentions(
+	store: ImperiumStore,
+	actor: ImperiumDoc | null,
+	resource: string,
+	current: ImperiumDoc,
+	previous?: ImperiumDoc | null,
+) {
+	if (resource === 'notifications' || resource === 'mentions') return;
+	await register_document_mentions(store, actor, {
+		current_document: current,
+		previous_document: previous ?? undefined,
+		resource,
+		document_id: String(current._id ?? ''),
+	});
 }
 
 async function before_create(

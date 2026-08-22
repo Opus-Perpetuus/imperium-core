@@ -45,6 +45,18 @@ import {
 	send_password_reset_email,
 } from './email.ts';
 import { generate_password_reset } from './password-reset.ts';
+import {
+	clear_notifications,
+	delete_notification,
+	mark_all_notifications,
+	my_mentions,
+	my_notifications,
+	notification_apply_action,
+	notification_summary,
+	notification_toast_digest,
+	notification_update_read,
+	register_comment_mentions,
+} from './notifications.ts';
 
 type Ctx = {
 	store: ImperiumStore;
@@ -117,7 +129,7 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 				'Modelos disponibles',
 			);
 		case 'auto-increment-control:consolidate_duplicates':
-			return ok([], 'Duplicados revisados');
+			return increment_consolidate(ctx);
 		case 'auto-increment-control:normalize_counters':
 			return normalize_counters(ctx);
 		case 'configuration:ai_generate_text':
@@ -282,23 +294,21 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'notifications:read_my_summary':
 			return notification_summary(ctx);
 		case 'notifications:read_my_notifications':
-		case 'notifications:read_my_mentions':
 			return my_notifications(ctx);
+		case 'notifications:read_my_mentions':
+			return my_mentions(ctx);
 		case 'notifications:create_toast_digest':
-			return ok([{ items: [] }], 'Digest');
+			return notification_toast_digest(ctx);
 		case 'notifications:mark_all_as_read':
 			return mark_all_notifications(ctx);
 		case 'notifications:update_read_status':
-			return patch_doc(ctx, 'notifications', ctx.params.id, { read: true, leido: true }, 'Leída');
+			return notification_update_read(ctx);
 		case 'notifications:apply_action':
-			return patch_doc(ctx, 'notifications', ctx.params.id, {
-				accion: ctx.body.action ?? 'done',
-				fecha_accion: now(),
-			}, 'Acción aplicada');
+			return notification_apply_action(ctx);
 		case 'notifications:clear_my_notifications':
 			return clear_notifications(ctx);
 		case 'notifications:delete_notification':
-			return delete_one(ctx, 'notifications', ctx.params.id);
+			return delete_notification(ctx);
 		case 'pedidos:reclamar_surtir':
 			return reclamar_surtir(ctx);
 		case 'pedidos:sync_offline':
@@ -850,6 +860,61 @@ async function purchase_order_parse_document(ctx: Ctx) {
 	);
 }
 
+async function increment_consolidate(ctx: Ctx) {
+	const { rows } = await ctx.store.find_many('auto-increment-control', {
+		take: 5000,
+		include_inactive: true,
+	});
+	const groups = new Map<string, ImperiumDoc[]>();
+	for (const row of rows) {
+		const key = String(row._unique_string_reference ?? '').trim();
+		if (!key) continue;
+		const list = groups.get(key) ?? [];
+		list.push(row);
+		groups.set(key, list);
+	}
+	let consolidated = 0;
+	let deleted = 0;
+	let errors = 0;
+	for (const list of groups.values()) {
+		if (list.length < 2) continue;
+		try {
+			const sorted = [...list].sort(
+				(a, b) =>
+					Number(b.current_sequence ?? b.current ?? b.valor ?? 0) -
+					Number(a.current_sequence ?? a.current ?? a.valor ?? 0),
+			);
+			const keep = sorted[0]!;
+			const max_sequence = Math.max(
+				...list.map((row) => Number(row.current_sequence ?? row.current ?? row.valor ?? 0)),
+			);
+			const with_max = list.find(
+				(row) => Number(row.current_sequence ?? row.current ?? row.valor ?? 0) === max_sequence,
+			);
+			await ctx.store.update('auto-increment-control', String(keep._id), {
+				current_sequence: max_sequence,
+				current: max_sequence,
+				valor: max_sequence,
+				current_real_value: with_max?.current_real_value ?? keep.current_real_value ?? 0,
+			});
+			for (const extra of sorted.slice(1)) {
+				await ctx.sql.unsafe(
+					`DELETE FROM ${ctx.store.qt('auto-increment-control')} WHERE id = $1`,
+					[String(extra._id)],
+				);
+				deleted += 1;
+			}
+			consolidated += 1;
+		} catch {
+			errors += 1;
+		}
+	}
+	return ok(
+		[{ consolidated, deleted, errors }],
+		`Consolidación completada. ${consolidated} grupos consolidados, ${deleted} duplicados eliminados.`,
+	);
+}
+
 async function increment_counter(ctx: Ctx) {
 	const doc = await need(ctx, 'auto-increment-control', ctx.params.id);
 	const current = Number(doc.current ?? doc.valor ?? doc.counter ?? 0);
@@ -1270,14 +1335,52 @@ async function optimize_route(ctx: Ctx) {
 }
 
 async function create_history_comment(ctx: Ctx) {
+	const document_id = String(
+		ctx.body.document_id ?? ctx.body.documentId ?? ctx.body.record_id ?? ctx.body.id ?? '',
+	).trim();
+	const collection_name = String(
+		ctx.body.collection_name ?? ctx.body.collectionName ?? ctx.body.model ?? '',
+	).trim();
+	const model_name = String(ctx.body.model_name ?? ctx.body.modelName ?? collection_name).trim();
+	const comment_text = String(
+		ctx.body.comment_text ?? ctx.body.commentText ?? ctx.body.comment ?? ctx.body.mensaje ?? '',
+	).trim();
+	if (!document_id) throw new Error('Se requiere document_id para registrar el comentario.');
+	if (!collection_name && !model_name) {
+		throw new Error('Se requiere collection_name o model_name para registrar el comentario.');
+	}
+	if (!comment_text) throw new Error('Debes escribir un comentario antes de guardarlo.');
 	const created = await ctx.store.insert('document-change-history', {
 		name: 'comentario',
-		comment: ctx.body.comment ?? ctx.body.mensaje,
-		model: ctx.body.model,
-		record_id: ctx.body.record_id ?? ctx.body.id,
+		entryType: 'comment',
+		comment: comment_text,
+		commentText: comment_text,
+		actionName: 'Comentario',
+		actionDescription: comment_text,
+		model: model_name,
+		modelName: model_name,
+		collectionName: collection_name || model_name,
+		documentId: document_id,
+		record_id: document_id,
+		operationType: 'comment',
 		created_by: actor_id(ctx),
+		actor: {
+			_id: actor_id(ctx),
+			name: ctx.actor?.name,
+			email: ctx.actor?.email,
+		},
 	});
-	return ok([created], 'Comentario creado');
+	await register_comment_mentions(ctx.store, ctx.actor, {
+		comment_text,
+		mentioned_user_ids: ctx.body.mentioned_user_ids ?? ctx.body.mentionedUserIds,
+		model_name,
+		collection_name: collection_name || model_name,
+		document_id,
+		history_id: String(created._id),
+		route: String(ctx.body.source_route ?? ctx.body.sourceRoute ?? ''),
+		entity_label: String(ctx.body.source_entity_label ?? ctx.body.sourceEntityLabel ?? ''),
+	});
+	return ok([created], 'Comentario registrado correctamente');
 }
 
 async function documentation_adjacent(ctx: Ctx) {
@@ -2766,44 +2869,6 @@ async function payroll_export_payload(ctx: Ctx) {
 	return ok([payload], 'Payload CFDI N exportado (sin timbrar)');
 }
 
-async function notification_summary(ctx: Ctx) {
-	const { rows } = await ctx.store.find_many('notifications', { take: 500 });
-	const uid = actor_id(ctx);
-	const mine = rows.filter((n) => String(n.user ?? n.created_by ?? n.to) === uid || !n.user);
-	const unread = mine.filter((n) => !n.read && !n.leido);
-	return ok([{ total: mine.length, unread: unread.length }], 'Resumen');
-}
-
-async function my_notifications(ctx: Ctx) {
-	const uid = actor_id(ctx);
-	const { rows } = await ctx.store.find_many('notifications', { take: 200 });
-	return ok(
-		rows.filter((n) => String(n.user ?? n.to ?? '') === uid || !n.user),
-		'Notificaciones',
-	);
-}
-
-async function mark_all_notifications(ctx: Ctx) {
-	const uid = actor_id(ctx);
-	const { rows } = await ctx.store.find_many('notifications', { take: 500 });
-	let n = 0;
-	for (const r of rows) {
-		if (String(r.user ?? r.to ?? '') === uid || !r.user) {
-			await ctx.store.update('notifications', String(r._id), { read: true, leido: true });
-			n++;
-		}
-	}
-	return ok([{ updated: n }], 'Todas marcadas como leídas');
-}
-
-async function clear_notifications(ctx: Ctx) {
-	const uid = actor_id(ctx);
-	const { rows } = await ctx.store.find_many('notifications', { take: 500 });
-	for (const r of rows) {
-		if (String(r.user ?? r.to ?? '') === uid) await ctx.store.remove('notifications', String(r._id));
-	}
-	return ok([], 'Notificaciones borradas');
-}
 
 const PEDIDO_ESTADOS = new Set([
 	'borrador',
