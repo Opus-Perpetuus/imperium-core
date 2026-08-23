@@ -4,8 +4,6 @@
  */
 import { as_array, type ImperiumDoc } from './envelope.ts';
 
-const TIPOS = new Set(['llamada', 'correo', 'carta', 'persona', 'registro']);
-
 function trim_text(value: unknown): string {
 	return String(value ?? '').trim();
 }
@@ -18,7 +16,10 @@ function extract_interaccion(body: ImperiumDoc): ImperiumDoc | null {
 	delete body.fecha_interaccion;
 	delete body.notas_interaccion;
 	if (!notas && (fecha_raw == null || fecha_raw === '')) return null;
-	const tipo = TIPOS.has(String(tipo_raw ?? '')) ? String(tipo_raw) : 'llamada';
+	const tipo =
+		tipo_raw == null || String(tipo_raw).trim() === ''
+			? 'llamada'
+			: String(tipo_raw);
 	const parsed = fecha_raw ? new Date(String(fecha_raw)) : null;
 	const fecha =
 		parsed && !Number.isNaN(parsed.getTime()) ? parsed.toISOString() : undefined;

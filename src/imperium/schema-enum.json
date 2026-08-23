@@ -11,7 +11,7 @@
       }
     },
     "cfdi-document": {
-      "severity": {
+      "validation_issues.severity": {
         "values": [
           "error",
           "warning"
@@ -38,6 +38,19 @@
         "values": [
           "comercial",
           "dpa_gobierno"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "custom-field-control": {
+      "fields.type": {
+        "values": [
+          "string",
+          "number",
+          "boolean",
+          "date",
+          "textarea",
+          "status"
         ],
         "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
       }
@@ -74,7 +87,7 @@
       }
     },
     "model-tracker": {
-      "source": {
+      "__schema_fields.source": {
         "values": [
           "schema",
           "custom_field"
@@ -83,7 +96,7 @@
       }
     },
     "asociaciones": {
-      "tipo": {
+      "interacciones.tipo": {
         "values": [
           "llamada",
           "correo",
@@ -305,7 +318,7 @@
       }
     },
     "delivery-package": {
-      "event_type": {
+      "logistics_events.event_type": {
         "values": [
           "load",
           "delivery"
@@ -343,7 +356,7 @@
       }
     },
     "dynamic-dashboard": {
-      "widget_type": {
+      "widgets.widget_type": {
         "values": [
           "kpi",
           "table",
@@ -354,7 +367,7 @@
         ],
         "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
       },
-      "group_by_date_granularity": {
+      "widgets.group_by_date_granularity": {
         "values": [
           "",
           "day",
@@ -364,7 +377,7 @@
         ],
         "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
       },
-      "op": {
+      "widgets.op": {
         "values": [
           "count",
           "sum",
@@ -374,7 +387,7 @@
         ],
         "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
       },
-      "mode": {
+      "widgets.mode": {
         "values": [
           "none",
           "relative",
@@ -382,7 +395,7 @@
         ],
         "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
       },
-      "relative": {
+      "widgets.relative": {
         "values": [
           "today",
           "last_7d",
@@ -421,7 +434,7 @@
       }
     },
     "interactive-manual": {
-      "placement": {
+      "steps.placement": {
         "values": [
           "auto",
           "top",
@@ -431,7 +444,7 @@
         ],
         "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
       },
-      "action_hint": {
+      "steps.action_hint": {
         "values": [
           "click",
           "input",
@@ -562,7 +575,7 @@
       }
     },
     "payroll-receipt": {
-      "categoria": {
+      "lineas.categoria": {
         "values": [
           "perception",
           "deduction",
@@ -628,7 +641,7 @@
       }
     },
     "proyectos": {
-      "status": {
+      "collaboration_requests.status": {
         "values": [
           "pendiente",
           "aceptada",
@@ -697,6 +710,14 @@
       }
     },
     "purchase-order": {
+      "facturas_proveedor.estado": {
+        "values": [
+          "pendiente",
+          "parcial",
+          "pagada"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      },
       "estado": {
         "values": [
           "borrador",
@@ -745,14 +766,14 @@
       }
     },
     "user": {
-      "mode": {
+      "start_view.mode": {
         "values": [
           "menu",
           "url"
         ],
         "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
       },
-      "view_kind": {
+      "start_view.view_kind": {
         "values": [
           "list",
           "form"
@@ -901,7 +922,7 @@
       }
     },
     "document-change-history": {
-      "op": {
+      "changes.op": {
         "values": [
           "add",
           "remove",
@@ -910,7 +931,7 @@
         ],
         "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
       },
-      "tipoMovimiento": {
+      "changes.tipoMovimiento": {
         "values": [
           "crear",
           "eliminar",

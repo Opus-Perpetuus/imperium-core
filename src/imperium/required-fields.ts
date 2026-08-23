@@ -112,53 +112,60 @@ export function assert_required_fields(resource: string, doc: Record<string, unk
 	const canonical = RESOURCE_ALIASES[resource] ?? resource;
 	const mins = STRING_LIMITS.minlength[canonical] ?? STRING_LIMITS.minlength[resource] ?? {};
 	const maxs = STRING_LIMITS.maxlength[canonical] ?? STRING_LIMITS.maxlength[resource] ?? {};
-	for (const [field, rule] of Object.entries(mins)) {
-		for (const value of string_values(doc[field])) {
-			if (value.length < rule.min) add(field, rule.message);
-		}
-	}
-	for (const [field, rule] of Object.entries(maxs)) {
-		for (const value of string_values(doc[field])) {
-			if (value.length > rule.max) add(field, rule.message);
-		}
-	}
 	const matches = MATCH_RULES[canonical] ?? MATCH_RULES[resource] ?? {};
-	for (const [field, rule] of Object.entries(matches)) {
-		if (is_missing(doc[field])) continue;
-		let regex: RegExp;
-		try {
-			regex = new RegExp(rule.pattern, rule.flags);
-		} catch {
-			continue;
-		}
-		for (const value of string_values(doc[field])) {
-			if (!regex.test(value)) add(field, rule.message);
-		}
-	}
 	const enums = ENUM_RULES[canonical] ?? ENUM_RULES[resource] ?? {};
-	for (const [field, rule] of Object.entries(enums)) {
-		if (is_missing(doc[field])) continue;
-		const allowed = new Set(rule.values);
-		for (const value of string_values(doc[field])) {
-			if (allowed.has(value)) continue;
-			add(field, enum_message(rule.message, field, value));
-		}
-	}
 	const mins_n = NUMBER_LIMITS.min[canonical] ?? NUMBER_LIMITS.min[resource] ?? {};
 	const maxs_n = NUMBER_LIMITS.max[canonical] ?? NUMBER_LIMITS.max[resource] ?? {};
-	for (const [field, rule] of Object.entries(mins_n)) {
-		if (is_missing(doc[field])) continue;
-		for (const value of number_values(doc[field])) {
-			if (rule.min !== undefined && value < rule.min) {
-				add(field, number_bound_message(rule.message, field, value, { MIN: rule.min }));
+	for (const { path, value } of collect_leaves(doc)) {
+		const key = rule_key(path);
+		const min_rule = mins[key];
+		if (min_rule) {
+			for (const text of string_values(value)) {
+				if (text.length < min_rule.min) add(path, min_rule.message);
 			}
 		}
-	}
-	for (const [field, rule] of Object.entries(maxs_n)) {
-		if (is_missing(doc[field])) continue;
-		for (const value of number_values(doc[field])) {
-			if (rule.max !== undefined && value > rule.max) {
-				add(field, number_bound_message(rule.message, field, value, { MAX: rule.max }));
+		const max_rule = maxs[key];
+		if (max_rule) {
+			for (const text of string_values(value)) {
+				if (text.length > max_rule.max) add(path, max_rule.message);
+			}
+		}
+		const match_rule = matches[key];
+		if (match_rule && !is_missing(value)) {
+			let regex: RegExp | undefined;
+			try {
+				regex = new RegExp(match_rule.pattern, match_rule.flags);
+			} catch {
+				regex = undefined;
+			}
+			if (regex) {
+				for (const text of string_values(value)) {
+					if (!regex.test(text)) add(path, match_rule.message);
+				}
+			}
+		}
+		const enum_rule = enums[key];
+		if (enum_rule && !is_missing(value)) {
+			const allowed = new Set(enum_rule.values);
+			for (const text of string_values(value)) {
+				if (allowed.has(text)) continue;
+				add(path, enum_message(enum_rule.message, path, text));
+			}
+		}
+		const nmin = mins_n[key];
+		if (nmin && !is_missing(value)) {
+			for (const n of number_values(value)) {
+				if (nmin.min !== undefined && n < nmin.min) {
+					add(path, number_bound_message(nmin.message, path, n, { MIN: nmin.min }));
+				}
+			}
+		}
+		const nmax = maxs_n[key];
+		if (nmax && !is_missing(value)) {
+			for (const n of number_values(value)) {
+				if (nmax.max !== undefined && n > nmax.max) {
+					add(path, number_bound_message(nmax.message, path, n, { MAX: nmax.max }));
+				}
 			}
 		}
 	}
@@ -178,6 +185,41 @@ function required_message(resource: string, field: string) {
 		FIELD_MESSAGES[field] ??
 		'Debes definir un valor'
 	);
+}
+
+function rule_key(path: string) {
+	return path
+		.split('.')
+		.filter((part) => !/^\d+$/.test(part))
+		.join('.');
+}
+
+function collect_leaves(
+	value: unknown,
+	prefix = '',
+): Array<{ path: string; value: unknown }> {
+	if (value == null || typeof value !== 'object' || value instanceof Date) {
+		return prefix ? [{ path: prefix, value }] : [];
+	}
+	if (Array.isArray(value)) {
+		const out: Array<{ path: string; value: unknown }> = [];
+		value.forEach((item, index) => {
+			const path = prefix ? `${prefix}.${index}` : String(index);
+			out.push(...collect_leaves(item, path));
+		});
+		return out;
+	}
+	const out: Array<{ path: string; value: unknown }> = [];
+	for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+		if (!prefix && key === 'payload') continue;
+		const path = prefix ? `${prefix}.${key}` : key;
+		if (child && typeof child === 'object' && !(child instanceof Date)) {
+			out.push(...collect_leaves(child, path));
+		} else {
+			out.push({ path, value: child });
+		}
+	}
+	return out;
 }
 
 function is_missing(value: unknown) {
