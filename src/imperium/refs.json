@@ -131,7 +131,11 @@
       "employee": "Employee"
     },
     "labor-incident": {
-      "payroll_period": "PayrollPeriod"
+      "payroll_period": "PayrollPeriod",
+      "employee": "Employee"
+    },
+    "labor-schedule": {
+      "employee": "Employee"
     },
     "payroll-period": {
       "branch_office": "Branchoffice"

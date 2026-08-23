@@ -670,6 +670,47 @@ const LIST_PROJECTIONS: Record<string, ListProjection> = {
 			'is_active',
 		],
 	},
+	'labor-schedule': {
+		rows: ['_id', 'name', 'description', 'employee', 'days', 'is_default', 'is_active'],
+	},
+	'user-group': {
+		rows: ['_id', 'name', 'description'],
+	},
+	'access-rights': {
+		rows: [
+			'_id',
+			'name',
+			'allow_create',
+			'allow_read',
+			'allow_update',
+			'allow_delete',
+			'model_id',
+		],
+	},
+	'unit-of-measure': {
+		rows: ['_id', 'name', 'is_active', 'clave_unidad', 'description'],
+	},
+	configuration: {
+		rows: [
+			'_id',
+			'name',
+			'description',
+			'is_active',
+			'is_system',
+			'module_id',
+			'type',
+			'value',
+		],
+	},
+	sku: {
+		rows: ['_id', 'name', 'codigo', 'unidad'],
+	},
+	'menu-management': {
+		rows: ['_id', 'name', 'icon', 'model', 'order', 'path', 'parent_id'],
+	},
+	tags: {
+		rows: ['_id', 'name', 'is_active', 'color', 'icon'],
+	},
 };
 
 function projection_for(resource: string): ListProjection | undefined {
