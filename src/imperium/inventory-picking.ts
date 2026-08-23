@@ -186,6 +186,7 @@ async function upsert_draft_replenishment_item(
 	const { rows } = await store.find_many('purchase-order', {
 		where: { estado: 'borrador', tipo_origen: 'reabasto' },
 		take: 1,
+		sort: 'id:asc',
 		include_inactive: false,
 		populate: false,
 	});
