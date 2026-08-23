@@ -296,7 +296,8 @@ function extract_token(req: Request): string {
 async function active_tokens(store: ImperiumStore, user_id: string) {
 	if (!store.has('mcp-user-token')) return [];
 	const { rows } = await store.find_many('mcp-user-token', {
-		take: 200,
+		mongo_match: { user_id },
+		take: 20000,
 		include_inactive: true,
 	});
 	return rows.filter(
@@ -396,9 +397,18 @@ async function authenticate_token(
 		);
 	}
 	const token_hash = hash_token(plaintext);
-	const { rows } = store.has('mcp-user-token')
-		? await store.find_many('mcp-user-token', { take: 2000, include_inactive: true })
-		: { rows: [] as ImperiumDoc[] };
+	const by_hash = store.has('mcp-user-token')
+		? await store.find_where('mcp-user-token', { token_hash })
+		: null;
+	const { rows } = by_hash
+		? { rows: [by_hash] }
+		: store.has('mcp-user-token')
+			? await store.find_many('mcp-user-token', {
+					mongo_match: { token_hash },
+					take: 20000,
+					include_inactive: true,
+				})
+			: { rows: [] as ImperiumDoc[] };
 	const token_doc = rows.find((row) => {
 		const stored = String(row.token_hash ?? '');
 		if (!stored || !safe_equal_hex(stored, token_hash)) return false;
@@ -490,8 +500,13 @@ function sanitize(payload: Record<string, unknown>) {
 
 async function capabilities(store: ImperiumStore, access: Access) {
 	const modules = store.has('module-management')
-		? (await store.find_many('module-management', { take: 2000, include_inactive: true }))
-				.rows
+		? (
+				await store.find_many('module-management', {
+					where: { is_enable: true },
+					take: 20000,
+					include_inactive: false,
+				})
+			).rows
 		: [];
 	const enabled = modules.filter(
 		(mod) => mod.is_enable === true || mod.is_enable === undefined,
