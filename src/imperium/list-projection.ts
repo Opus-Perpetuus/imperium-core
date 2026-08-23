@@ -190,6 +190,9 @@ const LIST_PROJECTIONS: Record<string, ListProjection> = {
 	country: {
 		rows: ['_id', 'name', 'is_active'],
 	},
+	boroughs: {
+		rows: ['_id', 'name', 'is_active'],
+	},
 	asociaciones: {
 		rows: ['_id', 'name', 'telefono', 'correo', 'ciudad', 'localidad', 'is_active'],
 	},
@@ -311,6 +314,9 @@ const LIST_PROJECTIONS: Record<string, ListProjection> = {
 			'purchase_order_nombre',
 			'purchase_order_id',
 		],
+	},
+	cfdi: {
+		rows: ['_id', 'name', 'is_active'],
 	},
 	'dynamic-dashboard': {
 		rows: ['_id', 'name', 'description', 'is_global', 'is_active'],
@@ -729,6 +735,30 @@ const LIST_PROJECTIONS: Record<string, ListProjection> = {
 			'value',
 		],
 	},
+	'api-keys': {
+		rows: [
+			'_id',
+			'name',
+			'description',
+			'domain',
+			'client',
+			'has_expiration',
+			'expiration_date',
+			'is_active',
+		],
+	},
+	'interface-restriction': {
+		rows: [
+			'_id',
+			'name',
+			'description',
+			'html_element_hash',
+			'allowed_user_groups',
+			'allowed_user_groups_id',
+			'allowed_user_groups_count',
+			'is_active',
+		],
+	},
 	sku: {
 		rows: ['_id', 'name', 'codigo', 'unidad'],
 	},
@@ -737,6 +767,52 @@ const LIST_PROJECTIONS: Record<string, ListProjection> = {
 	},
 	tags: {
 		rows: ['_id', 'name', 'is_active', 'color', 'icon'],
+	},
+	agua: {
+		rows: ['_id', 'name', 'vigencia_actual', 'periodo_actual', 'is_active'],
+	},
+	contrato: {
+		rows: [
+			'_id',
+			'name',
+			'contrato',
+			'contribuyente',
+			'colonia',
+			'id_ruta',
+			'saldo',
+			'tomada',
+			'is_active',
+		],
+	},
+	lectura: {
+		rows: [
+			'_id',
+			'name',
+			'contrato',
+			'lectura_actual',
+			'consumo_mts3',
+			'importe',
+			'fecha_lectura',
+			'is_active',
+		],
+	},
+	lecturista: {
+		rows: ['_id', 'name', 'id_lecturista', 'dispositivo', 'is_active'],
+	},
+	ruta: {
+		rows: ['_id', 'name', 'id_ruta', 'consecutivo', 'is_active'],
+	},
+	tarifa: {
+		rows: ['_id', 'name', 'id_tarifa', 'vigencia', 'cuota_minima', 'is_active'],
+	},
+	periodo: {
+		rows: ['_id', 'name', 'meses_por_periodo', 'is_active'],
+	},
+	incidencia: {
+		rows: ['_id', 'name', 'id_incidencia', 'is_active'],
+	},
+	impedimento: {
+		rows: ['_id', 'name', 'id_impedimento', 'is_active'],
 	},
 	'interactive-manual': {
 		rows: [
