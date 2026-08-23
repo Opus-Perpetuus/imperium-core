@@ -165,6 +165,19 @@ async function record_rule_scope(
 	);
 }
 
+async function assert_no_incoming_references(
+	store: ImperiumStore,
+	resource: string,
+	id: string,
+) {
+	const hits = await store.referencing_counts(resource, id);
+	if (!hits.length) return;
+	const mensaje = hits
+		.map((hit) => `${model_id_for_resource(hit.resource)}: ${hit.conteo} registros`)
+		.join(', ');
+	throw new Error(`No se puede eliminar el registro porque está referenciado en: ${mensaje}`);
+}
+
 const INVENTORY_LEDGER_WRITE_ERRORS: Record<
 	string,
 	{ create: string; update: string; delete: string; batch: string }
@@ -399,6 +412,7 @@ export async function handle_crud(
 		assert_inventory_ledger_write(resource, 'delete');
 		const scope = await record_rule_scope(store, actor, resource, method);
 		await assert_id_in_scope(store, resource, segs[1], scope, method);
+		await assert_no_incoming_references(store, resource, segs[1]!);
 		if (is_pattern_parts_resource(resource)) {
 			const deleted = await soft_delete_pattern_part(store, segs[1]!);
 			return json(resource, ok([deleted], pattern_part_delete_message()));

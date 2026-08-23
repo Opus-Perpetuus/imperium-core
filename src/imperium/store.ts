@@ -457,6 +457,41 @@ export class ImperiumStore {
 		return field_map_for(resource) ?? {};
 	}
 
+	/**
+	 * Refs simples (sin path anidado) que apuntan a `target`, como el
+	 * `_check_references` original que solo mira `schema.obj` con `ref`.
+	 */
+	incoming_simple_refs(target: string): Array<{ resource: string; field: string }> {
+		const out: Array<{ resource: string; field: string }> = [];
+		for (const [from, fields] of Object.entries(REFS.fields)) {
+			if (from === target || !this.has(from)) continue;
+			for (const [field, model] of Object.entries(fields)) {
+				if (!field || field.includes('.')) continue;
+				if (this.resource_for_model(model) === target) {
+					out.push({ resource: from, field });
+				}
+			}
+		}
+		return out;
+	}
+
+	async referencing_counts(
+		target: string,
+		id: string,
+	): Promise<Array<{ resource: string; field: string; conteo: number }>> {
+		const hits: Array<{ resource: string; field: string; conteo: number }> = [];
+		for (const incoming of this.incoming_simple_refs(target)) {
+			const { total } = await this.find_many(incoming.resource, {
+				where: { [incoming.field]: id },
+				take: 1,
+				include_inactive: false,
+				populate: false,
+			});
+			if (total > 0) hits.push({ ...incoming, conteo: total });
+		}
+		return hits;
+	}
+
 	json_cols(resource: string): Set<string> {
 		const loc = this.loc(resource);
 		const out = new Set(['custom_data', 'payload']);
