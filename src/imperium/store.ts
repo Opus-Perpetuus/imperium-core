@@ -1687,7 +1687,7 @@ export class ImperiumStore {
 		mongo_match?: Record<string, unknown> | null,
 	): Promise<Record<string, unknown>> {
 		const { rows } = await this.find_many('citizen-report', {
-			take: 5000,
+			take: 20000,
 			include_inactive: false,
 			mongo_match,
 		});
