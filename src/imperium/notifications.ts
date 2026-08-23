@@ -643,7 +643,11 @@ export async function my_mentions(ctx: NotificationCtx) {
 	}
 	const page = Math.max(1, Number.parseInt(String(ctx.url.searchParams.get('page') ?? '1'), 10) || 1);
 	const size = Math.min(100, Math.max(1, Number.parseInt(String(ctx.url.searchParams.get('size') ?? '25'), 10) || 25));
-	const { rows } = await ctx.store.find_many('mentions', { take: 2000, include_inactive: true });
+	const { rows } = await ctx.store.find_many('mentions', {
+		mongo_match: { mentionedUserId: uid },
+		take: 20000,
+		include_inactive: true,
+	});
 	const mine = rows
 		.filter((row) => String(row.mentionedUserId ?? '') === uid && row.is_active !== false)
 		.sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')));
