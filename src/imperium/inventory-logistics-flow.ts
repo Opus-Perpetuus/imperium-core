@@ -357,3 +357,171 @@ export async function inventory_movement_stats_extras(
 			})),
 	};
 }
+
+function round_cost(value: unknown): number {
+	return Number(Number(value ?? 0).toFixed(2));
+}
+
+function parse_stats_date(value: unknown, fallback: Date): Date {
+	if (!value) return fallback;
+	const parsed = new Date(String(value));
+	return Number.isNaN(parsed.getTime()) ? fallback : parsed;
+}
+
+function consume_fifo(
+	queues: Map<string, Array<{ remaining: number; unit_cost: number }>>,
+	product_id: string,
+	quantity: number,
+): number {
+	let pending = round_qty(quantity);
+	let consumed_cost = 0;
+	const queue = queues.get(product_id) ?? [];
+	let last_cost = queue[queue.length - 1]?.unit_cost ?? 0;
+	while (pending > 0.000001 && queue.length) {
+		const lot = queue[0]!;
+		const take = Math.min(lot.remaining, pending);
+		consumed_cost += take * lot.unit_cost;
+		lot.remaining = round_qty(lot.remaining - take);
+		pending = round_qty(pending - take);
+		last_cost = lot.unit_cost;
+		if (lot.remaining <= 0.000001) queue.shift();
+	}
+	if (pending > 0.000001 && last_cost > 0) {
+		consumed_cost += pending * last_cost;
+	}
+	queues.set(product_id, queue);
+	return round_cost(consumed_cost);
+}
+
+function sale_time(row: ImperiumDoc): number {
+	return new Date(String(row.createdAt ?? row.created_at ?? '')).getTime();
+}
+
+function product_id_of(item: Record<string, unknown>): string {
+	const raw = item.product ?? item.producto;
+	if (raw && typeof raw === 'object') return String((raw as { _id?: unknown })._id ?? '').trim();
+	return String(raw ?? '').trim();
+}
+
+/**
+ * `__get_statistics` de entradas de costo: totales + `estimated_fifo`
+ * del mes (o `date_from`/`date_to`) como el original.
+ */
+export async function cost_entry_stats(
+	store: ImperiumStore,
+	url?: URL,
+	mongo_match?: Record<string, unknown> | null,
+): Promise<Record<string, unknown>> {
+	const now = new Date();
+	const first_day = new Date(now.getFullYear(), now.getMonth(), 1);
+	const date_from = parse_stats_date(url?.searchParams.get('date_from'), first_day);
+	const date_to = parse_stats_date(url?.searchParams.get('date_to'), now);
+	const { rows: entries } = await store.find_many('inventory-cost-entry', {
+		take: 10000,
+		include_inactive: true,
+		populate: false,
+		mongo_match,
+	});
+	let total_quantity = 0;
+	let total_cost = 0;
+	for (const entry of entries) {
+		total_quantity += Number(entry.cantidad ?? 0);
+		total_cost += Number(entry.costo_total ?? 0);
+	}
+	const purchase_entries = entries
+		.filter((entry) => {
+			const stamp = new Date(String(entry.fecha_entrada ?? entry.createdAt ?? '')).getTime();
+			return Number.isFinite(stamp) && stamp <= date_to.getTime();
+		})
+		.sort((a, b) => {
+			const a_time = new Date(String(a.fecha_entrada ?? a.createdAt ?? '')).getTime();
+			const b_time = new Date(String(b.fecha_entrada ?? b.createdAt ?? '')).getTime();
+			if (a_time !== b_time) return a_time - b_time;
+			return String(a.createdAt ?? '').localeCompare(String(b.createdAt ?? ''));
+		});
+	const fifo_queues = new Map<string, Array<{ remaining: number; unit_cost: number }>>();
+	for (const entry of purchase_entries) {
+		const product_id = product_id_of(entry) || String(entry.producto ?? '').trim();
+		const quantity = round_qty(entry.cantidad);
+		if (!product_id || quantity <= 0) continue;
+		const queue = fifo_queues.get(product_id) ?? [];
+		queue.push({ remaining: quantity, unit_cost: Number(entry.costo_unitario ?? 0) });
+		fifo_queues.set(product_id, queue);
+	}
+	const { rows: pedidos } = await store.find_many('pedidos', {
+		take: 10000,
+		include_inactive: false,
+		populate: false,
+	});
+	const sales = pedidos.filter(
+		(row) => row.is_active !== false && String(row.estado ?? '') !== 'cancelado',
+	);
+	const from_ms = date_from.getTime();
+	const to_ms = date_to.getTime();
+	for (const sale of sales) {
+		const stamp = sale_time(sale);
+		if (!Number.isFinite(stamp) || stamp >= from_ms) continue;
+		for (const raw of as_array(sale.articulos)) {
+			const item = as_object(raw);
+			const product_id = product_id_of(item);
+			const quantity = round_qty(item.cantidad);
+			if (!product_id || quantity <= 0) continue;
+			consume_fifo(fifo_queues, product_id, quantity);
+		}
+	}
+	let period_sales_total = 0;
+	let period_sales_quantity = 0;
+	let period_fifo_cost = 0;
+	const sales_by_product = new Map<
+		string,
+		{ quantity: number; sale_amount: number; fifo_cost: number }
+	>();
+	for (const sale of sales) {
+		const stamp = sale_time(sale);
+		if (!Number.isFinite(stamp) || stamp < from_ms || stamp > to_ms) continue;
+		for (const raw of as_array(sale.articulos)) {
+			const item = as_object(raw);
+			const product_id = product_id_of(item);
+			const quantity = round_qty(item.cantidad);
+			const sale_amount = round_cost(item.importe ?? 0);
+			if (!product_id || quantity <= 0) continue;
+			const fifo_cost = consume_fifo(fifo_queues, product_id, quantity);
+			period_sales_total += sale_amount;
+			period_sales_quantity += quantity;
+			period_fifo_cost += fifo_cost;
+			const current = sales_by_product.get(product_id) ?? {
+				quantity: 0,
+				sale_amount: 0,
+				fifo_cost: 0,
+			};
+			current.quantity = round_qty(current.quantity + quantity);
+			current.sale_amount = round_cost(current.sale_amount + sale_amount);
+			current.fifo_cost = round_cost(current.fifo_cost + fifo_cost);
+			sales_by_product.set(product_id, current);
+		}
+	}
+	const total_records = entries.length;
+	return {
+		total_records,
+		total_quantity: round_qty(total_quantity),
+		total_cost: round_cost(total_cost),
+		date_range: { from: date_from, to: date_to },
+		estimated_fifo: {
+			sales_total: round_cost(period_sales_total),
+			sales_quantity: round_qty(period_sales_quantity),
+			inventory_cost: round_cost(period_fifo_cost),
+			gross_margin: round_cost(period_sales_total - period_fifo_cost),
+			by_product: [...sales_by_product.entries()].map(([product_id, summary]) => ({
+				product_id,
+				...summary,
+				gross_margin: round_cost(summary.sale_amount - summary.fifo_cost),
+			})),
+		},
+		last_updated: now,
+		kpis: {
+			total_records: { label: 'Total', value: total_records },
+			total_quantity: { label: 'Cantidad', value: round_qty(total_quantity) },
+			total_cost: { label: 'Costo', value: round_cost(total_cost) },
+		},
+	};
+}

@@ -376,3 +376,25 @@ export async function decorate_inventory_stock_quant_list(
 		};
 	});
 }
+
+/** `__get_statistics` original: `by_state` como `{ state, count }`. */
+export async function delivery_return_by_state(
+	store: ImperiumStore,
+	mongo_match?: Record<string, unknown> | null,
+): Promise<Array<{ state: string | null; count: number }>> {
+	const { rows } = await store.find_many('delivery-return', {
+		take: 10000,
+		include_inactive: true,
+		populate: false,
+		mongo_match,
+	});
+	const counts = new Map<string | null, number>();
+	for (const row of rows) {
+		const raw = text(row.estado ?? row.state);
+		const key = raw || null;
+		counts.set(key, (counts.get(key) ?? 0) + 1);
+	}
+	return [...counts.entries()]
+		.sort((a, b) => String(a[0] ?? '').localeCompare(String(b[0] ?? '')))
+		.map(([state, count]) => ({ state, count }));
+}

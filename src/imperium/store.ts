@@ -23,9 +23,12 @@ import { planeacion_statistics } from './planeacion-flow.ts';
 import { invoice_request_stats } from './invoice-request-flow.ts';
 import { physical_count_by_state } from './inventory-physical-count-flow.ts';
 import {
+	cost_entry_stats,
 	inventory_movement_stats_extras,
 	stock_quant_stats_extras,
 } from './inventory-logistics-flow.ts';
+import { location_stats_extras } from './location-flow.ts';
+import { delivery_return_by_state } from './delivery-return-flow.ts';
 import { record_document_history } from './history.ts';
 import {
 	find_increment_control,
@@ -1218,6 +1221,7 @@ export class ImperiumStore {
 		const planning = await planeacion_statistics(this, resource, url, actor, mongo_match);
 		if (planning) return planning;
 		if (resource === 'invoice-request') return invoice_request_stats(this, mongo_match);
+		if (resource === 'inventory-cost-entry') return cost_entry_stats(this, url, mongo_match);
 		const qt = this.qt(resource);
 		const cols = this.column_names(resource);
 		const from = new Date();
@@ -1258,6 +1262,12 @@ export class ImperiumStore {
 		}
 		if (resource === 'inventory-movement') {
 			Object.assign(domain, await inventory_movement_stats_extras(this, mongo_match));
+		}
+		if (resource === 'inventory-internal-location') {
+			Object.assign(domain, await location_stats_extras(this, mongo_match));
+		}
+		if (resource === 'delivery-return') {
+			domain.by_state = await delivery_return_by_state(this, mongo_match);
 		}
 		const now = new Date();
 		const daily_where = extra ? `created_at >= $1 AND ${extra}` : `created_at >= $1`;
