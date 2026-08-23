@@ -6262,7 +6262,7 @@ async function physical_device_report(ctx: Ctx) {
 
 async function model_tracker_all_models(ctx: Ctx) {
 	const { rows, total } = await ctx.store.find_many('model-tracker', {
-		take: 5000,
+		take: 20000,
 		include_inactive: true,
 	});
 	return ok(rows, 'Todos los modelos registrados fueron obtenidos.', total);
