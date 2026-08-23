@@ -78,8 +78,17 @@ export class FieldValidationError extends Error {
 /**
  * Replica trim / lowercase / uppercase de Mongoose (corren antes de validar).
  */
+/** Defaults de Mongoose que el original aplica al crear (antes de validar). */
+const SCHEMA_DEFAULTS: Record<string, Record<string, unknown>> = {
+	'payroll-period': { estado: 'draft' },
+};
+
 export function apply_schema_setters(resource: string, doc: Record<string, unknown>) {
 	const canonical = RESOURCE_ALIASES[resource] ?? resource;
+	const defaults = SCHEMA_DEFAULTS[canonical] ?? SCHEMA_DEFAULTS[resource] ?? {};
+	for (const [field, value] of Object.entries(defaults)) {
+		if (is_missing(doc[field])) doc[field] = value;
+	}
 	const fields = (kind: 'trim' | 'lowercase' | 'uppercase') =>
 		STRING_SETTERS[kind][canonical] ?? STRING_SETTERS[kind][resource] ?? [];
 	for (const field of fields('trim')) {

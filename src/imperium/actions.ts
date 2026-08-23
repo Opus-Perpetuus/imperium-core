@@ -150,6 +150,7 @@ import {
 	send_invoice_to_commercial,
 } from './invoice-request-flow.ts';
 import { resolve_dashboard_catalog, resolve_widget_data } from './dashboard-flow.ts';
+import { generate_payroll_drafts } from './payroll-flow.ts';
 import {
 	end_attending_turn as end_ticketing_turn,
 	notify_turn as notify_ticketing_turn,
@@ -3851,85 +3852,8 @@ async function receive_interinstance_message(ctx: Ctx) {
 }
 
 async function payroll_drafts(ctx: Ctx) {
-	const period = await need(ctx, 'payroll-period', ctx.params.id);
-	await ctx.store.update('payroll-period', String(period._id), { estado: 'generating' });
-	const employees = ctx.store.has('employee')
-		? (await ctx.store.find_many('employee', { take: 2000, populate: false })).rows
-		: [];
-	const existing = ctx.store.has('payroll-receipt')
-		? (
-				await ctx.store.find_many('payroll-receipt', {
-					where: { payroll_period: String(period._id) },
-					take: 5000,
-					populate: false,
-					include_inactive: true,
-				})
-			).rows
-		: [];
-	const by_emp = new Map<string, ImperiumDoc>();
-	for (const rec of existing) {
-		const emp_id = String(as_object(rec.employee)._id ?? rec.employee ?? '');
-		if (emp_id) by_emp.set(emp_id, rec);
-	}
-	let created = 0;
-	let updated = 0;
-	const errors: Array<{ employee_id?: string; message: string }> = [];
-	for (const emp of employees) {
-		const emp_id = String(emp._id ?? '');
-		if (!emp_id) continue;
-		if (emp.salario_diario != null && !(Number(emp.salario_diario) > 0)) continue;
-		const hit = by_emp.get(emp_id);
-		const estado = String(hit?.estado ?? '');
-		if (estado === 'stamped' || estado === 'stamping') continue;
-		try {
-			if (hit) {
-				await ctx.store.update('payroll-receipt', String(hit._id), {
-					name: `Recibo ${emp.name} · ${period.name}`.slice(0, 200),
-					estado: estado === 'ready_to_stamp' ? estado : 'calculated',
-					payroll_period: period._id,
-					employee: emp_id,
-				});
-				updated += 1;
-			} else {
-				await ctx.store.insert('payroll-receipt', {
-					name: `Recibo ${emp.name} · ${period.name}`.slice(0, 200),
-					description: 'Borrador de nómina generado automáticamente',
-					employee: emp_id,
-					payroll_period: period._id,
-					estado: 'calculated',
-				});
-				created += 1;
-			}
-		} catch (err) {
-			errors.push({
-				employee_id: emp_id,
-				message: err instanceof Error ? err.message : 'Error al calcular recibo',
-			});
-		}
-	}
-	const after = ctx.store.has('payroll-receipt')
-		? (
-				await ctx.store.find_many('payroll-receipt', {
-					where: { payroll_period: String(period._id) },
-					take: 5000,
-					populate: false,
-				})
-			).rows
-		: [];
-	const calculated_count = after.filter((r) =>
-		['calculated', 'ready_to_stamp'].includes(String(r.estado)),
-	).length;
-	await ctx.store.update('payroll-period', String(period._id), {
-		estado: 'open',
-		receipts_count: after.length,
-		calculated_count,
-		borradores_generados: true,
-		fecha_borradores: now(),
-	});
-	return ok(
-		[{ created, updated, errors, receipts_count: after.length, calculated_count }],
-		`Borradores generados: ${created} creados, ${updated} actualizados`,
-	);
+	const summary = await generate_payroll_drafts(ctx.store, String(ctx.params.id ?? ''));
+	return ok([summary], `Borradores generados: ${summary.created} creados, ${summary.updated} actualizados`);
 }
 
 async function payroll_prepare_stamp(ctx: Ctx) {
