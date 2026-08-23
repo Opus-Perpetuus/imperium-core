@@ -12,14 +12,16 @@
       "usuario": "User",
       "listaDePreciosId": "ListaDePrecios",
       "assigned_employee": "Employee",
-      "invoice_request_id": "InvoiceRequest"
+      "invoice_request_id": "InvoiceRequest",
+      "articulos.product": "Products"
     },
     "pedidos-surtir": {
       "contacto": "Contacto",
       "usuario": "User",
       "listaDePreciosId": "ListaDePrecios",
       "assigned_employee": "Employee",
-      "invoice_request_id": "InvoiceRequest"
+      "invoice_request_id": "InvoiceRequest",
+      "articulos.product": "Products"
     },
     "user": {
       "employee": "Employee"
@@ -56,7 +58,22 @@
       "medico_tratante_id": "Medical"
     },
     "lista-asistencia": {
-      "registro_incidencia_id": "RegistroIncidencias"
+      "registro_incidencia_id": "RegistroIncidencias",
+      "registro_asistencia_id": "RegistroAsistencias",
+      "alumno_id": "Alumnos",
+      "grupo_id": "Grupo"
+    },
+    "registro-asistencias": {
+      "grupo_id": "Grupo",
+      "materia_id": "Materias",
+      "teacher_user_id": "User"
+    },
+    "alumnos": {
+      "user_id": "User",
+      "grupo_id": "Grupo"
+    },
+    "delivery-route": {
+      "contacts": "Contacto"
     },
     "registro-incidencias": {
       "alumno_id": "Alumnos",
@@ -91,13 +108,15 @@
     "cfdi-document": {
       "issuer_profile": "CfdiIssuerProfile",
       "contacto": "Contacto",
-      "purchase_order": "PurchaseOrder"
+      "purchase_order": "PurchaseOrder",
+      "unidad": "UnitOfMeasure"
     },
     "cfdi-issuer-profile": {
       "branchoffice": "Branchoffice"
     },
     "pos-tickets": {
-      "pos_session": "PosSession"
+      "pos_session": "PosSession",
+      "items.item_id": "Products"
     },
     "employee": {
       "state_id": "States",
@@ -122,19 +141,29 @@
     },
     "planeacion-mis-tareas": {
       "parent_task": "MisTareas",
-      "owner_user": "User"
+      "owner_user": "User",
+      "assignee_users": "User",
+      "observer_users": "User"
     },
     "planeacion-proyectos": {
-      "owner_user": "User"
+      "owner_user": "User",
+      "collaborator_users": "User",
+      "observer_users": "User",
+      "collaboration_requests.user_id": "User",
+      "collaboration_requests.responded_by_user": "User"
     },
     "planeacion-proyectos-task": {
       "project_id": "Proyectos",
       "requested_by_user": "User",
-      "parent_task_id": "ProyectoTask"
+      "parent_task_id": "ProyectoTask",
+      "assignee_users": "User",
+      "observer_users": "User"
     },
     "ticketing-system-turn": {
       "customer_type": "TicketingSystemCustomerType",
-      "assigned_box": "TicketingSystemBoxConfig"
+      "assigned_box": "TicketingSystemBoxConfig",
+      "services": "TicketingSystemServiceType",
+      "priority_level": "TicketingSystemPriority"
     },
     "ticketing-system-service-type": {
       "priority_level": "TicketingSystemPriority"
@@ -148,7 +177,11 @@
     "invoice-request": {
       "pedido": "Pedidos",
       "contacto": "Contacto",
-      "cfdi_document_id": "CfdiDocument"
+      "cfdi_document_id": "CfdiDocument",
+      "articulos.product": "Products"
+    },
+    "lista-de-precios": {
+      "product.product": "Products"
     },
     "contacto": {
       "listaDePrecios": "ListaDePrecios"
@@ -185,6 +218,14 @@
     "attachmentmanagement": "attachment-management",
     "user": "user",
     "User": "user",
+    "Products": "products",
+    "ListaDePrecios": "lista-de-precios",
+    "Contacto": "contacto",
+    "MisTareas": "planeacion-mis-tareas",
+    "TicketingSystemCustomerType": "ticketing-system-customer-type",
+    "TicketingSystemBoxConfig": "ticketing-system-box-config",
+    "TicketingSystemServiceType": "ticketing-system-service-type",
+    "TicketingSystemPriority": "ticketing-system-priority",
     "usuario": "user",
     "user-group": "user-group",
     "usergroup": "user-group",

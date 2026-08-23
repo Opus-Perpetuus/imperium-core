@@ -911,8 +911,20 @@ export async function handle_crud(
 function decorate_rows(resource: string, rows: ImperiumDoc[]): ImperiumDoc[] {
 	if (resource === 'products') return rows.map(decorate_product);
 	if (resource === 'vehicle') return rows.map(decorate_vehicle);
+	if (resource === 'pos-tickets') return rows.map(decorate_pos_ticket);
 	if (is_physical_count_resource(resource)) return rows.map(decorate_physical_count);
 	return rows;
+}
+
+function decorate_pos_ticket(doc: ImperiumDoc): ImperiumDoc {
+	const items = as_array(doc.items).map((raw) => {
+		const item = as_object(raw);
+		const product = as_object(item.item_id);
+		const item_id = String(product._id ?? item.item_id ?? '');
+		const item_name = String(item.item_name ?? product.name ?? '').trim();
+		return { ...item, item_id, ...(item_name ? { item_name } : {}) };
+	});
+	return { ...doc, items };
 }
 
 function instance_type(

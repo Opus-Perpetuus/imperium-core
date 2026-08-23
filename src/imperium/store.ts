@@ -734,10 +734,10 @@ export class ImperiumStore {
 			const target = this.resource_for_model(model);
 			if (!target) continue;
 			for (const doc of docs) {
-				const id = ref_id(doc[field]);
-				if (!id) continue;
-				if (!needed.has(target)) needed.set(target, new Set());
-				needed.get(target)!.add(id);
+				for (const id of collect_ref_ids(doc, field.split('.'))) {
+					if (!needed.has(target)) needed.set(target, new Set());
+					needed.get(target)!.add(id);
+				}
 			}
 		}
 		const loaded = new Map<string, Map<string, ImperiumDoc>>();
@@ -754,12 +754,8 @@ export class ImperiumStore {
 			const out = { ...doc };
 			for (const [field, model] of Object.entries(field_map)) {
 				const target = this.resource_for_model(model);
-				const id = ref_id(doc[field]);
-				if (!id) continue;
-				const hit = target ? loaded.get(target)?.get(id) : undefined;
-				out[field] = hit
-					? { _id: hit._id, name: hit.name ?? '', description: hit.description ?? '' }
-					: { _id: id, name: '' };
+				const lookup = target ? loaded.get(target) : undefined;
+				apply_populated_path(out, field.split('.'), lookup);
 			}
 			return out;
 		});
@@ -1217,6 +1213,94 @@ function turn_duration_minutes(row: ImperiumDoc): number {
 	const b = new Date(String(raw[1])).getTime();
 	if (!Number.isFinite(a) || !Number.isFinite(b) || b <= a) return 0;
 	return (b - a) / 60000;
+}
+
+function collect_ref_ids(value: unknown, path: string[]): string[] {
+	if (typeof value === 'string') {
+		const trimmed = value.trim();
+		if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+			try {
+				return collect_ref_ids(JSON.parse(trimmed), path);
+			} catch {
+				/* id suelto, no JSON */
+			}
+		}
+	}
+	if (!path.length) {
+		if (Array.isArray(value)) {
+			return value.flatMap((entry) => {
+				const id = ref_id(entry);
+				return id ? [id] : [];
+			});
+		}
+		const id = ref_id(value);
+		return id ? [id] : [];
+	}
+	if (value == null) return [];
+	if (Array.isArray(value)) {
+		return value.flatMap((entry) => collect_ref_ids(entry, path));
+	}
+	if (typeof value !== 'object') return [];
+	return collect_ref_ids((value as Record<string, unknown>)[path[0]!], path.slice(1));
+}
+
+function populated_lite(hit: ImperiumDoc | undefined, id: string): ImperiumDoc {
+	if (!hit) return { _id: id, name: '' };
+	return {
+		_id: hit._id,
+		name: hit.name ?? hit.nombreCompleto ?? '',
+		description: hit.description ?? '',
+		...(hit.codigo != null ? { codigo: hit.codigo } : {}),
+		...(hit.image != null ? { image: hit.image } : {}),
+	};
+}
+
+function apply_populated_path(
+	target: Record<string, unknown>,
+	path: string[],
+	lookup: Map<string, ImperiumDoc> | undefined,
+) {
+	if (!path.length) return;
+	const [head, ...rest] = path;
+	const current = target[head!];
+	if (typeof current === 'string') {
+		const trimmed = current.trim();
+		if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+			try {
+				target[head!] = JSON.parse(trimmed);
+			} catch {
+				/* se deja el string */
+			}
+		}
+	}
+	if (!rest.length) {
+		const val = target[head!];
+		if (Array.isArray(val)) {
+			target[head!] = val.map((entry) => {
+				const id = ref_id(entry);
+				return id ? populated_lite(lookup?.get(id), id) : entry;
+			});
+			return;
+		}
+		const id = ref_id(val);
+		if (id) target[head!] = populated_lite(lookup?.get(id), id);
+		return;
+	}
+	const val = target[head!];
+	if (Array.isArray(val)) {
+		target[head!] = val.map((entry) => {
+			if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry;
+			const copy = { ...(entry as Record<string, unknown>) };
+			apply_populated_path(copy, rest, lookup);
+			return copy;
+		});
+		return;
+	}
+	if (val && typeof val === 'object' && !Array.isArray(val)) {
+		const copy = { ...(val as Record<string, unknown>) };
+		apply_populated_path(copy, rest, lookup);
+		target[head!] = copy;
+	}
 }
 
 function ref_id(value: unknown): string {
