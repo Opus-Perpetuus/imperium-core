@@ -747,7 +747,7 @@ async function statistics(
 	const resource = resolve_resource(store, model_id);
 	require_perm(access, resource, 'read');
 	const scope = mcp_read_scope(access, user, resource, model_id);
-	const stats = await store.stats(resource, new URL('http://local/'), scope.match);
+	const stats = await store.stats(resource, new URL('http://local/'), scope.match, user);
 	return ok([stats], 'Estadísticas obtenidas correctamente');
 }
 

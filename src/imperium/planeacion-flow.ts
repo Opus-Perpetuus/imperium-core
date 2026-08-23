@@ -481,4 +481,98 @@ export function strip_root_parent_where(where: Record<string, unknown>) {
 	return next;
 }
 
+/** Agrupa como el `$group._id` de Mongoose: vacío o ausente → `null`. */
+function breakdown_field(
+	rows: ImperiumDoc[],
+	field: string,
+): Array<{ _id: string | null; count: number }> {
+	const counts = new Map<string | null, number>();
+	for (const row of rows) {
+		const raw = row[field];
+		const key = raw == null || raw === '' ? null : String(raw);
+		counts.set(key, (counts.get(key) ?? 0) + 1);
+	}
+	return [...counts.entries()]
+		.sort((a, b) => String(a[0] ?? '').localeCompare(String(b[0] ?? '')))
+		.map(([_id, count]) => ({ _id, count }));
+}
+
+function planning_stats_payload(
+	rows: ImperiumDoc[],
+	extra: Record<string, unknown>,
+): Record<string, unknown> {
+	const total_records = rows.length;
+	const active_records = rows.filter((row) => row.is_active !== false).length;
+	const now = new Date();
+	return {
+		total_records,
+		active_records,
+		...extra,
+		last_updated: now,
+		kpis: {
+			total_records: { label: 'Total', value: total_records },
+			active_records: { label: 'Activos', value: active_records },
+		},
+	};
+}
+
+/**
+ * `__get_statistics` de proyectos / tareas / mis-tareas: breakdowns
+ * (`status_breakdown`, `priority_breakdown`) y recuentos con el mismo
+ * alcance que el original (proyecto, dueño).
+ */
+export async function planeacion_statistics(
+	store: ImperiumStore,
+	resource: string,
+	url?: URL,
+	actor?: ImperiumDoc | null,
+	mongo_match?: Record<string, unknown> | null,
+): Promise<Record<string, unknown> | null> {
+	if (is_project_resource(resource)) {
+		const { rows } = await store.find_many(resource, {
+			take: 10000,
+			include_inactive: true,
+			populate: false,
+			mongo_match,
+		});
+		return planning_stats_payload(rows, {
+			status_breakdown: breakdown_field(rows, 'state'),
+			priority_breakdown: breakdown_field(rows, 'priority'),
+		});
+	}
+	if (is_project_task_resource(resource)) {
+		const project_id = String(url?.searchParams.get('project_id') ?? '').trim();
+		if (!project_id) return null;
+		const { rows } = await store.find_many(resource, {
+			take: 10000,
+			include_inactive: true,
+			populate: false,
+			where: { project_id },
+			mongo_match,
+		});
+		const normalized = rows.map((row) => ({
+			...row,
+			status: row.status ?? row.state,
+		}));
+		return planning_stats_payload(normalized, {
+			status_breakdown: breakdown_field(normalized, 'status'),
+		});
+	}
+	if (is_personal_task_resource(resource)) {
+		const uid = ref_id(actor?._id ?? actor?.id);
+		if (!uid) throw new Error('No se pudo resolver el usuario actual');
+		const { rows } = await store.find_many(resource, {
+			take: 10000,
+			include_inactive: true,
+			populate: false,
+			where: { owner_user: uid },
+			mongo_match,
+		});
+		return planning_stats_payload(rows, {
+			status_breakdown: breakdown_field(rows, 'state'),
+		});
+	}
+	return null;
+}
+
 export { project_resource, TIME_LOG as PROJECT_TIME_LOG_RESOURCE };

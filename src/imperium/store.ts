@@ -18,6 +18,7 @@ import { products_inventory_cost } from './products-flow.ts';
 import { vehicle_by_status } from './vehicle-flow.ts';
 import { pedidos_sales_stats } from './pedidos-flow.ts';
 import { purchase_order_stats } from './purchase-order-flow.ts';
+import { planeacion_statistics } from './planeacion-flow.ts';
 import { record_document_history } from './history.ts';
 import {
 	find_increment_control,
@@ -1199,6 +1200,7 @@ export class ImperiumStore {
 		resource: string,
 		url?: URL,
 		mongo_match?: Record<string, unknown> | null,
+		actor?: ImperiumDoc | null,
 	): Promise<Record<string, unknown>> {
 		if (resource === 'ticketing-system-turn') return this.turn_stats(mongo_match);
 		if (resource === 'citizen-report') return this.citizen_report_stats(url, mongo_match);
@@ -1206,6 +1208,8 @@ export class ImperiumStore {
 		if (resource === 'pedidos' || resource === 'pedidos-surtir') {
 			return pedidos_sales_stats(this, url, mongo_match);
 		}
+		const planning = await planeacion_statistics(this, resource, url, actor, mongo_match);
+		if (planning) return planning;
 		const qt = this.qt(resource);
 		const cols = this.column_names(resource);
 		const from = new Date();

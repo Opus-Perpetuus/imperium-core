@@ -284,7 +284,7 @@ export async function handle_crud(
 			throw new Error('Debes indicar el proyecto a consultar');
 		}
 		const scope = await record_rule_scope(store, actor, resource, method);
-		const stats = await store.stats(resource, url, scope.match);
+		const stats = await store.stats(resource, url, scope.match, actor);
 		const message =
 			resource === 'ticketing-system-turn'
 				? 'Estadísticas obtenidas con información completa'
