@@ -87,6 +87,9 @@ const UNIQUE_FIELDS: Record<string, string[]> = {
 	'interface-restriction': ['html_element_hash'],
 	'inventory-internal-location': ['codigo'],
 	'violation-mobility-law': ['name'],
+	violation: ['code'],
+	'module-management-reference': ['reference'],
+	'mcp-user-token': ['token_hash'],
 };
 
 /** Unique solo entre activos (`partialFilterExpression: { is_active: { $ne: false } }`). */
