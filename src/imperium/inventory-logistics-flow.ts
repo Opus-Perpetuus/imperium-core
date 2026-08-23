@@ -45,7 +45,7 @@ async function get_order_reserved_quantities(store: ImperiumStore, pedido_id: st
 	if (!store.has('inventory-movement')) return reserved;
 	const { rows } = await store.find_many('inventory-movement', {
 		where: { documento_tipo: 'pedido', documento_id: pedido_id },
-		take: 5000,
+		take: 20000,
 		include_inactive: true,
 		populate: false,
 	});
