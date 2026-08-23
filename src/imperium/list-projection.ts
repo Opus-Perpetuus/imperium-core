@@ -10,6 +10,7 @@ const RESOURCE_ALIASES: Record<string, string> = {
 	'mis-tareas': 'planeacion-mis-tareas',
 	'proyectos-task': 'planeacion-proyectos-task',
 	'pedidos-surtir': 'pedidos',
+	usuario: 'user',
 };
 
 type ListProjection = {
@@ -557,6 +558,48 @@ const LIST_PROJECTIONS: Record<string, ListProjection> = {
 			'secuencia_surtido',
 			'is_system',
 			'is_active',
+		],
+	},
+	user: {
+		rows: ['_id', 'name', 'is_active', 'img'],
+	},
+	'pos-order': {
+		rows: [
+			'_id',
+			'partner_name',
+			'partner_lastname',
+			'partner_home',
+			'date_order',
+			'amount_total',
+			'reference',
+		],
+	},
+	'cfdi-issuer-profile': {
+		rows: [
+			'_id',
+			'name',
+			'is_active',
+			'rfc',
+			'regimen_fiscal',
+			'lugar_expedicion',
+			'perfil_emision_default',
+		],
+	},
+	'payroll-period': {
+		rows: [
+			'_id',
+			'name',
+			'is_active',
+			'tipo_nomina',
+			'fecha_pago',
+			'fecha_inicial',
+			'fecha_final',
+			'num_dias_pagados',
+			'periodicidad_pago',
+			'estado',
+			'receipts_count',
+			'calculated_count',
+			'stamped_count',
 		],
 	},
 };

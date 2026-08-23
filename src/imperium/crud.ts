@@ -1016,6 +1016,7 @@ function instance_type(
 	if (projected) return projected;
 	const keys = ['_id', 'name', 'description', 'is_active', '_ref'];
 	for (const col of store.loc(resource).columns) {
+		if (USER_SECRET_KEYS.has(col.name)) continue;
 		if (!keys.includes(col.name)) keys.push(col.name);
 	}
 	const out: Record<string, { nombre_encabezado: string; tipo: string }> = {};
