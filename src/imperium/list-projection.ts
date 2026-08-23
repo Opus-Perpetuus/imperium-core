@@ -969,6 +969,52 @@ const LIST_PROJECTIONS: Record<string, ListProjection> = {
 			'fields_count',
 		],
 	},
+	alumnos: {
+		rows: [
+			'_id',
+			'name',
+			'user_id',
+			'grupo_id',
+			'numero_lista',
+			'email_contacto',
+			'telefono_contacto',
+			'is_active',
+		],
+	},
+	grupo: {
+		rows: ['_id', 'name', 'is_active'],
+	},
+	materias: {
+		rows: ['_id', 'name', 'is_active'],
+	},
+	escuelas: {
+		rows: ['_id', 'name', 'is_active'],
+	},
+	aulas: {
+		rows: ['_id', 'name', 'is_active'],
+	},
+	horarios: {
+		rows: ['_id', 'name', 'is_active'],
+	},
+	'grados-escolares': {
+		rows: ['_id', 'name', 'is_active'],
+	},
+	'ciclos-escolares': {
+		rows: ['_id', 'name', 'is_active'],
+	},
+	'registro-asistencias': {
+		rows: [
+			'_id',
+			'name',
+			'grupo_id',
+			'materia_id',
+			'teacher_user_id',
+			'fecha_asistencia',
+			'estatus',
+			'total_alumnos',
+			'is_active',
+		],
+	},
 };
 
 function projection_for(resource: string): ListProjection | undefined {

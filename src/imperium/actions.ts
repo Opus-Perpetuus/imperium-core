@@ -3012,11 +3012,14 @@ async function stock_consistency(ctx: Ctx) {
 }
 
 async function violation_challenge(ctx: Ctx) {
-	const rec = await need(ctx, 'violation', ctx.params.id);
+	const id = String(ctx.params.id ?? ctx.body._id ?? '').trim();
+	if (!id) throw new Error('Se requiere la infracción a impugnar.');
 	const reason = String(ctx.body.reason ?? ctx.body.motivo ?? '').trim();
 	if (reason.length < 4) {
 		throw new Error('Escribe el motivo de la impugnación (mínimo 4 caracteres).');
 	}
+	const rec = await ctx.store.find_id('violation', id);
+	if (!rec) throw new Error('Registro no encontrado.');
 	const status = String(rec.status ?? rec.estado ?? '');
 	if (status === 'PAGADA') {
 		throw new Error('No se puede impugnar una infracción ya pagada.');
