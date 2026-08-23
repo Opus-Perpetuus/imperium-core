@@ -83,6 +83,9 @@ const UNIQUE_FIELDS: Record<string, string[]> = {
 	'auto-increment-control': ['_unique_string_reference'],
 	contrato: ['contrato'],
 	'font-awesome-icon-catalog': ['icon'],
+	'user-settings': ['user_id'],
+	'interface-restriction': ['html_element_hash'],
+	'inventory-internal-location': ['codigo'],
 };
 
 function unique_fields_for(resource: string): string[] {
