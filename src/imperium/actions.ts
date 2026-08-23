@@ -150,7 +150,11 @@ import {
 	send_invoice_to_commercial,
 } from './invoice-request-flow.ts';
 import { resolve_dashboard_catalog, resolve_widget_data } from './dashboard-flow.ts';
-import { generate_payroll_drafts } from './payroll-flow.ts';
+import {
+	export_payroll_payload,
+	generate_payroll_drafts,
+	prepare_payroll_stamp,
+} from './payroll-flow.ts';
 import {
 	end_attending_turn as end_ticketing_turn,
 	notify_turn as notify_ticketing_turn,
@@ -3857,33 +3861,12 @@ async function payroll_drafts(ctx: Ctx) {
 }
 
 async function payroll_prepare_stamp(ctx: Ctx) {
-	const rec = await need(ctx, 'payroll-receipt', ctx.params.id, 'No se encontró el recibo de nómina.');
-	const payload = rec.payload_cfdi ?? {
-		meta: { source: 'payroll_receipt', source_id: rec._id },
-		receptor: { nombre: rec.name },
-		estado: 'ready_to_stamp',
-	};
-	return patch_doc(
-		ctx,
-		'payroll-receipt',
-		String(rec._id),
-		{
-			estado: 'ready_to_stamp',
-			payload_cfdi: payload,
-			fecha_preparacion: now(),
-		},
-		'Recibo listo para timbrar',
-	);
+	const { receipt, handoff } = await prepare_payroll_stamp(ctx.store, String(ctx.params.id ?? ''));
+	return ok([receipt], handoff.message);
 }
 
 async function payroll_export_payload(ctx: Ctx) {
-	const rec = await need(ctx, 'payroll-receipt', ctx.params.id, 'No se encontró el recibo de nómina.');
-	const payload =
-		rec.payload_cfdi ??
-		({
-			meta: { source: 'payroll_receipt', source_id: rec._id },
-			receptor: { nombre: rec.name },
-		} as ImperiumDoc);
+	const payload = await export_payroll_payload(ctx.store, String(ctx.params.id ?? ''));
 	return ok([payload], 'Payload CFDI N exportado (sin timbrar)');
 }
 

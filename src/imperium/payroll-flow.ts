@@ -4,6 +4,11 @@
 import { as_array, as_object, type ImperiumDoc } from './envelope.ts';
 import { calculate_payroll_receipt } from './payroll-calc.engine.ts';
 import type { CalcIncidentInput, CalcScheduleDay } from './payroll-calc.types.ts';
+import {
+	build_payroll_cfdi_payload,
+	type PayrollReceiptLike,
+	type PayrollToCfdiPeriodContext,
+} from './payroll-to-cfdi-payload.ts';
 import type { ImperiumStore } from './store.ts';
 
 function text(value: unknown): string {
@@ -232,4 +237,90 @@ export async function generate_payroll_drafts(store: ImperiumStore, period_id: s
 		receipts_count: after.length,
 		calculated_count,
 	};
+}
+
+function receipt_for_cfdi(rec: ImperiumDoc): PayrollReceiptLike {
+	return {
+		...rec,
+		lineas: as_array(rec.lineas) as PayrollReceiptLike['lineas'],
+		snapshot: as_object(rec.snapshot),
+	};
+}
+
+async function load_period_context(
+	store: ImperiumStore,
+	payroll_period: unknown,
+): Promise<PayrollToCfdiPeriodContext | undefined> {
+	const id = ref_id(payroll_period) || text(payroll_period);
+	if (!id || !store.has('payroll-period')) return undefined;
+	const period = await store.find_id('payroll-period', id);
+	if (!period) return undefined;
+	return {
+		tipo_nomina: text(period.tipo_nomina) || undefined,
+		fecha_pago: period.fecha_pago as string | undefined,
+		fecha_inicial: period.fecha_inicial as string | undefined,
+		fecha_final: period.fecha_final as string | undefined,
+		num_dias_pagados: Number(period.num_dias_pagados ?? 0) || undefined,
+		periodicidad_pago: text(period.periodicidad_pago) || undefined,
+	};
+}
+
+function payroll_cfdi_handoff(payload: Record<string, unknown>) {
+	const pac_name = text(process.env.CFDI_PAC_PROVIDER) || 'unknown';
+	return {
+		status: 'payload_ready' as const,
+		payload,
+		message:
+			'Payload CFDI N listo y pack Facturación detectable. ' +
+			`PAC compartido: ${pac_name}. ` +
+			'Timbrar vía POST /cfdi-document/from-payroll-receipt/:id? o stamp del documento (mismo código que facturación comercial).',
+	};
+}
+
+async function load_active_receipt(store: ImperiumStore, receipt_id: string, empty: string) {
+	const id = text(receipt_id);
+	if (!id || id === 'prepare-stamp' || id === 'export-payload') {
+		throw new Error(empty);
+	}
+	const rec = await store.find_id('payroll-receipt', id);
+	if (!rec || rec.is_active === false) {
+		throw new Error('Recibo de nómina no encontrado');
+	}
+	return rec;
+}
+
+export async function prepare_payroll_stamp(store: ImperiumStore, receipt_id: string) {
+	const rec = await load_active_receipt(
+		store,
+		receipt_id,
+		'Se necesita un id de recibo para prepare-stamp',
+	);
+	const period = await load_period_context(store, rec.payroll_period);
+	const payload = build_payroll_cfdi_payload(receipt_for_cfdi(rec), { period });
+	const next_estado = text(rec.estado) === 'calculated' ? 'ready_to_stamp' : text(rec.estado);
+	const updated = await store.update('payroll-receipt', String(rec._id), {
+		payload_cfdi: payload,
+		...(next_estado === 'ready_to_stamp' ? { estado: 'ready_to_stamp' } : {}),
+	});
+	if (!updated) throw new Error('Recibo de nómina no encontrado');
+	const handoff = payroll_cfdi_handoff(payload);
+	const stored = as_object(updated.payload_cfdi);
+	return {
+		receipt: {
+			...updated,
+			payload_cfdi: stored.tipo_de_comprobante ? stored : payload,
+			handoff,
+		},
+		handoff,
+	};
+}
+
+export async function export_payroll_payload(store: ImperiumStore, receipt_id: string) {
+	const rec = await load_active_receipt(
+		store,
+		receipt_id,
+		'Se necesita un id de recibo para export-payload',
+	);
+	const period = await load_period_context(store, rec.payroll_period);
+	return build_payroll_cfdi_payload(receipt_for_cfdi(rec), { period });
 }
