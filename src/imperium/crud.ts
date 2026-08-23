@@ -178,6 +178,32 @@ async function assert_no_incoming_references(
 	throw new Error(`No se puede eliminar el registro porque está referenciado en: ${mensaje}`);
 }
 
+async function module_info_for(store: ImperiumStore, resource: string) {
+	const model_id = model_id_for_resource(resource);
+	if (store.has('module-management')) {
+		const { rows } = await store.find_many('module-management', {
+			where: { model_id },
+			take: 5,
+			include_inactive: false,
+			populate: false,
+		});
+		const record =
+			rows[0] ??
+			(await store.find_where('module-management', { module_name: resource })) ??
+			(await store.find_where('module-management', { module_name: model_id }));
+		if (record) return record;
+	}
+	return { name: model_id, model: model_id, model_id, module_name: resource };
+}
+
+async function with_module_info(
+	store: ImperiumStore,
+	resource: string,
+	body: Record<string, unknown>,
+) {
+	return { ...body, module_info: await module_info_for(store, resource) };
+}
+
 const INVENTORY_LEDGER_WRITE_ERRORS: Record<
 	string,
 	{ create: string; update: string; delete: string; batch: string }
@@ -426,7 +452,11 @@ export async function handle_crud(
 		if (resource === 'pedidos') await after_pedido_mutate(store, 'delete', deleted);
 		return json(
 			resource,
-			ok([deleted], resource === 'pedidos' ? 'Pedido eliminado' : 'Eliminado correctamente'),
+			await with_module_info(
+				store,
+				resource,
+				ok([deleted], resource === 'pedidos' ? 'Pedido eliminado' : 'Eliminado correctamente'),
+			),
 		);
 	}
 	if (method === 'GET' && segs.length === 0) {
@@ -439,19 +469,17 @@ export async function handle_crud(
 			list_fields,
 		);
 		if (listed.empty_project) {
-			return json(resource, {
+			return json(resource, await with_module_info(store, resource, {
 				...ok([], 'Sin proyecto especificado', 0),
 				tipo_de_instancia: tipo,
-				module_info: { name: resource, model: resource, model_id: resource },
 				schema_validation,
-			});
+			}));
 		}
-		return json(resource, {
+		return json(resource, await with_module_info(store, resource, {
 			...ok(listed.rows, list_message(resource), listed.total),
 			tipo_de_instancia: tipo,
-			module_info: { name: resource, model: resource, model_id: resource },
 			schema_validation,
-		});
+		}));
 	}
 	if (method === 'GET' && segs.length === 1) {
 		if (resource === 'pos-session') {
@@ -482,10 +510,10 @@ export async function handle_crud(
 		const detail = is_project_resource(resource)
 			? await hydrate_project(store, populated)
 			: populated;
-		return json(resource, {
+		return json(resource, await with_module_info(store, resource, {
 			...ok([detail], detail_message(resource)),
 			schema_validation: await schema_validation_for(store, resource),
-		});
+		}));
 	}
 	if (method === 'POST' && segs.length === 0) {
 		assert_inventory_ledger_write(resource, 'create');
@@ -666,11 +694,10 @@ export async function handle_crud(
 																					: is_pattern_condition_resource(resource)
 																						? pattern_condition_create_message()
 																						: 'Ruta creada';
-		return json(
-			resource,
-			notice ? { ...ok([populated], message), user_pin_notice: notice } : ok([populated], message),
-			201,
-		);
+		const created_body = notice
+			? { ...ok([populated], message), user_pin_notice: notice }
+			: ok([populated], message);
+		return json(resource, await with_module_info(store, resource, created_body), 201);
 	}
 	if (method === 'PUT' && segs.length === 0) {
 		assert_inventory_ledger_write(resource, 'update');
@@ -809,6 +836,9 @@ export async function handle_crud(
 		);
 		return json(
 			resource,
+			await with_module_info(
+				store,
+				resource,
 			ok(
 				[populated],
 				resource === 'pedidos'
@@ -840,6 +870,7 @@ export async function handle_crud(
 															: is_pattern_parts_resource(resource)
 																? pattern_part_update_message()
 																: 'Actualizado correctamente',
+			),
 			),
 		);
 	}
@@ -965,6 +996,9 @@ export async function handle_crud(
 		);
 		return json(
 			resource,
+			await with_module_info(
+				store,
+				resource,
 			ok(
 				[decorated],
 				resource === 'pedidos'
@@ -996,6 +1030,7 @@ export async function handle_crud(
 															: is_pattern_parts_resource(resource)
 																? pattern_part_update_message()
 																: 'Actualizado correctamente',
+			),
 			),
 		);
 	}
@@ -1323,9 +1358,13 @@ async function before_create(
 	store: ImperiumStore,
 	resource: string,
 	doc: ImperiumDoc,
-	_actor: ImperiumDoc | null,
+	actor: ImperiumDoc | null,
 ): Promise<ImperiumDoc> {
-	return assign_document_increments(store, resource, doc);
+	const incoming = { ...doc };
+	if (actor?._id && incoming.created_by === undefined) {
+		incoming.created_by = String(actor._id);
+	}
+	return assign_document_increments(store, resource, incoming);
 }
 
 async function after_create(
