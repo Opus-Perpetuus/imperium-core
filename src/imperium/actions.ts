@@ -2045,8 +2045,16 @@ async function read_history(ctx: Ctx) {
 	);
 	const desde = Math.max(0, Number(ctx.url.searchParams.get('desde') ?? 0) || 0);
 	const { rows } = await ctx.store.find_many('document-change-history', {
-		take: 5000,
+		mongo_match: {
+			$or: [
+				{ documentId: document_id },
+				{ document_id: document_id },
+				{ record_id: document_id },
+			],
+		},
+		take: 20000,
 		include_inactive: true,
+		sort: 'created_at:desc',
 	});
 	const matched = rows
 		.filter((row) => history_row_matches(ctx.store, row, document_id, canonical))
