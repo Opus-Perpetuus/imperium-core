@@ -530,7 +530,7 @@ export async function planeacion_statistics(
 ): Promise<Record<string, unknown> | null> {
 	if (is_project_resource(resource)) {
 		const { rows } = await store.find_many(resource, {
-			take: 10000,
+			take: 20000,
 			include_inactive: true,
 			populate: false,
 			mongo_match,
@@ -544,7 +544,7 @@ export async function planeacion_statistics(
 		const project_id = String(url?.searchParams.get('project_id') ?? '').trim();
 		if (!project_id) return null;
 		const { rows } = await store.find_many(resource, {
-			take: 10000,
+			take: 20000,
 			include_inactive: true,
 			populate: false,
 			where: { project_id },
@@ -562,7 +562,7 @@ export async function planeacion_statistics(
 		const uid = ref_id(actor?._id ?? actor?.id);
 		if (!uid) throw new Error('No se pudo resolver el usuario actual');
 		const { rows } = await store.find_many(resource, {
-			take: 10000,
+			take: 20000,
 			include_inactive: true,
 			populate: false,
 			where: { owner_user: uid },
