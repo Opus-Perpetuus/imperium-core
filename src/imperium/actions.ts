@@ -3526,15 +3526,16 @@ async function search_chat_messages(ctx: Ctx) {
 
 async function my_messages(ctx: Ctx) {
 	const uid = actor_id(ctx);
-	const { rows, total } = await ctx.store.find_many('messages', { take: 200 });
-	const mine = rows.filter(
-		(m) =>
-			String(m.created_by) === uid ||
-			String(m.from) === uid ||
-			String(m.to) === uid ||
-			as_array(m.participants).map(String).includes(uid),
-	);
-	return ok(mine, 'Mensajes', total);
+	const { rows } = await find_user_messages(ctx.store, uid);
+	const mine = rows
+		.filter((m) => {
+			const source = String(m.sourceType ?? m.source_type ?? '');
+			if (source === 'chat') return false;
+			return message_participants(m, uid).includes(uid);
+		})
+		.sort((a, b) => created_ms(b) - created_ms(a))
+		.slice(0, 200);
+	return ok(mine, 'Mensajes', mine.length);
 }
 
 async function conversation(ctx: Ctx) {
