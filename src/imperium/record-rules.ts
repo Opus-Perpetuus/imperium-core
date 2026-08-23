@@ -337,7 +337,7 @@ export async function load_record_rules_by_model(
 	).rows;
 	if (!all_rules.length) return {};
 	const all_groups = store.has('user-group')
-		? (await store.find_many('user-group', { take: 500, include_inactive: false, populate: false }))
+		? (await store.find_many('user-group', { take: 20000, include_inactive: false, populate: false }))
 				.rows
 		: [];
 	const user_group_record_rule_ids = new Set(

@@ -328,9 +328,13 @@ export async function build_access(store: ImperiumStore, user: ImperiumDoc) {
 		};
 	}
 	const groups = store.has('user-group')
-		? (await store.find_many('user-group', { take: 500, include_inactive: false })).rows.filter(
-				(g) => as_array(g.user_ids).map(String).includes(String(user._id)),
-			)
+		? (
+				await store.find_many('user-group', {
+					mongo_match: { user_ids: { $regex: String(user._id) } },
+					take: 20000,
+					include_inactive: false,
+				})
+			).rows.filter((g) => as_array(g.user_ids).map(String).includes(String(user._id)))
 		: [];
 	const user_group_reference_ids = new Set(
 		groups.flatMap((g) => [String(g._id ?? ''), String(g._ref ?? '')].filter(Boolean)),
@@ -340,7 +344,7 @@ export async function build_access(store: ImperiumStore, user: ImperiumDoc) {
 		for (const id of as_array(g.access_rights_ids)) user_group_access_right_ids.add(String(id));
 	}
 	const all_groups = store.has('user-group')
-		? (await store.find_many('user-group', { take: 500, include_inactive: false })).rows
+		? (await store.find_many('user-group', { take: 20000, include_inactive: false })).rows
 		: [];
 	const access_right_ids_assigned_to_any_group = new Set<string>();
 	for (const g of all_groups) {

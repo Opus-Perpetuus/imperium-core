@@ -43,7 +43,8 @@ export async function actor_group_refs(
 	const uid = String(actor?._id ?? '');
 	if (!uid) return [];
 	const { rows } = await store.find_many('user-group', {
-		take: 500,
+		mongo_match: { user_ids: { $regex: uid } },
+		take: 20000,
 		include_inactive: false,
 	});
 	return rows
