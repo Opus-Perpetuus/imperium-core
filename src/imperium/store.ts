@@ -1403,7 +1403,7 @@ export class ImperiumStore {
 
 	async turn_stats(mongo_match?: Record<string, unknown> | null): Promise<Record<string, unknown>> {
 		const { rows } = await this.find_many('ticketing-system-turn', {
-			take: 5000,
+			take: 20000,
 			include_inactive: true,
 			mongo_match,
 		});
@@ -1566,7 +1566,7 @@ export class ImperiumStore {
 			this.has(resource)
 				? (
 						await this.find_many(resource, {
-							take: 500,
+							take: 20000,
 							include_inactive: false,
 							populate: false,
 						})
