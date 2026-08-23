@@ -19,6 +19,10 @@ import {
 	sanitize_location_segment,
 } from './location-path.ts';
 import { compose_location_code } from './location-flow.ts';
+import {
+	find_increment_control,
+	format_increment_real_value,
+} from './custom-pattern-render.ts';
 import { AguaMssqlService } from './agua-mssql.ts';
 import { calcular_importe } from './agua-importe.ts';
 import { looks_like_canonical, serialize_cfdi_to_xml, type CfdiCanonical } from './cfdi-xml.ts';
@@ -1324,7 +1328,7 @@ async function increment_counter(ctx: Ctx) {
 		'auto-increment-control',
 		ctx.params.id,
 		'No se encontró el control solicitado.',
-		'Debes indicar el ID del control.',
+		'Se necesita un id para incrementar.',
 	);
 	const amount = Math.max(1, Number(ctx.body.amount ?? ctx.url.searchParams.get('amount') ?? 1));
 	const model_name = String(doc.model_name ?? '');
@@ -1337,42 +1341,45 @@ async function increment_counter(ctx: Ctx) {
 	} else {
 		next += amount;
 	}
+	const real_value = await format_increment_real_value(ctx.store, doc, next);
 	const updated = await ctx.store.update('auto-increment-control', String(doc._id), {
 		current_sequence: next,
 		current: next,
 		valor: next,
 		counter: next,
-		current_real_value: next,
+		current_real_value: real_value,
 	});
 	return ok(
-		[{ ...(updated ?? {}), real_value: next, sequence: next, next_sequence: next }],
-		`Secuencia incrementada a ${String(next)}.`,
+		[{ ...(updated ?? {}), real_value, sequence: next, next_sequence: next }],
+		`Secuencia incrementada a ${String(real_value)}.`,
 	);
 }
 
 async function preview_counter(ctx: Ctx) {
-	const model_name = ctx.params.model_name;
-	const increment_field = ctx.params.increment_field;
-	const { rows } = await ctx.store.find_many('auto-increment-control', {
-		where: { model_name },
-		take: 20,
-		include_inactive: true,
-	});
-	const hit =
-		rows.find((r) => String(r.increment_field ?? r.campo ?? '') === increment_field) ??
-		rows[0];
-	const next_sequence = Number(hit?.current_sequence ?? hit?.current ?? hit?.valor ?? 0) + 1;
-	return ok(
-		[
-			{
-				next_sequence,
-				next_consecutive: next_sequence,
-				next_real_value: next_sequence,
-				tracker: hit ?? null,
-			},
-		],
-		`Siguiente valor: ${String(next_sequence)}.`,
-	);
+	const model_name = String(ctx.params.model_name ?? '').trim();
+	const increment_field = String(ctx.params.increment_field ?? '').trim() || 'sequence';
+	if (!model_name) throw new Error('Debes indicar el nombre del modelo.');
+	try {
+		const hit = await find_increment_control(ctx.store, model_name, increment_field);
+		const next_sequence = Number(hit?.current_sequence ?? hit?.current ?? hit?.valor ?? 0) + 1;
+		const next_real_value = await format_increment_real_value(ctx.store, hit, next_sequence);
+		return ok(
+			[
+				{
+					next_sequence,
+					next_consecutive: next_sequence,
+					next_real_value,
+					tracker: hit ?? null,
+				},
+			],
+			`Siguiente valor: ${String(next_real_value)}.`,
+		);
+	} catch (error) {
+		return ok(
+			[{ next_sequence: 0, next_real_value: null, tracker: null }],
+			error instanceof Error ? error.message : 'Error al obtener la previsualización.',
+		);
+	}
 }
 
 async function normalize_counters(ctx: Ctx) {

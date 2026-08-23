@@ -6,6 +6,7 @@
 import { as_array, as_object, type ImperiumDoc } from './envelope.ts';
 import { sync_order_logistics_reservation } from './inventory-logistics-flow.ts';
 import type { ImperiumStore } from './store.ts';
+import { format_model_field_value } from './custom-pattern-render.ts';
 
 const PACKAGE_STATES = [
 	'pendiente',
@@ -282,7 +283,16 @@ async function resolve_package_codigo(
 	const next = await store.next_auto_increment('DeliveryPackage', 'codigo_bulto', {
 		resource: 'delivery-package',
 	});
-	const codigo = format_codigo_bulto(next);
+	const codigo = String(
+		await format_model_field_value(
+			store,
+			'DeliveryPackage',
+			'codigo_bulto',
+			next,
+			undefined,
+			format_codigo_bulto(next),
+		),
+	);
 	if (!codigo) throw new Error('No se pudo asignar el folio de secuencia del bulto');
 	return codigo;
 }

@@ -3,6 +3,7 @@
  */
 import { as_object, type ImperiumDoc } from './envelope.ts';
 import type { ImperiumStore } from './store.ts';
+import { format_model_field_value } from './custom-pattern-render.ts';
 
 const REF_FIELDS = [
 	'employee_taken_the_report',
@@ -83,7 +84,12 @@ export async function prepare_citizen_report_write(
 			resource: 'citizen-report',
 		});
 		doc.sequence = sequence;
-		doc.name = `CR-${sequence}`;
+		doc.name = String(
+			await format_model_field_value(store, 'CitizenReport', 'name', sequence, {
+				...doc,
+				sequence,
+			}, `CR-${sequence}`),
+		);
 		if (!doc.status) doc.status = 'pendiente';
 	}
 	return doc;
