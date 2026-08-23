@@ -482,7 +482,7 @@ async function ticket_summaries_for_session(
 	if (!store.has('pos-tickets')) return [];
 	const { rows } = await store.find_many('pos-tickets', {
 		where: { pos_session: session_id },
-		take: 2000,
+		take: 20000,
 		include_inactive: true,
 		populate: false,
 	});
