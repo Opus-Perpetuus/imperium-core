@@ -159,7 +159,7 @@ async function list_status_configurations(store: ImperiumStore) {
 	if (!store.has('configuration')) return [] as ImperiumDoc[];
 	const { rows } = await store.find_many('configuration', {
 		where: { type: STATUS_OPTION_CONFIGURATION_TYPE },
-		take: 2000,
+		take: 20000,
 		include_inactive: true,
 	});
 	return rows;
@@ -553,7 +553,7 @@ export async function list_status_option_control(ctx: StatusCtx) {
 		return ok([], 'Opciones de estado por módulo cargadas correctamente.');
 	}
 	const { rows: modules } = await ctx.store.find_many('module-management', {
-		take: 2000,
+		take: 20000,
 		include_inactive: true,
 	});
 	const configs = await list_status_configurations(ctx.store);
