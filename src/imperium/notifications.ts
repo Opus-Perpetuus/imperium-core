@@ -7,6 +7,7 @@ import type { ImperiumStore } from './store.ts';
 
 const PLANNING_REMINDER_WINDOW_MS = 48 * 60 * 60 * 1000;
 const MENTION_TOKEN = /\[@[^\n\]]*\]\(mention:([a-f\d]{24})\)/gi;
+const OBJECT_ID = /^[a-f0-9]{24}$/i;
 const COLLAB = {
 	pendiente: 'pendiente',
 	aceptada: 'aceptada',
@@ -273,7 +274,9 @@ export async function notification_toast_digest(ctx: NotificationCtx) {
 export async function notification_update_read(ctx: NotificationCtx) {
 	const uid = actor_id(ctx);
 	const notification_id = String(ctx.params.id ?? '').trim();
-	if (!notification_id) throw new Error('La notificacion solicitada no es valida.');
+	if (!notification_id || !OBJECT_ID.test(notification_id)) {
+		throw new Error('La notificacion solicitada no es valida.');
+	}
 	const is_read_flag = typeof ctx.body.is_read === 'boolean' ? ctx.body.is_read : true;
 	const doc = await ctx.store.find_id('notifications', notification_id);
 	if (!doc || recipient_of(doc) !== uid) {
@@ -318,7 +321,9 @@ export async function notification_apply_action(ctx: NotificationCtx) {
 	const uid = actor_id(ctx);
 	const notification_id = String(ctx.params.id ?? '').trim();
 	const action = query_text(ctx.body.action)?.toLowerCase();
-	if (!notification_id) throw new Error('La notificacion solicitada no es valida.');
+	if (!notification_id || !OBJECT_ID.test(notification_id)) {
+		throw new Error('La notificacion solicitada no es valida.');
+	}
 	if (action !== 'accept' && action !== 'reject') {
 		throw new Error('La accion solicitada no es valida.');
 	}
@@ -336,7 +341,9 @@ export async function notification_apply_action(ctx: NotificationCtx) {
 	const source = as_object(notification.source);
 	const project_id =
 		query_text(source.documentId) ?? payload_string(notification, 'project_id') ?? '';
-	if (!project_id) throw new Error('La invitacion no tiene un proyecto valido asociado.');
+	if (!project_id || !OBJECT_ID.test(project_id)) {
+		throw new Error('La invitacion no tiene un proyecto valido asociado.');
+	}
 	const project =
 		(await ctx.store.find_id('planeacion-proyectos', project_id)) ??
 		(await ctx.store.find_id('proyectos', project_id));
@@ -663,7 +670,9 @@ export async function clear_notifications(ctx: NotificationCtx) {
 export async function delete_notification(ctx: NotificationCtx) {
 	const uid = actor_id(ctx);
 	const notification_id = String(ctx.params.id ?? '').trim();
-	if (!notification_id) throw new Error('La notificacion solicitada no es valida.');
+	if (!notification_id || !OBJECT_ID.test(notification_id)) {
+		throw new Error('La notificacion solicitada no es valida.');
+	}
 	const doc = await ctx.store.find_id('notifications', notification_id);
 	if (!doc || recipient_of(doc) !== uid) {
 		return ok([], 'Notificacion no encontrada');

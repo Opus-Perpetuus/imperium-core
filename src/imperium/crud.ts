@@ -452,25 +452,7 @@ export async function handle_crud(
 		const detail = is_project_resource(resource)
 			? await hydrate_project(store, populated)
 			: populated;
-		return json(
-			resource,
-			ok(
-				[detail],
-				resource === 'delivery-package'
-					? 'Bulto encontrado'
-					: resource === 'delivery-return'
-						? 'Devolución encontrada'
-						: resource === 'vehicle'
-							? 'Vehículo encontrado'
-							: resource === 'font-awesome-icon-catalog'
-								? 'Ícono encontrado'
-							: is_location_resource(resource)
-								? 'Ubicación encontrada'
-								: is_physical_count_resource(resource)
-								? 'Conteo encontrado'
-								: 'Ruta encontrada',
-			),
-		);
+		return json(resource, ok([detail], detail_message(resource)));
 	}
 	if (method === 'POST' && segs.length === 0) {
 		assert_inventory_ledger_write(resource, 'create');
@@ -637,7 +619,9 @@ export async function handle_crud(
 																		? 'Registro de asistencia creado'
 																		: is_lista_asistencia_resource(resource)
 																			? 'Fila de asistencia creada'
-																			: 'Ruta creada';
+																			: resource === 'physical-device'
+																				? 'Dispositivo creado'
+																				: 'Ruta creada';
 		return json(
 			resource,
 			notice ? { ...ok([populated], message), user_pin_notice: notice } : ok([populated], message),
@@ -1057,6 +1041,21 @@ function decorate_pos_ticket(doc: ImperiumDoc): ImperiumDoc {
 
 function list_message(resource: string) {
 	if (resource === 'font-awesome-icon-catalog') return 'Íconos de Font Awesome';
+	return 'Elementos encontrados.';
+}
+
+function detail_message(resource: string) {
+	if (resource === 'delivery-package') return 'Bulto encontrado';
+	if (resource === 'delivery-return') return 'Devolución encontrada';
+	if (resource === 'vehicle') return 'Vehículo encontrado';
+	if (resource === 'font-awesome-icon-catalog') return 'Ícono encontrado';
+	if (resource === 'purchase-order') return 'Orden de compra encontrada';
+	if (resource === 'pos-session') return 'Sesión encontradda';
+	if (resource === 'physical-device') return 'Dispositivo encontrado';
+	if (is_location_resource(resource)) return 'Ubicación encontrada';
+	if (is_physical_count_resource(resource)) return 'Conteo encontrado';
+	if (is_dashboard_resource(resource)) return 'Tablero encontrado';
+	if (is_view_preset_resource(resource)) return 'Configuración encontrada';
 	return 'Ruta encontrada';
 }
 
