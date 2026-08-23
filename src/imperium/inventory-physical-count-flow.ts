@@ -330,7 +330,7 @@ export async function physical_count_by_state(
 	mongo_match?: Record<string, unknown> | null,
 ): Promise<Array<{ state: string | null; count: number }>> {
 	const { rows } = await store.find_many('inventory-physical-count', {
-		take: 10000,
+		take: 20000,
 		include_inactive: true,
 		populate: false,
 		mongo_match,
