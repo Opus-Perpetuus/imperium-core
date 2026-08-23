@@ -26,7 +26,7 @@ import {
 	format_increment_real_value,
 	type PatternContext,
 } from './custom-pattern-render.ts';
-import { assert_required_fields } from './required-fields.ts';
+import { apply_schema_setters, assert_required_fields } from './required-fields.ts';
 
 export type ExtraCol = {
 	name: string;
@@ -763,6 +763,7 @@ export class ImperiumStore {
 	}
 
 	async insert(resource: string, doc: ImperiumDoc): Promise<ImperiumDoc> {
+		apply_schema_setters(resource, doc);
 		assert_required_fields(resource, doc);
 		await this.assert_unique_business_keys(resource, doc);
 		const cols = this.column_names(resource);
@@ -801,6 +802,7 @@ export class ImperiumStore {
 			_id: id,
 			payload: { ...as_object(existing), ...as_object(patch) },
 		};
+		apply_schema_setters(resource, merged);
 		assert_required_fields(resource, merged);
 		await this.assert_unique_business_keys(resource, merged, id);
 		const row = from_imperium(merged, cols);

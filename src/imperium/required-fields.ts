@@ -41,6 +41,14 @@ const NUMBER_LIMITS = JSON.parse(
 	readFileSync(join(import.meta.dir, 'schema-number-limits.json'), 'utf8'),
 ) as { min: Record<string, Record<string, NumberBound>>; max: Record<string, Record<string, NumberBound>> };
 
+const STRING_SETTERS = JSON.parse(
+	readFileSync(join(import.meta.dir, 'schema-string-setters.json'), 'utf8'),
+) as {
+	trim: Record<string, string[]>;
+	lowercase: Record<string, string[]>;
+	uppercase: Record<string, string[]>;
+};
+
 const RESOURCE_ALIASES: Record<string, string> = {
 	proyectos: 'planeacion-proyectos',
 	'mis-tareas': 'planeacion-mis-tareas',
@@ -64,6 +72,24 @@ export class FieldValidationError extends Error {
 	constructor(field_errors: Record<string, string[]>, message: string) {
 		super(message);
 		this.field_errors = field_errors;
+	}
+}
+
+/**
+ * Replica trim / lowercase / uppercase de Mongoose (corren antes de validar).
+ */
+export function apply_schema_setters(resource: string, doc: Record<string, unknown>) {
+	const canonical = RESOURCE_ALIASES[resource] ?? resource;
+	const fields = (kind: 'trim' | 'lowercase' | 'uppercase') =>
+		STRING_SETTERS[kind][canonical] ?? STRING_SETTERS[kind][resource] ?? [];
+	for (const field of fields('trim')) {
+		if (typeof doc[field] === 'string') doc[field] = doc[field].trim();
+	}
+	for (const field of fields('lowercase')) {
+		if (typeof doc[field] === 'string') doc[field] = doc[field].toLowerCase();
+	}
+	for (const field of fields('uppercase')) {
+		if (typeof doc[field] === 'string') doc[field] = doc[field].toUpperCase();
 	}
 }
 

@@ -1,0 +1,424 @@
+{
+  "trim": {
+    "time-sheets": [
+      "model"
+    ],
+    "cfdi-document": [
+      "purchase_order_nombre"
+    ],
+    "cfdi-issuer-profile": [
+      "rfc",
+      "nombre_fiscal"
+    ],
+    "api-keys": [
+      "domain",
+      "client"
+    ],
+    "branchoffice": [
+      "location",
+      "image"
+    ],
+    "interface-restriction": [
+      "html_element_hash"
+    ],
+    "contacto": [
+      "nombre_fiscal",
+      "regimen_fiscal",
+      "uso_cfdi_default"
+    ],
+    "asociaciones": [
+      "notas",
+      "name",
+      "telefono",
+      "correo",
+      "ciudad",
+      "localidad",
+      "pais",
+      "observaciones"
+    ],
+    "despensa-solidaria": [
+      "name",
+      "codigo_barras",
+      "motivos"
+    ],
+    "directorio-contactos": [
+      "name",
+      "telefono",
+      "telefono_secundario",
+      "direccion",
+      "web",
+      "email",
+      "fax",
+      "observaciones"
+    ],
+    "inventario-sanitario": [
+      "name",
+      "lote",
+      "ubicacion",
+      "observaciones"
+    ],
+    "registro-emergencias": [
+      "name",
+      "municipio",
+      "telefono",
+      "operador",
+      "alertante_nombre",
+      "alertante_telefono",
+      "direccion_exacta",
+      "provincia",
+      "punto_referencia",
+      "descripcion_inicial",
+      "indicativos_vehiculos",
+      "material_especifico",
+      "instrucciones_alertante",
+      "consejos_autoproteccion",
+      "coordinacion_entidades",
+      "observaciones_operador",
+      "responsable_cierre",
+      "resumen_final"
+    ],
+    "rescate-animal": [
+      "name",
+      "nombre_animal",
+      "especie",
+      "lugar_encontrado",
+      "chip_numero",
+      "raza",
+      "edad_aproximada",
+      "color",
+      "fotografia",
+      "estado_animal",
+      "material_utilizado"
+    ],
+    "servicios-realizados": [
+      "name",
+      "lugar",
+      "vehiculos",
+      "voluntarios",
+      "resumen",
+      "asistencias",
+      "incidencias"
+    ],
+    "voluntariado": [
+      "name",
+      "numero_socio",
+      "indicativo",
+      "documento_identidad",
+      "telefono",
+      "correo",
+      "localidad",
+      "foto",
+      "direccion_postal",
+      "codigo_postal",
+      "otra_formacion",
+      "carnet_conducir",
+      "observaciones"
+    ],
+    "alumnos": [
+      "email_contacto",
+      "telefono_contacto"
+    ],
+    "escuelas": [
+      "clave",
+      "direccion",
+      "telefono"
+    ],
+    "grados-escolares": [
+      "clave"
+    ],
+    "grupo": [
+      "letra"
+    ],
+    "materias": [
+      "clave"
+    ],
+    "delivery-package": [
+      "event_id",
+      "source",
+      "delivery_ticket_reference",
+      "delivery_signature_attachment_id",
+      "product_name",
+      "product_code",
+      "notes",
+      "name",
+      "description",
+      "pedido_folio",
+      "pedido_contacto_nombre",
+      "pedido_contacto_domicilio",
+      "pedido_contacto_url_maps",
+      "delivery_route_nombre",
+      "vehicle_nombre",
+      "codigo_bulto",
+      "contenido_resumen"
+    ],
+    "delivery-return": [
+      "producto_nombre",
+      "producto_codigo",
+      "motivo",
+      "estado_producto",
+      "foto_attachment_id",
+      "name",
+      "description",
+      "pedido_folio",
+      "contacto_nombre",
+      "firma_conformidad_attachment_id",
+      "ubicacion_recepcion_codigo"
+    ],
+    "delivery-route": [
+      "vehicle_name"
+    ],
+    "documentation-page": [
+      "title",
+      "slug",
+      "file_path",
+      "folder_path",
+      "description",
+      "icon",
+      "section"
+    ],
+    "employee": [
+      "image",
+      "puesto",
+      "rfc",
+      "curp",
+      "nss",
+      "num_empleado",
+      "tipo_contrato",
+      "tipo_regimen",
+      "tipo_jornada",
+      "riesgo_puesto",
+      "periodicidad_pago",
+      "clave_ent_fed",
+      "banco",
+      "cuenta",
+      "clabe"
+    ],
+    "inventory-cost-entry": [
+      "name",
+      "description",
+      "receipt_key",
+      "recepcion_referencia",
+      "orden_compra_nombre",
+      "orden_compra_referencia",
+      "producto_nombre",
+      "producto_codigo",
+      "proveedor_nombre",
+      "proveedor_rfc"
+    ],
+    "inventory-internal-location": [
+      "name",
+      "description",
+      "codigo",
+      "segmento_codigo",
+      "nivel_nombre"
+    ],
+    "inventory-movement": [
+      "name",
+      "description",
+      "producto_nombre",
+      "producto_codigo",
+      "ubicacion_origen_nombre",
+      "ubicacion_destino_nombre",
+      "documento_tipo",
+      "documento_id",
+      "documento_modelo",
+      "documento_nombre",
+      "documento_referencia",
+      "dedupe_key"
+    ],
+    "inventory-physical-count": [
+      "producto_nombre",
+      "producto_codigo",
+      "name",
+      "description",
+      "ubicacion_codigo",
+      "contado_por"
+    ],
+    "inventory-reception": [
+      "documento_tipo",
+      "documento_id",
+      "documento_nombre",
+      "producto_nombre",
+      "producto_codigo",
+      "codigo_proveedor",
+      "purchase_order_nombre",
+      "proveedor_nombre",
+      "proveedor_rfc",
+      "uuid_xml",
+      "referencia"
+    ],
+    "inventory-stock-quant": [
+      "name",
+      "description",
+      "producto_nombre",
+      "producto_codigo",
+      "ubicacion_codigo"
+    ],
+    "labor-incident": [
+      "tipo_incapacidad"
+    ],
+    "labor-schedule": [
+      "start_time",
+      "end_time"
+    ],
+    "payroll-concept": [
+      "clave_interna",
+      "tipo_sat"
+    ],
+    "payroll-period": [
+      "name",
+      "periodicidad_pago"
+    ],
+    "payroll-receipt": [
+      "nombre",
+      "rfc",
+      "curp",
+      "nss",
+      "num_empleado",
+      "tipo_contrato",
+      "tipo_regimen",
+      "periodicidad_pago",
+      "clave_ent_fed",
+      "tipo_sat",
+      "clave",
+      "concepto",
+      "name",
+      "cfdi_document_id",
+      "uuid_fiscal",
+      "idempotency_key"
+    ],
+    "pedidos": [
+      "offline_uuid"
+    ],
+    "products": [
+      "codigo",
+      "image",
+      "positional_code",
+      "proveedor_nombre",
+      "descripcion",
+      "clave_prod_serv",
+      "objeto_imp_default",
+      "ubicacion_preferida_codigo"
+    ],
+    "purchase-order": [
+      "producto_nombre",
+      "producto_codigo",
+      "codigo_proveedor",
+      "descripcion_origen",
+      "origen_pedido_folio",
+      "recepcion_pendiente_nombre",
+      "ubicacion_destino_nombre",
+      "receipt_key",
+      "referencia",
+      "notas",
+      "numero_factura",
+      "name",
+      "description",
+      "proveedor_nombre",
+      "proveedor_rfc",
+      "referencia_origen",
+      "uuid_xml",
+      "aprobado_por",
+      "aprobado_por_nombre"
+    ],
+    "sku": [
+      "codigo"
+    ],
+    "unit-of-measure": [
+      "clave_unidad"
+    ],
+    "user-settings": [
+      "tag_id",
+      "tag_name",
+      "tag_name_normalized",
+      "user_id",
+      "user_name",
+      "user_email",
+      "document_id",
+      "collection_name",
+      "model_name",
+      "module_label",
+      "record_label",
+      "android_status_bar_custom_color",
+      "message_sound_key",
+      "notification_sound_key"
+    ],
+    "vehicle": [
+      "name",
+      "description",
+      "foto",
+      "placas",
+      "numero_economico",
+      "marca",
+      "modelo",
+      "color",
+      "chofer_nombre"
+    ],
+    "message": [
+      "title",
+      "message"
+    ],
+    "ticket": [
+      "title",
+      "description"
+    ],
+    "citizen-report": [
+      "source_instance_label",
+      "source_instance_url"
+    ],
+    "ticketing-system-consecutive": [
+      "name"
+    ]
+  },
+  "lowercase": {
+    "alumnos": [
+      "email_contacto"
+    ],
+    "documentation-page": [
+      "slug"
+    ],
+    "user": [
+      "email"
+    ]
+  },
+  "uppercase": {
+    "cfdi-issuer-profile": [
+      "rfc"
+    ],
+    "grupo": [
+      "letra"
+    ],
+    "delivery-package": [
+      "codigo_bulto"
+    ],
+    "employee": [
+      "rfc",
+      "curp",
+      "clave_ent_fed"
+    ],
+    "inventory-internal-location": [
+      "codigo",
+      "segmento_codigo"
+    ],
+    "inventory-physical-count": [
+      "ubicacion_codigo"
+    ],
+    "inventory-stock-quant": [
+      "ubicacion_codigo"
+    ],
+    "payroll-concept": [
+      "clave_interna"
+    ],
+    "payroll-receipt": [
+      "rfc",
+      "curp",
+      "uuid_fiscal"
+    ],
+    "products": [
+      "ubicacion_preferida_codigo"
+    ],
+    "vehicle": [
+      "placas"
+    ]
+  }
+}
