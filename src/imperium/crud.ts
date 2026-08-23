@@ -9,6 +9,9 @@ import { register_document_mentions } from './notifications.ts';
 import { apply_uploads, link_attachments_to_record } from './uploads.ts';
 import {
 	after_pedido_mutate,
+	decorate_pedido,
+	enrich_pedidos_list,
+	is_pedido_resource,
 	prepare_pedido_create,
 	prepare_pedido_update,
 } from './pedidos-flow.ts';
@@ -226,7 +229,7 @@ export async function handle_crud(
 			ids,
 			mongo_match: scope.match,
 		});
-		const decorated = decorate_rows(resource, rows);
+		const decorated = await finalize_rows(store, resource, rows, 'list');
 		const keys = new Set<string>();
 		for (const r of decorated) for (const k of Object.keys(r)) keys.add(k);
 		const cols = [...keys]
@@ -256,7 +259,10 @@ export async function handle_crud(
 			skip: Number(b.desde ?? 0),
 			include_inactive: true,
 		});
-		return json(resource, ok(decorate_rows(resource, rows), 'Consulta masiva', total));
+		return json(
+			resource,
+			ok(await finalize_rows(store, resource, rows, 'list'), 'Consulta masiva', total),
+		);
 	}
 	if (method === 'PUT' && segs[0] === 'batch' && segs.length === 1) {
 		if (is_print_template_resource(resource)) {
@@ -392,7 +398,7 @@ export async function handle_crud(
 					? found.total
 					: filtered.length,
 		};
-		let decorated = decorate_rows(resource, rows);
+		let decorated = await finalize_rows(store, resource, rows, 'list');
 		let visible_total = total;
 		if (is_dashboard_resource(resource)) {
 			const access = await dashboard_access(store, actor);
@@ -908,7 +914,20 @@ export async function handle_crud(
 	return null;
 }
 
+async function finalize_rows(
+	store: ImperiumStore,
+	resource: string,
+	rows: ImperiumDoc[],
+	mode: 'list' | 'detail',
+): Promise<ImperiumDoc[]> {
+	if (is_pedido_resource(resource) && mode === 'list') {
+		return enrich_pedidos_list(store, rows);
+	}
+	return decorate_rows(resource, rows);
+}
+
 function decorate_rows(resource: string, rows: ImperiumDoc[]): ImperiumDoc[] {
+	if (is_pedido_resource(resource)) return rows.map((row) => decorate_pedido(row, 'detail'));
 	if (resource === 'products') return rows.map(decorate_product);
 	if (resource === 'vehicle') return rows.map(decorate_vehicle);
 	if (resource === 'pos-tickets') return rows.map(decorate_pos_ticket);

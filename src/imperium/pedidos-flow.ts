@@ -110,7 +110,7 @@ export async function prepare_pedido_create(
 	out.folio_interno = await store.next_auto_increment('Pedidos', 'folio_interno', {
 		resource: 'pedidos',
 	});
-	if (!out.name) out.name = String(out.folio);
+	out.name = `PEDIDO-${out.folio}`;
 	return out;
 }
 
@@ -239,4 +239,81 @@ export async function after_pedido_mutate(
 		await register_order_fulfillment_exit(store, { ...current, articulos });
 	}
 	emit_pedidos_updated();
+}
+
+export function is_pedido_resource(resource: string) {
+	return resource === 'pedidos' || resource === 'pedidos-surtir';
+}
+
+function text(value: unknown): string {
+	return String(value ?? '').trim();
+}
+
+export function decorate_pedido(doc: ImperiumDoc, mode: 'list' | 'detail'): ImperiumDoc {
+	const out: ImperiumDoc = { ...doc };
+	const folio = text(out.folio);
+	if (folio) out.name = `PEDIDO-${folio}`;
+	if (!text(out.fecha)) {
+		out.fecha = out.createdAt ?? out.created_at ?? out.fecha;
+	}
+	const contact_id = ref_id(out.contacto_id) || ref_id(out.contacto);
+	if (contact_id) out.contacto_id = contact_id;
+	if (out.invoice_request_id != null && out.invoice_request_id !== '') {
+		out.invoice_request_id = ref_id(out.invoice_request_id) || out.invoice_request_id;
+	}
+	if (mode === 'list') {
+		const contact = as_object(out.contacto);
+		if (contact._id) out.contacto = text(contact.name) || contact_id;
+		const employee = as_object(out.assigned_employee);
+		if (employee._id) {
+			out.assigned_employee = text(employee.name) || ref_id(employee);
+		}
+	}
+	return out;
+}
+
+export async function enrich_pedidos_list(
+	store: ImperiumStore,
+	rows: ImperiumDoc[],
+): Promise<ImperiumDoc[]> {
+	const decorated = rows.map((row) => decorate_pedido(row, 'list'));
+	if (!decorated.length || !store.has('contacto')) {
+		return decorated.map((row) => ({ ...row, ruta: text(row.ruta) }));
+	}
+	const contact_ids = [
+		...new Set(decorated.map((row) => ref_id(row.contacto_id)).filter(Boolean)),
+	];
+	if (!contact_ids.length) {
+		return decorated.map((row) => ({ ...row, ruta: text(row.ruta) }));
+	}
+	const contacts = await store.find_many('contacto', {
+		ids: contact_ids,
+		take: contact_ids.length,
+		include_inactive: true,
+		populate: false,
+	});
+	const route_ids = new Set<string>();
+	const routes_by_contact = new Map<string, string[]>();
+	for (const contact of contacts.rows) {
+		const rutas = as_array(contact.rutas).map(ref_id).filter(Boolean);
+		routes_by_contact.set(String(contact._id), rutas);
+		for (const id of rutas) route_ids.add(id);
+	}
+	const names = new Map<string, string>();
+	if (route_ids.size && store.has('delivery-route')) {
+		const routes = await store.find_many('delivery-route', {
+			ids: [...route_ids],
+			take: route_ids.size,
+			include_inactive: true,
+			populate: false,
+		});
+		for (const route of routes.rows) names.set(String(route._id), text(route.name));
+	}
+	return decorated.map((row) => {
+		const ids = routes_by_contact.get(ref_id(row.contacto_id)) ?? [];
+		return {
+			...row,
+			ruta: ids.map((id) => names.get(id)).filter(Boolean).join(', '),
+		};
+	});
 }
