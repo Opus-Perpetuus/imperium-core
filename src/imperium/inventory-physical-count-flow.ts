@@ -92,7 +92,7 @@ async function quants_at_location(store: ImperiumStore, ubicacion_id: string) {
 	if (!store.has('inventory-stock-quant')) return [];
 	const { rows } = await store.find_many('inventory-stock-quant', {
 		where: { ubicacion: ubicacion_id },
-		take: 5000,
+		take: 20000,
 		include_inactive: true,
 		populate: false,
 	});
