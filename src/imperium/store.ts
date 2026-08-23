@@ -80,6 +80,9 @@ const UNIQUE_FIELDS: Record<string, string[]> = {
 	sku: ['codigo'],
 	'ticketing-system-consecutive': ['name'],
 	'api-keys': ['api_key'],
+	'auto-increment-control': ['_unique_string_reference'],
+	contrato: ['contrato'],
+	'font-awesome-icon-catalog': ['icon'],
 };
 
 function unique_fields_for(resource: string): string[] {
