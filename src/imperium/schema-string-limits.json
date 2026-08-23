@@ -1,0 +1,1232 @@
+{
+  "minlength": {
+    "tags": {
+      "name": {
+        "min": 2,
+        "message": "El nombre debe contener al menos 2 caracteres"
+      }
+    },
+    "attachment-management": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      },
+      "name_stored": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "boroughs": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "cfdi-catalog": {
+      "name": {
+        "min": 1,
+        "message": "El nombre es requerido"
+      }
+    },
+    "cfdi-document": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "cfdi-issuer-profile": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "cfdi": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "api-keys": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "branchoffice": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "configuration": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "custom-field-control": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "status-option-control": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "asociaciones": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "control-emergencias": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "despensa-solidaria": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "directorio-contactos": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "inventario-sanitario": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "registro-emergencias": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "rescate-animal": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "servicios-realizados": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "voluntariado": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "alumnos": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "aulas": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "ciclos-escolares": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "control-escolar": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "escuelas": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "grados-escolares": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "grupo": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "horarios": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "lista-asistencia": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "materias": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "registro-asistencias": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "registro-incidencias": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "country": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "cuadrillas": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "delivery-package": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "dynamic-dashboard": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "employee": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "epson-ticket-template": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "interactive-manual": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "inventory-cost-entry": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "inventory-internal-location": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "inventory-movement": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "inventory-reception": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "invoice-request": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "lista-de-precios": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "mcp-user-token": {
+      "name": {
+        "min": 2,
+        "message": "El nombre debe tener al menos dos caracteres"
+      }
+    },
+    "module-management": {
+      "name": {
+        "min": 3,
+        "message": "El nombre debe contener tres letras o mas"
+      }
+    },
+    "municipality": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "labor-incident": {
+      "name": {
+        "min": 2,
+        "message": "El nombre debe contener al menos dos caracteres"
+      }
+    },
+    "labor-schedule": {
+      "name": {
+        "min": 2,
+        "message": "El nombre debe contener al menos dos caracteres"
+      }
+    },
+    "nomina": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "payroll-concept": {
+      "name": {
+        "min": 2,
+        "message": "El nombre debe contener al menos dos caracteres"
+      },
+      "clave_interna": {
+        "min": 3,
+        "message": "La clave interna debe tener entre 3 y 15 caracteres"
+      }
+    },
+    "payroll-period": {
+      "name": {
+        "min": 2,
+        "message": "El nombre debe contener al menos dos caracteres"
+      }
+    },
+    "payroll-receipt": {
+      "name": {
+        "min": 2,
+        "message": "El nombre debe contener al menos dos caracteres"
+      }
+    },
+    "mis-tareas": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "planeacion": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "proyecto-task": {
+      "name": {
+        "min": 3,
+        "message": "La tarea debe tener al menos tres caracteres"
+      }
+    },
+    "proyectos": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "pos-session": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "purchase-order": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "record-rules": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "reports-pdf-setting": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "reports": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "unit-of-measure": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "user-pin": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "user-print-template": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      },
+      "template_html": {
+        "min": 1,
+        "message": "La plantilla HTML no puede estar vacia"
+      }
+    },
+    "vehicle": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "view-config-preset": {
+      "name": {
+        "min": 3,
+        "message": "El nombre debe contener tres letras o mas"
+      }
+    },
+    "zpl-management": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "impedimento": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "incidencia": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "tarifa": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "citizen-report-problem": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "citizen-report-reporting-medium": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "payments": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "news-banner-control": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "ticketing-system-box-config": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "ticketing-system-consecutive": {
+      "name": {
+        "min": 1,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "ticketing-system-customer-type": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "ticketing-system-priority": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "ticketing-system-service-type": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "ticketing-system-turn-youtube": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "ticketing-system-turn": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "violation-city-zone": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "violation-mobility-law": {
+      "name": {
+        "min": 1,
+        "message": "El nombre debe contener al menos una letra"
+      }
+    },
+    "violation-offender-guarantee": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "violation-payment-method": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "violation-user-id-type": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "violation-vehicle-brand": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "violation-vehicle-type": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
+    "violation": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    }
+  },
+  "maxlength": {
+    "tags": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el máximo de caracteres"
+      }
+    },
+    "time-sheets": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el máximo de caracteres"
+      }
+    },
+    "attachment-management": {
+      "name": {
+        "max": 800,
+        "message": "Limite de caracteres excedido"
+      },
+      "name_stored": {
+        "max": 800,
+        "message": "Limite de caracteres excedido"
+      },
+      "description": {
+        "max": 800,
+        "message": "Limite de caracteres excedido"
+      },
+      "mimetype": {
+        "max": 100,
+        "message": "Limite de caracteres excedido"
+      },
+      "created_by_id": {
+        "max": 100,
+        "message": "Limite de caracteres excedido"
+      },
+      "related_model": {
+        "max": 100,
+        "message": "Limite de caracteres excedido"
+      },
+      "related_record_id": {
+        "max": 100,
+        "message": "Limite de caracteres excedido"
+      },
+      "field": {
+        "max": 100,
+        "message": "Limite de caracteres excedido"
+      },
+      "file_ext": {
+        "max": 20,
+        "message": "Limite de caracteres excedido"
+      }
+    },
+    "boroughs": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "cfdi-catalog": {
+      "description": {
+        "max": 2000,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "cfdi-document": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "cfdi-issuer-profile": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "cfdi": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "api-keys": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "branchoffice": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "configuration": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "custom-field-control": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "interface-restriction": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el máximo de caracteres permitidos"
+      }
+    },
+    "status-option-control": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "asociaciones": {
+      "observaciones": {
+        "max": 1000,
+        "message": "Las observaciones exceden el maximo de caracteres"
+      }
+    },
+    "control-emergencias": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "directorio-contactos": {
+      "observaciones": {
+        "max": 500,
+        "message": "Las observaciones exceden el maximo de caracteres"
+      }
+    },
+    "inventario-sanitario": {
+      "observaciones": {
+        "max": 1000,
+        "message": "Las observaciones exceden el maximo de caracteres"
+      }
+    },
+    "voluntariado": {
+      "observaciones": {
+        "max": 1000,
+        "message": "Las observaciones exceden el maximo de caracteres"
+      }
+    },
+    "alumnos": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "aulas": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "ciclos-escolares": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "control-escolar": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "escuelas": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "grados-escolares": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "grupo": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "horarios": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "lista-asistencia": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "materias": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "registro-asistencias": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "registro-incidencias": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "country": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "cuadrillas": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "delivery-package": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "delivery-return": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "dynamic-dashboard": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "employee": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      },
+      "image": {
+        "max": 250,
+        "message": "La referencia de imagen es demasiado larga"
+      },
+      "puesto": {
+        "max": 120,
+        "message": "El puesto es demasiado largo"
+      },
+      "rfc": {
+        "max": 13,
+        "message": "RFC inválido"
+      },
+      "curp": {
+        "max": 18,
+        "message": "CURP inválida"
+      },
+      "nss": {
+        "max": 11,
+        "message": "NSS inválido"
+      },
+      "num_empleado": {
+        "max": 15,
+        "message": "Número de empleado demasiado largo"
+      }
+    },
+    "epson-ticket-template": {
+      "description": {
+        "max": 1000,
+        "message": "La descripción excede el maximo de caracteres"
+      },
+      "content": {
+        "max": 50000,
+        "message": "Excede el maximo de caracteres"
+      }
+    },
+    "interactive-manual": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "inventory-cost-entry": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "inventory-internal-location": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "inventory-movement": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "inventory-physical-count": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "inventory-reception": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "inventory-stock-quant": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "invoice-request": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "lista-de-precios": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "mcp-user-token": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el máximo de caracteres"
+      }
+    },
+    "module-management": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "municipality": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "labor-incident": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      },
+      "notas": {
+        "max": 1000,
+        "message": "Las notas exceden el máximo de caracteres"
+      }
+    },
+    "labor-schedule": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "nomina": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "payroll-concept": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      },
+      "clave_interna": {
+        "max": 15,
+        "message": "La clave interna debe tener entre 3 y 15 caracteres"
+      },
+      "concepto_default": {
+        "max": 200,
+        "message": "El concepto por defecto excede el máximo de caracteres"
+      }
+    },
+    "payroll-period": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      },
+      "periodicidad_pago": {
+        "max": 5,
+        "message": "Periodicidad de pago demasiado larga"
+      }
+    },
+    "payroll-receipt": {
+      "tipo_sat": {
+        "max": 10,
+        "message": "Tipo SAT demasiado largo"
+      },
+      "clave": {
+        "max": 15,
+        "message": "Clave demasiado larga"
+      },
+      "concepto": {
+        "max": 200,
+        "message": "Concepto demasiado largo"
+      },
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "mis-tareas": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "planeacion": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "proyecto-task": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el máximo de caracteres"
+      }
+    },
+    "proyecto-time-log": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el máximo de caracteres"
+      }
+    },
+    "proyectos": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "pos-session": {
+      "razon_de_diferencia_con_ultimo_cierre": {
+        "max": 500,
+        "message": "La razón de diferencia con el último cierre excede el máximo permitido"
+      },
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "pos-tickets": {
+      "withdrawal_reason": {
+        "max": 500,
+        "message": "El motivo del retiro excede el máximo permitido"
+      }
+    },
+    "purchase-order": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "record-rules": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "reports-pdf-setting": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "reports": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      },
+      "generated_report_name": {
+        "max": 300,
+        "message": "El nombre del reporte generado es demasiado largo"
+      },
+      "excel_sheet_name": {
+        "max": 80,
+        "message": "El nombre de hoja excede el máximo permitido"
+      }
+    },
+    "unit-of-measure": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "user-pin": {
+      "description": {
+        "max": 500,
+        "message": "La descripcion excede el maximo de caracteres"
+      }
+    },
+    "user-print-template": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      },
+      "source_module": {
+        "max": 120,
+        "message": "El modulo origen excede el maximo de caracteres"
+      }
+    },
+    "vehicle": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      },
+      "foto": {
+        "max": 250,
+        "message": "La foto excede el maximo de caracteres"
+      }
+    },
+    "view-config-preset": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "zpl-management": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      },
+      "zpl": {
+        "max": 150000,
+        "message": "Excede el maximo de caracteres"
+      }
+    },
+    "citizen-report-problem": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "citizen-report-reporting-medium": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "citizen-report": {
+      "report_description": {
+        "max": 500,
+        "message": "La descripción del reporte excede el maximo de caracteres"
+      }
+    },
+    "cobranza-payment": {
+      "name": {
+        "max": 800,
+        "message": "Limite de caracteres excedido"
+      }
+    },
+    "cobranza": {
+      "name": {
+        "max": 800,
+        "message": "Limite de caracteres excedido"
+      }
+    },
+    "payments": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "news-banner-control": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "ticketing-system-box-config": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "ticketing-system-consecutive": {
+      "name": {
+        "max": 3,
+        "message": "El nombre excede el maximo de caracteres"
+      },
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "ticketing-system-customer-type": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      },
+      "letter": {
+        "max": 1,
+        "message": "La letra debe ser un solo caracter"
+      }
+    },
+    "ticketing-system-priority": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "ticketing-system-service-type": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      },
+      "letter": {
+        "max": 1,
+        "message": "Solo se permite una letra"
+      }
+    },
+    "ticketing-system-turn-youtube": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "ticketing-system-turn": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "violation-mobility-law": {
+      "name": {
+        "max": 30,
+        "message": "El nombre debe contener treinta letras o menos"
+      }
+    },
+    "violation": {
+      "name": {
+        "max": 800,
+        "message": "Limite de caracteres excedido"
+      },
+      "description": {
+        "max": 800,
+        "message": "Limite de caracteres excedido"
+      }
+    }
+  }
+}
