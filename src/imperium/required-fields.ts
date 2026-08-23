@@ -80,7 +80,12 @@ export class FieldValidationError extends Error {
  */
 /** Defaults de Mongoose que el original aplica al crear (antes de validar). */
 const SCHEMA_DEFAULTS: Record<string, Record<string, unknown>> = {
-	'payroll-period': { estado: 'draft' },
+	'payroll-period': { estado: 'draft', tipo_nomina: 'O' },
+	'payroll-receipt': { estado: 'draft' },
+	'inventory-reception': { estado: 'pendiente' },
+	'delivery-package': { estado: 'pendiente' },
+	'delivery-return': { estado: 'borrador' },
+	'citizen-report': { priority: 'BAJA', status: 'pendiente' },
 };
 
 export function apply_schema_setters(resource: string, doc: Record<string, unknown>) {
