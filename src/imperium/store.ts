@@ -297,6 +297,13 @@ function assert_objectid_refs(resource: string, doc: ImperiumDoc) {
 
 /** Campos que el original guarda como id string (sin $lookup a name). */
 const LIST_REF_KEEP_AS_ID = new Set(['invoice_request_id', 'cfdi_document_id']);
+/** Original `on_populate_get_name_and_id: false`: el $lookup se queda como objeto. */
+const LIST_KEEP_POPULATED_REFS = new Set([
+	'employee',
+	'vehicle',
+	'pos-session',
+	'custom-field-control',
+]);
 
 /** `__get_statistics` del scaffold con `charts.daily_stats` (línea 30 días). */
 const DAILY_LINE_CHART = new Set([
@@ -1246,6 +1253,7 @@ export class ImperiumStore {
 	flatten_list_docs(resource: string, docs: ImperiumDoc[]): ImperiumDoc[] {
 		const field_map = field_map_for(resource);
 		if (!field_map || !docs.length) return docs;
+		if (LIST_KEEP_POPULATED_REFS.has(resource)) return docs;
 		return docs.map((doc) => {
 			const out = { ...doc };
 			for (const field of Object.keys(field_map)) {
