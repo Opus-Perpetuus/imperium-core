@@ -4652,9 +4652,18 @@ async function report_first(ctx: Ctx) {
 	const model = ctx.params.model_name ?? ctx.params.modelName ?? '';
 	try {
 		const resource = await resolve_report_target(ctx, model);
-		const { rows } = await ctx.store.find_many(resource, { take: 1, sort: 'id:asc' });
+		const { rows } = await ctx.store.find_many(resource, {
+			take: 1,
+			sort: 'id:asc',
+			populate: false,
+		});
 		const raw = rows[0] ?? null;
-		const record = raw ? await hydrate_loose_product_references(ctx.store, raw) : null;
+		const [populated] = raw
+			? await ctx.store.populate_docs(resource, [raw], { full: true })
+			: [null];
+		const record = populated
+			? await hydrate_loose_product_references(ctx.store, populated)
+			: null;
 		return ok(record ? [record] : [], record ? 'Record found' : 'No record found', record ? 1 : 0);
 	} catch {
 		return ok([], 'No record found');
@@ -4901,7 +4910,7 @@ async function report_record(ctx: Ctx) {
 		if (!loaded || loaded.is_active === false) {
 			return ok([], 'Registro no encontrado', 0);
 		}
-		const [populated] = await ctx.store.populate_docs(resource, [loaded]);
+		const [populated] = await ctx.store.populate_docs(resource, [loaded], { full: true });
 		const record = await hydrate_loose_product_references(ctx.store, populated ?? loaded);
 		return ok([record], 'Registro obtenido correctamente', 1);
 	} catch {
@@ -4951,7 +4960,9 @@ async function report_preview(ctx: Ctx) {
 			const resource = await resolve_report_target(ctx, model_name);
 			const loaded = await ctx.store.find_id(resource, record_id);
 			if (loaded) {
-				const [populated] = await ctx.store.populate_docs(resource, [loaded]);
+				const [populated] = await ctx.store.populate_docs(resource, [loaded], {
+					full: true,
+				});
 				record = populated ?? loaded;
 			}
 		} catch {

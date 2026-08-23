@@ -1211,9 +1211,14 @@ export class ImperiumStore {
 		return this.update(resource, id, { is_active: false });
 	}
 
-	async populate_docs(resource: string, docs: ImperiumDoc[]): Promise<ImperiumDoc[]> {
+	async populate_docs(
+		resource: string,
+		docs: ImperiumDoc[],
+		opts?: { full?: boolean },
+	): Promise<ImperiumDoc[]> {
 		const field_map = field_map_for(resource);
 		if (!field_map || !docs.length) return docs;
+		const full = Boolean(opts?.full);
 		const needed = new Map<string, Set<string>>();
 		for (const [field, model] of Object.entries(field_map)) {
 			const target = this.resource_for_model(model);
@@ -1233,14 +1238,17 @@ export class ImperiumStore {
 				include_inactive: true,
 				populate: false,
 			});
-			loaded.set(target, new Map(rows.map((r) => [String(r._id), r])));
+			loaded.set(
+				target,
+				new Map(rows.map((r) => [String(r._id), full ? strip_populated_secrets(target, r) : r])),
+			);
 		}
 		return docs.map((doc) => {
 			const out = { ...doc };
 			for (const [field, model] of Object.entries(field_map)) {
 				const target = this.resource_for_model(model);
 				const lookup = target ? loaded.get(target) : undefined;
-				apply_populated_path(out, field.split('.'), lookup);
+				apply_populated_path(out, field.split('.'), lookup, full);
 			}
 			return out;
 		});
@@ -1973,10 +1981,33 @@ function populated_lite(hit: ImperiumDoc | undefined, id: string): ImperiumDoc {
 	};
 }
 
+/** El populate sin select del original deja el documento; quita secretos de user/PIN. */
+function strip_populated_secrets(resource: string, doc: ImperiumDoc): ImperiumDoc {
+	const out = { ...doc };
+	delete out.pin_hash;
+	if (resource === 'user' || resource === 'usuario') {
+		delete out.password;
+		delete out.reset_password_token_hash;
+		delete out.reset_password_expires;
+		delete out.reset_password_kind;
+	}
+	return out;
+}
+
+function pick_populated(
+	hit: ImperiumDoc | undefined,
+	id: string,
+	full: boolean,
+): ImperiumDoc {
+	if (full) return hit ? { ...hit } : { _id: id, name: '' };
+	return populated_lite(hit, id);
+}
+
 function apply_populated_path(
 	target: Record<string, unknown>,
 	path: string[],
 	lookup: Map<string, ImperiumDoc> | undefined,
+	full = false,
 ) {
 	if (!path.length) return;
 	const [head, ...rest] = path;
@@ -1996,12 +2027,12 @@ function apply_populated_path(
 		if (Array.isArray(val)) {
 			target[head!] = val.map((entry) => {
 				const id = ref_id(entry);
-				return id ? populated_lite(lookup?.get(id), id) : entry;
+				return id ? pick_populated(lookup?.get(id), id, full) : entry;
 			});
 			return;
 		}
 		const id = ref_id(val);
-		if (id) target[head!] = populated_lite(lookup?.get(id), id);
+		if (id) target[head!] = pick_populated(lookup?.get(id), id, full);
 		return;
 	}
 	const val = target[head!];
@@ -2009,14 +2040,14 @@ function apply_populated_path(
 		target[head!] = val.map((entry) => {
 			if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry;
 			const copy = { ...(entry as Record<string, unknown>) };
-			apply_populated_path(copy, rest, lookup);
+			apply_populated_path(copy, rest, lookup, full);
 			return copy;
 		});
 		return;
 	}
 	if (val && typeof val === 'object' && !Array.isArray(val)) {
 		const copy = { ...(val as Record<string, unknown>) };
-		apply_populated_path(copy, rest, lookup);
+		apply_populated_path(copy, rest, lookup, full);
 		target[head!] = copy;
 	}
 }

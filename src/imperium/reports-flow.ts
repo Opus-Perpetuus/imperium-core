@@ -561,7 +561,7 @@ export async function resolve_report_records(
 	for (const id of ids) {
 		const doc = await store.find_id(resource, id);
 		if (doc) {
-			const [populated] = await store.populate_docs(resource, [doc]);
+			const [populated] = await store.populate_docs(resource, [doc], { full: true });
 			out.push(populated ?? doc);
 		}
 	}
