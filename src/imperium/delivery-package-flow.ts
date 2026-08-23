@@ -180,14 +180,16 @@ async function resolve_route_from_contact(store: ImperiumStore, contact_id: stri
 	if (route_ids.length) {
 		const { rows } = await store.find_many('delivery-route', {
 			ids: route_ids,
-			take: route_ids.length,
+			take: 1,
+			sort: 'id:asc',
+			include_inactive: false,
 			populate: false,
 		});
-		const route = rows.find((row) => row.is_active !== false);
-		if (route) return map_route_suggestion(route);
+		if (rows[0]) return map_route_suggestion(rows[0]);
 	}
 	const { rows } = await store.find_many('delivery-route', {
 		take: 20000,
+		sort: 'id:asc',
 		include_inactive: false,
 		populate: false,
 	});
