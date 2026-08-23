@@ -1,6 +1,6 @@
 /**
- * Required / minlength / maxlength de Mongoose + `field_errors` del
- * `ValidationError` original.
+ * Required / minlength / maxlength / match / enum de Mongoose + `field_errors`
+ * del `ValidationError` original.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -28,6 +28,13 @@ const MATCH_RULES: Record<string, Record<string, MatchRule>> = (
 		match: Record<string, Record<string, MatchRule>>;
 	}
 ).match;
+
+type EnumRule = { values: string[]; message: string };
+const ENUM_RULES: Record<string, Record<string, EnumRule>> = (
+	JSON.parse(readFileSync(join(import.meta.dir, 'schema-enum.json'), 'utf8')) as {
+		enum: Record<string, Record<string, EnumRule>>;
+	}
+).enum;
 
 const RESOURCE_ALIASES: Record<string, string> = {
 	proyectos: 'planeacion-proyectos',
@@ -97,6 +104,15 @@ export function assert_required_fields(resource: string, doc: Record<string, unk
 			if (!regex.test(value)) add(field, rule.message);
 		}
 	}
+	const enums = ENUM_RULES[canonical] ?? ENUM_RULES[resource] ?? {};
+	for (const [field, rule] of Object.entries(enums)) {
+		if (is_missing(doc[field])) continue;
+		const allowed = new Set(rule.values);
+		for (const value of string_values(doc[field])) {
+			if (allowed.has(value)) continue;
+			add(field, enum_message(rule.message, field, value));
+		}
+	}
 	if (!Object.keys(field_errors).length) return;
 	const model = model_label(resource);
 	const detail = Object.entries(field_errors)
@@ -126,6 +142,10 @@ function string_values(value: unknown): string[] {
 	if (typeof value === 'string') return [value];
 	if (Array.isArray(value)) return value.filter((item): item is string => typeof item === 'string');
 	return [];
+}
+
+function enum_message(template: string, field: string, value: string) {
+	return template.replaceAll('{VALUE}', value).replaceAll('{PATH}', field);
 }
 
 function model_label(resource: string) {

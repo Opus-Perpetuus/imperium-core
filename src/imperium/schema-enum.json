@@ -1,0 +1,1110 @@
+{
+  "enum": {
+    "time-sheets": {
+      "collection": {
+        "values": [
+          "mis-tareas",
+          "proyectos",
+          "proyectos-task"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "cfdi-document": {
+      "severity": {
+        "values": [
+          "error",
+          "warning"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      },
+      "perfil_emision": {
+        "values": [
+          "comercial",
+          "dpa_gobierno"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      },
+      "flow_direction": {
+        "values": [
+          "outbound",
+          "inbound"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "cfdi-issuer-profile": {
+      "perfil_emision_default": {
+        "values": [
+          "comercial",
+          "dpa_gobierno"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "custom-pattern-increment-sequence-parts": {
+      "token_type": {
+        "values": [
+          "yy",
+          "yyyy",
+          "LL",
+          "LLL",
+          "LLLL",
+          "WW",
+          "ooo",
+          "dd",
+          "c",
+          "ccc",
+          "cccc",
+          "sequence",
+          "counter",
+          "field",
+          "custom",
+          "literal"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      },
+      "format_mode": {
+        "values": [
+          "default",
+          "letra",
+          "romano"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "model-tracker": {
+      "source": {
+        "values": [
+          "schema",
+          "custom_field"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "asociaciones": {
+      "tipo": {
+        "values": [
+          "llamada",
+          "correo",
+          "carta",
+          "persona",
+          "registro"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "despensa-solidaria": {
+      "categoria": {
+        "values": [
+          "alimento",
+          "higiene",
+          "cubiertos",
+          "infantil",
+          "ropa"
+        ],
+        "message": "La categoría \"{VALUE}\" no existe"
+      },
+      "estado": {
+        "values": [
+          "ok",
+          "stock_bajo",
+          "por_caducar",
+          "caducado"
+        ],
+        "message": "El estado \"{VALUE}\" no existe"
+      }
+    },
+    "directorio-contactos": {
+      "categoria": {
+        "values": [
+          "emergencias",
+          "sanidad",
+          "cultura",
+          "turismo",
+          "poblados",
+          "hacienda",
+          "transporte",
+          "servicios_municipales"
+        ],
+        "message": "La categoría \"{VALUE}\" no existe"
+      }
+    },
+    "inventario-sanitario": {
+      "categoria": {
+        "values": [
+          "medicamentos",
+          "via_aerea",
+          "curas_vendajes",
+          "control_hemorragias",
+          "epi_seguridad",
+          "instrumental"
+        ],
+        "message": "La categoría \"{VALUE}\" no existe"
+      },
+      "estado": {
+        "values": [
+          "ok",
+          "stock_bajo",
+          "por_caducar",
+          "caducado"
+        ],
+        "message": "El estado \"{VALUE}\" no existe"
+      }
+    },
+    "registro-emergencias": {
+      "tipo_emergencia": {
+        "values": [
+          "sanitaria",
+          "social",
+          "incendio",
+          "inundacion",
+          "busqueda_desaparecido",
+          "proteccion_animal",
+          "medio_ambiente",
+          "nrbq",
+          "parada_cardiaca",
+          "accidente_trafico"
+        ],
+        "message": "El tipo de emergencia \"{VALUE}\" no existe"
+      },
+      "prioridad": {
+        "values": [
+          "alta",
+          "media",
+          "baja"
+        ],
+        "message": "La prioridad \"{VALUE}\" no existe"
+      },
+      "resultado": {
+        "values": [
+          "activa",
+          "pendiente",
+          "resuelta",
+          "derivada",
+          "falsa_alarma",
+          "informacion"
+        ],
+        "message": "El resultado \"{VALUE}\" no existe"
+      },
+      "medio_recepcion": {
+        "values": [
+          "telefono",
+          "radio_uhf",
+          "personal_in_situ"
+        ],
+        "message": "El medio de recepción \"{VALUE}\" no existe"
+      },
+      "relacion_alertante": {
+        "values": [
+          "testigo",
+          "112",
+          "policia_nacional",
+          "policia_local",
+          "servicios_medicos",
+          "centro_serem"
+        ],
+        "message": "La relación del alertante \"{VALUE}\" no existe"
+      }
+    },
+    "rescate-animal": {
+      "estado": {
+        "values": [
+          "rescatado",
+          "desaparecido",
+          "en_acogida",
+          "adoptado",
+          "fallecido"
+        ],
+        "message": "El estado \"{VALUE}\" no existe"
+      },
+      "sexo": {
+        "values": [
+          "macho",
+          "hembra",
+          "no_sabe"
+        ],
+        "message": "El sexo \"{VALUE}\" no existe"
+      },
+      "tamano": {
+        "values": [
+          "grande",
+          "mediano",
+          "pequeno"
+        ],
+        "message": "El tamaño \"{VALUE}\" no existe"
+      },
+      "derivado_a": {
+        "values": [
+          "clinica_veterinaria",
+          "centro_proteccion",
+          "apa",
+          "policia_local",
+          "agentes_forestales"
+        ],
+        "message": "El destino de derivación \"{VALUE}\" no existe"
+      }
+    },
+    "servicios-realizados": {
+      "tipo_servicio": {
+        "values": [
+          "preventivo",
+          "teleservicio",
+          "social",
+          "reunion_formacion",
+          "catastrofe",
+          "guardia",
+          "otro"
+        ],
+        "message": "El tipo de servicio \"{VALUE}\" no existe"
+      }
+    },
+    "voluntariado": {
+      "estado": {
+        "values": [
+          "alta",
+          "ausencia",
+          "baja"
+        ],
+        "message": "El estado \"{VALUE}\" no existe"
+      },
+      "sexo": {
+        "values": [
+          "hombre",
+          "mujer",
+          "otro"
+        ],
+        "message": "El sexo \"{VALUE}\" no existe"
+      }
+    },
+    "lista-asistencia": {
+      "estado": {
+        "values": [
+          "pendiente",
+          "presente",
+          "ausente"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "registro-asistencias": {
+      "estatus": {
+        "values": [
+          "abierta",
+          "cerrada"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "registro-incidencias": {
+      "tipo": {
+        "values": [
+          "ausencia"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "delivery-package": {
+      "event_type": {
+        "values": [
+          "load",
+          "delivery"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      },
+      "last_logistics_event_type": {
+        "values": [
+          "load",
+          "delivery"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      },
+      "estado": {
+        "values": [
+          "pendiente",
+          "asignado",
+          "cargado",
+          "en_ruta",
+          "entregado",
+          "incidencia",
+          "cancelado"
+        ],
+        "message": "El estado del bulto \"{VALUE}\" no existe"
+      }
+    },
+    "delivery-return": {
+      "estado": {
+        "values": [
+          "borrador",
+          "firmado",
+          "recibido_almacen"
+        ],
+        "message": "El estado de la devolución \"{VALUE}\" no existe"
+      }
+    },
+    "dynamic-dashboard": {
+      "widget_type": {
+        "values": [
+          "kpi",
+          "table",
+          "chart-pie",
+          "chart-line",
+          "chart-bar",
+          "progress"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      },
+      "group_by_date_granularity": {
+        "values": [
+          "",
+          "day",
+          "week",
+          "month",
+          "year"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      },
+      "op": {
+        "values": [
+          "count",
+          "sum",
+          "avg",
+          "min",
+          "max"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      },
+      "mode": {
+        "values": [
+          "none",
+          "relative",
+          "absolute"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      },
+      "relative": {
+        "values": [
+          "today",
+          "last_7d",
+          "last_30d",
+          "last_90d",
+          "this_month",
+          "this_year"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "employee": {
+      "sexo": {
+        "values": [
+          "H",
+          "M"
+        ],
+        "message": "Sexo debe ser H o M"
+      }
+    },
+    "epson-ticket-template": {
+      "render_target": {
+        "values": [
+          "ESCPOS",
+          "ZPL",
+          "BOTH"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      },
+      "template_key": {
+        "values": [
+          "POS_SALE",
+          "OFFLINE_ORDER"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "interactive-manual": {
+      "placement": {
+        "values": [
+          "auto",
+          "top",
+          "right",
+          "bottom",
+          "left"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      },
+      "action_hint": {
+        "values": [
+          "click",
+          "input",
+          "navigate",
+          "observe"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "inventory-internal-location": {
+      "tipo": {
+        "values": [
+          "almacen",
+          "logistica",
+          "transito",
+          "cliente",
+          "ajuste"
+        ],
+        "message": "El tipo de ubicación \"{VALUE}\" no existe"
+      }
+    },
+    "inventory-movement": {
+      "tipo_movimiento": {
+        "values": [
+          "recepcion_compra",
+          "apartado_logistica",
+          "liberacion_logistica",
+          "salida_entrega",
+          "transferencia_interna",
+          "ajuste_manual",
+          "recepcion_devolucion"
+        ],
+        "message": "El tipo de movimiento \"{VALUE}\" no existe"
+      }
+    },
+    "inventory-physical-count": {
+      "estado": {
+        "values": [
+          "borrador",
+          "contado",
+          "aplicado"
+        ],
+        "message": "El estado del conteo \"{VALUE}\" no existe"
+      }
+    },
+    "inventory-reception": {
+      "estado": {
+        "values": [
+          "pendiente",
+          "parcial",
+          "recibida",
+          "cancelada"
+        ],
+        "message": "El estado \"{VALUE}\" para la recepción no existe"
+      }
+    },
+    "invoice-request": {
+      "base_calculo": {
+        "values": [
+          "importe"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      },
+      "estado": {
+        "values": [
+          "pendiente_autorizacion_cobranza",
+          "listo_para_comercial",
+          "enviado_a_comercial",
+          "facturado",
+          "cancelado"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "module-management": {
+      "module_location": {
+        "values": [
+          "plugins",
+          "components"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "labor-incident": {
+      "tipo": {
+        "values": [
+          "absence",
+          "late",
+          "overtime",
+          "vacation",
+          "disability",
+          "permission_paid",
+          "permission_unpaid",
+          "bonus",
+          "loan_infonavit",
+          "other_deduction",
+          "termination"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "payroll-concept": {
+      "categoria": {
+        "values": [
+          "perception",
+          "deduction",
+          "other_payment"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "payroll-period": {
+      "tipo_nomina": {
+        "values": [
+          "O",
+          "E"
+        ],
+        "message": "Tipo de nómina debe ser O (ordinaria) o E (extraordinaria)"
+      },
+      "estado": {
+        "values": [
+          "draft",
+          "open",
+          "closed",
+          "generating"
+        ],
+        "message": "Estado de periodo no válido"
+      }
+    },
+    "payroll-receipt": {
+      "categoria": {
+        "values": [
+          "perception",
+          "deduction",
+          "other_payment",
+          "incapacity"
+        ],
+        "message": "Categoría de línea no válida"
+      },
+      "estado": {
+        "values": [
+          "draft",
+          "calculated",
+          "ready_to_stamp",
+          "stamping",
+          "stamped",
+          "error"
+        ],
+        "message": "Estado de recibo no válido"
+      }
+    },
+    "mis-tareas": {
+      "state": {
+        "values": [
+          "pendiente",
+          "en_progreso",
+          "en_revision",
+          "bloqueado",
+          "completado",
+          "cancelado"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      },
+      "priority": {
+        "values": [
+          "baja",
+          "media",
+          "alta",
+          "critica"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "proyecto-task": {
+      "status": {
+        "values": [
+          "pendiente",
+          "en_progreso",
+          "en_revision",
+          "bloqueado",
+          "completado",
+          "cancelado"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      },
+      "priority": {
+        "values": [
+          "baja",
+          "media",
+          "alta",
+          "critica"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "proyectos": {
+      "status": {
+        "values": [
+          "pendiente",
+          "aceptada",
+          "rechazada"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      },
+      "state": {
+        "values": [
+          "pendiente",
+          "en_progreso",
+          "en_revision",
+          "bloqueado",
+          "completado",
+          "cancelado"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      },
+      "priority": {
+        "values": [
+          "baja",
+          "media",
+          "alta",
+          "critica"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "pos-order": {
+      "state": {
+        "values": [
+          "BORRADOR",
+          "CONFIRMADO",
+          "HECHO",
+          "CANCELADO"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "pos-session": {
+      "mode": {
+        "values": [
+          "ONLINE",
+          "OFFLINE"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "pos-tickets": {
+      "ticket_type": {
+        "values": [
+          "VENTA",
+          "DEVOLUCION",
+          "RETIRO_MANUAL_CAJA"
+        ],
+        "message": "El tipo \"{VALUE}\" para un ticket de pos, no existe"
+      },
+      "state": {
+        "values": [
+          "facturado",
+          "borrador",
+          "confirmado",
+          "cancelado"
+        ],
+        "message": "El estado \"{VALUE}\" para un ticket de pos, no existe"
+      }
+    },
+    "purchase-order": {
+      "estado": {
+        "values": [
+          "borrador",
+          "aprobada",
+          "parcialmente_recibida",
+          "confirmada",
+          "archivada"
+        ],
+        "message": "El estado \"{VALUE}\" para la orden de compra no existe"
+      },
+      "tipo_origen": {
+        "values": [
+          "manual",
+          "xml",
+          "reabasto"
+        ],
+        "message": "El tipo de origen \"{VALUE}\" para la orden de compra no existe"
+      }
+    },
+    "reports-pdf-setting": {
+      "page_size_preset": {
+        "values": [
+          "A4",
+          "Letter",
+          "Legal",
+          "Custom"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      },
+      "orientation": {
+        "values": [
+          "portrait",
+          "landscape"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "reports": {
+      "page_size": {
+        "values": [
+          "A4",
+          "Letter",
+          "Legal"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "user": {
+      "mode": {
+        "values": [
+          "menu",
+          "url"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      },
+      "view_kind": {
+        "values": [
+          "list",
+          "form"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      },
+      "reset_password_kind": {
+        "values": [
+          "recovery",
+          "invitation"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "user-pin": {
+      "pin_type": {
+        "values": [
+          "numeric",
+          "letters"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "user-print-template": {
+      "page_size_preset": {
+        "values": [
+          "a4",
+          "letter",
+          "legal",
+          "custom"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      },
+      "orientation": {
+        "values": [
+          "portrait",
+          "landscape"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "user-settings": {
+      "default_task_view": {
+        "values": [
+          "board",
+          "list",
+          "tree"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      },
+      "mobile_list_mode": {
+        "values": [
+          "compact",
+          "expanded",
+          "card"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      },
+      "border_style": {
+        "values": [
+          "none",
+          "hidden",
+          "dotted",
+          "dashed",
+          "solid",
+          "double",
+          "groove",
+          "ridge",
+          "inset",
+          "outset"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      },
+      "corner_radius_mode": {
+        "values": [
+          "rounded",
+          "square"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      },
+      "android_status_bar_background_mode": {
+        "values": [
+          "theme-background",
+          "transparent-blur",
+          "theme-primary",
+          "theme-surface",
+          "black",
+          "white",
+          "custom"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      },
+      "android_status_bar_icon_style": {
+        "values": [
+          "auto",
+          "light",
+          "dark"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "vehicle": {
+      "tipo_unidad": {
+        "values": [
+          "pickup",
+          "van",
+          "camion",
+          "motocicleta",
+          "otro"
+        ],
+        "message": "El tipo de unidad \"{VALUE}\" no existe"
+      },
+      "estado_operativo": {
+        "values": [
+          "disponible",
+          "asignado",
+          "mantenimiento",
+          "inactivo"
+        ],
+        "message": "El estado operativo \"{VALUE}\" no existe"
+      }
+    },
+    "view-config-preset": {
+      "scope": {
+        "values": [
+          "private",
+          "shared",
+          "global"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "zpl-management": {
+      "dpmm": {
+        "values": [
+          "6dpmm (152dpi)",
+          "6dpmm",
+          "8dpmm (203dpi)",
+          "8dpmm",
+          "12dpmm (300dpi)",
+          "12dpmm",
+          "24dpmm (600dpi)",
+          "24dpmm"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "document-change-history": {
+      "op": {
+        "values": [
+          "add",
+          "remove",
+          "replace",
+          "move"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      },
+      "tipoMovimiento": {
+        "values": [
+          "crear",
+          "eliminar",
+          "editar",
+          "reordenar"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      },
+      "entryType": {
+        "values": [
+          "change",
+          "comment"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "message": {
+      "direction": {
+        "values": [
+          "internal",
+          "outbound",
+          "inbound"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      },
+      "sourceType": {
+        "values": [
+          "internal",
+          "interinstance",
+          "chat"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "ticket": {
+      "sourceType": {
+        "values": [
+          "public",
+          "internal",
+          "interinstance",
+          "error",
+          "log"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      },
+      "status": {
+        "values": [
+          "open",
+          "in_progress",
+          "resolved",
+          "closed"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "citizen-report": {
+      "priority": {
+        "values": [
+          "BAJA",
+          "MEDIA",
+          "ALTA",
+          "URGENTE",
+          "CRITICA"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      },
+      "status": {
+        "values": [
+          "pendiente",
+          "en_proceso",
+          "terminado"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "cobranza-payment": {
+      "status": {
+        "values": [
+          "APLICADO",
+          "CANCELADO"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      },
+      "provider": {
+        "values": [
+          "EFECTIVO",
+          "TARJETA",
+          "STRIPE",
+          "MITEC"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "cobranza": {
+      "source_module": {
+        "values": [
+          "violation",
+          "agua"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      },
+      "status": {
+        "values": [
+          "PENDIENTE",
+          "PARCIAL",
+          "PAGADO",
+          "CANCELADO"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "medical-file": {
+      "status": {
+        "values": [
+          "pendiente",
+          "en_consulta",
+          "completado"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "patient": {
+      "sexo": {
+        "values": [
+          "Masculino",
+          "Femenino",
+          "No especificado"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      },
+      "estado_civil": {
+        "values": [
+          "Soltero",
+          "Casado",
+          "Unión libre",
+          "Divorciado",
+          "Viudo",
+          "Otro"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "payments": {
+      "status": {
+        "values": [
+          "PENDIENTE",
+          "PAGADO",
+          "CANCELADO",
+          "FALLIDO"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "ticketing-system-turn": {
+      "status": {
+        "values": [
+          "pendiente",
+          "en_atencion",
+          "completado"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
+    "violation": {
+      "status": {
+        "values": [
+          "CONFIRMADO",
+          "EMITIDA",
+          "PAGADA",
+          "CANCELADA",
+          "CONDONADA",
+          "IMPUGNADA",
+          "ARCHIVADO"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      },
+      "service_type": {
+        "values": [
+          "Particular",
+          "Publico",
+          "Publico Federal"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      },
+      "identification_type": {
+        "values": [
+          "Viva voz",
+          "Pasaporte",
+          "INE",
+          "Licencia de Conducir",
+          "Sin identificacion"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    }
+  }
+}
