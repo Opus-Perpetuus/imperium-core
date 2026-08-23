@@ -114,7 +114,7 @@ export async function generate_payroll_drafts(store: ImperiumStore, period_id: s
 		? (
 				await store.find_many('employee', {
 					mongo_match: { salario_diario: { $gt: '0' } },
-					take: 2000,
+					take: 20000,
 					populate: false,
 				})
 			).rows.filter((row) => {
@@ -130,7 +130,7 @@ export async function generate_payroll_drafts(store: ImperiumStore, period_id: s
 		? (
 				await store.find_many('payroll-receipt', {
 					where: { payroll_period: id },
-					take: 5000,
+					take: 20000,
 					populate: false,
 					include_inactive: true,
 				})
@@ -221,7 +221,7 @@ export async function generate_payroll_drafts(store: ImperiumStore, period_id: s
 		? (
 				await store.find_many('payroll-receipt', {
 					where: { payroll_period: id },
-					take: 5000,
+					take: 20000,
 					populate: false,
 				})
 			).rows
