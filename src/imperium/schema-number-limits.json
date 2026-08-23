@@ -1,0 +1,924 @@
+{
+  "min": {
+    "time-sheets": {
+      "duration_minutes": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      }
+    },
+    "attachment-management": {
+      "size_in_kb": {
+        "min": 0,
+        "message": "El tamaño no puede ser negativo"
+      }
+    },
+    "cfdi-document": {
+      "total": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      }
+    },
+    "cfdi-issuer-profile": {
+      "folio_siguiente": {
+        "min": 1,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      }
+    },
+    "contacto": {
+      "facturacion_dividida_monto_maximo": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      }
+    },
+    "despensa-solidaria": {
+      "cantidad": {
+        "min": 0,
+        "message": "La cantidad no puede ser negativa"
+      },
+      "stock_minimo": {
+        "min": 0,
+        "message": "El stock mínimo no puede ser negativo"
+      },
+      "productos_retirados": {
+        "min": 0,
+        "message": "Los productos retirados no pueden ser negativos"
+      }
+    },
+    "inventario-sanitario": {
+      "cantidad": {
+        "min": 0,
+        "message": "La cantidad no puede ser negativa"
+      },
+      "stock_minimo": {
+        "min": 0,
+        "message": "El stock mínimo no puede ser negativo"
+      }
+    },
+    "registro-emergencias": {
+      "duracion_llamada": {
+        "min": 0,
+        "message": "La duración no puede ser negativa"
+      },
+      "num_afectados": {
+        "min": 0,
+        "message": "El nº de afectados no puede ser negativo"
+      },
+      "personal_voluntario_activado": {
+        "min": 0,
+        "message": "El personal voluntario no puede ser negativo"
+      }
+    },
+    "rescate-animal": {
+      "peso_aproximado": {
+        "min": 0,
+        "message": "El peso no puede ser negativo"
+      }
+    },
+    "servicios-realizados": {
+      "total_horas": {
+        "min": 0,
+        "message": "El total de horas no puede ser negativo"
+      }
+    },
+    "alumnos": {
+      "numero_lista": {
+        "min": 1,
+        "message": "El número de lista debe iniciar en 1"
+      }
+    },
+    "aulas": {
+      "capacidad": {
+        "min": 0,
+        "message": "La capacidad no puede ser negativa"
+      }
+    },
+    "grados-escolares": {
+      "nivel_orden": {
+        "min": 1,
+        "message": "El nivel debe ser mayor a cero"
+      }
+    },
+    "lista-asistencia": {
+      "numero_lista": {
+        "min": 1,
+        "message": "El número de lista debe iniciar en 1"
+      }
+    },
+    "registro-asistencias": {
+      "total_alumnos": {
+        "min": 0,
+        "message": "El total de alumnos no puede ser negativo"
+      }
+    },
+    "delivery-package": {
+      "quantity": {
+        "min": 0.0001,
+        "message": "La cantidad debe ser mayor a cero"
+      },
+      "numero_bulto": {
+        "min": 1,
+        "message": "El número del bulto debe ser mayor a cero"
+      },
+      "peso_kg": {
+        "min": 0,
+        "message": "El peso no puede ser negativo"
+      },
+      "pedido_total_bultos": {
+        "min": 1,
+        "message": "El pedido debe tener al menos un bulto"
+      }
+    },
+    "delivery-return": {
+      "cantidad": {
+        "min": 0.0001,
+        "message": "La cantidad devuelta debe ser mayor a cero"
+      }
+    },
+    "employee": {
+      "salario_diario": {
+        "min": 0,
+        "message": "El salario diario no puede ser negativo"
+      },
+      "sdi": {
+        "min": 0,
+        "message": "El SDI no puede ser negativo"
+      }
+    },
+    "epson-ticket-template": {
+      "line_width": {
+        "min": 16,
+        "message": "El ancho minimo permitido es 16"
+      }
+    },
+    "inventory-cost-entry": {
+      "cantidad": {
+        "min": 0.000001,
+        "message": "La cantidad debe ser mayor que cero"
+      },
+      "costo_unitario": {
+        "min": 0,
+        "message": "El costo unitario no puede ser negativo"
+      },
+      "costo_total": {
+        "min": 0,
+        "message": "El costo total no puede ser negativo"
+      },
+      "costo_promedio_resultante": {
+        "min": 0,
+        "message": "El costo promedio resultante no puede ser negativo"
+      }
+    },
+    "inventory-internal-location": {
+      "nivel": {
+        "min": 0,
+        "message": "El nivel no puede ser negativo"
+      }
+    },
+    "inventory-movement": {
+      "cantidad": {
+        "min": 0.000001,
+        "message": "La cantidad debe ser mayor a cero"
+      },
+      "costo_unitario": {
+        "min": 0,
+        "message": "El costo unitario no puede ser negativo"
+      }
+    },
+    "inventory-reception": {
+      "cantidad": {
+        "min": 0.000001,
+        "message": "La cantidad reservada debe ser mayor que cero"
+      },
+      "cantidad_esperada": {
+        "min": 0.000001,
+        "message": "La cantidad esperada debe ser mayor que cero"
+      },
+      "cantidad_recibida": {
+        "min": 0,
+        "message": "La cantidad recibida no puede ser negativa"
+      },
+      "cantidad_acomodada": {
+        "min": 0,
+        "message": "La cantidad acomodada no puede ser negativa"
+      },
+      "costo_unitario": {
+        "min": 0,
+        "message": "El costo unitario no puede ser negativo"
+      },
+      "total_esperado": {
+        "min": 0,
+        "message": "El total esperado no puede ser negativo"
+      },
+      "total_recibido": {
+        "min": 0,
+        "message": "El total recibido no puede ser negativo"
+      }
+    },
+    "invoice-request": {
+      "pedido_articulo_index": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "cantidad_original": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "cantidad_facturable": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "precio_unitario": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "monto_total": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "index": {
+        "min": 1,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "articulos_count": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "pedido_total": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "pedido_iva": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "monto_umbral": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      }
+    },
+    "lista-de-precios": {
+      "precio": {
+        "min": 0,
+        "message": "El precio minimo es 0"
+      },
+      "iva": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      }
+    },
+    "labor-incident": {
+      "dias": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "horas": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      }
+    },
+    "labor-schedule": {
+      "weekday": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "hours": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      }
+    },
+    "payroll-period": {
+      "num_dias_pagados": {
+        "min": 0.001,
+        "message": "NumDiasPagados debe ser mayor a 0 (mín. 0.001)"
+      },
+      "receipts_count": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "calculated_count": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "stamped_count": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      }
+    },
+    "payroll-receipt": {
+      "salario_diario": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "sdi": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "importe_gravado": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "importe_exento": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "importe": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "num_dias_pagados": {
+        "min": 0,
+        "message": "NumDiasPagados no puede ser negativo"
+      },
+      "total_percepciones": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "total_deducciones": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "total_otros_pagos": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "subsidio_causado": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      }
+    },
+    "mis-tareas": {
+      "estimated_minutes": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      }
+    },
+    "proyecto-task": {
+      "estimated_minutes": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      }
+    },
+    "proyecto-time-log": {
+      "duration_minutes": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      }
+    },
+    "proyectos": {
+      "progress_percentage": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      }
+    },
+    "pos-session": {
+      "quantity": {
+        "min": 1,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "unit_price": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "sequence": {
+        "min": 1,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "cash": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "cash_register_opening_money": {
+        "min": 0,
+        "message": "No puedes especificar menos de 0 en el dinero inicial de la caja\",\n            ],\n        },\n\n        on_use: {\n            type: Boolean,\n            default: true,\n        },\n\n        usage_history: {\n            type: [PosSessionUsageEntrySchema],\n            default: [],\n        },\n\n        runtime_state: {\n            type: PosSessionRuntimeStateSchema,\n            default: () => ({\n                mode: PosSessionWorkModes.ONLINE,\n                sequence: 1,\n                cash: 0,\n                items: [],\n                client: null,\n                updated_at: null,\n            }),\n        },\n\n        ...$ModelGeneralDataSchema,\n        // Definido después del spread para conservar el tipo ObjectId/ref/required\n        // propio del modelo (el schema general aporta un `created_by` String genérico).\n        created_by: {\n            type: mongoose.Schema.Types.ObjectId,\n            required: [true, \"Se requiere el usuario que creó la sesión"
+      }
+    },
+    "pos-tickets": {
+      "quantity": {
+        "min": 0,
+        "message": "La cantidad mínima de items es 0"
+      },
+      "withdrawal_amount": {
+        "min": 0,
+        "message": "El monto del retiro no puede ser negativo"
+      }
+    },
+    "products": {
+      "existenciaApartada": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "costoVenta": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "costoCompraPromedio": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "ultimoCostoCompra": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "stockMinimo": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      }
+    },
+    "purchase-order": {
+      "cantidad": {
+        "min": 0.000001,
+        "message": "La cantidad recibida debe ser mayor a cero"
+      },
+      "cantidad_recibida": {
+        "min": 0,
+        "message": "La cantidad recibida no puede ser negativa"
+      },
+      "costo_unitario": {
+        "min": 0,
+        "message": "El costo unitario no puede ser negativo"
+      },
+      "importe": {
+        "min": 0,
+        "message": "El importe no puede ser negativo"
+      },
+      "cantidad_faltante": {
+        "min": 0,
+        "message": "El faltante no puede ser negativo"
+      },
+      "cantidad_sugerida_consumo": {
+        "min": 0,
+        "message": "El consumo sugerido no puede ser negativo"
+      },
+      "cantidad_desde_recepcion": {
+        "min": 0,
+        "message": "La cantidad tomada de recepción no puede ser negativa"
+      },
+      "costo_total": {
+        "min": 0,
+        "message": "El costo total no puede ser negativo"
+      },
+      "total_cantidad": {
+        "min": 0,
+        "message": "El total de piezas no puede ser negativo"
+      },
+      "subtotal": {
+        "min": 0,
+        "message": "El subtotal no puede ser negativo"
+      },
+      "monto_total": {
+        "min": 0,
+        "message": "El monto total no puede ser negativo"
+      },
+      "total_recibido": {
+        "min": 0,
+        "message": "El total recibido no puede ser negativo"
+      }
+    },
+    "reports-pdf-setting": {
+      "custom_width_mm": {
+        "min": 10,
+        "message": "El ancho personalizado debe ser mayor o igual a 10mm"
+      },
+      "custom_height_mm": {
+        "min": 10,
+        "message": "El alto personalizado debe ser mayor o igual a 10mm"
+      },
+      "margin_top_mm": {
+        "min": 0,
+        "message": "El margen superior no puede ser negativo"
+      },
+      "margin_right_mm": {
+        "min": 0,
+        "message": "El margen derecho no puede ser negativo"
+      },
+      "margin_bottom_mm": {
+        "min": 0,
+        "message": "El margen inferior no puede ser negativo"
+      },
+      "margin_left_mm": {
+        "min": 0,
+        "message": "El margen izquierdo no puede ser negativo"
+      },
+      "scale_percent": {
+        "min": 10,
+        "message": "La escala mínima es 10%"
+      }
+    },
+    "sku": {
+      "costoVenta": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "stockMinimo": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      }
+    },
+    "user-pin": {
+      "pin_length": {
+        "min": 1,
+        "message": "La longitud minima del PIN es 1"
+      },
+      "pin_version": {
+        "min": 1,
+        "message": "La version minima del PIN es 1"
+      }
+    },
+    "user-print-template": {
+      "margin_top_mm": {
+        "min": 0,
+        "message": "El margen superior no puede ser negativo"
+      },
+      "margin_right_mm": {
+        "min": 0,
+        "message": "El margen derecho no puede ser negativo"
+      },
+      "margin_bottom_mm": {
+        "min": 0,
+        "message": "El margen inferior no puede ser negativo"
+      },
+      "margin_left_mm": {
+        "min": 0,
+        "message": "El margen izquierdo no puede ser negativo"
+      },
+      "custom_width_mm": {
+        "min": 10,
+        "message": "El ancho personalizado no puede ser menor a 10mm"
+      },
+      "custom_height_mm": {
+        "min": 10,
+        "message": "El alto personalizado no puede ser menor a 10mm"
+      }
+    },
+    "user-settings": {
+      "backdrop_blur_multiplier": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "transparency_multiplier": {
+        "min": 0.35,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "floating_backdrop_blur_multiplier": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "liquid_glass_blur": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "liquid_glass_depth": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "liquid_glass_refraction": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "border_thickness_multiplier": {
+        "min": 0.5,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "border_contrast_multiplier": {
+        "min": 0.5,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "corner_radius_multiplier": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "font_size_multiplier": {
+        "min": 0.8,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      }
+    },
+    "vehicle": {
+      "anio": {
+        "min": 1900,
+        "message": "El año del vehículo no es válido"
+      },
+      "capacidad_carga_kg": {
+        "min": 0,
+        "message": "La capacidad de carga no puede ser negativa"
+      }
+    },
+    "zpl-management": {
+      "label_size_mm_x": {
+        "min": 1,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "label_size_mm_y": {
+        "min": 1,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      }
+    },
+    "agua": {
+      "periodo_actual": {
+        "min": 1,
+        "message": "El periodo mínimo es 1"
+      }
+    },
+    "lectura": {
+      "lectura_actual": {
+        "min": 0,
+        "message": "La lectura no puede ser negativa"
+      }
+    },
+    "citizen-report": {
+      "latitude": {
+        "min": -90,
+        "message": "La latitud debe estar entre -90 y 90"
+      },
+      "longitude": {
+        "min": -180,
+        "message": "La longitud debe estar entre -180 y 180"
+      }
+    },
+    "cobranza-payment": {
+      "amount": {
+        "min": 0.01,
+        "message": "El monto del pago debe ser mayor a cero"
+      }
+    },
+    "cobranza": {
+      "total_amount": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "paid_amount": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "balance": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      }
+    },
+    "patient": {
+      "edad": {
+        "min": 0,
+        "message": "La edad no puede ser negativa"
+      }
+    },
+    "payments": {
+      "amount": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      }
+    },
+    "ticketing-system-box-config": {
+      "min_movements": {
+        "min": 1,
+        "message": "El minimo de movimientos debe ser al menos 1"
+      },
+      "max_movements": {
+        "min": 1,
+        "message": "El maximo de movimientos debe ser al menos 1"
+      }
+    },
+    "ticketing-system-priority": {
+      "priority_level": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      }
+    },
+    "violation-mobility-law": {
+      "umas_min": {
+        "min": 1,
+        "message": "El valor mínimo no puede ser menor a 1"
+      },
+      "umas_max": {
+        "min": 1,
+        "message": "El valor máximo no puede ser menor a 1"
+      }
+    },
+    "violation": {
+      "condoned": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "vehicle_year": {
+        "min": 1900,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "uma_qty": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "uma_price": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "uma_total": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "uma_min": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      },
+      "uma_max": {
+        "min": 0,
+        "message": "Path `{PATH}` ({VALUE}) is less than minimum allowed value ({MIN})."
+      }
+    }
+  },
+  "max": {
+    "epson-ticket-template": {
+      "line_width": {
+        "max": 96,
+        "message": "El ancho maximo permitido es 96"
+      }
+    },
+    "labor-schedule": {
+      "weekday": {
+        "max": 6,
+        "message": "Path `{PATH}` ({VALUE}) is more than maximum allowed value ({MAX})."
+      }
+    },
+    "proyectos": {
+      "progress_percentage": {
+        "max": 100,
+        "message": "Path `{PATH}` ({VALUE}) is more than maximum allowed value ({MAX})."
+      }
+    },
+    "reports-pdf-setting": {
+      "custom_width_mm": {
+        "max": 2000,
+        "message": "El ancho personalizado no puede exceder 2000mm"
+      },
+      "custom_height_mm": {
+        "max": 2000,
+        "message": "El alto personalizado no puede exceder 2000mm"
+      },
+      "margin_top_mm": {
+        "max": 100,
+        "message": "El margen superior no puede exceder 100mm"
+      },
+      "margin_right_mm": {
+        "max": 100,
+        "message": "El margen derecho no puede exceder 100mm"
+      },
+      "margin_bottom_mm": {
+        "max": 100,
+        "message": "El margen inferior no puede exceder 100mm"
+      },
+      "margin_left_mm": {
+        "max": 100,
+        "message": "El margen izquierdo no puede exceder 100mm"
+      },
+      "scale_percent": {
+        "max": 200,
+        "message": "La escala máxima es 200%"
+      }
+    },
+    "user-pin": {
+      "pin_length": {
+        "max": 12,
+        "message": "La longitud maxima del PIN es 12"
+      }
+    },
+    "user-print-template": {
+      "margin_top_mm": {
+        "max": 100,
+        "message": "El margen superior no puede exceder 100mm"
+      },
+      "margin_right_mm": {
+        "max": 100,
+        "message": "El margen derecho no puede exceder 100mm"
+      },
+      "margin_bottom_mm": {
+        "max": 100,
+        "message": "El margen inferior no puede exceder 100mm"
+      },
+      "margin_left_mm": {
+        "max": 100,
+        "message": "El margen izquierdo no puede exceder 100mm"
+      },
+      "custom_width_mm": {
+        "max": 2000,
+        "message": "El ancho personalizado no puede exceder 2000mm"
+      },
+      "custom_height_mm": {
+        "max": 2000,
+        "message": "El alto personalizado no puede exceder 2000mm"
+      }
+    },
+    "user-settings": {
+      "backdrop_blur_multiplier": {
+        "max": 2.5,
+        "message": "Path `{PATH}` ({VALUE}) is more than maximum allowed value ({MAX})."
+      },
+      "transparency_multiplier": {
+        "max": 1.65,
+        "message": "Path `{PATH}` ({VALUE}) is more than maximum allowed value ({MAX})."
+      },
+      "floating_backdrop_blur_multiplier": {
+        "max": 2.5,
+        "message": "Path `{PATH}` ({VALUE}) is more than maximum allowed value ({MAX})."
+      },
+      "liquid_glass_blur": {
+        "max": 40,
+        "message": "Path `{PATH}` ({VALUE}) is more than maximum allowed value ({MAX})."
+      },
+      "liquid_glass_depth": {
+        "max": 1,
+        "message": "Path `{PATH}` ({VALUE}) is more than maximum allowed value ({MAX})."
+      },
+      "liquid_glass_refraction": {
+        "max": 60,
+        "message": "Path `{PATH}` ({VALUE}) is more than maximum allowed value ({MAX})."
+      },
+      "border_thickness_multiplier": {
+        "max": 2.5,
+        "message": "Path `{PATH}` ({VALUE}) is more than maximum allowed value ({MAX})."
+      },
+      "border_contrast_multiplier": {
+        "max": 2.5,
+        "message": "Path `{PATH}` ({VALUE}) is more than maximum allowed value ({MAX})."
+      },
+      "corner_radius_multiplier": {
+        "max": 2.5,
+        "message": "Path `{PATH}` ({VALUE}) is more than maximum allowed value ({MAX})."
+      },
+      "font_size_multiplier": {
+        "max": 1.5,
+        "message": "Path `{PATH}` ({VALUE}) is more than maximum allowed value ({MAX})."
+      }
+    },
+    "vehicle": {
+      "anio": {
+        "max": 2500,
+        "message": "El año del vehículo no es válido"
+      }
+    },
+    "zpl-management": {
+      "label_size_mm_x": {
+        "max": 1000,
+        "message": "Path `{PATH}` ({VALUE}) is more than maximum allowed value ({MAX})."
+      },
+      "label_size_mm_y": {
+        "max": 1000,
+        "message": "Path `{PATH}` ({VALUE}) is more than maximum allowed value ({MAX})."
+      }
+    },
+    "agua": {
+      "periodo_actual": {
+        "max": 6,
+        "message": "El periodo máximo es 6"
+      }
+    },
+    "citizen-report": {
+      "latitude": {
+        "max": 90,
+        "message": "La latitud debe estar entre -90 y 90"
+      },
+      "longitude": {
+        "max": 180,
+        "message": "La longitud debe estar entre -180 y 180"
+      }
+    },
+    "ticketing-system-priority": {
+      "priority_level": {
+        "max": 10,
+        "message": "Path `{PATH}` ({VALUE}) is more than maximum allowed value ({MAX})."
+      }
+    },
+    "violation-mobility-law": {
+      "umas_min": {
+        "max": 99,
+        "message": "El valor mínimo no puede ser mayor a 99"
+      },
+      "umas_max": {
+        "max": 99,
+        "message": "El valor máximo no puede ser mayor a 99"
+      }
+    },
+    "violation": {
+      "condoned": {
+        "max": 100,
+        "message": "Path `{PATH}` ({VALUE}) is more than maximum allowed value ({MAX})."
+      },
+      "uma_qty": {
+        "max": 100,
+        "message": "Path `{PATH}` ({VALUE}) is more than maximum allowed value ({MAX})."
+      },
+      "uma_price": {
+        "max": 10000,
+        "message": "Path `{PATH}` ({VALUE}) is more than maximum allowed value ({MAX})."
+      },
+      "uma_total": {
+        "max": 30000,
+        "message": "Path `{PATH}` ({VALUE}) is more than maximum allowed value ({MAX})."
+      },
+      "uma_min": {
+        "max": 3000,
+        "message": "Path `{PATH}` ({VALUE}) is more than maximum allowed value ({MAX})."
+      },
+      "uma_max": {
+        "max": 3000,
+        "message": "Path `{PATH}` ({VALUE}) is more than maximum allowed value ({MAX})."
+      }
+    }
+  }
+}

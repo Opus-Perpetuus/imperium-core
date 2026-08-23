@@ -1,6 +1,6 @@
 /**
- * Required / minlength / maxlength / match / enum de Mongoose + `field_errors`
- * del `ValidationError` original.
+ * Required / minlength / maxlength / match / enum / min-max numérico de
+ * Mongoose + `field_errors` del `ValidationError` original.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -35,6 +35,11 @@ const ENUM_RULES: Record<string, Record<string, EnumRule>> = (
 		enum: Record<string, Record<string, EnumRule>>;
 	}
 ).enum;
+
+type NumberBound = { min?: number; max?: number; message: string };
+const NUMBER_LIMITS = JSON.parse(
+	readFileSync(join(import.meta.dir, 'schema-number-limits.json'), 'utf8'),
+) as { min: Record<string, Record<string, NumberBound>>; max: Record<string, Record<string, NumberBound>> };
 
 const RESOURCE_ALIASES: Record<string, string> = {
 	proyectos: 'planeacion-proyectos',
@@ -113,6 +118,24 @@ export function assert_required_fields(resource: string, doc: Record<string, unk
 			add(field, enum_message(rule.message, field, value));
 		}
 	}
+	const mins_n = NUMBER_LIMITS.min[canonical] ?? NUMBER_LIMITS.min[resource] ?? {};
+	const maxs_n = NUMBER_LIMITS.max[canonical] ?? NUMBER_LIMITS.max[resource] ?? {};
+	for (const [field, rule] of Object.entries(mins_n)) {
+		if (is_missing(doc[field])) continue;
+		for (const value of number_values(doc[field])) {
+			if (rule.min !== undefined && value < rule.min) {
+				add(field, number_bound_message(rule.message, field, value, { MIN: rule.min }));
+			}
+		}
+	}
+	for (const [field, rule] of Object.entries(maxs_n)) {
+		if (is_missing(doc[field])) continue;
+		for (const value of number_values(doc[field])) {
+			if (rule.max !== undefined && value > rule.max) {
+				add(field, number_bound_message(rule.message, field, value, { MAX: rule.max }));
+			}
+		}
+	}
 	if (!Object.keys(field_errors).length) return;
 	const model = model_label(resource);
 	const detail = Object.entries(field_errors)
@@ -146,6 +169,28 @@ function string_values(value: unknown): string[] {
 
 function enum_message(template: string, field: string, value: string) {
 	return template.replaceAll('{VALUE}', value).replaceAll('{PATH}', field);
+}
+
+function number_values(value: unknown): number[] {
+	if (typeof value === 'number' && Number.isFinite(value)) return [value];
+	if (typeof value === 'string' && value.trim() !== '') {
+		const n = Number(value);
+		if (Number.isFinite(n)) return [n];
+	}
+	return [];
+}
+
+function number_bound_message(
+	template: string,
+	field: string,
+	value: number,
+	bounds: { MIN?: number; MAX?: number },
+) {
+	return template
+		.replaceAll('{PATH}', field)
+		.replaceAll('{VALUE}', String(value))
+		.replaceAll('{MIN}', bounds.MIN === undefined ? '' : String(bounds.MIN))
+		.replaceAll('{MAX}', bounds.MAX === undefined ? '' : String(bounds.MAX));
 }
 
 function model_label(resource: string) {
