@@ -234,7 +234,7 @@ export async function notify_ticketing_rooms(store: ImperiumStore) {
 	});
 	if (!store.has('ticketing-system-box-config')) return;
 	const { rows } = await store.find_many('ticketing-system-box-config', {
-		take: 500,
+		take: 20000,
 		populate: false,
 	});
 	for (const box of rows.filter((row) => row.is_active !== false)) {
