@@ -103,6 +103,22 @@ import {
 	is_print_template_resource,
 	prepare_print_template_write,
 } from './print-template-flow.ts';
+import {
+	after_pattern_condition_create,
+	after_pattern_condition_delete,
+	after_pattern_condition_update,
+	after_pattern_part_write,
+	is_pattern_condition_resource,
+	is_pattern_parts_resource,
+	pattern_condition_create_message,
+	pattern_condition_delete_message,
+	pattern_part_create_message,
+	pattern_part_delete_message,
+	pattern_part_update_message,
+	prepare_pattern_part_create,
+	prepare_pattern_part_update,
+	soft_delete_pattern_part,
+} from './pattern-parts-flow.ts';
 import { build_access } from './auth.ts';
 import { is_seed_admin } from './group-access.ts';
 import {
@@ -348,8 +364,16 @@ export async function handle_crud(
 		assert_inventory_ledger_write(resource, 'delete');
 		const scope = await record_rule_scope(store, actor, resource, method);
 		await assert_id_in_scope(store, resource, segs[1], scope, method);
+		if (is_pattern_parts_resource(resource)) {
+			const deleted = await soft_delete_pattern_part(store, segs[1]!);
+			return json(resource, ok([deleted], pattern_part_delete_message()));
+		}
 		const deleted = await store.remove(resource, segs[1]);
 		if (!deleted) return json(resource, fail('No encontrado', 404).body, 404);
+		if (is_pattern_condition_resource(resource)) {
+			await after_pattern_condition_delete(store, deleted);
+			return json(resource, ok([deleted], pattern_condition_delete_message()));
+		}
 		if (resource === 'pedidos') await after_pedido_mutate(store, 'delete', deleted);
 		return json(
 			resource,
@@ -548,11 +572,18 @@ export async function handle_crud(
 		if (is_print_template_resource(resource)) {
 			incoming = await prepare_print_template_write(store, incoming);
 		}
+		if (is_pattern_parts_resource(resource)) {
+			incoming = await prepare_pattern_part_create(store, incoming);
+		}
 		const doc = await before_create(store, resource, incoming, actor);
 		const created = await store.insert(resource, doc);
 		await link_attachments_to_record(store, resource, created);
 		await maybe_register_mentions(store, actor, resource, created);
 		const notice = await after_create(store, resource, created, actor);
+		if (is_pattern_parts_resource(resource)) await after_pattern_part_write(store, created);
+		if (is_pattern_condition_resource(resource)) {
+			await after_pattern_condition_create(store, created);
+		}
 		if (resource === 'pedidos') await after_pedido_mutate(store, 'create', created);
 		if (resource === 'ticketing-system-turn') await notify_ticketing_rooms(store);
 		if (resource === 'purchase-order') {
@@ -621,7 +652,11 @@ export async function handle_crud(
 																			? 'Fila de asistencia creada'
 																			: resource === 'physical-device'
 																				? 'Dispositivo creado'
-																				: 'Ruta creada';
+																				: is_pattern_parts_resource(resource)
+																					? pattern_part_create_message()
+																					: is_pattern_condition_resource(resource)
+																						? pattern_condition_create_message()
+																						: 'Ruta creada';
 		return json(
 			resource,
 			notice ? { ...ok([populated], message), user_pin_notice: notice } : ok([populated], message),
@@ -725,10 +760,19 @@ export async function handle_crud(
 		if (is_print_template_resource(resource)) {
 			b = await prepare_print_template_write(store, { ...previous, ...b });
 		}
+		if (is_pattern_parts_resource(resource)) {
+			b = await prepare_pattern_part_update(b, previous);
+		}
 		const updated = await store.update(resource, id, b);
 		if (updated) await link_attachments_to_record(store, resource, updated);
 		if (!updated) return json(resource, fail('No encontrado', 404).body, 404);
 		if (resource === 'pedidos') await after_pedido_mutate(store, 'update', updated, previous);
+		if (is_pattern_parts_resource(resource)) {
+			await after_pattern_part_write(store, updated, previous);
+		}
+		if (is_pattern_condition_resource(resource)) {
+			await after_pattern_condition_update(store, updated, previous);
+		}
 		if (resource === 'purchase-order') {
 			await sync_inbound_supplier_invoice(store, updated);
 			await ensure_pending_reception_from_purchase_order(store, updated);
@@ -784,7 +828,9 @@ export async function handle_crud(
 														? 'Actualizado correctamente'
 														: is_lista_asistencia_resource(resource)
 															? 'Fila de asistencia actualizada correctamente'
-															: 'Actualizado correctamente',
+															: is_pattern_parts_resource(resource)
+																? pattern_part_update_message()
+																: 'Actualizado correctamente',
 			),
 		);
 	}
@@ -870,10 +916,19 @@ export async function handle_crud(
 		if (is_print_template_resource(resource)) {
 			patched = await prepare_print_template_write(store, { ...previous, ...patched });
 		}
+		if (is_pattern_parts_resource(resource)) {
+			patched = await prepare_pattern_part_update(patched, previous);
+		}
 		const updated = await store.update(resource, segs[0]!, patched);
 		if (updated) await link_attachments_to_record(store, resource, updated);
 		if (!updated) return json(resource, fail('No encontrado', 404).body, 404);
 		if (resource === 'pedidos') await after_pedido_mutate(store, 'update', updated, previous);
+		if (is_pattern_parts_resource(resource)) {
+			await after_pattern_part_write(store, updated, previous);
+		}
+		if (is_pattern_condition_resource(resource)) {
+			await after_pattern_condition_update(store, updated, previous);
+		}
 		if (resource === 'purchase-order') {
 			await sync_inbound_supplier_invoice(store, updated);
 			await ensure_pending_reception_from_purchase_order(store, updated);
@@ -929,7 +984,9 @@ export async function handle_crud(
 														? 'Actualizado correctamente'
 														: is_lista_asistencia_resource(resource)
 															? 'Fila de asistencia actualizada correctamente'
-															: 'Actualizado correctamente',
+															: is_pattern_parts_resource(resource)
+																? pattern_part_update_message()
+																: 'Actualizado correctamente',
 			),
 		);
 	}
@@ -1041,6 +1098,9 @@ function decorate_pos_ticket(doc: ImperiumDoc): ImperiumDoc {
 
 function list_message(resource: string) {
 	if (resource === 'font-awesome-icon-catalog') return 'Íconos de Font Awesome';
+	if (resource === 'custom-pattern-increment-sequence-parts') {
+		return 'Partes del patrón cargadas correctamente.';
+	}
 	return 'Elementos encontrados.';
 }
 
@@ -1052,6 +1112,9 @@ function detail_message(resource: string) {
 	if (resource === 'purchase-order') return 'Orden de compra encontrada';
 	if (resource === 'pos-session') return 'Sesión encontradda';
 	if (resource === 'physical-device') return 'Dispositivo encontrado';
+	if (resource === 'custom-pattern-increment-sequence-parts') {
+		return 'Parte del patrón encontrada.';
+	}
 	if (is_location_resource(resource)) return 'Ubicación encontrada';
 	if (is_physical_count_resource(resource)) return 'Conteo encontrado';
 	if (is_dashboard_resource(resource)) return 'Tablero encontrado';

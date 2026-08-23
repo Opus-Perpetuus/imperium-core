@@ -253,9 +253,7 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'configuration:ai_generate_text':
 			return ai_generate_text(ctx);
 		case 'custom-pattern-increment-sequence-parts:get_by_counter_config':
-			return list_where(ctx, 'custom-pattern-increment-sequence-parts', {
-				counter_config_id: ctx.params.counter_config_id,
-			});
+			return pattern_parts_by_counter(ctx);
 		case 'interface-restriction:runtime_read':
 			return interface_restriction_runtime(ctx);
 		case 'status-option-control:read_list':
@@ -740,6 +738,21 @@ async function list_where(ctx: Ctx, resource: string, where: Record<string, unkn
 	const clean = Object.fromEntries(Object.entries(where).filter(([, v]) => v !== ''));
 	const { rows, total } = await ctx.store.find_many(resource, { where: clean, take: 500 });
 	return ok(rows, 'Ruta encontrada', total);
+}
+
+async function pattern_parts_by_counter(ctx: Ctx) {
+	const counter_config_id = String(ctx.params.counter_config_id ?? '').trim();
+	if (!counter_config_id) throw new Error('Debes indicar el contador padre.');
+	if (!ctx.store.has('custom-pattern-increment-sequence-parts')) {
+		return ok([], 'Partes del patrón cargadas correctamente.', 0);
+	}
+	const { rows } = await ctx.store.find_many('custom-pattern-increment-sequence-parts', {
+		where: { counter_config_id },
+		take: 500,
+		sort: 'order:asc',
+	});
+	const ordered = [...rows].sort((a, b) => Number(a.order ?? 0) - Number(b.order ?? 0));
+	return ok(ordered, 'Partes del patrón cargadas correctamente.', ordered.length);
 }
 
 /**
