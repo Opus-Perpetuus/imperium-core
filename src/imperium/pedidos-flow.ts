@@ -273,6 +273,45 @@ export function decorate_pedido(doc: ImperiumDoc, mode: 'list' | 'detail'): Impe
 	return out;
 }
 
+const CONTACTO_DETAIL_KEYS = [
+	'rfc',
+	'codigo',
+	'domicilios',
+	'facturacion_dividida_habilitada',
+	'facturacion_dividida_monto_maximo',
+	'facturacion_requiere_autorizacion_cobranza',
+] as const;
+
+export async function hydrate_pedido_detail(
+	store: ImperiumStore,
+	doc: ImperiumDoc,
+): Promise<ImperiumDoc> {
+	const out = decorate_pedido(doc, 'detail');
+	const contact_id = ref_id(out.contacto_id) || ref_id(out.contacto);
+	if (contact_id && store.has('contacto')) {
+		const contact = await store.find_id('contacto', contact_id);
+		if (contact) {
+			const picked: ImperiumDoc = { _id: contact._id, name: contact.name };
+			for (const key of CONTACTO_DETAIL_KEYS) {
+				if (contact[key] !== undefined) picked[key] = contact[key];
+			}
+			out.contacto = picked;
+		}
+	}
+	const lista_id = ref_id(out.listaDePreciosId);
+	if (lista_id && store.has('lista-de-precios')) {
+		const lista = await store.find_id('lista-de-precios', lista_id);
+		if (lista) {
+			out.listaDePreciosId = {
+				_id: lista._id,
+				name: lista.name,
+				...(lista.iva !== undefined ? { iva: lista.iva } : {}),
+			};
+		}
+	}
+	return out;
+}
+
 export async function enrich_pedidos_list(
 	store: ImperiumStore,
 	rows: ImperiumDoc[],

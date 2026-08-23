@@ -18,6 +18,7 @@ import {
 	after_pedido_mutate,
 	decorate_pedido,
 	enrich_pedidos_list,
+	hydrate_pedido_detail,
 	is_pedido_resource,
 	prepare_pedido_create,
 	prepare_pedido_update,
@@ -1302,7 +1303,12 @@ async function finalize_rows(
 		return project ? project_list_docs(resource, flat) : flat;
 	}
 	const decorated = decorate_rows(resource, rows);
-	if (mode === 'detail') return populate_shared_tags(store, decorated);
+	if (mode === 'detail') {
+		const with_pedido = is_pedido_resource(resource)
+			? await Promise.all(decorated.map((row) => hydrate_pedido_detail(store, row)))
+			: decorated;
+		return populate_shared_tags(store, with_pedido);
+	}
 	const flat = store.flatten_list_docs(resource, decorated);
 	return project ? project_list_docs(resource, flat) : flat;
 }
