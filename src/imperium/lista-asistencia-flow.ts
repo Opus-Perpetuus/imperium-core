@@ -122,7 +122,7 @@ export async function snapshot_attendance_entries(
 	}
 	const { rows } = await store.find_many('alumnos', {
 		where: { grupo_id },
-		take: 2000,
+		take: 20000,
 		include_inactive: false,
 		populate: false,
 	});
