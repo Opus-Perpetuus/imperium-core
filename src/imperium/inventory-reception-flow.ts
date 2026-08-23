@@ -76,8 +76,9 @@ function pending_lines_from_po(po: ImperiumDoc, strict_product: boolean) {
 async function find_open_reception(store: ImperiumStore, po_id: string) {
 	for (const field of ['purchase_order', 'orden_compra'] as const) {
 		const { rows } = await store.find_many('inventory-reception', {
-			where: { [field]: po_id },
-			take: 50,
+			where: { [field]: po_id, estado: { in: [...OPEN_STATES] } },
+			take: 1,
+			sort: 'created_at:desc',
 			populate: false,
 		});
 		const open = rows.find(
