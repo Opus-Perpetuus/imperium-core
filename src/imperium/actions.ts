@@ -2232,7 +2232,8 @@ async function documentation_read_one(
 		if (opts.folder) where.folder_path = opts.folder;
 		const { rows } = await ctx.store.find_many('documentation-page', {
 			where,
-			take: 20000,
+			take: 1,
+			sort: 'id:asc',
 			include_inactive: false,
 		});
 		doc = rows[0] ?? null;
