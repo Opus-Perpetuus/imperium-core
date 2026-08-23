@@ -5254,14 +5254,7 @@ async function user_settings_global_theme(ctx: Ctx) {
 	}
 	let updated_users = 0;
 	if (ctx.body.apply_to_all && ctx.store.has('user-settings')) {
-		const { rows } = await ctx.store.find_many('user-settings', {
-			take: 5000,
-			include_inactive: true,
-		});
-		for (const row of rows) {
-			await ctx.store.update('user-settings', String(row._id), { theme });
-			updated_users++;
-		}
+		updated_users = await ctx.store.set_payload_field_all('user-settings', 'theme', theme);
 	}
 	return ok([{ theme, updated_users }], 'Tema predeterminado del sistema guardado');
 }

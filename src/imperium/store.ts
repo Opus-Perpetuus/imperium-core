@@ -1156,6 +1156,27 @@ export class ImperiumStore {
 		return wanted.length;
 	}
 
+	/** Como `updateMany({}, { $set: { field } })` del original. */
+	async set_payload_field_all(resource: string, field: string, value: unknown): Promise<number> {
+		if (!this.has(resource)) return 0;
+		if (!/^[a-z_][a-z0-9_]*$/i.test(field)) throw new Error(`bad ident ${field}`);
+		const now = new Date().toISOString();
+		const rows = await this.sql.unsafe(
+			`UPDATE ${this.qt(resource)}
+			 SET payload = (
+			   CASE
+			     WHEN jsonb_typeof(payload) = 'string' THEN COALESCE((payload #>> '{}')::jsonb, '{}'::jsonb)
+			     WHEN jsonb_typeof(payload) = 'object' THEN COALESCE(payload, '{}'::jsonb)
+			     ELSE '{}'::jsonb
+			   END
+			 ) || jsonb_build_object($2::text, to_jsonb($3::text)),
+			 updated_at = $1
+			 RETURNING id`,
+			[now, field, String(value ?? '')],
+		);
+		return rows.length;
+	}
+
 	async sync_search(resource: string, doc: ImperiumDoc) {
 		const collection = this.loc(resource).collection;
 		const id = String(doc._id ?? '');
