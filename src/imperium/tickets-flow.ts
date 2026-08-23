@@ -420,7 +420,18 @@ export async function tickets_admin_list(ctx: TicketCtx) {
 	const desde = Math.max(0, Number(ctx.url.searchParams.get('desde') ?? 0) || 0);
 	const limite = Math.min(500, Math.max(1, Number(ctx.url.searchParams.get('limite') ?? 50) || 50));
 	const { rows } = await ctx.store.find_many('tickets', {
-		take: 5000,
+		mongo_match: termino
+			? {
+					$or: [
+						{ name: { $regex: termino, $options: 'i' } },
+						{ title: { $regex: termino, $options: 'i' } },
+						{ description: { $regex: termino, $options: 'i' } },
+						{ status: { $regex: termino, $options: 'i' } },
+						{ sourceType: { $regex: termino, $options: 'i' } },
+					],
+				}
+			: undefined,
+		take: 20000,
 		include_inactive: true,
 	});
 	const matched = rows
@@ -748,7 +759,8 @@ export async function read_received_interinstance_tickets(ctx: TicketCtx) {
 	const desde = Math.max(0, Number(ctx.url.searchParams.get('desde') ?? 0) || 0);
 	const limite = Math.min(500, Math.max(1, Number(ctx.url.searchParams.get('limite') ?? 50) || 50));
 	const { rows } = await ctx.store.find_many('tickets', {
-		take: 5000,
+		mongo_match: { sourceType: 'interinstance' },
+		take: 20000,
 		include_inactive: true,
 	});
 	const filtered = rows
