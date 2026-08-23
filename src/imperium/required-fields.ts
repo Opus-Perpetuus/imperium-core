@@ -79,6 +79,13 @@ export class FieldValidationError extends Error {
  * Replica trim / lowercase / uppercase de Mongoose (corren antes de validar).
  */
 /** Defaults de Mongoose que el original aplica al crear (antes de validar). */
+const DEFAULT_LABOR_SCHEDULE_DAYS = [1, 2, 3, 4, 5].map((weekday) => ({
+	weekday,
+	start_time: '09:00',
+	end_time: '17:00',
+	hours: 8,
+}));
+
 const SCHEMA_DEFAULTS: Record<string, Record<string, unknown>> = {
 	'payroll-period': { estado: 'draft', tipo_nomina: 'O' },
 	'payroll-receipt': { estado: 'draft' },
@@ -86,13 +93,16 @@ const SCHEMA_DEFAULTS: Record<string, Record<string, unknown>> = {
 	'delivery-package': { estado: 'pendiente' },
 	'delivery-return': { estado: 'borrador' },
 	'citizen-report': { priority: 'BAJA', status: 'pendiente' },
+	'labor-schedule': { days: DEFAULT_LABOR_SCHEDULE_DAYS, is_default: true },
 };
 
 export function apply_schema_setters(resource: string, doc: Record<string, unknown>) {
 	const canonical = RESOURCE_ALIASES[resource] ?? resource;
 	const defaults = SCHEMA_DEFAULTS[canonical] ?? SCHEMA_DEFAULTS[resource] ?? {};
 	for (const [field, value] of Object.entries(defaults)) {
-		if (is_missing(doc[field])) doc[field] = value;
+		if (is_missing(doc[field])) {
+			doc[field] = value !== null && typeof value === 'object' ? structuredClone(value) : value;
+		}
 	}
 	const fields = (kind: 'trim' | 'lowercase' | 'uppercase') =>
 		STRING_SETTERS[kind][canonical] ?? STRING_SETTERS[kind][resource] ?? [];
