@@ -2092,7 +2092,7 @@ async function read_history_by_id(ctx: Ctx) {
 }
 
 async function documentation_adjacent(ctx: Ctx) {
-	const { rows } = await ctx.store.find_many('documentation-page', { take: 500 });
+	const { rows } = await ctx.store.find_many('documentation-page', { take: 20000 });
 	const i = rows.findIndex((r) => String(r.slug) === ctx.params.slug);
 	return ok(
 		[{ prev: rows[i - 1] ?? null, next: rows[i + 1] ?? null, current: rows[i] ?? null }],
@@ -2389,7 +2389,7 @@ async function debug_read_related(ctx: Ctx) {
 }
 
 async function documentation_structure(ctx: Ctx) {
-	const { rows } = await ctx.store.find_many('documentation-page', { take: 2000 });
+	const { rows } = await ctx.store.find_many('documentation-page', { take: 20000 });
 	const root_pages: ReturnType<typeof documentation_page_card>[] = [];
 	const sections = new Map<
 		string,
