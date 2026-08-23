@@ -783,6 +783,39 @@ const LIST_PROJECTIONS: Record<string, ListProjection> = {
 			'domain',
 		],
 	},
+	'reports-pdf-setting': {
+		rows: [
+			'_id',
+			'name',
+			'description',
+			'page_size_preset',
+			'orientation',
+			'custom_width_mm',
+			'custom_height_mm',
+			'margin_top_mm',
+			'margin_right_mm',
+			'margin_bottom_mm',
+			'margin_left_mm',
+			'print_background',
+			'prefer_css_page_size',
+			'display_header_footer',
+			'scale_percent',
+			'mirror_margins',
+			'is_active',
+		],
+	},
+	'user-print-template': {
+		rows: [
+			'_id',
+			'name',
+			'description',
+			'source_module',
+			'page_size_preset',
+			'orientation',
+			'updatedAt',
+			'is_active',
+		],
+	},
 };
 
 function projection_for(resource: string): ListProjection | undefined {
