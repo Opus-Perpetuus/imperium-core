@@ -564,7 +564,7 @@ export async function assign_document_increments(
 		return doc;
 	}
 	const { rows } = await store.find_many('auto-increment-control', {
-		take: 5000,
+		take: 20000,
 		include_inactive: true,
 	});
 	const seen = new Set<string>();
