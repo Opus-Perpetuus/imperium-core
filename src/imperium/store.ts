@@ -71,6 +71,8 @@ export const RESOURCE_ALIASES: Record<string, string> = {
 /** Unique de negocio que el original imponía en Mongoose y Postgres aún no indexa. */
 const UNIQUE_FIELDS: Record<string, string[]> = {
 	user: ['email'],
+	products: ['codigo'],
+	'physical-device': ['install_uuid'],
 };
 
 function unique_fields_for(resource: string): string[] {
