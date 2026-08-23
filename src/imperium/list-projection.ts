@@ -1149,6 +1149,30 @@ const LIST_PROJECTIONS: Record<string, ListProjection> = {
 			'is_active',
 		],
 	},
+	'font-awesome-icon-catalog': {
+		rows: ['_id', 'name', 'icon', 'slug', 'prefix', 'style', 'is_active'],
+	},
+	'custom-pattern-condition': {
+		rows: [
+			'_id',
+			'part_id',
+			'modelo',
+			'field_path',
+			'expected_value',
+			'return_value',
+			'is_default_value',
+			'own_count',
+		],
+		tipo: [
+			'part_id',
+			'modelo',
+			'field_path',
+			'expected_value',
+			'return_value',
+			'is_default_value',
+			'own_count',
+		],
+	},
 	'model-tracker': {
 		rows: [
 			'_id',

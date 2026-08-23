@@ -466,7 +466,9 @@ export async function cancel_delivery_package(
 	reason?: string,
 ): Promise<ImperiumDoc> {
 	const id = text(package_id);
-	if (!id) throw new Error('Debes indicar un bulto válido');
+	if (!id || !/^[a-fA-F0-9]{24}$/.test(id)) {
+		throw new Error('Debes indicar un bulto válido');
+	}
 	const current = await store.find_id('delivery-package', id);
 	if (!current) throw new Error('No se encontró el bulto indicado');
 	if (current.is_active === false) throw new Error('Este bulto ya está anulado');

@@ -418,7 +418,7 @@ export async function handle_crud(
 			}
 		}
 		return json(resource, {
-			...ok(decorated, 'Ruta encontrada', visible_total),
+			...ok(decorated, list_message(resource), visible_total),
 			tipo_de_instancia: instance_type(store, resource, decorated),
 			module_info: { name: resource, model: resource, model_id: resource },
 		});
@@ -462,6 +462,8 @@ export async function handle_crud(
 						? 'Devolución encontrada'
 						: resource === 'vehicle'
 							? 'Vehículo encontrado'
+							: resource === 'font-awesome-icon-catalog'
+								? 'Ícono encontrado'
 							: is_location_resource(resource)
 								? 'Ubicación encontrada'
 								: is_physical_count_resource(resource)
@@ -1051,6 +1053,11 @@ function decorate_pos_ticket(doc: ImperiumDoc): ImperiumDoc {
 		return { ...item, item_id, ...(item_name ? { item_name } : {}) };
 	});
 	return { ...doc, items };
+}
+
+function list_message(resource: string) {
+	if (resource === 'font-awesome-icon-catalog') return 'Íconos de Font Awesome';
+	return 'Ruta encontrada';
 }
 
 function instance_type(

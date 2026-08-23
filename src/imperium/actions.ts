@@ -2335,13 +2335,38 @@ async function documentation_structure(ctx: Ctx) {
 	return ok([structure], 'Estructura obtenida correctamente.');
 }
 
+function documentation_snippet(content: string, query: string): string {
+	const text = String(content ?? '');
+	const lower_content = text.toLowerCase();
+	const lower_query = query.toLowerCase();
+	const index = lower_content.indexOf(lower_query);
+	if (index === -1) return text.substring(0, 200);
+	const start = Math.max(0, index - 80);
+	const end = Math.min(text.length, index + query.length + 80);
+	let snippet = text.substring(start, end);
+	if (start > 0) snippet = `...${snippet}`;
+	if (end < text.length) snippet = `${snippet}...`;
+	return snippet;
+}
+
 async function documentation_search(ctx: Ctx) {
 	const query = String(ctx.url.searchParams.get('q') ?? ctx.url.searchParams.get('termino') ?? '').trim();
 	if (query.length < 2) {
 		return ok([], 'La búsqueda debe tener al menos 2 caracteres.');
 	}
-	const { rows, total } = await ctx.store.find_many('documentation-page', { q: query, take: 50 });
-	return ok(rows, 'Documentos encontrados.', total);
+	const { rows } = await ctx.store.find_many('documentation-page', { q: query, take: 50 });
+	const results = rows
+		.filter((doc) => doc.is_active !== false)
+		.map((doc) => ({
+			title: doc.title ?? doc.name,
+			slug: doc.slug,
+			section: doc.section,
+			folder_path: doc.folder_path,
+			metadata: doc.metadata,
+			snippet: documentation_snippet(String(doc.content ?? ''), query),
+			order: doc.order,
+		}));
+	return ok(results, `Se encontraron ${results.length} resultado(s).`);
 }
 
 async function documentation_sync_status(ctx: Ctx) {
