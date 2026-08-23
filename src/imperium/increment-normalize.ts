@@ -582,3 +582,84 @@ export async function normalize_all_counters(
 		results,
 	};
 }
+
+function text(value: unknown): string {
+	return String(value ?? '').trim();
+}
+
+/**
+ * Misma clave que `AutoIncrementControlService.build_unique_string_reference`.
+ */
+export function build_increment_unique_ref(params: {
+	collection: string;
+	model_name: string;
+	increment_field: string;
+	index_name: string;
+}): string {
+	return [
+		params.collection,
+		params.model_name,
+		params.increment_field,
+		params.index_name,
+		JSON.stringify(null),
+	].join('::');
+}
+
+/**
+ * Completa collection / index_name / _unique_string_reference como
+ * `AutoIncrementControlService.normalize_payload` + `__create`.
+ */
+export async function prepare_increment_create(
+	store: ImperiumStore,
+	incoming: ImperiumDoc,
+): Promise<ImperiumDoc> {
+	const model_name = text(incoming.model_name);
+	if (!model_name) throw new Error('Debes indicar el nombre del modelo.');
+	const hit = store
+		.available_mongoose_models()
+		.find((row) => row.model_name === model_name);
+	if (!hit) throw new Error(`El modelo ${model_name} no existe.`);
+	const increment_field = text(incoming.increment_field ?? incoming.campo);
+	if (!increment_field) throw new Error('Debes indicar el campo a incrementar.');
+	const collection = hit.collection;
+	const index_name = text(incoming.index_name) || increment_field;
+	const type = text(incoming.type) || 'numeric';
+	if (!['numeric', 'alphanumeric', 'custom'].includes(type)) {
+		throw new Error('El tipo debe ser numeric, alphanumeric o custom.');
+	}
+	const custom_pattern =
+		type === 'custom' ? text(incoming.custom_pattern) || undefined : undefined;
+	const unique = build_increment_unique_ref({
+		collection,
+		model_name,
+		increment_field,
+		index_name,
+	});
+	const { rows } = await store.find_many('auto-increment-control', {
+		where: { model_name, increment_field },
+		take: 20000,
+		include_inactive: true,
+		populate: false,
+	});
+	const combo = rows.find(
+		(row) =>
+			text(row.index_name ?? row.increment_field) === index_name &&
+			(is_global_ref(row.ref_value) || !text(row.ref_value)),
+	);
+	const by_unique = rows.find((row) => text(row._unique_string_reference) === unique);
+	if (combo || by_unique) {
+		throw new Error('Ya existe un control de auto-incremento para esa combinación.');
+	}
+	return {
+		...incoming,
+		name: text(incoming.name) || `${model_name}.${increment_field}`,
+		model_name,
+		collection,
+		increment_field,
+		index_name,
+		type,
+		custom_pattern,
+		_unique_string_reference: unique,
+		user_edited: true,
+	};
+}

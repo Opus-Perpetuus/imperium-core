@@ -120,6 +120,7 @@ import {
 	soft_delete_pattern_part,
 } from './pattern-parts-flow.ts';
 import { assign_document_increments } from './custom-pattern-render.ts';
+import { prepare_increment_create } from './increment-normalize.ts';
 import { build_access } from './auth.ts';
 import { is_seed_admin } from './group-access.ts';
 import {
@@ -673,6 +674,9 @@ export async function handle_crud(
 		if (is_pattern_parts_resource(resource)) {
 			incoming = await prepare_pattern_part_create(store, incoming);
 		}
+		if (resource === 'auto-increment-control') {
+			incoming = await prepare_increment_create(store, incoming);
+		}
 		const doc = await before_create(store, resource, incoming, actor);
 		const created = await store.insert(resource, doc);
 		await link_attachments_to_record(store, resource, created);
@@ -691,6 +695,21 @@ export async function handle_crud(
 			await after_project_write(store, created, project_seed, actor);
 		}
 		let result = created;
+		if (resource === 'auto-increment-control') {
+			const model_name = String(created.model_name ?? '');
+			const increment_field = String(created.increment_field ?? '');
+			if (model_name && increment_field) {
+				const next = await store.next_auto_increment(model_name, increment_field);
+				const shown = await store.find_id(resource, String(created._id));
+				result = {
+					...(shown ?? created),
+					current_sequence: next,
+					sequence: next,
+					next_sequence: next,
+					current_real_value: shown?.current_real_value ?? next,
+				};
+			}
+		}
 		if (resource === 'delivery-package') {
 			await after_delivery_package_mutate(store, String(created.pedido ?? ''));
 			result = (await store.find_id(resource, String(created._id))) ?? created;
@@ -753,7 +772,9 @@ export async function handle_crud(
 																					? pattern_part_create_message()
 																					: is_pattern_condition_resource(resource)
 																						? pattern_condition_create_message()
-																						: 'Ruta creada';
+																						: resource === 'auto-increment-control'
+																							? 'Control de auto-incremento creado correctamente.'
+																							: 'Ruta creada';
 		const created_body = notice
 			? { ...ok([populated], message), user_pin_notice: notice }
 			: ok([populated], message);
