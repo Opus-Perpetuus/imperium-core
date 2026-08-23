@@ -74,6 +74,7 @@ const UNIQUE_FIELDS: Record<string, string[]> = {
 	products: ['codigo'],
 	'physical-device': ['install_uuid'],
 	'cfdi-document': ['uuid'],
+	pedidos: ['offline_uuid'],
 };
 
 function unique_fields_for(resource: string): string[] {
