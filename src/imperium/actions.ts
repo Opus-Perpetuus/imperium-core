@@ -5281,35 +5281,47 @@ async function view_available(ctx: Ctx) {
 	if (!user_id) throw new Error('No estás autenticado');
 	const access = await actor_access(ctx);
 	const group_ids = access.user_group_ids;
+	const or: Record<string, unknown>[] = [
+		{ created_by: user_id },
+		{ scope: 'global' },
+		{ is_template: true },
+		{ assigned_user_ids: { $regex: user_id } },
+	];
+	for (const gid of group_ids) {
+		if (gid) or.push({ assigned_user_group_ids: { $regex: String(gid) } });
+	}
 	const { rows } = await ctx.store.find_many('view-config-preset', {
-		take: 5000,
+		mongo_match: { $or: or },
+		take: 20000,
 		include_inactive: false,
 	});
-	const filtered = rows.filter((doc) => {
-		if (String(doc.created_by ?? '') === user_id) return true;
-		if (String(doc.scope ?? '') === 'global') return true;
-		if (doc.is_template === true) return true;
-		if (has_id(doc.assigned_user_ids, user_id)) return true;
-		return intersects_ids(doc.assigned_user_group_ids, group_ids);
-	});
-	return ok(sort_by_updated_desc(filtered), 'Configuraciones disponibles');
+	return ok(sort_by_updated_desc(rows), 'Configuraciones disponibles');
 }
 
 async function view_baseline(ctx: Ctx) {
 	const user_id = actor_id(ctx);
 	if (!user_id) throw new Error('No estás autenticado');
-	const { rows } = await ctx.store.find_many('view-config-preset', {
-		take: 5000,
+	const { rows: direct_rows } = await ctx.store.find_many('view-config-preset', {
+		mongo_match: { assigned_user_ids: { $regex: user_id } },
+		take: 1,
+		sort: 'updated_at:desc',
 		include_inactive: false,
 	});
-	const direct = sort_by_updated_desc(
-		rows.filter((doc) => has_id(doc.assigned_user_ids, user_id)),
-	)[0];
+	const direct = direct_rows[0];
 	if (direct) return ok([direct], 'Configuración base asignada');
 	const access = await actor_access(ctx);
-	const by_group = sort_by_updated_desc(
-		rows.filter((doc) => intersects_ids(doc.assigned_user_group_ids, access.user_group_ids)),
-	)[0];
+	const group_or = access.user_group_ids
+		.filter(Boolean)
+		.map((gid) => ({ assigned_user_group_ids: { $regex: String(gid) } }));
+	const { rows: group_rows } = group_or.length
+		? await ctx.store.find_many('view-config-preset', {
+				mongo_match: { $or: group_or },
+				take: 1,
+				sort: 'updated_at:desc',
+				include_inactive: false,
+			})
+		: { rows: [] as ImperiumDoc[] };
+	const by_group = group_rows[0];
 	return by_group
 		? ok([by_group], 'Configuración base asignada')
 		: ok([], 'Sin configuración base asignada');
