@@ -232,7 +232,7 @@ export async function recompute_product_existencia(store: ImperiumStore, product
 	if (store.has('inventory-stock-quant')) {
 		const { rows } = await store.find_many('inventory-stock-quant', {
 			where: { producto: product_id },
-			take: 5000,
+			take: 20000,
 			include_inactive: true,
 			populate: false,
 		});
