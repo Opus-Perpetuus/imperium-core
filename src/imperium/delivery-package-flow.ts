@@ -263,7 +263,7 @@ async function resolve_next_package_number(
 ) {
 	const { rows } = await store.find_many('delivery-package', {
 		where: { pedido: pedido_id },
-		take: 5000,
+		take: 20000,
 		include_inactive: true,
 		populate: false,
 	});
@@ -441,7 +441,7 @@ export async function after_delivery_package_mutate(
 async function sync_order_package_totals(store: ImperiumStore, pedido_id: string) {
 	const { rows } = await store.find_many('delivery-package', {
 		where: { pedido: pedido_id },
-		take: 5000,
+		take: 20000,
 		include_inactive: false,
 		populate: false,
 	});
@@ -519,7 +519,7 @@ export async function list_packages_by_pedido(
 	if (!id) throw new Error('Debes indicar el pedido');
 	const { rows } = await store.find_many('delivery-package', {
 		where: { pedido: id },
-		take: 5000,
+		take: 20000,
 		include_inactive: true,
 		populate: false,
 	});

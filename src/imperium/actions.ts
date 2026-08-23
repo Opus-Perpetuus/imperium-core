@@ -1458,7 +1458,7 @@ async function close_empaque(ctx: Ctx) {
 	}
 	const { rows } = await ctx.store.find_many('delivery-package', {
 		where: { pedido: String(pedido._id) },
-		take: 200,
+		take: 20000,
 		include_inactive: true,
 	});
 	const active = rows.filter(
