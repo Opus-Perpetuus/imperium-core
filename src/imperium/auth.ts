@@ -26,6 +26,7 @@ import {
 	type RecordRuleOperationFlag,
 } from './record-rules.ts';
 import { debug_error, debug_info } from './debug-request-log.ts';
+import { report_archived_login_attempt } from './archived-login-alert.ts';
 
 const COOKIE = 'connect.sid';
 const SECRET = process.env.SESSION_SECRET ?? 'imperium-modular-dev-session';
@@ -95,6 +96,7 @@ export async function handle_auth(
 		if (!ok_pw || !user || user.is_active === false) {
 			if (user && user.is_active === false) {
 				debug_error('Usuario no encontrado o inactivo');
+				await report_archived_login_attempt(store, user);
 			}
 			return Response.json(
 				{ message: 'Usuario o contraseña incorrectos', error: 'Usuario o contraseña incorrectos' },
