@@ -160,7 +160,7 @@ export async function generate_payroll_drafts(store: ImperiumStore, period_id: s
 			? (
 					await store.find_many('labor-incident', {
 						where: { employee: emp_id },
-						take: 500,
+						take: 20000,
 						populate: false,
 					})
 				).rows.filter((row) => {
