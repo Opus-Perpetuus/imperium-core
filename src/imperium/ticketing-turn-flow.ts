@@ -165,6 +165,15 @@ async function attending_turns(store: ImperiumStore): Promise<ImperiumDoc[]> {
 	return [...rows, ...extra].filter(is_attending);
 }
 
+/** El tablero lee `assigned_box.name`; el original hace `.populate('assigned_box')`. */
+async function populate_turns(
+	store: ImperiumStore,
+	turns: ImperiumDoc[],
+): Promise<ImperiumDoc[]> {
+	if (!turns.length) return turns;
+	return store.populate_docs('ticketing-system-turn', turns);
+}
+
 async function sort_pending(store: ImperiumStore, turns: ImperiumDoc[]): Promise<ImperiumDoc[]> {
 	const ranked = await Promise.all(
 		turns.map(async (turn) => ({
@@ -221,7 +230,7 @@ export async function notify_ticketing_rooms(store: ImperiumStore) {
 	emit_to_room(ROOM, 'update', { action: 'turn_stack_next', data: pending });
 	emit_to_room(ROOM, 'update', {
 		action: 'turn_stack_attending',
-		data: await attending_turns(store),
+		data: await populate_turns(store, await attending_turns(store)),
 	});
 	if (!store.has('ticketing-system-box-config')) return;
 	const { rows } = await store.find_many('ticketing-system-box-config', {
@@ -349,7 +358,8 @@ export async function take_next_turn(
 	});
 	if (!updated) throw new Error('No se encontró el siguiente turno');
 	await notify_ticketing_rooms(store);
-	return { turn: updated, waiting: waiting.length };
+	const [populated] = await populate_turns(store, [updated]);
+	return { turn: populated ?? updated, waiting: waiting.length };
 }
 
 export async function notify_turn(store: ImperiumStore, raw_id: unknown): Promise<ImperiumDoc> {
@@ -357,8 +367,10 @@ export async function notify_turn(store: ImperiumStore, raw_id: unknown): Promis
 	if (!id) throw new Error('Se necesita un id de turno para notificar');
 	const turn = await store.find_id('ticketing-system-turn', id);
 	if (!turn || turn.is_active === false) throw new Error('No se encontró el turno');
-	emit_to_room(ROOM, 'update', { action: 'notify_turn', data: [turn] });
-	const box_id = ref_id(turn.assigned_box);
+	const [populated] = await populate_turns(store, [turn]);
+	const shown = populated ?? turn;
+	emit_to_room(ROOM, 'update', { action: 'notify_turn', data: [shown] });
+	const box_id = ref_id(shown.assigned_box);
 	if (box_id) {
 		const box = await store.find_id('ticketing-system-box-config', box_id);
 		if (box) {
@@ -368,7 +380,7 @@ export async function notify_turn(store: ImperiumStore, raw_id: unknown): Promis
 			});
 		}
 	}
-	return turn;
+	return shown;
 }
 
 export async function end_attending_turn(
