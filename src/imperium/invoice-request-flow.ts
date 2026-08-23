@@ -520,7 +520,7 @@ export async function invoice_request_stats(
 	mongo_match?: Record<string, unknown> | null,
 ): Promise<Record<string, unknown>> {
 	const { rows } = await store.find_many('invoice-request', {
-		take: 10000,
+		take: 20000,
 		include_inactive: false,
 		populate: false,
 		mongo_match,
