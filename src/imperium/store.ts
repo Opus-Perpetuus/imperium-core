@@ -90,6 +90,7 @@ const UNIQUE_FIELDS: Record<string, string[]> = {
 	violation: ['code'],
 	'module-management-reference': ['reference'],
 	'mcp-user-token': ['token_hash'],
+	'epson-ticket-template': ['template_key'],
 };
 
 /** Unique solo entre activos (`partialFilterExpression: { is_active: { $ne: false } }`). */
