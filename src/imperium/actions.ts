@@ -70,6 +70,7 @@ import {
 	notification_toast_digest,
 	notification_update_read,
 	register_comment_mentions,
+	resolve_comment_mentioned_users,
 } from './notifications.ts';
 import { assert_target_model_read, build_access } from './auth.ts';
 import { history_row_matches, resolve_history_model } from './history.ts';
@@ -1985,12 +1986,19 @@ async function create_history_comment(ctx: Ctx) {
 		throw new Error('No se pudo resolver el modelo del historial solicitado.');
 	}
 	await assert_target_model_read(ctx.store, ctx.actor, canonical);
+	const mentioned_users = await resolve_comment_mentioned_users(
+		ctx.store,
+		ctx.actor,
+		comment_text,
+		ctx.body.mentioned_user_ids ?? ctx.body.mentionedUserIds,
+	);
+	const mentioned_user_ids = mentioned_users.map((user) => String(user._id ?? ''));
 	const created = await ctx.store.insert('document-change-history', {
 		name: 'comentario',
 		entryType: 'comment',
 		comment: comment_text,
 		commentText: comment_text,
-		actionName: 'Comentario',
+		actionName: mentioned_users.length ? 'Comentario con menciones' : 'Comentario',
 		actionDescription: comment_text,
 		model: canonical,
 		modelName: canonical,
@@ -1998,6 +2006,12 @@ async function create_history_comment(ctx: Ctx) {
 		documentId: document_id,
 		record_id: document_id,
 		operationType: 'comment',
+		mentionedUserIds: mentioned_user_ids,
+		mentionedUsers: mentioned_users.map((user) => ({
+			_id: user._id,
+			name: user.name,
+			email: user.email,
+		})),
 		created_by: actor_id(ctx),
 		actor: {
 			_id: actor_id(ctx),

@@ -824,6 +824,27 @@ async function persist_mentions(
 	}
 }
 
+export async function resolve_comment_mentioned_users(
+	store: ImperiumStore,
+	actor: ImperiumDoc | null,
+	comment_text: string,
+	mentioned_user_ids?: unknown,
+) {
+	const uid = String(actor?._id ?? '').toLowerCase();
+	const from_body = as_array(mentioned_user_ids)
+		.map((item) => {
+			if (item && typeof item === 'object') {
+				return String((item as { _id?: unknown })._id ?? '').toLowerCase();
+			}
+			return String(item ?? '').toLowerCase();
+		})
+		.filter(Boolean);
+	const ids = [...new Set([...from_body, ...mention_ids_in(comment_text)])].filter(
+		(id) => id && id !== uid,
+	);
+	return resolve_users(store, ids);
+}
+
 export async function register_comment_mentions(
 	store: ImperiumStore,
 	actor: ImperiumDoc | null,
@@ -838,13 +859,14 @@ export async function register_comment_mentions(
 		entity_label?: string;
 	},
 ) {
-	const uid = String(actor?._id ?? '');
-	const from_body = as_array(params.mentioned_user_ids).map((id) => String(id).toLowerCase());
-	const ids = [...new Set([...from_body, ...mention_ids_in(params.comment_text)])].filter(
-		(id) => id && id !== uid,
+	const users = await resolve_comment_mentioned_users(
+		store,
+		actor,
+		params.comment_text,
+		params.mentioned_user_ids,
 	);
-	const users = await resolve_users(store, ids);
 	if (!users.length) return;
+	const uid = String(actor?._id ?? '');
 	const excerpt = clean_excerpt(params.comment_text);
 	const records: ImperiumDoc[] = [];
 	const notifications: ImperiumDoc[] = [];
