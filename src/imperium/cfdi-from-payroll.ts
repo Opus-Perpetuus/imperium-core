@@ -33,16 +33,20 @@ async function load_issuer_optional(store: ImperiumStore, issuer_profile_id?: st
 			if (!by_id || by_id.is_active === false) return null;
 			return by_id;
 		}
-		const { rows } = await store.find_many('cfdi-issuer-profile', {
-			take: 200,
+		const { rows: defaults } = await store.find_many('cfdi-issuer-profile', {
+			where: { is_default: true },
+			take: 1,
 			include_inactive: false,
+			populate: false,
 		});
-		const active = rows.filter((row) => row.is_active !== false);
-		return (
-			active.find((row) => row.is_default === true || row.is_default === 'true') ??
-			active[0] ??
-			null
-		);
+		if (defaults[0]) return defaults[0];
+		const { rows: first_active } = await store.find_many('cfdi-issuer-profile', {
+			take: 1,
+			sort: 'created_at:asc',
+			include_inactive: false,
+			populate: false,
+		});
+		return first_active[0] ?? null;
 	} catch {
 		return null;
 	}

@@ -40,13 +40,20 @@ async function load_issuer(store: ImperiumStore, issuer_profile_id?: string): Pr
 		}
 		return by_id;
 	}
-	const { rows } = await store.find_many('cfdi-issuer-profile', {
-		take: 200,
+	const { rows: defaults } = await store.find_many('cfdi-issuer-profile', {
+		where: { is_default: true },
+		take: 1,
 		include_inactive: false,
+		populate: false,
 	});
-	const active = rows.filter((row) => row.is_active !== false);
-	const def = active.find((row) => row.is_default === true || row.is_default === 'true');
-	const first = def ?? active.sort((a, b) => String(a.createdAt ?? '').localeCompare(String(b.createdAt ?? '')))[0];
+	if (defaults[0]) return defaults[0];
+	const { rows: first_active } = await store.find_many('cfdi-issuer-profile', {
+		take: 1,
+		sort: 'created_at:asc',
+		include_inactive: false,
+		populate: false,
+	});
+	const first = first_active[0];
 	if (!first) {
 		throw new Error(
 			'No hay perfil de emisor CFDI activo. Configura un emisor antes de generar el comprobante.',
