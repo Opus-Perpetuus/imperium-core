@@ -5267,7 +5267,7 @@ async function interactive_manual_board(ctx: Ctx) {
 		return ok([], 'Sin guías');
 	}
 	const { rows } = await ctx.store.find_many('interactive-manual', {
-		take: 5000,
+		take: 20000,
 		include_inactive: false,
 	});
 	const readable = new Set(access.models.map(String));
