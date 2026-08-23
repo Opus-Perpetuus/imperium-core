@@ -2,6 +2,7 @@
  * Opciones de estatus — mismo contrato que `status-option-control.service.ts`.
  */
 import { as_array, as_object, ok, type ImperiumDoc } from './envelope.ts';
+import { query_list } from './body.ts';
 import type { ImperiumStore } from './store.ts';
 
 const STATUS_OPTION_CONFIGURATION_TYPE = 'status-options-by-module';
@@ -21,6 +22,7 @@ type StatusCtx = {
 	params: Record<string, string>;
 	actor: ImperiumDoc | null;
 	body: Record<string, unknown>;
+	url?: URL;
 };
 
 type StatusOption = {
@@ -490,4 +492,100 @@ export async function resolve_spurious_options(ctx: StatusCtx) {
 			: 'No se recibieron opciones huérfanas para limpiar.',
 		summary.results.length,
 	);
+}
+
+function matches_term(record: ImperiumDoc, fields: string[], termino: string) {
+	if (!termino) return true;
+	const needle = termino.toLowerCase();
+	return fields.some((field) => String(record[field] ?? '').toLowerCase().includes(needle));
+}
+
+function build_option_rows(module_record: ImperiumDoc, configuration: ImperiumDoc | null) {
+	const projection = build_record(module_record, configuration);
+	const options = as_array(projection.status_options);
+	return options.map((raw, index) => {
+		const option = as_object(raw);
+		const option_value = String(option.value ?? '');
+		const option_field_name = String(option.field_name ?? '');
+		return {
+			...projection,
+			_id: `${projection.module_id || 'module'}-${option_field_name || 'default'}-${option_value || index}-${index}`,
+			name: String(option.label ?? option_value),
+			description: String(option.description ?? ''),
+			option_field_name: option_field_name || undefined,
+			option_value,
+			option_color: option.color,
+			option_icon: option.icon,
+			option_type: String(option.type ?? STATUS_OPTION_DEFAULT_TYPE),
+			option_is_default: false,
+			is_option_row: true,
+		};
+	});
+}
+
+/**
+ * GET /status-option-control: filas virtuales por módulo (o por opción si `?module=`).
+ */
+export async function list_status_option_control(ctx: StatusCtx) {
+	const q = ctx.url ? query_list(ctx.url) : { skip: 0, take: 100, q: '' };
+	const module_filter = text(ctx.url?.searchParams.get('module'));
+	if (module_filter) {
+		if (!/^[a-f0-9]{24}$/i.test(module_filter)) {
+			return ok([], 'No se encontró el módulo solicitado.');
+		}
+		const module_record = await find_module(ctx.store, module_filter);
+		if (!module_record) return ok([], 'No se encontró el módulo solicitado.');
+		const configuration = await find_existing_configuration(ctx.store, String(module_record._id));
+		const filtered = build_option_rows(module_record, configuration).filter((row) =>
+			matches_term(
+				row,
+				['name', 'description', 'option_field_name', 'option_type', 'option_color', 'option_icon'],
+				q.q,
+			),
+		);
+		return ok(
+			filtered.slice(q.skip, q.skip + q.take),
+			`Opciones configuradas para ${module_record.name}.`,
+			filtered.length,
+		);
+	}
+	if (!ctx.store.has('module-management')) {
+		return ok([], 'Opciones de estado por módulo cargadas correctamente.');
+	}
+	const { rows: modules } = await ctx.store.find_many('module-management', {
+		take: 2000,
+		include_inactive: true,
+	});
+	const configs = await list_status_configurations(ctx.store);
+	const by_module = new Map<string, ImperiumDoc>();
+	for (const row of configs) {
+		const module_id = String(row.module_id ?? configuration_value(row).module_id ?? '');
+		if (module_id) by_module.set(module_id, row);
+	}
+	const filtered = modules
+		.map((module_record) =>
+			build_record(module_record, by_module.get(String(module_record._id)) ?? null),
+		)
+		.sort((a, b) => String(a.name).localeCompare(String(b.name), 'es'))
+		.filter((row) => matches_term(row, ['name', 'description', 'module_name', 'model_id'], q.q));
+	return ok(
+		filtered.slice(q.skip, q.skip + q.take),
+		'Opciones de estado por módulo cargadas correctamente.',
+		filtered.length,
+	);
+}
+
+/**
+ * GET /status-option-control/:id — el original lee ModuleManagement, no la colección.
+ */
+export async function read_status_option_control(ctx: StatusCtx) {
+	const module_id = text(ctx.params.id);
+	if (!module_id) throw new Error('Debes indicar el módulo a consultar.');
+	if (!/^[a-f0-9]{24}$/i.test(module_id)) {
+		throw new Error('No se encontró el módulo solicitado.');
+	}
+	const module_record = await find_module(ctx.store, module_id);
+	if (!module_record) throw new Error('No se encontró el módulo solicitado.');
+	const configuration = await find_existing_configuration(ctx.store, String(module_record._id));
+	return ok([build_record(module_record, configuration)], 'Ruta encontrada');
 }

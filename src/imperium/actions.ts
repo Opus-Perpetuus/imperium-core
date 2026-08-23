@@ -66,7 +66,9 @@ import {
 import { assert_target_model_read, build_access } from './auth.ts';
 import { history_row_matches, resolve_history_model } from './history.ts';
 import {
+	list_status_option_control,
 	normalize_state_values,
+	read_status_option_control,
 	resolve_spurious_options,
 	save_status_config,
 } from './status-options.ts';
@@ -256,6 +258,12 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			});
 		case 'interface-restriction:runtime_read':
 			return interface_restriction_runtime(ctx);
+		case 'status-option-control:read_list':
+			return list_status_option_control(ctx);
+		case 'status-option-control:read_one':
+			return read_status_option_control(ctx);
+		case 'auto-increment-control:read_list':
+			return list_auto_increment_controls(ctx);
 		case 'status-option-control:save_module_configuration':
 			return save_status_config(ctx);
 		case 'status-option-control:normalize_state_values':
@@ -1166,6 +1174,46 @@ async function purchase_order_parse_document(ctx: Ctx) {
 	);
 }
 
+async function list_auto_increment_controls(ctx: Ctx) {
+	const q = query_list(ctx.url);
+	const { rows } = await ctx.store.find_many('auto-increment-control', {
+		take: 5000,
+		include_inactive: true,
+	});
+	const mapped = rows
+		.map((row) => {
+			const ref_value = row.ref_value;
+			const is_global =
+				ref_value == null || ref_value === undefined || String(ref_value).trim() === '';
+			return {
+				_id: row._id,
+				name: row.name || `${row.model_name}.${row.increment_field}`,
+				model_name: row.model_name,
+				collection: row.collection,
+				increment_field: row.increment_field,
+				index_name: row.index_name,
+				type: row.type,
+				custom_pattern: row.custom_pattern || undefined,
+				current_sequence: row.current_sequence,
+				current_real_value: row.current_real_value,
+				ref_value: row.ref_value,
+				segment: is_global ? '(global)' : String(ref_value),
+				is_active: row.is_active !== false,
+			};
+		})
+		.filter((row) => {
+			if (!q.q) return true;
+			const hay = `${row.name} ${row.model_name} ${row.increment_field} ${row.segment}`.toLowerCase();
+			return hay.includes(q.q.toLowerCase());
+		})
+		.sort((a, b) => String(a.name).localeCompare(String(b.name), 'es'));
+	return ok(
+		mapped.slice(q.skip, q.skip + q.take),
+		'Controles de auto-incremento cargados correctamente.',
+		mapped.length,
+	);
+}
+
 async function increment_consolidate(ctx: Ctx) {
 	const { rows } = await ctx.store.find_many('auto-increment-control', {
 		take: 5000,
@@ -1283,7 +1331,14 @@ async function normalize_counters(ctx: Ctx) {
 
 
 async function close_empaque(ctx: Ctx) {
-	const pedido = await need(ctx, 'pedidos', ctx.params.pedidoId);
+	const pedido_id = String(ctx.params.pedidoId ?? '').trim();
+	if (!pedido_id || !/^[a-f0-9]{24}$/i.test(pedido_id)) {
+		throw new Error('Debes indicar un pedido válido');
+	}
+	const pedido = await ctx.store.find_id('pedidos', pedido_id);
+	if (!pedido || pedido.is_active === false) {
+		throw new Error('No se encontró el pedido');
+	}
 	const estado = String(pedido.estado ?? '');
 	if (estado === 'cancelado') {
 		throw new Error('No se puede cerrar empaque de un pedido cancelado');
@@ -1571,7 +1626,11 @@ async function delivery_chofer_routes(ctx: Ctx) {
 }
 
 async function logistics_event(ctx: Ctx) {
-	const doc = await need(ctx, 'delivery-package', ctx.params.id);
+	const id = String(ctx.params.id ?? '').trim();
+	const doc = id ? await ctx.store.find_id('delivery-package', id) : null;
+	if (!doc || doc.is_active === false) {
+		throw new Error('No se encontró el bulto indicado');
+	}
 	const event_type = String(ctx.body.event_type ?? ctx.body.event ?? ctx.body.tipo ?? '').trim();
 	const event_id = String(ctx.body.event_id ?? crypto.randomUUID());
 	const occurred_at = String(ctx.body.occurred_at ?? ctx.body.created_at ?? now());

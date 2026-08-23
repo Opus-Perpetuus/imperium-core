@@ -115,6 +115,24 @@
   },
   {
     "resource": "status-option-control",
+    "method": "get",
+    "path": "/",
+    "action": "read_list"
+  },
+  {
+    "resource": "status-option-control",
+    "method": "get",
+    "path": "/:id",
+    "action": "read_one"
+  },
+  {
+    "resource": "auto-increment-control",
+    "method": "get",
+    "path": "/",
+    "action": "read_list"
+  },
+  {
+    "resource": "status-option-control",
     "method": "post",
     "path": "/module/:module_id/configuration",
     "action": "save_module_configuration"
