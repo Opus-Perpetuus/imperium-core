@@ -131,7 +131,7 @@ async function pending_turns(store: ImperiumStore): Promise<ImperiumDoc[]> {
 	const by_status = (
 		await store.find_many('ticketing-system-turn', {
 			where: { status: 'pendiente' },
-			take: 10000,
+			take: 20000,
 			populate: false,
 		})
 	).rows;
@@ -140,7 +140,7 @@ async function pending_turns(store: ImperiumStore): Promise<ImperiumDoc[]> {
 		: (
 				await store.find_many('ticketing-system-turn', {
 					where: { estado: 'pendiente' },
-					take: 10000,
+					take: 20000,
 					populate: false,
 				})
 			).rows;
@@ -150,7 +150,7 @@ async function pending_turns(store: ImperiumStore): Promise<ImperiumDoc[]> {
 async function attending_turns(store: ImperiumStore): Promise<ImperiumDoc[]> {
 	const { rows } = await store.find_many('ticketing-system-turn', {
 		where: { status: 'en_atencion' },
-		take: 10000,
+		take: 20000,
 		populate: false,
 	});
 	const extra = rows.length
@@ -158,7 +158,7 @@ async function attending_turns(store: ImperiumStore): Promise<ImperiumDoc[]> {
 		: (
 				await store.find_many('ticketing-system-turn', {
 					where: { estado: 'en_atencion' },
-					take: 10000,
+					take: 20000,
 					populate: false,
 				})
 			).rows;
