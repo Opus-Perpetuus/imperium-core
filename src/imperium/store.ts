@@ -17,6 +17,7 @@ import { mongo_match_to_sql } from './record-rules.ts';
 import { products_inventory_cost } from './products-flow.ts';
 import { vehicle_by_status } from './vehicle-flow.ts';
 import { pedidos_sales_stats } from './pedidos-flow.ts';
+import { purchase_order_stats } from './purchase-order-flow.ts';
 import { record_document_history } from './history.ts';
 
 export type ExtraCol = {
@@ -846,6 +847,7 @@ export class ImperiumStore {
 	): Promise<Record<string, unknown>> {
 		if (resource === 'ticketing-system-turn') return this.turn_stats(mongo_match);
 		if (resource === 'citizen-report') return this.citizen_report_stats(url, mongo_match);
+		if (resource === 'purchase-order') return purchase_order_stats(this, mongo_match);
 		if (resource === 'pedidos' || resource === 'pedidos-surtir') {
 			return pedidos_sales_stats(this, url, mongo_match);
 		}

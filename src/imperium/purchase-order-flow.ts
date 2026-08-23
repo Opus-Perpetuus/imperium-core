@@ -306,3 +306,74 @@ export async function apply_purchase_receipt_stock(
 		});
 	}
 }
+
+/**
+ * Estadísticas de órdenes de compra: mismos totales, `by_state` y
+ * `daily_stats` que el `__get_statistics` original.
+ */
+export async function purchase_order_stats(
+	store: ImperiumStore,
+	mongo_match?: Record<string, unknown> | null,
+): Promise<Record<string, unknown>> {
+	const { rows } = await store.find_many('purchase-order', {
+		take: 5000,
+		include_inactive: true,
+		populate: false,
+		mongo_match,
+	});
+	const total_records = rows.length;
+	const active_records = rows.filter((row) => row.is_active !== false).length;
+	const inactive_records = total_records - active_records;
+	const grouped = new Map<string, { count: number; subtotal: number; total_recibido: number }>();
+	for (const row of rows) {
+		const state = text(row.estado ?? row.state) || 'sin_estado';
+		const current = grouped.get(state) ?? { count: 0, subtotal: 0, total_recibido: 0 };
+		current.count += 1;
+		current.subtotal += Number(row.subtotal ?? 0) || 0;
+		current.total_recibido += Number(row.total_recibido ?? 0) || 0;
+		grouped.set(state, current);
+	}
+	const by_state = [...grouped.entries()]
+		.sort(([a], [b]) => a.localeCompare(b))
+		.map(([state, item]) => ({
+			state,
+			count: item.count,
+			subtotal: round_money(item.subtotal),
+			total_recibido: round_qty(item.total_recibido),
+		}));
+	const thirty_days_ago = new Date();
+	thirty_days_ago.setDate(thirty_days_ago.getDate() - 30);
+	const from_ms = thirty_days_ago.getTime();
+	const daily = new Map<string, number>();
+	for (const row of rows) {
+		const created = new Date(String(row.createdAt ?? row.created_at ?? '')).getTime();
+		if (!Number.isFinite(created) || created < from_ms) continue;
+		const day = new Date(created).toISOString().slice(0, 10);
+		daily.set(day, (daily.get(day) ?? 0) + 1);
+	}
+	const daily_stats = [...daily.entries()]
+		.sort(([a], [b]) => a.localeCompare(b))
+		.map(([date, count]) => ({ date, count }));
+	return {
+		total_records,
+		active_records,
+		inactive_records,
+		by_state,
+		date_range: { from: thirty_days_ago, to: new Date() },
+		daily_stats,
+		last_updated: new Date(),
+		kpis: {
+			total_records: { label: 'Total', value: total_records },
+			active_records: { label: 'Activas', value: active_records },
+			inactive_records: { label: 'Inactivas', value: inactive_records },
+		},
+		charts: {
+			by_state: {
+				data: by_state.map((item) => ({
+					name: item.state,
+					value: item.count,
+				})),
+			},
+		},
+	};
+}
