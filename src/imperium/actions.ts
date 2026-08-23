@@ -2127,7 +2127,7 @@ function documentation_children(children: Map<string, { key: string; title: stri
 
 async function documentation_read_all(ctx: Ctx) {
 	const { rows } = await ctx.store.find_many('documentation-page', {
-		take: 5000,
+		take: 20000,
 		include_inactive: false,
 	});
 	const docs = rows
