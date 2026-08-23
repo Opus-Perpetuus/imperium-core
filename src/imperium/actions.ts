@@ -1556,10 +1556,14 @@ async function read_chofer_queue(ctx: Ctx) {
 		return ok([], 'No hay vehículos con este chofer asignado. Configura vehicle.chofer.');
 	}
 	const estados = mode === 'delivery' ? ['cargado', 'en_ruta'] : ['asignado'];
-	const { rows } = await ctx.store.find_many('delivery-package', { take: 500 });
-	const hit = rows.filter(
-		(p) => vehicle_ids.has(ref_id(p.vehicle)) && estados.includes(String(p.estado)),
-	);
+	const { rows } = await ctx.store.find_many('delivery-package', {
+		where: {
+			vehicle: { in: [...vehicle_ids] },
+			estado: { in: estados },
+		},
+		take: 20000,
+	});
+	const hit = rows.filter((p) => p.is_active !== false);
 	return ok(
 		hit,
 		mode === 'delivery' ? 'Cola de entrega del chofer' : 'Cola de carga del chofer',
