@@ -791,18 +791,22 @@ async function generic_action(ctx: Ctx) {
 }
 
 async function catalog_lookup(ctx: Ctx) {
-	const catalog = ctx.url.searchParams.get('catalog') ?? String(ctx.body.catalog ?? '');
-	const code =
+	const catalog = String(ctx.url.searchParams.get('catalog') ?? ctx.body.catalog ?? '').trim();
+	const code = String(
 		ctx.url.searchParams.get('code') ??
-		ctx.url.searchParams.get('key') ??
-		String(ctx.body.code ?? ctx.body.key ?? '');
-	if (!catalog || !code) throw new Error('Se necesitan catalog y code');
+			ctx.url.searchParams.get('key') ??
+			ctx.body.code ??
+			ctx.body.key ??
+			'',
+	).trim();
+	if (!catalog || !code) return ok([], 'Clave no encontrada', 0);
 	const { rows } = await ctx.store.find_many('cfdi-catalog', {
 		where: { catalog, code },
 		take: 5,
-		include_inactive: true,
+		populate: false,
 	});
-	return ok(rows, rows.length ? 'Catálogo encontrado' : 'Sin coincidencia');
+	const row = rows[0] ?? null;
+	return ok(row ? [row] : [], row ? 'Clave encontrada' : 'Clave no encontrada', row ? 1 : 0);
 }
 
 function cfdi_samples_dir() {
@@ -862,14 +866,28 @@ async function catalog_seed_samples(ctx: Ctx) {
 }
 
 async function catalog_search(ctx: Ctx) {
-	const catalog = ctx.url.searchParams.get('catalog') ?? '';
-	const q = ctx.url.searchParams.get('termino') ?? ctx.url.searchParams.get('q') ?? '';
-	const { rows, total } = await ctx.store.find_many('cfdi-catalog', {
-		q,
-		where: catalog ? { catalog } : undefined,
-		take: 50,
+	const catalog = String(ctx.url.searchParams.get('catalog') ?? '').trim();
+	const term = String(
+		ctx.url.searchParams.get('q') ?? ctx.url.searchParams.get('termino') ?? '',
+	).trim();
+	const limit = Math.min(Math.max(Number(ctx.url.searchParams.get('limit') ?? 20) || 20, 1), 100);
+	const { rows } = await ctx.store.find_many('cfdi-catalog', {
+		where: { catalog },
+		take: term ? 20000 : limit,
+		sort: 'code:asc',
+		populate: false,
 	});
-	return ok(rows, 'Búsqueda de catálogo', total);
+	const needle = term.toLowerCase();
+	const filtered = needle
+		? rows.filter((row) => {
+				const code = String(row.code ?? '').toLowerCase();
+				const name = String(row.name ?? '').toLowerCase();
+				const search_field = String(row.search_field ?? '').toLowerCase();
+				return code.includes(needle) || name.includes(needle) || search_field.includes(needle);
+			})
+		: rows;
+	const page = filtered.slice(0, limit);
+	return ok(page, 'Búsqueda de catálogo', page.length);
 }
 
 async function cfdi_validate(ctx: Ctx) {
