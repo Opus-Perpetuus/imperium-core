@@ -191,7 +191,8 @@ async function module_info_for(store: ImperiumStore, resource: string) {
 	if (store.has('module-management')) {
 		const { rows } = await store.find_many('module-management', {
 			where: { model_id },
-			take: 5,
+			take: 1,
+			sort: 'id:asc',
 			include_inactive: false,
 			populate: false,
 		});
