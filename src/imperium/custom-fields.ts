@@ -151,7 +151,8 @@ export async function load_custom_field_definitions(
 	const where = module_id ? { module_id } : { model_id };
 	const { rows } = await store.find_many('custom-field-control', {
 		where,
-		take: 20,
+		take: 1,
+		sort: 'id:asc',
 		include_inactive: false,
 		populate: false,
 	});
@@ -159,7 +160,8 @@ export async function load_custom_field_definitions(
 	if (!config && module_id) {
 		const fallback = await store.find_many('custom-field-control', {
 			where: { model_id },
-			take: 20,
+			take: 1,
+			sort: 'id:asc',
 			include_inactive: false,
 			populate: false,
 		});
