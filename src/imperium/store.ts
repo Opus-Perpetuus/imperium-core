@@ -88,8 +88,22 @@ const UNIQUE_FIELDS: Record<string, string[]> = {
 	'inventory-internal-location': ['codigo'],
 };
 
+/** Unique compuesto que el original imponía con índice multi-campo. */
+const UNIQUE_COMPOSITES: Record<string, string[][]> = {
+	cobranza: [['source_module', 'source_id']],
+	'cfdi-catalog': [['catalog', 'code']],
+};
+
 function unique_fields_for(resource: string): string[] {
 	return UNIQUE_FIELDS[resource] ?? UNIQUE_FIELDS[RESOURCE_ALIASES[resource] ?? ''] ?? [];
+}
+
+function unique_composites_for(resource: string): string[][] {
+	return (
+		UNIQUE_COMPOSITES[resource] ??
+		UNIQUE_COMPOSITES[RESOURCE_ALIASES[resource] ?? ''] ??
+		[]
+	);
 }
 
 type RefBook = {
@@ -885,6 +899,30 @@ export class ImperiumStore {
 			if (!value) continue;
 			const found = await this.find_where(resource, { [field]: value });
 			if (!found?._id || String(found._id) === String(except_id ?? '')) continue;
+			const label = field === '_ref' ? 'la referencia' : `el campo ${field}`;
+			throw new Error(`Ya existe un registro con ${label} "${value}".`);
+		}
+		for (const fields of unique_composites_for(resource)) {
+			const where: Record<string, unknown> = {};
+			let skip = false;
+			for (const field of fields) {
+				const raw = doc[field];
+				if (raw === undefined || raw === null) {
+					skip = true;
+					break;
+				}
+				const value = typeof raw === 'string' ? raw.trim() : raw;
+				if (value === '') {
+					skip = true;
+					break;
+				}
+				where[field] = value;
+			}
+			if (skip) continue;
+			const found = await this.find_where(resource, where);
+			if (!found?._id || String(found._id) === String(except_id ?? '')) continue;
+			const field = fields[0] ?? 'campo';
+			const value = String(where[field] ?? '').trim();
 			const label = field === '_ref' ? 'la referencia' : `el campo ${field}`;
 			throw new Error(`Ya existe un registro con ${label} "${value}".`);
 		}
