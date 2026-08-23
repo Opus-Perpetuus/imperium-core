@@ -329,7 +329,7 @@ export async function inventory_movement_stats_extras(
 	by_type: Array<{ type: string | null; count: number; total_quantity: number }>;
 }> {
 	const { rows } = await store.find_many('inventory-movement', {
-		take: 10000,
+		take: 20000,
 		include_inactive: true,
 		populate: false,
 		mongo_match,
