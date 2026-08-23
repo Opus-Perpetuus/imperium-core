@@ -31,6 +31,18 @@ const COOKIE = 'connect.sid';
 const SECRET = process.env.SESSION_SECRET ?? 'imperium-modular-dev-session';
 const SEED_ADMIN_REF = 'user-menu-management-0';
 
+function id_list(value: unknown): string[] {
+	return as_array(value)
+		.map((item) => {
+			if (item && typeof item === 'object') {
+				const rec = item as Record<string, unknown>;
+				return String(rec._id ?? rec.id ?? '');
+			}
+			return String(item ?? '');
+		})
+		.filter(Boolean);
+}
+
 type Session = {
 	id: string;
 	user: ImperiumDoc;
@@ -334,22 +346,22 @@ export async function build_access(store: ImperiumStore, user: ImperiumDoc) {
 					take: 20000,
 					include_inactive: false,
 				})
-			).rows.filter((g) => as_array(g.user_ids).map(String).includes(String(user._id)))
+			).rows.filter((g) => id_list(g.user_ids).includes(String(user._id)))
 		: [];
 	const user_group_reference_ids = new Set(
 		groups.flatMap((g) => [String(g._id ?? ''), String(g._ref ?? '')].filter(Boolean)),
 	);
 	const user_group_access_right_ids = new Set<string>();
 	for (const g of groups) {
-		for (const id of as_array(g.access_rights_ids)) user_group_access_right_ids.add(String(id));
+		for (const id of id_list(g.access_rights_ids)) user_group_access_right_ids.add(id);
 	}
 	const all_groups = store.has('user-group')
 		? (await store.find_many('user-group', { take: 20000, include_inactive: false })).rows
 		: [];
 	const access_right_ids_assigned_to_any_group = new Set<string>();
 	for (const g of all_groups) {
-		for (const id of as_array(g.access_rights_ids)) {
-			access_right_ids_assigned_to_any_group.add(String(id));
+		for (const id of id_list(g.access_rights_ids)) {
+			access_right_ids_assigned_to_any_group.add(id);
 		}
 	}
 	const rights = store.has('access-rights')
