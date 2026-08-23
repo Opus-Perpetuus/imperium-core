@@ -2423,13 +2423,51 @@ async function debug_read_one(ctx: Ctx) {
 	return ok([doc], 'Log encontrado');
 }
 
+function debug_normalize_related_route(value: string): string {
+	const normalized = value.trim();
+	if (!normalized) return '';
+	if (normalized.startsWith('/')) return normalized.slice(0, 1024);
+	try {
+		const parsed = new URL(normalized);
+		return `${parsed.pathname}${parsed.search}`.slice(0, 1024);
+	} catch {
+		return '';
+	}
+}
+
+function debug_route_key(value: string): string {
+	const route = debug_normalize_related_route(value);
+	if (route === '/api') return '/';
+	if (route.startsWith('/api/')) return route.slice(4) || '/';
+	return route;
+}
+
+function debug_parse_query_date(value: string): number | null {
+	const parsed = Date.parse(value.trim());
+	return Number.isFinite(parsed) ? parsed : null;
+}
+
+function debug_pick_related_request_log(docs: ImperiumDoc[]): ImperiumDoc | null {
+	if (!docs.length) return null;
+	return docs.find((doc) => String(doc.level ?? '') === 'error') ?? docs[0] ?? null;
+}
+
 async function debug_read_related(ctx: Ctx) {
-	const route = String(ctx.url.searchParams.get('route') ?? ctx.url.searchParams.get('url') ?? '').trim();
-	const method = String(ctx.url.searchParams.get('method') ?? '').trim().toUpperCase();
+	const route = debug_normalize_related_route(
+		String(ctx.url.searchParams.get('route') ?? ctx.url.searchParams.get('url') ?? ''),
+	);
+	const method = String(ctx.url.searchParams.get('method') ?? '').trim().toUpperCase().slice(0, 10);
 	if (!route || !method) {
 		return ok([], 'Debes indicar `route` y `method` para localizar el log.');
 	}
-	const status_code = Number(ctx.url.searchParams.get('status') ?? '');
+	const status_raw = Number(ctx.url.searchParams.get('status') ?? '');
+	const status_code =
+		Number.isFinite(status_raw) && status_raw >= 100 && status_raw <= 599
+			? Math.trunc(status_raw)
+			: undefined;
+	const created_after = debug_parse_query_date(String(ctx.url.searchParams.get('created_after') ?? ''));
+	const created_before = debug_parse_query_date(String(ctx.url.searchParams.get('created_before') ?? ''));
+	const wanted_route = debug_route_key(route);
 	const { rows } = await ctx.store.find_many('debug-log', {
 		take: 20000,
 		include_inactive: true,
@@ -2437,20 +2475,26 @@ async function debug_read_related(ctx: Ctx) {
 	const hits = rows
 		.filter((row) => {
 			const ctx_req = as_object(row.request_context);
-			if (String(ctx_req.route ?? '') !== route) return false;
+			if (debug_route_key(String(ctx_req.route ?? '')) !== wanted_route) return false;
 			if (String(ctx_req.method ?? '').toUpperCase() !== method) return false;
 			const level = String(row.level ?? '');
 			if (!['error', 'request'].includes(level)) return false;
-			if (Number.isFinite(status_code) && status_code) {
+			if (status_code !== undefined) {
 				const code = Number(as_object(ctx_req.response).status_code);
 				if (code !== status_code) return false;
+			}
+			if (created_after != null || created_before != null) {
+				const ms = created_ms(row);
+				if (created_after != null && ms < created_after) return false;
+				if (created_before != null && ms > created_before) return false;
 			}
 			return true;
 		})
 		.sort((a, b) => created_ms(b) - created_ms(a))
 		.slice(0, 10);
-	if (!hits.length) return ok([], 'No se encontró un log relacionado.');
-	return ok([hits[0]], 'Log relacionado encontrado');
+	const related_log = debug_pick_related_request_log(hits);
+	if (!related_log) return ok([], 'No se encontró un log relacionado.');
+	return ok([related_log], 'Log relacionado encontrado');
 }
 
 async function documentation_structure(ctx: Ctx) {

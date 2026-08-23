@@ -122,8 +122,8 @@ export async function persist_request_log(
 	if (req.method === 'OPTIONS') return;
 	if (!store.has('debug-log')) return;
 	const url = new URL(req.url);
-	const route = strip_api(url.pathname) + url.search;
-	if (is_noisy_path(route)) return;
+	const stored_route = `${url.pathname}${url.search}`.slice(0, 1024);
+	if (is_noisy_path(strip_api(url.pathname) + url.search)) return;
 	const status_code = res.status;
 	let response_message = '';
 	let response_code = '';
@@ -147,7 +147,7 @@ export async function persist_request_log(
 	const status_group = status_group_of(status_code);
 	const user_name = String(actor?.name ?? '').trim();
 	const message = [
-		route,
+		stored_route,
 		`${result_label.padEnd(7, ' ')} ${status_code} ${duration_ms}ms | ${response_message || 'N/A'}`,
 		`${user_name || 'No autenticado'} | origin: ${req.headers.get('origin') || 'N/A'}`,
 	].join('\n');
@@ -155,7 +155,7 @@ export async function persist_request_log(
 		method: req.method,
 		label: req.method,
 		url: url.href,
-		route,
+		route: stored_route,
 		origin: req.headers.get('origin') || undefined,
 		ip: req.headers.get('x-forwarded-for') || undefined,
 		user_agent: req.headers.get('user-agent') || undefined,
@@ -195,7 +195,7 @@ export async function persist_request_log(
 			},
 			search_field: [
 				req.method,
-				route,
+				stored_route,
 				response_message,
 				user_name,
 				String(actor?.email ?? ''),
