@@ -566,7 +566,8 @@ async function sync_planning_reminders(store: ImperiumStore, uid: string) {
 	if (store.has('planeacion-mis-tareas')) {
 		const { rows } = await store.find_many('planeacion-mis-tareas', {
 			where: { owner_user: uid },
-			take: 500,
+			take: 20000,
+			include_inactive: false,
 		});
 		for (const task of rows) {
 			if (CLOSED_STATES.has(String(task.status ?? task.state ?? ''))) continue;
