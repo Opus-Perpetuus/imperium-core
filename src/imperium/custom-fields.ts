@@ -2,7 +2,7 @@
  * Campos personalizados: mismo contrato que
  * `get_model_custom_field_definitions` + `merge_custom_fields_into_schema_validation`.
  */
-import { as_array, as_object } from './envelope.ts';
+import { as_array, as_object, type ImperiumDoc } from './envelope.ts';
 import type { StateFieldsMetadata } from './state-fields.ts';
 import type { ImperiumStore } from './store.ts';
 
@@ -222,4 +222,58 @@ export function merge_custom_fields_into_schema<T extends Record<string, unknown
 			custom_fields: build_custom_field_metadata(custom_fields),
 		},
 	} as T;
+}
+
+export function custom_fields_shown_in_list(fields: CustomFieldDefinition[]) {
+	return fields
+		.filter((field) => field.show_in_list)
+		.sort((left, right) => {
+			const left_order = left.list_order ?? Number.MAX_SAFE_INTEGER;
+			const right_order = right.list_order ?? Number.MAX_SAFE_INTEGER;
+			return left_order - right_order;
+		});
+}
+
+function list_instance_tipo(type: string) {
+	if (type === 'number') return 'Number';
+	if (type === 'boolean') return 'Boolean';
+	if (type === 'date') return 'Date';
+	return 'String';
+}
+
+export function apply_custom_list_values(
+	source: ImperiumDoc[],
+	projected: ImperiumDoc[],
+	fields: CustomFieldDefinition[],
+): ImperiumDoc[] {
+	const shown = custom_fields_shown_in_list(fields);
+	if (!shown.length) return projected;
+	const by_id = new Map(source.map((row) => [String(row._id ?? ''), row]));
+	return projected.map((row) => {
+		const src = by_id.get(String(row._id ?? '')) ?? row;
+		const custom = as_object(src.custom_data);
+		const bag = as_object(row.custom_data);
+		let touched = false;
+		for (const field of shown) {
+			if (Object.prototype.hasOwnProperty.call(custom, field.field_name)) {
+				bag[field.field_name] = custom[field.field_name];
+				touched = true;
+			}
+		}
+		return touched ? { ...row, custom_data: bag } : row;
+	});
+}
+
+export function with_custom_list_instance_type(
+	base: Record<string, { nombre_encabezado: string; tipo: string }>,
+	fields: CustomFieldDefinition[],
+) {
+	const out = { ...base };
+	for (const field of custom_fields_shown_in_list(fields)) {
+		out[field.field_path] = {
+			nombre_encabezado: field.label,
+			tipo: list_instance_tipo(field.type),
+		};
+	}
+	return out;
 }

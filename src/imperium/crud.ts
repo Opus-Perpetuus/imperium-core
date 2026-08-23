@@ -129,7 +129,18 @@ import {
 	field_values_missing_field_error,
 	filter_pedido_estado_options,
 } from './field-values.ts';
-import { load_state_fields_metadata, schema_validation_for, state_field_for } from './state-fields.ts';
+import {
+	apply_custom_list_values,
+	type CustomFieldDefinition,
+	load_custom_field_definitions,
+	with_custom_list_instance_type,
+} from './custom-fields.ts';
+import {
+	load_state_fields_metadata,
+	model_id_for_resource,
+	schema_validation_for,
+	state_field_for,
+} from './state-fields.ts';
 import {
 	assert_record_in_scope,
 	operation_flag,
@@ -406,19 +417,26 @@ export async function handle_crud(
 	}
 	if (method === 'GET' && segs.length === 0) {
 		const listed = await read_list_docs(store, resource, url, actor);
+		const schema_validation = await schema_validation_for(store, resource);
+		const list_fields = (schema_validation.metadata?.custom_fields?.fields ??
+			[]) as CustomFieldDefinition[];
+		const tipo = with_custom_list_instance_type(
+			instance_type(store, resource, listed.rows),
+			list_fields,
+		);
 		if (listed.empty_project) {
 			return json(resource, {
 				...ok([], 'Sin proyecto especificado', 0),
-				tipo_de_instancia: instance_type(store, resource, []),
+				tipo_de_instancia: tipo,
 				module_info: { name: resource, model: resource, model_id: resource },
-				schema_validation: await schema_validation_for(store, resource),
+				schema_validation,
 			});
 		}
 		return json(resource, {
 			...ok(listed.rows, list_message(resource), listed.total),
-			tipo_de_instancia: instance_type(store, resource, listed.rows),
+			tipo_de_instancia: tipo,
 			module_info: { name: resource, model: resource, model_id: resource },
-			schema_validation: await schema_validation_for(store, resource),
+			schema_validation,
 		});
 	}
 	if (method === 'GET' && segs.length === 1) {
@@ -1022,10 +1040,22 @@ async function read_list_docs(
 		const access = await dashboard_access(store, actor);
 		if (!access.full) {
 			decorated = decorated.filter((doc) => dashboard_is_visible(doc, access));
+			decorated = await attach_custom_list_fields(store, resource, filtered, decorated);
 			return { rows: decorated, total: decorated.length };
 		}
 	}
+	decorated = await attach_custom_list_fields(store, resource, filtered, decorated);
 	return { rows: decorated, total };
+}
+
+async function attach_custom_list_fields(
+	store: ImperiumStore,
+	resource: string,
+	source: ImperiumDoc[],
+	projected: ImperiumDoc[],
+) {
+	const fields = await load_custom_field_definitions(store, model_id_for_resource(resource));
+	return apply_custom_list_values(source, projected, fields);
 }
 
 async function finalize_rows(
