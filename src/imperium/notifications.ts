@@ -943,7 +943,7 @@ export async function notify_document_subscription_event(
 	const event_flag = input.was_new ? 'notify_on_create' : 'notify_on_update';
 	const actor_id_value = String(input.actor?._id ?? '');
 	const { rows } = await store.find_many('user-settings', {
-		take: 2000,
+		take: 20000,
 		include_inactive: false,
 	});
 	const current = as_object(input.current_document);
