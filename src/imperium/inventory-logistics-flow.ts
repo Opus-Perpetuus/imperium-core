@@ -302,7 +302,7 @@ export async function stock_quant_stats_extras(
 	mongo_match?: Record<string, unknown> | null,
 ): Promise<{ total_cantidad: number; ubicaciones_con_existencia: number }> {
 	const { rows } = await store.find_many('inventory-stock-quant', {
-		take: 10000,
+		take: 20000,
 		include_inactive: true,
 		populate: false,
 		mongo_match,
