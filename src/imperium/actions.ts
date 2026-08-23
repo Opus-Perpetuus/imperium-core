@@ -114,6 +114,7 @@ import {
 	recompute_product_existencia,
 } from './delivery-return-flow.ts';
 import { apply_purchase_receipt_stock } from './purchase-order-flow.ts';
+import { list_instance_type, project_list_docs } from './list-projection.ts';
 import {
 	acomodar_reception,
 	create_reception_backorder,
@@ -5223,10 +5224,15 @@ async function medical_list(
 	message: string,
 ) {
 	const q = query_list(ctx.url);
-	return ctx.store.find_many('medical-file', {
+	const found = await ctx.store.find_many('medical-file', {
 		...q,
 		where: { ...q.where, ...where },
-	}).then((found) => ok(found.rows, message, found.total));
+		populate: false,
+	});
+	return {
+		...ok(project_list_docs('medical-file', found.rows), message, found.total),
+		tipo_de_instancia: list_instance_type('medical-file'),
+	};
 }
 
 async function medical_for_doctor(ctx: Ctx) {

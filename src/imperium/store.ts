@@ -888,16 +888,32 @@ export class ImperiumStore {
 			domain.by_status = await vehicle_by_status(this, mongo_match);
 		}
 		const now = new Date();
+		const daily_where = extra ? `created_at >= $1 AND ${extra}` : `created_at >= $1`;
+		const daily_rows =
+			DAILY_LINE_CHART.has(resource) || resource === 'medical-file'
+				? await this.sql.unsafe(
+						`SELECT LEFT(created_at, 10) AS day, COUNT(*)::int AS n
+           FROM ${qt}
+           WHERE ${daily_where}
+           GROUP BY 1
+           ORDER BY 1`,
+						params,
+					)
+				: [];
+		if (resource === 'medical-file') {
+			return {
+				total_records,
+				active_records,
+				inactive_records,
+				date_range: { from, to: now },
+				daily_stats: daily_rows.map((row) => ({
+					date: String((row as { day?: unknown }).day ?? ''),
+					count: Number((row as { n?: unknown }).n ?? 0),
+				})),
+				last_updated: now,
+			};
+		}
 		if (DAILY_LINE_CHART.has(resource)) {
-			const daily_where = extra ? `created_at >= $1 AND ${extra}` : `created_at >= $1`;
-			const daily_rows = await this.sql.unsafe(
-				`SELECT LEFT(created_at, 10) AS day, COUNT(*)::int AS n
-         FROM ${qt}
-         WHERE ${daily_where}
-         GROUP BY 1
-         ORDER BY 1`,
-				params,
-			);
 			return {
 				total_records,
 				active_records,
