@@ -800,8 +800,8 @@ export class ImperiumStore {
 				}
 				const id_key = `${field}_id`;
 				if (out[id_key] == null || out[id_key] === '') out[id_key] = id;
-				const name = String((val as ImperiumDoc).name ?? '').trim();
-				if (name) out[field] = name;
+				// El $lookup original siempre deja el nombre (aunque vacío), no el objeto.
+				out[field] = String((val as ImperiumDoc).name ?? '').trim();
 			}
 			return out;
 		});

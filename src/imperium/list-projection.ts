@@ -630,6 +630,46 @@ const LIST_PROJECTIONS: Record<string, ListProjection> = {
 			'allowed_services',
 		],
 	},
+	'ticketing-system-customer-type': {
+		rows: ['_id', 'name', 'description', 'priority_level', 'letter', 'show_to_select'],
+	},
+	'ticketing-system-service-type': {
+		rows: ['_id', 'name', 'is_active', 'priority_level', 'letter', 'show_to_select'],
+	},
+	'ticketing-system-priority': {
+		rows: ['_id', 'name', 'description', 'priority_level'],
+	},
+	patient: {
+		rows: [
+			'_id',
+			'numero_expediente',
+			'nombre_completo',
+			'fecha_nacimiento',
+			'edad',
+			'sexo',
+			'estado_civil',
+			'ocupacion',
+			'telefono_paciente',
+			'is_active',
+		],
+	},
+	'labor-incident': {
+		rows: [
+			'_id',
+			'name',
+			'description',
+			'employee',
+			'tipo',
+			'fecha_inicio',
+			'fecha_fin',
+			'dias',
+			'horas',
+			'importe',
+			'tipo_incapacidad',
+			'payroll_period',
+			'is_active',
+		],
+	},
 };
 
 function projection_for(resource: string): ListProjection | undefined {
