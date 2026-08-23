@@ -117,7 +117,7 @@ async function sync_order_invoice_state(store: ImperiumStore, request: ImperiumD
 async function find_existing_request(store: ImperiumStore, order_id: string) {
 	const { rows } = await store.find_many('invoice-request', {
 		where: { pedido: order_id },
-		take: 50,
+		take: 20000,
 		include_inactive: true,
 		populate: false,
 		sort: 'created_at:desc',
