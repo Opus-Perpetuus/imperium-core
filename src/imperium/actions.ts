@@ -2159,17 +2159,14 @@ async function documentation_read_one(
 	if (opts.id) {
 		doc = await ctx.store.find_id('documentation-page', opts.id);
 	} else if (opts.slug) {
+		const where: Record<string, unknown> = { slug: opts.slug };
+		if (opts.folder) where.folder_path = opts.folder;
 		const { rows } = await ctx.store.find_many('documentation-page', {
-			where: { slug: opts.slug },
-			take: 20,
-			include_inactive: true,
+			where,
+			take: 20000,
+			include_inactive: false,
 		});
-		doc =
-			rows.find((row) => {
-				if (row.is_active === false) return false;
-				if (!opts.folder) return true;
-				return String(row.folder_path ?? '') === opts.folder;
-			}) ?? null;
+		doc = rows[0] ?? null;
 	}
 	if (!doc || doc.is_active === false) {
 		return ok([], 'Documento no encontrado.');
