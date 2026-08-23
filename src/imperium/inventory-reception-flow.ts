@@ -359,6 +359,7 @@ export async function register_internal_transfer(
 			stock_total_resultante: stock_total,
 			stock_apartado_previo: stock_apartado,
 			stock_apartado_resultante: stock_apartado,
+			stock_disponible_resultante: round_qty(stock_total - stock_apartado),
 			fecha_movimiento: new Date().toISOString(),
 		});
 	}

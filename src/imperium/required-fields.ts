@@ -103,6 +103,12 @@ const SCHEMA_DEFAULTS: Record<string, Record<string, unknown>> = {
 		excel_sheet_name: 'Reporte',
 		generated_report_name: '{{name}}_{{hora_actual}}_{{usuario_genera}}',
 	},
+	'inventory-cost-entry': { tipo_origen: 'manual' },
+	'inventory-movement': {
+		stock_apartado_previo: 0,
+		stock_apartado_resultante: 0,
+		stock_disponible_resultante: 0,
+	},
 };
 
 export function apply_schema_setters(
