@@ -1639,7 +1639,10 @@ async function read_load_manifest(ctx: Ctx) {
 
 async function delivery_offline_catalog(ctx: Ctx) {
 	const route_id = String(ctx.url.searchParams.get('route_id') ?? '').trim();
-	const { rows } = await ctx.store.find_many('delivery-package', { take: 5000 });
+	const { rows } = await ctx.store.find_many('delivery-package', {
+		where: route_id ? { delivery_route: route_id } : {},
+		take: 20000,
+	});
 	const records = rows
 		.filter((row) => {
 			const route = ref_id(row.delivery_route);
@@ -1662,7 +1665,10 @@ async function delivery_offline_catalog(ctx: Ctx) {
 
 async function delivery_route_map(ctx: Ctx) {
 	const route_id = String(ctx.url.searchParams.get('route_id') ?? '').trim();
-	const { rows } = await ctx.store.find_many('delivery-package', { take: 5000 });
+	const { rows } = await ctx.store.find_many('delivery-package', {
+		where: route_id ? { delivery_route: route_id } : {},
+		take: 20000,
+	});
 	const packages = rows.filter((row) => {
 		const coords = as_object(row.delivery_address_coordinates);
 		const lat = Number(coords.latitude ?? coords.lat);
