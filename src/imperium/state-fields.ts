@@ -384,13 +384,130 @@ function merge_persisted(
 	return { fields, has_state_fields: fields.length > 0 };
 }
 
-async function find_tracker_metadata(store: ImperiumStore, resource: string) {
-	if (!store.has('model-tracker')) return empty_state_fields();
+async function load_tracker_doc(store: ImperiumStore, resource: string) {
+	if (!store.has('model-tracker')) return null;
 	const model_id = model_id_for_resource(resource);
-	const tracker =
+	return (
 		(await store.find_where('model-tracker', { __model_name: model_id })) ??
-		(await store.find_where('model-tracker', { name: model_id }));
+		(await store.find_where('model-tracker', { name: model_id }))
+	);
+}
+
+async function find_tracker_metadata(store: ImperiumStore, resource: string) {
+	const tracker = await load_tracker_doc(store, resource);
 	return normalize_metadata(tracker?.__state_fields);
+}
+
+const OBJECT_ID_PATTERN = '^[0-9a-fA-F]{24}$';
+
+function json_schema_type(type: string) {
+	const normalized = type.toLowerCase();
+	if (normalized === 'number' || normalized === 'decimal128') return 'number';
+	if (normalized === 'boolean' || normalized === 'bool') return 'boolean';
+	return 'string';
+}
+
+function object_id_property(ref?: string) {
+	return {
+		type: 'string',
+		pattern: OBJECT_ID_PATTERN,
+		...(ref ? { 'x-ref': ref } : {}),
+	};
+}
+
+function property_for_descriptor(
+	field: { type?: string; is_array?: boolean; ref?: string },
+	ref_fallback?: string,
+) {
+	const ref = field.ref || ref_fallback;
+	const type = text(field.type);
+	const is_object_id = type === 'objectid' || Boolean(ref);
+	if (field.is_array) {
+		return {
+			type: 'array',
+			items: is_object_id ? object_id_property(ref) : { type: json_schema_type(type) },
+		};
+	}
+	if (is_object_id) return object_id_property(ref);
+	return { type: json_schema_type(type) };
+}
+
+function build_schema_properties(
+	store: ImperiumStore,
+	resource: string,
+	tracker: Record<string, unknown> | null,
+) {
+	const properties: Record<string, Record<string, unknown>> = {
+		name: { type: 'string' },
+		description: { type: 'string' },
+		is_active: { type: 'boolean' },
+	};
+	const refs = store.field_refs(canonical_state_resource(resource));
+	for (const field of as_array(tracker?.__schema_fields)) {
+		const rec = as_object(field);
+		const path = text(rec.path);
+		if (!path || path.includes('.')) continue;
+		properties[path] = property_for_descriptor(
+			{
+				type: text(rec.type),
+				is_array: rec.is_array === true,
+				ref: text(rec.ref) || undefined,
+			},
+			refs[path],
+		);
+	}
+	for (const [field, model] of Object.entries(refs)) {
+		if (field.includes('.')) continue;
+		const current = properties[field] ?? {};
+		if (current.type === 'array') {
+			const items = as_object(current.items);
+			properties[field] = {
+				type: 'array',
+				items: { ...items, ...object_id_property(model) },
+			};
+			continue;
+		}
+		properties[field] = { ...current, ...object_id_property(model) };
+	}
+	return properties;
+}
+
+function build_batch_import(
+	store: ImperiumStore,
+	resource: string,
+	tracker: Record<string, unknown> | null,
+	properties: Record<string, Record<string, unknown>>,
+) {
+	const fields = as_array(tracker?.__schema_fields)
+		.map((item) => text(as_object(item).path))
+		.filter(Boolean);
+	const available = [...new Set([...fields, ...Object.keys(properties)])];
+	const refs = store.field_refs(canonical_state_resource(resource));
+	const helper_fields = [
+		...as_array(tracker?.__schema_fields)
+			.filter((item) => as_object(item).is_reference === true || text(as_object(item).ref))
+			.map((item) => `${text(as_object(item).path).replace(/\./g, '_')}_name*`),
+		...Object.keys(refs).map((field) => `${field.replace(/\./g, '_')}_name*`),
+	].filter((value, index, all) => value && all.indexOf(value) === index);
+	const automatic_match_fields = ['_id', 'name', 'description'].filter((field) =>
+		available.includes(field),
+	);
+	const matchable_source = as_array(tracker?.__batch_matchable_fields).map((item) => text(item));
+	const matchable_fields = (matchable_source.length ? matchable_source : Object.keys(refs))
+		.filter((path) => path && !automatic_match_fields.includes(path))
+		.map((path) => ({
+			path,
+			type: 'objectid',
+			ref: refs[path] || text(as_object(
+				as_array(tracker?.__schema_fields).find((item) => as_object(item).path === path),
+			).ref) || undefined,
+		}));
+	return {
+		available_fields: available,
+		helper_fields,
+		automatic_match_fields,
+		matchable_fields,
+	};
 }
 
 async function find_persisted_config(store: ImperiumStore, resource: string) {
@@ -425,12 +542,21 @@ export async function load_state_fields_metadata(
 }
 
 export async function schema_validation_for(store: ImperiumStore, resource: string) {
-	const state_fields = await load_state_fields_metadata(store, resource);
+	const canonical = canonical_state_resource(resource);
+	const [state_fields, tracker] = await Promise.all([
+		load_state_fields_metadata(store, resource),
+		load_tracker_doc(store, canonical),
+	]);
+	const properties = build_schema_properties(store, canonical, tracker);
 	return {
+		type: 'object',
+		properties,
+		required: [] as string[],
 		metadata: {
 			state_fields,
 			model_id: model_id_for_resource(resource),
 			attachment_fields: [] as string[],
+			batch_import: build_batch_import(store, canonical, tracker, properties),
 		},
 	};
 }
