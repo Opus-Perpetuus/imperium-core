@@ -316,7 +316,9 @@ export async function register_internal_transfer(
 	const cantidad = round_qty(params.cantidad);
 	if (!(cantidad > 0)) throw new Error('La cantidad a trasladar debe ser mayor a cero');
 	const producto_id = text(params.producto);
-	if (!producto_id) throw new Error('Debes indicar un producto válido');
+	if (!producto_id || !is_object_id(producto_id)) {
+		throw new Error('Debes indicar un producto válido');
+	}
 	const origen = await store.find_id('inventory-internal-location', params.ubicacion_origen);
 	const destino = await store.find_id('inventory-internal-location', params.ubicacion_destino);
 	if (!origen || !destino) throw new Error('La ubicación de origen o destino no existe');

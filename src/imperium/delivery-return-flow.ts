@@ -10,6 +10,7 @@ const STATE_DRAFT = 'borrador';
 const STATE_SIGNED = 'firmado';
 const STATE_RECEIVED = 'recibido_almacen';
 const DOMAIN_EVENT = 'devolucion-recibida-almacen';
+const OBJECT_ID = /^[a-fA-F0-9]{24}$/;
 
 function text(value: unknown): string {
 	return String(value ?? '').trim();
@@ -53,14 +54,16 @@ export async function recibir_delivery_return(
 	actor: ImperiumDoc | null,
 ): Promise<ImperiumDoc> {
 	const id = text(return_id);
-	if (!id) throw new Error('Debes indicar una devolución válida');
+	if (!id || !OBJECT_ID.test(id)) throw new Error('Debes indicar una devolución válida');
 	const devolucion = await store.find_id('delivery-return', id);
 	if (!devolucion) throw new Error('No se encontró la devolución indicada');
 	if (text(devolucion.estado) === STATE_RECEIVED) {
 		throw new Error('Esta devolución ya fue recibida en almacén');
 	}
 	const location_id = text(ubicacion_id);
-	if (!location_id) throw new Error('Debes indicar la ubicación de recepción');
+	if (!location_id || !OBJECT_ID.test(location_id)) {
+		throw new Error('Debes indicar la ubicación de recepción');
+	}
 	const ubicacion = await store.find_id('inventory-internal-location', location_id);
 	if (!ubicacion) throw new Error('No se encontró la ubicación indicada');
 	if (
@@ -305,8 +308,6 @@ function build_return_received_comment_text(devolucion: ImperiumDoc, ubicacion_c
 		.filter(Boolean)
 		.join('\n');
 }
-
-const OBJECT_ID = /^[a-fA-F0-9]{24}$/;
 
 /**
  * El original proyecta `producto_id`/`ubicacion_id` con `$toString` y nombres

@@ -873,7 +873,13 @@ async function catalog_search(ctx: Ctx) {
 }
 
 async function cfdi_validate(ctx: Ctx) {
-	const doc = await need(ctx, 'cfdi-document', ctx.params.id, 'No se encontró el documento CFDI.');
+	const doc = await need(
+		ctx,
+		'cfdi-document',
+		ctx.params.id,
+		'No se encontró el documento CFDI.',
+		'Debes indicar el identificador del documento CFDI.',
+	);
 	const canonical = as_object(doc.canonical ?? doc.payload_canonico);
 	if (!looks_like_canonical(canonical)) {
 		throw new Error('El documento no tiene un payload canónico para validar.');
@@ -947,7 +953,13 @@ async function sync_cfdi_source_stamp(
 }
 
 async function cfdi_stamp(ctx: Ctx) {
-	const doc = await need(ctx, 'cfdi-document', ctx.params.id, 'No se encontró el documento CFDI.');
+	const doc = await need(
+		ctx,
+		'cfdi-document',
+		ctx.params.id,
+		'No se encontró el documento CFDI.',
+		'Debes indicar el identificador del documento CFDI.',
+	);
 	const canonical = as_object(doc.canonical ?? doc.payload_canonico);
 	if (!looks_like_canonical(canonical)) {
 		throw new Error('El documento no tiene payload canónico para timbrar.');
@@ -1045,7 +1057,13 @@ async function cfdi_stamp(ctx: Ctx) {
 }
 
 async function cfdi_export(ctx: Ctx, kind: 'xml' | 'json') {
-	const doc = await need(ctx, 'cfdi-document', ctx.params.id, 'No se encontró el documento CFDI.');
+	const doc = await need(
+		ctx,
+		'cfdi-document',
+		ctx.params.id,
+		'No se encontró el documento CFDI.',
+		'Debes indicar el identificador del documento CFDI.',
+	);
 	const canonical = as_object(doc.canonical ?? doc.payload_canonico);
 	if (kind === 'xml') {
 		if (!looks_like_canonical(canonical)) {
@@ -1275,6 +1293,7 @@ async function increment_counter(ctx: Ctx) {
 		'auto-increment-control',
 		ctx.params.id,
 		'No se encontró el control solicitado.',
+		'Debes indicar el ID del control.',
 	);
 	const amount = Math.max(1, Number(ctx.body.amount ?? ctx.url.searchParams.get('amount') ?? 1));
 	const model_name = String(doc.model_name ?? '');
@@ -2953,6 +2972,7 @@ async function confirm_reception(ctx: Ctx) {
 		'inventory-reception',
 		ctx.params.id,
 		'No se encontró la recepción indicada',
+		'No se encontró la recepción indicada',
 	);
 	const estado = String(rec.estado ?? '');
 	if (estado && !['pendiente', 'parcial', 'PENDING', 'PARTIAL'].includes(estado)) {
@@ -3189,6 +3209,7 @@ async function invoice_link_cfdi(ctx: Ctx) {
 		'invoice-request',
 		ctx.params.id,
 		'No se encontró la solicitud de facturación.',
+		'Debes especificar la solicitud de facturación.',
 	);
 	const estado = String(rec.estado ?? '').trim().toLowerCase();
 	if (estado === 'cancelado' || estado === 'cancelada') {
@@ -3224,6 +3245,7 @@ async function invoice_cfdi_draft(ctx: Ctx) {
 		'invoice-request',
 		ctx.params.id,
 		'No se encontró la solicitud de facturación.',
+		'Debes especificar la solicitud de facturación.',
 	);
 	const estado = String(rec.estado ?? '').trim().toLowerCase();
 	if (estado === 'cancelado' || estado === 'cancelada') {
@@ -4188,13 +4210,14 @@ async function pos_cancel(ctx: Ctx) {
 }
 
 async function po_approve(ctx: Ctx) {
-	const po = await need(ctx, 'purchase-order', ctx.params.id, 'No se encontró la orden de compra indicada');
+	const po = await need(
+		ctx,
+		'purchase-order',
+		ctx.params.id,
+		'No se encontró la orden o ya fue aprobada previamente',
+		'Se necesita el id de la orden de compra',
+	);
 	const estado = String(po.estado ?? po.state ?? 'borrador');
-	if (estado !== 'borrador' && estado !== 'DRAFT' && estado) {
-		if (estado !== 'borrador') {
-			/* migrated docs may use other labels */
-		}
-	}
 	if (estado !== 'borrador' && estado !== 'DRAFT') {
 		throw new Error('No se encontró la orden o ya fue aprobada previamente');
 	}
@@ -4210,7 +4233,13 @@ async function po_approve(ctx: Ctx) {
 }
 
 async function po_receive(ctx: Ctx, confirm_all: boolean) {
-	const po = await need(ctx, 'purchase-order', ctx.params.id, 'No se encontró la orden de compra indicada');
+	const po = await need(
+		ctx,
+		'purchase-order',
+		ctx.params.id,
+		'No se encontró la orden de compra indicada',
+		'Se necesita el id de la orden de compra',
+	);
 	if (String(po.estado) === 'archivada') throw new Error('No puedes recibir una orden archivada');
 	if (String(po.estado) === 'confirmada') throw new Error('La orden de compra ya fue recibida por completo');
 	const articulos = as_array(po.articulos).map(as_object);
@@ -4295,20 +4324,19 @@ async function po_apply_receipt(
 }
 
 async function po_register_invoice(ctx: Ctx) {
-	const po = await need(ctx, 'purchase-order', ctx.params.id, 'No se encontró la orden de compra indicada');
-	const numero = String(ctx.body.numero_factura ?? ctx.body.folio ?? '').trim();
-	if (!numero) throw new Error('La factura 1 requiere número de factura');
+	const po = await need(
+		ctx,
+		'purchase-order',
+		ctx.params.id,
+		'No se encontró la orden de compra indicada',
+		'Se necesita el id de la orden de compra',
+	);
+	const invoice = normalize_supplier_invoice(ctx.body, 0);
 	const facturas = as_array(po.facturas_proveedor).map(as_object);
-	if (facturas.some((invoice) => String(invoice.numero_factura) === numero)) {
+	if (facturas.some((row) => String(row.numero_factura) === invoice.numero_factura)) {
 		throw new Error('La factura del proveedor ya está registrada');
 	}
-	facturas.push({
-		...ctx.body,
-		numero_factura: numero,
-		fecha: now(),
-		estado: 'registrada',
-		usuario: actor_name(ctx),
-	});
+	facturas.push(invoice);
 	return patch_doc(
 		ctx,
 		'purchase-order',
@@ -4316,6 +4344,34 @@ async function po_register_invoice(ctx: Ctx) {
 		{ facturas_proveedor: facturas },
 		'Factura de proveedor registrada correctamente',
 	);
+}
+
+const SUPPLIER_INVOICE_STATES = new Set(['pendiente', 'parcial', 'pagada']);
+
+function normalize_supplier_invoice(raw: ImperiumDoc, index: number): ImperiumDoc {
+	const numero_factura = String(raw.numero_factura ?? '').trim();
+	if (!numero_factura) {
+		throw new Error(`La factura ${index + 1} requiere número de factura`);
+	}
+	const estado = SUPPLIER_INVOICE_STATES.has(String(raw.estado ?? ''))
+		? String(raw.estado)
+		: 'pendiente';
+	const fecha_raw = raw.fecha_factura ?? raw.fecha;
+	const fecha = fecha_raw ? new Date(String(fecha_raw)) : new Date();
+	if (Number.isNaN(fecha.getTime())) {
+		throw new Error(`El campo facturas_proveedor[${index}].fecha_factura no contiene una fecha válida`);
+	}
+	const monto = Number(raw.monto_total ?? 0);
+	if (!Number.isFinite(monto)) {
+		throw new Error(`El campo facturas_proveedor[${index}].monto_total debe ser numérico`);
+	}
+	return {
+		numero_factura,
+		fecha_factura: fecha.toISOString(),
+		monto_total: Number(monto.toFixed(6)),
+		estado,
+		notas: String(raw.notas ?? '').trim(),
+	};
 }
 
 async function po_replenish(ctx: Ctx) {
@@ -5448,8 +5504,14 @@ async function medical_pending(ctx: Ctx) {
 	return medical_list(ctx, { estado: 'pendiente' }, 'Pendientes');
 }
 
-async function need(ctx: Ctx, resource: string, id?: string, missing = 'No se encontró el documento') {
-	if (!id) throw new Error('Se necesita el id');
+async function need(
+	ctx: Ctx,
+	resource: string,
+	id?: string,
+	missing = 'No se encontró el documento',
+	empty = 'Se necesita el id',
+) {
+	if (!id) throw new Error(empty);
 	const doc = await ctx.store.find_id(resource, id);
 	if (!doc || doc.is_active === false) throw new Error(missing);
 	return doc;
