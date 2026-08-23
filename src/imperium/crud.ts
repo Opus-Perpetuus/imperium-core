@@ -6,7 +6,6 @@ import { run_batch_import } from './batch-import.ts';
 import { query_list, read_imperium_body } from './body.ts';
 import type { ImperiumStore } from './store.ts';
 import { assert_pos_pin, maybe_create_pos_session_pin } from './user-pin.ts';
-import { register_document_mentions } from './notifications.ts';
 import { apply_uploads, link_attachments_to_record } from './uploads.ts';
 import {
 	after_pedido_mutate,
@@ -677,7 +676,6 @@ export async function handle_crud(
 		const doc = await before_create(store, resource, incoming, actor);
 		const created = await store.insert(resource, doc);
 		await link_attachments_to_record(store, resource, created);
-		await maybe_register_mentions(store, actor, resource, created);
 		const notice = await after_create(store, resource, created, actor);
 		if (is_pattern_parts_resource(resource)) await after_pattern_part_write(store, created);
 		if (is_pattern_condition_resource(resource)) {
@@ -885,7 +883,6 @@ export async function handle_crud(
 				String(updated.pedido ?? ''),
 			);
 		}
-		await maybe_register_mentions(store, actor, resource, updated, previous);
 		let shown = updated;
 		if (is_project_resource(resource)) {
 			shown = await hydrate_project(store, updated);
@@ -1045,7 +1042,6 @@ export async function handle_crud(
 				String(updated.pedido ?? ''),
 			);
 		}
-		await maybe_register_mentions(store, actor, resource, updated, previous);
 		let shown = updated;
 		if (is_project_resource(resource)) {
 			shown = await hydrate_project(store, updated);
@@ -1450,22 +1446,6 @@ function csv(v: unknown): string {
 	const s = typeof v === 'object' ? JSON.stringify(v) : String(v);
 	if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
 	return s;
-}
-
-async function maybe_register_mentions(
-	store: ImperiumStore,
-	actor: ImperiumDoc | null,
-	resource: string,
-	current: ImperiumDoc,
-	previous?: ImperiumDoc | null,
-) {
-	if (resource === 'notifications' || resource === 'mentions') return;
-	await register_document_mentions(store, actor, {
-		current_document: current,
-		previous_document: previous ?? undefined,
-		resource,
-		document_id: String(current._id ?? ''),
-	});
 }
 
 async function before_create(
