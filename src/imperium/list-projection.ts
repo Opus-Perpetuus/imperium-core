@@ -178,6 +178,18 @@ const LIST_PROJECTIONS: Record<string, ListProjection> = {
 	'citizen-report-reporting-medium': {
 		rows: ['_id', 'name', 'is_active'],
 	},
+	cuadrillas: {
+		rows: ['_id', 'name', 'description', 'is_active'],
+	},
+	states: {
+		rows: ['_id', 'name', 'is_active'],
+	},
+	municipality: {
+		rows: ['_id', 'name', 'is_active'],
+	},
+	country: {
+		rows: ['_id', 'name', 'is_active'],
+	},
 	asociaciones: {
 		rows: ['_id', 'name', 'telefono', 'correo', 'ciudad', 'localidad', 'is_active'],
 	},
@@ -645,6 +657,15 @@ const LIST_PROJECTIONS: Record<string, ListProjection> = {
 	'ticketing-system-priority': {
 		rows: ['_id', 'name', 'description', 'priority_level'],
 	},
+	'ticketing-system-turn-youtube': {
+		rows: ['_id', 'name', 'is_active', 'video_id'],
+	},
+	'news-banner-control': {
+		rows: ['_id', 'name', 'is_active'],
+	},
+	'ticketing-system-consecutive': {
+		rows: ['_id', 'name', 'is_active', 'consecutive'],
+	},
 	patient: {
 		rows: [
 			'_id',
@@ -824,6 +845,27 @@ const LIST_PROJECTIONS: Record<string, ListProjection> = {
 	},
 	violation: {
 		rows: ['_id', 'name', 'folio', 'code', 'plates', 'status', 'is_active'],
+	},
+	'violation-vehicle-type': {
+		rows: ['_id', 'name', 'is_active'],
+	},
+	'violation-vehicle-brand': {
+		rows: ['_id', 'name', 'is_active'],
+	},
+	'violation-user-id-type': {
+		rows: ['_id', 'name', 'is_active'],
+	},
+	'violation-payment-method': {
+		rows: ['_id', 'name', 'is_active'],
+	},
+	'violation-offender-guarantee': {
+		rows: ['_id', 'name', 'is_active'],
+	},
+	'violation-mobility-law': {
+		rows: ['_id', 'name', 'description', 'fractions'],
+	},
+	'violation-city-zone': {
+		rows: ['_id', 'name', 'is_active'],
 	},
 	'epson-ticket-template': {
 		rows: [
