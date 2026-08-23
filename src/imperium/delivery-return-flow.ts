@@ -165,19 +165,25 @@ export async function find_quant_for_pair(
 ): Promise<ImperiumDoc | null> {
 	if (!store.has('inventory-stock-quant') || !producto) return null;
 	const codigo = String(ubicacion_codigo ?? '').trim().toUpperCase();
-	const { rows } = await store.find_many('inventory-stock-quant', {
-		where: { producto },
-		take: 500,
-		include_inactive: true,
-		populate: false,
-	});
-	return (
-		rows.find((row) => {
-			const uid = ref_id(row.ubicacion) || text(row.ubicacion_id);
-			const ucode = text(row.ubicacion_codigo).toUpperCase();
-			return uid === ubicacion || uid === codigo || (codigo && ucode === codigo);
-		}) ?? null
-	);
+	if (ubicacion) {
+		const { rows } = await store.find_many('inventory-stock-quant', {
+			where: { producto, ubicacion },
+			take: 1,
+			include_inactive: true,
+			populate: false,
+		});
+		if (rows[0]) return rows[0];
+	}
+	if (codigo) {
+		const { rows } = await store.find_many('inventory-stock-quant', {
+			where: { producto, ubicacion_codigo: codigo },
+			take: 1,
+			include_inactive: true,
+			populate: false,
+		});
+		if (rows[0]) return rows[0];
+	}
+	return null;
 }
 
 export async function apply_quant_delta(
