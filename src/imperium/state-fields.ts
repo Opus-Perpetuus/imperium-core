@@ -564,14 +564,11 @@ async function find_persisted_config(store: ImperiumStore, resource: string) {
 		(await store.find_where('module-management', { module_name: model_id }));
 	if (!module_record?._id) return null;
 	const module_id = String(module_record._id);
-	const { rows } = await store.find_many('configuration', {
-		where: { type: STATUS_OPTION_CONFIGURATION_TYPE },
-		take: 2000,
-		include_inactive: true,
-	});
 	const configuration =
-		rows.find((row) => String(row.module_id ?? as_object(row.value).module_id ?? '') === module_id) ??
-		null;
+		(await store.find_where('configuration', {
+			type: STATUS_OPTION_CONFIGURATION_TYPE,
+			module_id,
+		})) ?? null;
 	if (!configuration) return null;
 	return as_object(configuration.value);
 }
