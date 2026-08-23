@@ -995,6 +995,7 @@ export class ImperiumStore {
 		const { rows } = await this.find_many(resource, {
 			where,
 			take: 1,
+			sort: 'id:asc',
 			include_inactive: true,
 			populate: false,
 		});
