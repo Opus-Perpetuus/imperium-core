@@ -602,6 +602,34 @@ const LIST_PROJECTIONS: Record<string, ListProjection> = {
 			'stamped_count',
 		],
 	},
+	'cfdi-catalog': {
+		rows: ['_id', 'name', 'is_active', 'catalog', 'code', 'description'],
+	},
+	'registro-emergencias': {
+		rows: [
+			'_id',
+			'name',
+			'fecha_hora_recepcion',
+			'tipo_emergencia',
+			'prioridad',
+			'municipio',
+			'resultado',
+			'is_active',
+		],
+	},
+	'ticketing-system-box-config': {
+		rows: [
+			'_id',
+			'name',
+			'description',
+			'box_number',
+			'min_movements',
+			'max_movements',
+			'exclusive',
+			'allowed_customer_types',
+			'allowed_services',
+		],
+	},
 };
 
 function projection_for(resource: string): ListProjection | undefined {
