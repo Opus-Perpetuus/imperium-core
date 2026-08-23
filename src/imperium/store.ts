@@ -68,6 +68,9 @@ const REFS: RefBook = JSON.parse(
 	readFileSync(join(import.meta.dir, 'refs.json'), 'utf8'),
 ) as RefBook;
 
+/** Campos que el original guarda como id string (sin $lookup a name). */
+const LIST_REF_KEEP_AS_ID = new Set(['invoice_request_id']);
+
 const GENERAL = new Set([
 	'id',
 	'name',
@@ -778,7 +781,9 @@ export class ImperiumStore {
 				if (!val || typeof val !== 'object') continue;
 				const id = ref_id(val);
 				if (!id) continue;
-				if (/(_id|Id)$/.test(field)) {
+				// String denormalizado en el original (no es ObjectId + $lookup).
+				// El form de pedidos lee `invoice_request_id` como id.
+				if (LIST_REF_KEEP_AS_ID.has(field)) {
 					out[field] = id;
 					continue;
 				}
