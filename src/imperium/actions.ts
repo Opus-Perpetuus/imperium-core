@@ -4014,7 +4014,7 @@ async function pedidos_sync_offline(ctx: Ctx) {
  */
 async function lista_de_precios_sync_offline(ctx: Ctx) {
 	const { rows } = await ctx.store.find_many('lista-de-precios', {
-		take: 5000,
+		take: 20000,
 		populate: false,
 	});
 	const listasDePrecios = rows.map((row) => {
