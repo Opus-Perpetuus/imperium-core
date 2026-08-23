@@ -168,8 +168,7 @@
     "ticketing-system-turn": {
       "customer_type": "TicketingSystemCustomerType",
       "assigned_box": "TicketingSystemBoxConfig",
-      "services": "TicketingSystemServiceType",
-      "priority_level": "TicketingSystemPriority"
+      "services": "TicketingSystemServiceType"
     },
     "ticketing-system-service-type": {
       "priority_level": "TicketingSystemPriority"
