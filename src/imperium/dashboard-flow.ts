@@ -112,17 +112,35 @@ function is_blocked_path(path: string) {
 		);
 }
 
-function resolve_widget_resource(store: ImperiumStore, raw: string) {
-	const name = raw
+function widget_resource_candidates(raw: string): string[] {
+	const kebab = raw
 		.replace(/^\/+/, '')
 		.replace(/Model$/, '')
 		.replace(/([a-z])([A-Z])/g, '$1-$2')
 		.toLowerCase();
-	if (store.has(name)) return name;
-	if (store.has(raw)) return raw;
-	const hit = [...store.locs.keys()].find(
-		(key) => key.replace(/-/g, '') === name.replace(/-/g, ''),
-	);
+	const collapsed = kebab.replace(/-/g, '');
+	const out = [kebab, raw, collapsed];
+	if (kebab && !kebab.endsWith('s')) out.push(`${kebab}s`);
+	if (kebab.endsWith('s') && kebab.length > 1) out.push(kebab.slice(0, -1));
+	if (kebab.endsWith('y') && kebab.length > 1) out.push(`${kebab.slice(0, -1)}ies`);
+	return [...new Set(out.filter(Boolean))];
+}
+
+function resolve_widget_resource(store: ImperiumStore, raw: string) {
+	for (const name of widget_resource_candidates(raw)) {
+		if (store.has(name)) return name;
+	}
+	const collapsed = String(raw ?? '')
+		.replace(/^\/+/, '')
+		.replace(/Model$/, '')
+		.replace(/([a-z])([A-Z])/g, '$1-$2')
+		.toLowerCase()
+		.replace(/-/g, '');
+	const hit = [...store.locs.keys()].find((key) => {
+		const k = key.replace(/-/g, '');
+		if (k === collapsed || k === `${collapsed}s` || `${k}s` === collapsed) return true;
+		return same_model_token(catalog_model_id(key), raw);
+	});
 	if (hit) return hit;
 	throw new Error(`El modelo '${raw}' no está disponible.`);
 }
