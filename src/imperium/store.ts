@@ -67,6 +67,15 @@ export const RESOURCE_ALIASES: Record<string, string> = {
 	usuario: 'user',
 };
 
+/** Unique de negocio que el original imponía en Mongoose y Postgres aún no indexa. */
+const UNIQUE_FIELDS: Record<string, string[]> = {
+	user: ['email'],
+};
+
+function unique_fields_for(resource: string): string[] {
+	return UNIQUE_FIELDS[resource] ?? UNIQUE_FIELDS[RESOURCE_ALIASES[resource] ?? ''] ?? [];
+}
+
 type RefBook = {
 	fields: Record<string, Record<string, string>>;
 	models: Record<string, string>;
@@ -735,7 +744,25 @@ export class ImperiumStore {
 		return rows[0] ?? null;
 	}
 
+	async assert_unique_business_keys(
+		resource: string,
+		doc: ImperiumDoc,
+		except_id?: string,
+	) {
+		for (const field of unique_fields_for(resource)) {
+			const raw = doc[field];
+			if (raw === undefined || raw === null) continue;
+			const value = String(raw).trim();
+			if (!value) continue;
+			const found = await this.find_where(resource, { [field]: value });
+			if (!found?._id || String(found._id) === String(except_id ?? '')) continue;
+			const label = field === '_ref' ? 'la referencia' : `el campo ${field}`;
+			throw new Error(`Ya existe un registro con ${label} "${value}".`);
+		}
+	}
+
 	async insert(resource: string, doc: ImperiumDoc): Promise<ImperiumDoc> {
+		await this.assert_unique_business_keys(resource, doc);
 		const cols = this.column_names(resource);
 		const jsons = this.json_cols(resource);
 		const row = from_imperium(doc, cols);
@@ -772,6 +799,7 @@ export class ImperiumStore {
 			_id: id,
 			payload: { ...as_object(existing), ...as_object(patch) },
 		};
+		await this.assert_unique_business_keys(resource, merged, id);
 		const row = from_imperium(merged, cols);
 		row.id = id;
 		row.updated_at = new Date().toISOString();
