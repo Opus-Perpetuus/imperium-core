@@ -711,6 +711,78 @@ const LIST_PROJECTIONS: Record<string, ListProjection> = {
 	tags: {
 		rows: ['_id', 'name', 'is_active', 'color', 'icon'],
 	},
+	'interactive-manual': {
+		rows: [
+			'_id',
+			'name',
+			'description',
+			'is_active',
+			'icon',
+			'module_model_id',
+			'is_default_for_module',
+			'steps',
+			'assigned_user_ids',
+			'assigned_group_ids',
+		],
+	},
+	'module-management': {
+		rows: [
+			'_id',
+			'name',
+			'is_enable',
+			'model_id',
+			'module_name',
+			'parent_module',
+			'module_location',
+		],
+	},
+	departments: {
+		rows: ['_id', 'name', 'is_active'],
+	},
+	'payroll-concept': {
+		rows: [
+			'_id',
+			'name',
+			'description',
+			'clave_interna',
+			'categoria',
+			'tipo_sat',
+			'concepto_default',
+			'is_system',
+			'is_active',
+		],
+	},
+	'lista-asistencia': {
+		rows: [
+			'_id',
+			'name',
+			'registro_asistencia_id',
+			'alumno_id',
+			'grupo_id',
+			'alumno_nombre_snapshot',
+			'numero_lista',
+			'estado',
+			'justificada',
+			'evidencia',
+			'registro_incidencia_id',
+			'is_active',
+		],
+	},
+	'record-rules': {
+		rows: [
+			'_id',
+			'name',
+			'description',
+			'is_active',
+			'allow_create',
+			'allow_read',
+			'allow_update',
+			'allow_delete',
+			'model_id',
+			'group_id',
+			'domain',
+		],
+	},
 };
 
 function projection_for(resource: string): ListProjection | undefined {
