@@ -258,6 +258,22 @@ const LIST_PROJECTIONS: Record<string, ListProjection> = {
 	payments: {
 		rows: ['_id', 'name', 'is_active', 'service_slug', 'amount', 'status', 'description'],
 	},
+	'invoice-request': {
+		rows: [
+			'_id',
+			'name',
+			'pedido_folio',
+			'contacto_nombre',
+			'estado',
+			'monto_total',
+			'monto_umbral',
+			'autorizado_cobranza',
+			'requiere_facturacion_dividida',
+			'cfdi_document_id',
+			'cfdi_document_status',
+			'cfdi_document_name',
+		],
+	},
 	'cfdi-document': {
 		rows: [
 			'_id',

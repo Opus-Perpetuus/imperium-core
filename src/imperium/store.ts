@@ -74,7 +74,10 @@ function field_map_for(resource: string): Record<string, string> | undefined {
 }
 
 /** Campos que el original guarda como id string (sin $lookup a name). */
-const LIST_REF_KEEP_AS_ID = new Set(['invoice_request_id']);
+const LIST_REF_KEEP_AS_ID = new Set(['invoice_request_id', 'cfdi_document_id']);
+
+/** `__get_statistics` del scaffold con `charts.daily_stats` (línea 30 días). */
+const DAILY_LINE_CHART = new Set(['cfdi-document', 'payments', 'dynamic-dashboard']);
 
 const GENERAL = new Set([
 	'id',
@@ -884,14 +887,49 @@ export class ImperiumStore {
 		if (resource === 'vehicle') {
 			domain.by_status = await vehicle_by_status(this, mongo_match);
 		}
+		const now = new Date();
+		if (DAILY_LINE_CHART.has(resource)) {
+			const daily_where = extra ? `created_at >= $1 AND ${extra}` : `created_at >= $1`;
+			const daily_rows = await this.sql.unsafe(
+				`SELECT LEFT(created_at, 10) AS day, COUNT(*)::int AS n
+         FROM ${qt}
+         WHERE ${daily_where}
+         GROUP BY 1
+         ORDER BY 1`,
+				params,
+			);
+			return {
+				total_records,
+				active_records,
+				inactive_records,
+				date_range: { from, to: now },
+				last_updated: now,
+				kpis: {
+					total_records: { label: 'Total', value: total_records },
+					active_records: { label: 'Activos', value: active_records },
+					inactive_records: { label: 'Inactivos', value: inactive_records },
+				},
+				charts: {
+					daily_stats: {
+						title: 'Registros por día (últimos 30 días)',
+						chart_type: 'line',
+						data: daily_rows.map((row) => ({
+							name: String((row as { day?: unknown }).day ?? ''),
+							value: Number((row as { n?: unknown }).n ?? 0),
+						})),
+					},
+				},
+				...domain,
+			};
+		}
 		return {
 			model_name: resource,
 			total_records,
 			active_records,
 			inactive_records,
 			recent_records_30d,
-			date_range_30d: { from, to: new Date() },
-			last_updated: new Date(),
+			date_range_30d: { from, to: now },
+			last_updated: now,
 			kpis: {
 				total_records: { label: 'Total', value: total_records },
 				active_records: { label: 'Activos', value: active_records },
