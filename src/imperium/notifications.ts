@@ -155,8 +155,14 @@ function sanitize_toast_entries(entries: unknown) {
 		.slice(0, 24) as Array<Record<string, unknown>>;
 }
 
-async function list_mine(store: ImperiumStore, uid: string, take = 2000) {
-	const { rows } = await store.find_many('notifications', { take, include_inactive: true });
+async function list_mine(store: ImperiumStore, uid: string, take = 20000) {
+	const { rows } = await store.find_many('notifications', {
+		mongo_match: {
+			$or: [{ recipientId: uid }, { user: uid }, { to: uid }],
+		},
+		take,
+		include_inactive: true,
+	});
 	return rows.filter((row) => recipient_of(row) === uid && row.is_active !== false);
 }
 
