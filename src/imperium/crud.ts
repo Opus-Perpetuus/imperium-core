@@ -21,6 +21,7 @@ import {
 	prepare_delivery_package_update,
 } from './delivery-package-flow.ts';
 import {
+	decorate_inventory_stock_quant_list,
 	prepare_delivery_return_create,
 	prepare_delivery_return_update,
 } from './delivery-return-flow.ts';
@@ -970,6 +971,15 @@ async function finalize_rows(
 		return project_list_docs(
 			resource,
 			store.flatten_list_docs(resource, decorate_inventory_reception_list(rows)),
+		);
+	}
+	if (resource === 'inventory-stock-quant' && mode === 'list') {
+		return project_list_docs(
+			resource,
+			store.flatten_list_docs(
+				resource,
+				await decorate_inventory_stock_quant_list(store, rows),
+			),
 		);
 	}
 	const decorated = decorate_rows(resource, rows);

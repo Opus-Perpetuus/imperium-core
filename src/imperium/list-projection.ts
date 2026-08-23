@@ -462,6 +462,36 @@ const LIST_PROJECTIONS: Record<string, ListProjection> = {
 			'is_active',
 		],
 	},
+	'inventory-stock-quant': {
+		rows: [
+			'_id',
+			'name',
+			'description',
+			'producto_nombre',
+			'producto_codigo',
+			'ubicacion_codigo',
+			'cantidad',
+			'cantidad_apartada',
+			'cantidad_disponible',
+			'producto_id',
+			'ubicacion_id',
+			'is_active',
+		],
+	},
+	'inventory-physical-count': {
+		rows: [
+			'_id',
+			'name',
+			'description',
+			'ubicacion_codigo',
+			'estado',
+			'fecha',
+			'contado_por',
+			'is_active',
+			'updatedAt',
+			'total_lineas',
+		],
+	},
 };
 
 function projection_for(resource: string): ListProjection | undefined {

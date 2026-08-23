@@ -305,3 +305,73 @@ function build_return_received_comment_text(devolucion: ImperiumDoc, ubicacion_c
 		.filter(Boolean)
 		.join('\n');
 }
+
+const OBJECT_ID = /^[a-fA-F0-9]{24}$/;
+
+/**
+ * El original proyecta `producto_id`/`ubicacion_id` con `$toString` y nombres
+ * denormalizados. En SQL esas columnas llegan vacías; el id vive en `producto`.
+ */
+export async function decorate_inventory_stock_quant_list(
+	store: ImperiumStore,
+	rows: ImperiumDoc[],
+): Promise<ImperiumDoc[]> {
+	const product_ids = new Set<string>();
+	const location_ids = new Set<string>();
+	for (const row of rows) {
+		const producto_id = text(row.producto_id) || ref_id(row.producto);
+		if (OBJECT_ID.test(producto_id)) product_ids.add(producto_id);
+		const ubicacion_id = text(row.ubicacion_id) || ref_id(row.ubicacion);
+		if (OBJECT_ID.test(ubicacion_id)) location_ids.add(ubicacion_id);
+	}
+	const products = new Map<string, ImperiumDoc>();
+	if (product_ids.size && store.has('products')) {
+		const { rows: found } = await store.find_many('products', {
+			ids: [...product_ids],
+			take: product_ids.size,
+			include_inactive: true,
+			populate: false,
+		});
+		for (const product of found) products.set(String(product._id), product);
+	}
+	const locations = new Map<string, ImperiumDoc>();
+	if (location_ids.size && store.has('inventory-internal-location')) {
+		const { rows: found } = await store.find_many('inventory-internal-location', {
+			ids: [...location_ids],
+			take: location_ids.size,
+			include_inactive: true,
+			populate: false,
+		});
+		for (const location of found) locations.set(String(location._id), location);
+	}
+	return rows.map((row) => {
+		const producto_id = text(row.producto_id) || ref_id(row.producto);
+		const raw_ubicacion = ref_id(row.ubicacion);
+		const ubicacion_id =
+			text(row.ubicacion_id) || (OBJECT_ID.test(raw_ubicacion) ? raw_ubicacion : '');
+		const product = products.get(producto_id);
+		const location = ubicacion_id ? locations.get(ubicacion_id) : undefined;
+		const cantidad = Number(row.cantidad ?? 0);
+		const cantidad_apartada = Number(row.cantidad_apartada ?? 0);
+		const cantidad_disponible =
+			row.cantidad_disponible != null && row.cantidad_disponible !== ''
+				? Number(row.cantidad_disponible)
+				: round_qty(cantidad - cantidad_apartada);
+		const ubicacion_codigo =
+			text(row.ubicacion_codigo) ||
+			text(location?.codigo) ||
+			text(location?.name) ||
+			(!OBJECT_ID.test(raw_ubicacion) ? raw_ubicacion : '');
+		return {
+			...row,
+			producto_id: producto_id || row.producto_id,
+			producto_nombre: text(row.producto_nombre) || text(product?.name) || row.producto_nombre,
+			producto_codigo:
+				text(row.producto_codigo) || text(product?.codigo) || row.producto_codigo,
+			ubicacion_id: ubicacion_id || row.ubicacion_id,
+			ubicacion_codigo: ubicacion_codigo || row.ubicacion_codigo,
+			cantidad_apartada,
+			cantidad_disponible,
+		};
+	});
+}
