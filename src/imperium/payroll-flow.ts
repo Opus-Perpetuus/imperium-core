@@ -111,7 +111,13 @@ export async function generate_payroll_drafts(store: ImperiumStore, period_id: s
 	const period_end = to_date(period.fecha_final) ?? period_start;
 	const branch = ref_id(period.branch_office);
 	const employees = store.has('employee')
-		? (await store.find_many('employee', { take: 2000, populate: false })).rows.filter((row) => {
+		? (
+				await store.find_many('employee', {
+					mongo_match: { salario_diario: { $gt: '0' } },
+					take: 2000,
+					populate: false,
+				})
+			).rows.filter((row) => {
 				if (!employee_eligible(row, period_start, period_end)) return false;
 				if (branch) {
 					const emp_branch = ref_id(row.branch_office) || text(row.branch_office);
