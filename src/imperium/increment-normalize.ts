@@ -494,7 +494,7 @@ async function normalize_index(params: {
 		}
 		const { rows: trackers } = await params.store.find_many('auto-increment-control', {
 			where: { model_name },
-			take: 200,
+			take: 20000,
 			include_inactive: true,
 		});
 		for (const tracker of trackers) {
