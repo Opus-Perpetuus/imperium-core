@@ -5610,7 +5610,10 @@ async function disabled_model_ids(ctx: Ctx) {
 	const disabled = new Set<string>();
 	if (!ctx.store.has('module-management')) return disabled;
 	const { rows } = await ctx.store.find_many('module-management', {
-		take: 500,
+		mongo_match: {
+			$or: [{ is_enable: false }, { is_active: false }],
+		},
+		take: 20000,
 		include_inactive: true,
 	});
 	for (const row of rows) {
