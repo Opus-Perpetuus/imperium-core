@@ -353,7 +353,7 @@ export async function build_access(store: ImperiumStore, user: ImperiumDoc) {
 		}
 	}
 	const rights = store.has('access-rights')
-		? (await store.find_many('access-rights', { take: 2000, include_inactive: false })).rows
+		? (await store.find_many('access-rights', { take: 20000, include_inactive: false })).rows
 		: [];
 	const mine = rights.filter((r) => {
 		const rid = String(r._id ?? '');
