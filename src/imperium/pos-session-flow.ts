@@ -2,6 +2,7 @@
  * Sesión POS y tickets: create/update, consecutivo y cierre como el service original.
  */
 import { as_array, as_object, type ImperiumDoc } from './envelope.ts';
+import { find_increment_control } from './custom-pattern-render.ts';
 import type { ImperiumStore } from './store.ts';
 
 const TICKET_VENTA = 'VENTA';
@@ -236,15 +237,7 @@ export async function preview_pos_consecutive(store: ImperiumStore): Promise<num
 		}
 	}
 	if (store.has('auto-increment-control')) {
-		const { rows } = await store.find_many('auto-increment-control', {
-			where: { increment_field: 'consecutivo' },
-			take: 20,
-			include_inactive: true,
-			populate: false,
-		});
-		const hit =
-			rows.find((row) => text(row.model_name) === 'PosSession') ??
-			rows.find((row) => text(row.name) === 'PosSession.consecutivo');
+		const hit = await find_increment_control(store, 'PosSession', 'consecutivo');
 		const current = Number(hit?.current_sequence ?? hit?.current ?? hit?.valor ?? 0);
 		if (Number.isFinite(current)) floor = Math.max(floor, current);
 	}
