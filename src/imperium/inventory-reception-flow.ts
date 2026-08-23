@@ -518,3 +518,28 @@ export async function list_pending_for_product(
 		})
 		.filter((row): row is ImperiumDoc => Boolean(row));
 }
+
+/**
+ * El original proyecta `purchase_order_id` = `$toString($purchase_order)` y
+ * `producto_id` = ids de `articulos.producto` para los smart buttons.
+ * En SQL esos campos son columnas vacías; el id vive en `purchase_order`.
+ */
+export function decorate_inventory_reception_list(rows: ImperiumDoc[]): ImperiumDoc[] {
+	return rows.map((row) => {
+		const purchase_order_id =
+			text(row.purchase_order_id) ||
+			ref_id(row.purchase_order) ||
+			ref_id(row.orden_compra);
+		const producto_id = as_array(row.articulos)
+			.map((raw) => {
+				const line = as_object(raw);
+				return ref_id(line.producto ?? line.producto_id);
+			})
+			.filter(Boolean);
+		return {
+			...row,
+			purchase_order_id: purchase_order_id || row.purchase_order_id,
+			producto_id: producto_id.length ? producto_id : row.producto_id,
+		};
+	});
+}

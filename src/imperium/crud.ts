@@ -35,7 +35,10 @@ import {
 	prepare_purchase_order_update,
 } from './purchase-order-flow.ts';
 import { sync_inbound_supplier_invoice } from './cfdi-from-purchase.ts';
-import { ensure_pending_reception_from_purchase_order } from './inventory-reception-flow.ts';
+import {
+	decorate_inventory_reception_list,
+	ensure_pending_reception_from_purchase_order,
+} from './inventory-reception-flow.ts';
 import {
 	notify_ticketing_rooms,
 	prepare_ticketing_turn_create,
@@ -962,6 +965,12 @@ async function finalize_rows(
 		const decorated = await decorate_delivery_routes(store, rows, mode);
 		const flat = store.flatten_list_docs(resource, decorated);
 		return mode === 'list' ? project_list_docs(resource, flat) : flat;
+	}
+	if (resource === 'inventory-reception' && mode === 'list') {
+		return project_list_docs(
+			resource,
+			store.flatten_list_docs(resource, decorate_inventory_reception_list(rows)),
+		);
 	}
 	const decorated = decorate_rows(resource, rows);
 	if (mode !== 'list') return decorated;
