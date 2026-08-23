@@ -154,7 +154,7 @@ export async function model_tracker_field_values(ctx: TrackerCtx) {
 	const is_reference = Boolean(ref_resource && ctx.store.has(ref_resource));
 
 	const { rows } = await ctx.store.find_many(resource, {
-		take: 10000,
+		take: 20000,
 		include_inactive: true,
 	});
 	const counts = parent_counts(rows, field_path);
@@ -162,7 +162,7 @@ export async function model_tracker_field_values(ctx: TrackerCtx) {
 	let options: FieldValueOption[];
 	if (is_reference && ref_resource) {
 		const { rows: refs } = await ctx.store.find_many(ref_resource, {
-			take: 10000,
+			take: 20000,
 			include_inactive: true,
 		});
 		const merged = new Map<string, FieldValueOption>();
