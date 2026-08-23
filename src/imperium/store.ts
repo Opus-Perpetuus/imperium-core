@@ -73,6 +73,7 @@ const UNIQUE_FIELDS: Record<string, string[]> = {
 	user: ['email'],
 	products: ['codigo'],
 	'physical-device': ['install_uuid'],
+	'cfdi-document': ['uuid'],
 };
 
 function unique_fields_for(resource: string): string[] {
