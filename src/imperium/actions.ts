@@ -3381,22 +3381,33 @@ async function invoice_cfdi_draft(ctx: Ctx) {
 }
 
 function message_participants(doc: ImperiumDoc, uid: string): string[] {
-	const parts = as_array(
+	const parts = id_list(
 		doc.participants ?? doc.participant_user_ids ?? doc.participantUserIds,
-	)
-		.map(String)
-		.filter(Boolean);
+	);
 	const extra = [
-		doc.from,
-		doc.to,
-		doc.created_by,
-		doc.senderUserId,
-		doc.sender_user_id,
-		...as_array(doc.recipientUserIds ?? doc.recipient_user_ids),
-	]
-		.map((v) => String(v ?? ''))
-		.filter(Boolean);
+		ref_id(doc.from),
+		ref_id(doc.to),
+		ref_id(doc.created_by),
+		ref_id(doc.senderUserId),
+		ref_id(doc.sender_user_id),
+		...id_list(doc.recipientUserIds ?? doc.recipient_user_ids),
+	].filter(Boolean);
 	return [...new Set([...parts, ...extra].filter(Boolean))];
+}
+
+function message_source_type(doc: ImperiumDoc): string {
+	return String(doc.sourceType ?? doc.source_type ?? '');
+}
+
+function message_conversation_key(doc: ImperiumDoc): string {
+	return String(doc.conversationKey ?? doc.conversation_key ?? '').trim();
+}
+
+function message_is_unread_for(doc: ImperiumDoc, uid: string): boolean {
+	if (!uid) return false;
+	const recipients = id_list(doc.recipientUserIds ?? doc.recipient_user_ids);
+	const read = id_list(doc.readByUserIds ?? doc.read_by_user_ids);
+	return recipients.includes(uid) && !read.includes(uid);
 }
 
 async function find_user_messages(store: ImperiumStore, uid: string, take = 20000) {
@@ -3419,35 +3430,44 @@ async function find_user_messages(store: ImperiumStore, uid: string, take = 2000
 async function my_conversations(ctx: Ctx) {
 	const uid = actor_id(ctx);
 	const { rows } = await find_user_messages(ctx.store, uid);
+	const chats = rows.filter((m) => {
+		if (message_source_type(m) !== 'chat') return false;
+		if (!message_conversation_key(m)) return false;
+		return id_list(
+			m.participantUserIds ?? m.participant_user_ids ?? m.participants,
+		).includes(uid);
+	});
 	const groups = new Map<string, ImperiumDoc[]>();
-	for (const m of rows) {
-		const parts = message_participants(m, uid);
-		if (!parts.includes(uid)) continue;
-		const others = parts.filter((p) => p !== uid).sort();
-		const key = others.join(',') || `self:${String(m._id ?? m.id ?? '')}`;
+	for (const m of chats) {
+		const key = message_conversation_key(m);
 		const list = groups.get(key) ?? [];
 		list.push(m);
 		groups.set(key, list);
 	}
-	const summaries = [...groups.entries()].map(([conversation_key, msgs]) => {
-		const latest = [...msgs].sort((a, b) =>
-			String(b.createdAt ?? b.updatedAt ?? '').localeCompare(
-				String(a.createdAt ?? a.updatedAt ?? ''),
-			),
-		)[0]!;
-		const participant_user_ids = message_participants(latest, uid);
-		const other_id = participant_user_ids.find((p) => p !== uid);
-		return {
-			conversation_key,
-			participant_user_ids,
-			other_participant: other_id
-				? { _id: other_id, name: String(latest.name ?? latest.title ?? other_id) }
-				: undefined,
-			latest_message: latest,
-			unread_count: 0,
-		};
-	});
-	return ok(summaries, 'Conversaciones');
+	const summaries = [...groups.entries()]
+		.map(([conversation_key, msgs]) => {
+			const latest = [...msgs].sort((a, b) => created_ms(b) - created_ms(a))[0]!;
+			const participant_user_ids = id_list(
+				latest.participantUserIds ??
+					latest.participant_user_ids ??
+					latest.participants,
+			);
+			const other_id =
+				participant_user_ids.find((p) => p !== uid) ?? participant_user_ids[0];
+			const unread_count = msgs.filter((m) => message_is_unread_for(m, uid)).length;
+			return {
+				conversation_key,
+				participant_user_ids,
+				other_participant: other_id
+					? { _id: other_id, name: String(latest.name ?? latest.title ?? other_id) }
+					: undefined,
+				latest_message: latest,
+				unread_count,
+			};
+		})
+		.sort((a, b) => created_ms(b.latest_message) - created_ms(a.latest_message))
+		.slice(0, 100);
+	return ok(summaries, 'Conversaciones cargadas correctamente.');
 }
 
 async function search_chat_messages(ctx: Ctx) {
