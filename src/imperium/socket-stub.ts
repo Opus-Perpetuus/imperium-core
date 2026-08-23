@@ -17,6 +17,67 @@ type Session = {
 	rooms: Set<string>;
 };
 
+/** Última posición del chofer, mismo TTL que CacheService del original. */
+const DRIVER_LOCATION_TTL_MS = 120_000;
+
+type DriverLocation = {
+	route_id: string;
+	vehicle_id?: string;
+	user_id?: string;
+	latitude: number;
+	longitude: number;
+	heading?: number;
+	speed?: number;
+	at: string;
+};
+
+const driver_positions = new Map<string, { payload: DriverLocation; expires: number }>();
+
+export function remember_driver_location(input: {
+	route_id?: string;
+	vehicle_id?: string;
+	user_id?: string;
+	latitude?: unknown;
+	longitude?: unknown;
+	heading?: unknown;
+	speed?: unknown;
+	at?: string;
+}): DriverLocation | null {
+	const route_id = String(input.route_id ?? '').trim();
+	const latitude = Number(input.latitude);
+	const longitude = Number(input.longitude);
+	if (!route_id || !Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+		return null;
+	}
+	const payload: DriverLocation = {
+		route_id,
+		vehicle_id: input.vehicle_id ? String(input.vehicle_id) : undefined,
+		user_id: input.user_id ? String(input.user_id) : undefined,
+		latitude,
+		longitude,
+		heading: Number.isFinite(Number(input.heading)) ? Number(input.heading) : undefined,
+		speed: Number.isFinite(Number(input.speed)) ? Number(input.speed) : undefined,
+		at: input.at ?? new Date().toISOString(),
+	};
+	driver_positions.set(route_id, {
+		payload,
+		expires: Date.now() + DRIVER_LOCATION_TTL_MS,
+	});
+	return payload;
+}
+
+export function last_driver_location(route_id: string): DriverLocation | null {
+	const id = String(route_id ?? '').trim();
+	if (!id) return null;
+	const entry = driver_positions.get(id);
+	if (!entry) return null;
+	if (entry.expires < Date.now()) {
+		driver_positions.delete(id);
+		return null;
+	}
+	return entry.payload;
+}
+
 const PING_MS = 25_000;
 const sessions = new Map<string, Session>();
 
@@ -172,9 +233,8 @@ function handle_socket_event(session: Session, chunk: string) {
 		return;
 	}
 	if (event === 'driverLocation' && args[1] && typeof args[1] === 'object') {
-		const data = args[1] as { route_id?: string };
-		const route_id = String(data.route_id ?? '').trim();
-		if (route_id) emit_to_room(`route:${route_id}:driver`, 'driver_location', args[1]);
+		const payload = remember_driver_location(args[1] as Parameters<typeof remember_driver_location>[0]);
+		if (payload) emit_to_room(`route:${payload.route_id}:driver`, 'driver_location', payload);
 	}
 }
 

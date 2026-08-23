@@ -82,7 +82,7 @@ import {
 	recreate_indexes,
 } from './module-data.ts';
 import { is_upload, persist_upload_as_attachment } from './uploads.ts';
-import { emit_messages_refresh } from './socket-stub.ts';
+import { emit_messages_refresh, last_driver_location } from './socket-stub.ts';
 import {
 	assert_report_template_write,
 	hydrate_loose_product_references,
@@ -319,7 +319,7 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'delivery-route:optimize_route':
 			return optimize_route(ctx);
 		case 'delivery-route:read_driver_location':
-			return one(ctx, 'delivery-route', ctx.params.id);
+			return read_driver_location(ctx);
 		case 'document-change-history:create_comment':
 			return create_history_comment(ctx);
 		case 'document-change-history:read_history':
@@ -1731,6 +1731,18 @@ async function read_packages_by_pedido(ctx: Ctx) {
 		flag === '1' || flag === 'true',
 	);
 	return ok(listed.rows, listed.message, listed.rows.length);
+}
+
+async function read_driver_location(ctx: Ctx) {
+	const route_id = String(ctx.params.id ?? '').trim();
+	if (!route_id) throw new Error('Se necesita el id de la ruta.');
+	const position = last_driver_location(route_id);
+	return ok(
+		position ? [position] : [],
+		position
+			? 'Ubicación del chofer obtenida correctamente'
+			: 'Sin ubicación reciente del chofer',
+	);
 }
 
 async function optimize_route(ctx: Ctx) {

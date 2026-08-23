@@ -172,6 +172,12 @@ const LIST_PROJECTIONS: Record<string, ListProjection> = {
 			'createdAt',
 		],
 	},
+	'citizen-report-problem': {
+		rows: ['_id', 'name', 'is_active', 'auto_priority', 'department'],
+	},
+	'citizen-report-reporting-medium': {
+		rows: ['_id', 'name', 'is_active'],
+	},
 	asociaciones: {
 		rows: ['_id', 'name', 'telefono', 'correo', 'ciudad', 'localidad', 'is_active'],
 	},
