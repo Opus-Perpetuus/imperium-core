@@ -179,6 +179,49 @@ async function insert_notification(store: ImperiumStore, doc: ImperiumDoc) {
 	});
 }
 
+/**
+ * Replica `MessagesService.notify_recipients`: cada destinatario
+ * distinto del remitente recibe una notificación `type: message`.
+ */
+export async function notify_message_recipients(store: ImperiumStore, message: ImperiumDoc) {
+	const sender = String(message.senderUserId ?? message.sender_user_id ?? '').trim();
+	const recipients = as_array(message.recipientUserIds ?? message.recipient_user_ids)
+		.map((item) => ref_id(item) || String(item ?? '').trim())
+		.filter((id) => id && id !== sender);
+	const title = String(
+		message.title || `Nuevo mensaje de ${message.senderName || 'sistema'}`,
+	);
+	for (const recipient_id of recipients) {
+		await insert_notification(store, {
+			recipientId: recipient_id,
+			type: 'message',
+			title,
+			message: String(message.message ?? ''),
+			isRead: false,
+			source: {
+				kind: 'message',
+				action: message.direction,
+				modelName: 'Message',
+				collectionName: '__messages',
+				documentId: message._id,
+				route: '/internal/notifications',
+				entityLabel: message.title,
+			},
+			payload: {
+				message_id: message._id,
+				direction: message.direction,
+				source_type: message.sourceType ?? message.source_type,
+				related_ticket_id: message.relatedTicketId ?? message.related_ticket_id,
+			},
+			actor: {
+				_id: sender,
+				name: message.senderName,
+				email: message.senderEmail,
+			},
+		});
+	}
+}
+
 export async function notification_toast_digest(ctx: NotificationCtx) {
 	const uid = actor_id(ctx);
 	if (!uid) throw new Error('No se encontró una sesión válida.');

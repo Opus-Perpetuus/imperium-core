@@ -64,6 +64,7 @@ import {
 	mark_all_notifications,
 	my_mentions,
 	my_notifications,
+	notify_message_recipients,
 	notification_apply_action,
 	notification_summary,
 	notification_toast_digest,
@@ -3832,6 +3833,7 @@ async function create_internal_message(ctx: Ctx) {
 		created_by: sender_user_id,
 		fecha: now(),
 	});
+	await notify_message_recipients(ctx.store, created);
 	return ok([created], 'Mensaje interno enviado correctamente.');
 }
 
@@ -3922,6 +3924,7 @@ async function create_interinstance_message(ctx: Ctx) {
 		created_by: sender_user_id,
 		fecha: now(),
 	});
+	await notify_message_recipients(ctx.store, created);
 	return ok(
 		[created],
 		forward_result.delivered
@@ -3980,6 +3983,7 @@ async function receive_interinstance_message(ctx: Ctx) {
 		from: sender_user_id,
 		fecha: now(),
 	});
+	await notify_message_recipients(ctx.store, created);
 	return ok([created], 'Mensaje interinstancia recibido correctamente.');
 }
 
