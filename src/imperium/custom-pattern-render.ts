@@ -283,7 +283,7 @@ export async function resolve_custom_values(
 		}
 		const { rows: conditions } = await store.find_many('custom-pattern-condition', {
 			where: { part_id: String(part._id) },
-			take: 200,
+			take: 20000,
 		});
 		let matched = '';
 		let matched_reset = false;
