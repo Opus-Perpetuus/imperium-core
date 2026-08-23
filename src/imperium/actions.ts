@@ -3555,20 +3555,65 @@ async function my_messages(ctx: Ctx) {
 	return ok(mine, 'Mensajes', mine.length);
 }
 
+async function mark_conversation_as_read(
+	store: ImperiumStore,
+	uid: string,
+	conversation_key: string,
+) {
+	if (!uid || !conversation_key || !store.has('messages')) return;
+	const { rows } = await store.find_many('messages', {
+		mongo_match: {
+			$or: [
+				{ conversationKey: conversation_key },
+				{ conversation_key: conversation_key },
+			],
+		},
+		take: 20000,
+		include_inactive: true,
+	});
+	for (const row of rows) {
+		if (message_source_type(row) !== 'chat') continue;
+		if (message_conversation_key(row) !== conversation_key) continue;
+		if (!message_is_unread_for(row, uid)) continue;
+		const read = id_list(row.readByUserIds ?? row.read_by_user_ids);
+		await store.update('messages', String(row._id), {
+			readByUserIds: [...read, uid],
+		});
+	}
+}
+
 async function conversation(ctx: Ctx) {
-	const other = String(ctx.params.participantId ?? '').trim();
+	const other = String(
+		ctx.params.participantId ?? ctx.url.searchParams.get('participant_id') ?? '',
+	).trim();
 	const uid = actor_id(ctx);
+	if (!other) throw new Error('Debes indicar el participante del chat.');
 	const expected_key = conversation_key_for([uid, other]);
-	const { rows } = await find_user_messages(ctx.store, uid);
+	if (!expected_key) throw new Error('No fue posible resolver la conversación solicitada.');
+	await mark_conversation_as_read(ctx.store, uid, expected_key);
+	const size = Math.min(
+		500,
+		Math.max(1, Number(ctx.url.searchParams.get('size') ?? 250) || 250),
+	);
+	const { rows } = await ctx.store.find_many('messages', {
+		mongo_match: {
+			$or: [
+				{ conversationKey: expected_key },
+				{ conversation_key: expected_key },
+			],
+		},
+		take: 20000,
+		include_inactive: true,
+	});
 	const mine = rows
-		.filter((m) => {
-			const key = String(m.conversationKey ?? m.conversation_key ?? '');
-			if (expected_key && key === expected_key) return true;
-			const parts = message_participants(m, uid);
-			return Boolean(other) && parts.includes(uid) && parts.includes(other);
-		})
-		.sort((a, b) => created_ms(a) - created_ms(b));
-	return ok(mine, 'Conversación');
+		.filter(
+			(m) =>
+				message_source_type(m) === 'chat' &&
+				message_conversation_key(m) === expected_key,
+		)
+		.sort((a, b) => created_ms(a) - created_ms(b))
+		.slice(0, size);
+	return ok(mine, 'Historial del chat cargado correctamente.');
 }
 
 function conversation_key_for(ids: string[]): string {
