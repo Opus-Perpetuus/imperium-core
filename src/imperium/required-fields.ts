@@ -109,6 +109,7 @@ const SCHEMA_DEFAULTS: Record<string, Record<string, unknown>> = {
 		stock_apartado_resultante: 0,
 		stock_disponible_resultante: 0,
 	},
+	'medical-file': { status: 'pendiente' },
 };
 
 export function apply_schema_setters(

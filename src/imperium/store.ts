@@ -37,7 +37,12 @@ import {
 	format_increment_real_value,
 	type PatternContext,
 } from './custom-pattern-render.ts';
-import { apply_schema_setters, assert_required_fields, FieldValidationError } from './required-fields.ts';
+import {
+	apply_schema_setters,
+	assert_required_fields,
+	FieldValidationError,
+	required_fields_for,
+} from './required-fields.ts';
 
 export type ExtraCol = {
 	name: string;
@@ -95,6 +100,31 @@ function apply_inventory_movement_ledger(resource: string, doc: ImperiumDoc) {
 	const apartado = Number(doc.stock_apartado_resultante ?? 0);
 	if (!Number.isFinite(total) || !Number.isFinite(apartado)) return;
 	doc.stock_disponible_resultante = round_qty(total - apartado);
+}
+
+const SQL_NAME_FALLBACKS = [
+	'nombre_completo',
+	'nombre_paciente',
+	'citizen_name',
+	'ticket_sequence',
+];
+
+/**
+ * El SQL del kit exige `name NOT NULL`. Modelos como Patient / MedicalFile no
+ * tienen `name` en Mongoose (el form original manda `nombre_completo` /
+ * `nombre_paciente`). Sin este relleno el INSERT truena con 23502.
+ */
+function ensure_sql_name(resource: string, doc: ImperiumDoc) {
+	if (doc.name != null && String(doc.name).trim() !== '') return;
+	if (required_fields_for(resource).includes('name')) return;
+	for (const field of SQL_NAME_FALLBACKS) {
+		const value = String(doc[field] ?? '').trim();
+		if (value) {
+			doc.name = value;
+			return;
+		}
+	}
+	doc.name = '';
 }
 
 /** Unique de negocio que el original imponía en Mongoose y Postgres aún no indexa. */
@@ -1052,6 +1082,7 @@ export class ImperiumStore {
 	async insert(resource: string, doc: ImperiumDoc): Promise<ImperiumDoc> {
 		apply_schema_setters(resource, doc);
 		apply_inventory_movement_ledger(resource, doc);
+		ensure_sql_name(resource, doc);
 		assert_required_fields(resource, doc);
 		assert_objectid_refs(resource, doc);
 		await this.assert_unique_business_keys(resource, doc);
