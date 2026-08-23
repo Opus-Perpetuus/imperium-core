@@ -48,7 +48,7 @@ export async function calcular_importe(
 	if (!id_tarifa) return { consumo_mts3, importe: 0 };
 	const { rows } = await store.find_many('tarifa', {
 		where: { id_tarifa },
-		take: 200,
+		take: 20000,
 		sort: 'consumo_minimo:asc',
 	});
 	if (!rows.length) return { consumo_mts3, importe: 0 };
