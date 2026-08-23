@@ -593,7 +593,7 @@ export class ImperiumStore {
 		if (opts.where) {
 			for (const [raw_key, v] of Object.entries(opts.where)) {
 				if (v === undefined) continue;
-				const k = raw_key === '_ref' ? 'ref' : raw_key;
+				const k = physical_filter_field(cols, raw_key);
 				if (v && typeof v === 'object' && !Array.isArray(v) && 'in' in v && Array.isArray((v as { in: unknown[] }).in)) {
 					const values = (v as { in: unknown[] }).in.map(String);
 					if (!values.length) continue;
@@ -603,6 +603,18 @@ export class ImperiumStore {
 					});
 					if (cols.has(k)) clauses.push(`${qident(k)} IN (${marks.join(', ')})`);
 					else clauses.push(payload_field_in_sql(k, marks));
+					continue;
+				}
+				if (is_range_filter(v)) {
+					const range = v as { gte?: unknown; lte?: unknown };
+					if (range.gte !== undefined && range.gte !== '') {
+						params.push(range_bound(String(range.gte), 'gte'));
+						clauses.push(range_compare_sql(cols, k, '>=', params.length));
+					}
+					if (range.lte !== undefined && range.lte !== '') {
+						params.push(range_bound(String(range.lte), 'lte'));
+						clauses.push(range_compare_sql(cols, k, '<=', params.length));
+					}
 					continue;
 				}
 				params.push(v);
@@ -1569,6 +1581,91 @@ function ref_id(value: unknown): string {
 
 function json_placeholder(index: number, json: boolean): string {
 	return json ? `$${index}::jsonb` : `$${index}`;
+}
+
+const FILTER_FIELD_ALIASES: Record<string, string> = {
+	updatedAt: 'updated_at',
+	createdAt: 'created_at',
+	_id: 'id',
+	_ref: 'ref',
+};
+
+const RANGE_FILTER_TIMEZONE = process.env.APP_TIMEZONE || 'America/Mexico_City';
+
+function physical_filter_field(cols: Set<string>, field: string) {
+	const mapped = FILTER_FIELD_ALIASES[field] ?? field;
+	if (mapped === 'fecha' && !cols.has('fecha') && cols.has('created_at')) return 'created_at';
+	return mapped;
+}
+
+function is_range_filter(value: unknown): value is { gte?: unknown; lte?: unknown } {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+	const rec = value as Record<string, unknown>;
+	return ('gte' in rec || 'lte' in rec) && !('in' in rec);
+}
+
+function range_bound(raw: string, op: 'gte' | 'lte') {
+	const text = raw.trim();
+	if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+		return zoned_day_bound(text, op === 'lte', RANGE_FILTER_TIMEZONE).toISOString();
+	}
+	const parsed = new Date(text);
+	return Number.isNaN(parsed.getTime()) ? text : parsed.toISOString();
+}
+
+function zoned_day_bound(date_only: string, end_of_day: boolean, tz: string) {
+	const [year, month, day] = date_only.split('-').map(Number);
+	const hour = end_of_day ? 23 : 0;
+	const minute = end_of_day ? 59 : 0;
+	const second = end_of_day ? 59 : 0;
+	const ms = end_of_day ? 999 : 0;
+	return local_wall_time_to_utc(year!, month!, day!, hour, minute, second, ms, tz);
+}
+
+function local_wall_time_to_utc(
+	year: number,
+	month: number,
+	day: number,
+	hour: number,
+	minute: number,
+	second: number,
+	ms: number,
+	tz: string,
+) {
+	let utc = Date.UTC(year, month - 1, day, hour, minute, second, ms);
+	for (let i = 0; i < 2; i++) {
+		const offset = tz_offset_ms(new Date(utc), tz);
+		utc = Date.UTC(year, month - 1, day, hour, minute, second, ms) - offset;
+	}
+	return new Date(utc);
+}
+
+function tz_offset_ms(date: Date, tz: string) {
+	const parts = new Intl.DateTimeFormat('en-US', {
+		timeZone: tz,
+		year: 'numeric',
+		month: '2-digit',
+		day: '2-digit',
+		hour: '2-digit',
+		minute: '2-digit',
+		second: '2-digit',
+		hourCycle: 'h23',
+	}).formatToParts(date);
+	const get = (type: string) => Number(parts.find((part) => part.type === type)?.value ?? 0);
+	return (
+		Date.UTC(get('year'), get('month') - 1, get('day'), get('hour'), get('minute'), get('second')) -
+		date.getTime()
+	);
+}
+
+function range_compare_sql(cols: Set<string>, field: string, op: '>=' | '<=', index: number) {
+	if (cols.has(field)) return `${qident(field)} ${op} $${index}`;
+	return payload_field_range_sql(field, op, `$${index}`);
+}
+
+function payload_field_range_sql(field: string, op: '>=' | '<=', param: string): string {
+	const key = literal(field);
+	return `(payload ->> ${key} ${op} ${param}::text OR (jsonb_typeof(payload) = 'string' AND ((payload #>> '{}')::jsonb) ->> ${key} ${op} ${param}::text))`;
 }
 
 /** Campo en payload, incluso si la celda jsonb quedó como string (doble encode). */

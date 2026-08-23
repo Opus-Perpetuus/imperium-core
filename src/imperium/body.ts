@@ -70,6 +70,11 @@ export async function read_imperium_body(
 	return {};
 }
 
+function query_flag(value: string | null) {
+	const raw = String(value ?? '').trim().toLowerCase();
+	return raw === '1' || raw === 'true';
+}
+
 const LIST_RESERVED = new Set([
 	'termino',
 	'q',
@@ -115,11 +120,24 @@ export function query_list(url: URL): {
 		sort = sort_raw;
 	}
 	const include_inactive =
-		url.searchParams.get('include_inactive') === '1' ||
-		url.searchParams.get('include_inactive') === 'true';
+		query_flag(url.searchParams.get('include_inactive')) ||
+		query_flag(url.searchParams.get('show_archived'));
 	const where: Record<string, unknown> = {};
 	for (const [key, value] of url.searchParams.entries()) {
 		if (LIST_RESERVED.has(key) || value === '') continue;
+		const range = key.match(/^(.*)__(gte|lte)$/);
+		if (range?.[1]) {
+			const field = range[1];
+			const op = range[2] as 'gte' | 'lte';
+			const current = where[field];
+			const bucket =
+				current && typeof current === 'object' && !Array.isArray(current) && !('in' in current)
+					? { ...(current as Record<string, unknown>) }
+					: {};
+			bucket[op] = value;
+			where[field] = bucket;
+			continue;
+		}
 		if (key in where) {
 			const prev = where[key];
 			const arr = Array.isArray((prev as { in?: unknown[] })?.in)
