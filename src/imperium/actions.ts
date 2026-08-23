@@ -1286,7 +1286,7 @@ async function list_auto_increment_controls(ctx: Ctx) {
 
 async function increment_consolidate(ctx: Ctx) {
 	const { rows } = await ctx.store.find_many('auto-increment-control', {
-		take: 5000,
+		take: 20000,
 		include_inactive: true,
 	});
 	const groups = new Map<string, ImperiumDoc[]>();
@@ -1315,12 +1315,6 @@ async function increment_consolidate(ctx: Ctx) {
 			const with_max = list.find(
 				(row) => Number(row.current_sequence ?? row.current ?? row.valor ?? 0) === max_sequence,
 			);
-			await ctx.store.update('auto-increment-control', String(keep._id), {
-				current_sequence: max_sequence,
-				current: max_sequence,
-				valor: max_sequence,
-				current_real_value: with_max?.current_real_value ?? keep.current_real_value ?? 0,
-			});
 			for (const extra of sorted.slice(1)) {
 				await ctx.sql.unsafe(
 					`DELETE FROM ${ctx.store.qt('auto-increment-control')} WHERE id = $1`,
@@ -1328,6 +1322,12 @@ async function increment_consolidate(ctx: Ctx) {
 				);
 				deleted += 1;
 			}
+			await ctx.store.update('auto-increment-control', String(keep._id), {
+				current_sequence: max_sequence,
+				current: max_sequence,
+				valor: max_sequence,
+				current_real_value: with_max?.current_real_value ?? keep.current_real_value ?? 0,
+			});
 			consolidated += 1;
 		} catch {
 			errors += 1;
