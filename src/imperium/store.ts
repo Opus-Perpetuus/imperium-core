@@ -1050,6 +1050,57 @@ export class ImperiumStore {
 				? Number((s.minutes.reduce((a, b) => a + b, 0) / s.minutes.length).toFixed(2))
 				: 0,
 		}));
+		const seven_rows = seven_keys.flatMap((k) => by_day.get(k) ?? []);
+		const four_keys = seven_keys.slice(-4);
+		const four_rows = four_keys.flatMap((k) => by_day.get(k) ?? []);
+		const customer_type_rows = four_rows.filter((r) => Boolean(ref_id(r.customer_type)));
+		const load_lookup = async (resource: string) =>
+			this.has(resource)
+				? (
+						await this.find_many(resource, {
+							take: 500,
+							include_inactive: false,
+							populate: false,
+						})
+					).rows
+				: [];
+		const [boxes, services, customer_types] = await Promise.all([
+			load_lookup('ticketing-system-box-config'),
+			load_lookup('ticketing-system-service-type'),
+			load_lookup('ticketing-system-customer-type'),
+		]);
+		const range_7 = { from: `${seven_keys[0]}T00:00:00.000Z`, to: `${ref_key}T23:59:59.999Z` };
+		const range_4 = {
+			from: `${four_keys[0] ?? ref_key}T00:00:00.000Z`,
+			to: `${ref_key}T23:59:59.999Z`,
+		};
+		const range_today = {
+			from: `${ref_key}T00:00:00.000Z`,
+			to: `${ref_key}T23:59:59.999Z`,
+		};
+		const turn_export = (
+			records: ImperiumDoc[],
+			title: string,
+			chart_type: 'pie' | 'line',
+			unit: string,
+			aggregation_method: string,
+			aggregation_description: string,
+			range: { from: string; to: string },
+			lookups: Record<string, ImperiumDoc[]>,
+		) => ({
+			records,
+			metadata: {
+				title,
+				unit,
+				total_records: records.length,
+				chart_type,
+				aggregation_method,
+				aggregation_description,
+				query_date_range: range,
+				filters_applied: { status: 'completado' },
+			},
+			lookups,
+		});
 		return {
 			daily_stats,
 			average_times,
@@ -1058,7 +1109,68 @@ export class ImperiumStore {
 			seven_days_stats,
 			services_stats,
 			customer_types_stats,
-			__export_data: {},
+			__export_data: {
+				daily_turns_pie: turn_export(
+					today_rows,
+					'Turnos del día por caja',
+					'pie',
+					'cantidad',
+					'count_by_box',
+					'Cantidad de turnos agrupados por caja',
+					range_today,
+					{ boxes },
+				),
+				average_times_7d_line: turn_export(
+					seven_rows,
+					'Tiempos promedio últimos 7 días',
+					'line',
+					'minutos',
+					'weighted_average_by_box_and_day',
+					'Promedio ponderado de tiempos por caja y día (últimos 7 días)',
+					range_7,
+					{ boxes },
+				),
+				turns_last_7d_line: turn_export(
+					seven_rows,
+					'Total turnos últimos 7 días',
+					'line',
+					'cantidad',
+					'count_by_box_and_day',
+					'Cantidad de turnos por caja y día (últimos 7 días)',
+					range_7,
+					{ boxes },
+				),
+				avg_times_per_day_line: turn_export(
+					seven_rows,
+					'Tiempos promedio por día',
+					'line',
+					'minutos',
+					'average_by_day',
+					'Tiempo promedio por día (últimos 7 días)',
+					range_7,
+					{ boxes },
+				),
+				services_stats_pie: turn_export(
+					four_rows,
+					'Tiempos por tipo de servicio',
+					'pie',
+					'minutos',
+					'weighted_average_by_service',
+					'Promedio ponderado de tiempos por tipo de servicio (últimos 4 días)',
+					range_4,
+					{ services },
+				),
+				customer_types_pie: turn_export(
+					customer_type_rows,
+					'Tiempos por tipo de cliente',
+					'pie',
+					'minutos',
+					'average_by_customer_type',
+					'Tiempo promedio por tipo de cliente (últimos 4 días)',
+					range_4,
+					{ customer_types, boxes },
+				),
+			},
 		};
 	}
 
