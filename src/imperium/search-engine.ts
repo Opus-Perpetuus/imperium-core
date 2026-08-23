@@ -50,7 +50,10 @@ class SearchEngineService {
 	}
 
 	uid(collection: string) {
-		return collection.replace(/[^a-zA-Z0-9_-]/g, '_');
+		const safe = collection.replace(/[^a-zA-Z0-9_-]/g, '_');
+		/* Prefijo propio: el Meili compartido con el Node original trae
+		 * índices homónimos (~5000 docs sin `search_text`) que vacían termino. */
+		return `imp_${safe}`;
 	}
 
 	async index_documents(collection: string, docs: SearchDocument[]) {

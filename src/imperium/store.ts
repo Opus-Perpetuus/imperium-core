@@ -554,13 +554,9 @@ export class ImperiumStore {
 		if (!opts.include_inactive) clauses.push(`is_active IS DISTINCT FROM false`);
 		if (opts.q && SearchEngine.is_enabled() && resource !== 'font-awesome-icon-catalog') {
 			const ids = await SearchEngine.search_ids(loc.collection, opts.q);
-			if (ids !== null) {
-				const empty_index = !ids.length && (await SearchEngine.index_is_empty(loc.collection));
-				if (!empty_index) {
-					const wanted = opts.ids?.length ? ids.filter((id) => opts.ids!.includes(id)) : ids;
-					if (!wanted.length) return { rows: [], total: 0 };
-					opts = { ...opts, q: '', ids: wanted };
-				}
+			if (ids !== null && ids.length) {
+				const wanted = opts.ids?.length ? ids.filter((id) => opts.ids!.includes(id)) : ids;
+				if (wanted.length) opts = { ...opts, q: '', ids: wanted };
 			}
 		}
 		if (opts.ids?.length) {
