@@ -102,6 +102,11 @@ const UNIQUE_COMPOSITES: Record<string, string[][]> = {
 	'documentation-page': [['slug', 'folder_path']],
 };
 
+/** Unique compuesto solo entre activos. */
+const UNIQUE_COMPOSITES_ACTIVE: Record<string, string[][]> = {
+	'user-pin': [['document_model', 'document_id']],
+};
+
 function unique_fields_for(resource: string): string[] {
 	return UNIQUE_FIELDS[resource] ?? UNIQUE_FIELDS[RESOURCE_ALIASES[resource] ?? ''] ?? [];
 }
@@ -118,6 +123,14 @@ function unique_fields_active_for(resource: string): string[] {
 	return (
 		UNIQUE_FIELDS_ACTIVE[resource] ??
 		UNIQUE_FIELDS_ACTIVE[RESOURCE_ALIASES[resource] ?? ''] ??
+		[]
+	);
+}
+
+function unique_composites_active_for(resource: string): string[][] {
+	return (
+		UNIQUE_COMPOSITES_ACTIVE[resource] ??
+		UNIQUE_COMPOSITES_ACTIVE[RESOURCE_ALIASES[resource] ?? ''] ??
 		[]
 	);
 }
@@ -931,6 +944,36 @@ export class ImperiumStore {
 			});
 			const found = rows[0];
 			if (!found?._id || String(found._id) === String(except_id ?? '')) continue;
+			const label = field === '_ref' ? 'la referencia' : `el campo ${field}`;
+			throw new Error(`Ya existe un registro con ${label} "${value}".`);
+		}
+		for (const fields of unique_composites_active_for(resource)) {
+			const where: Record<string, unknown> = {};
+			let skip = false;
+			for (const field of fields) {
+				const raw = doc[field];
+				if (raw === undefined || raw === null) {
+					skip = true;
+					break;
+				}
+				const value = typeof raw === 'string' ? raw.trim() : raw;
+				if (value === '') {
+					skip = true;
+					break;
+				}
+				where[field] = value;
+			}
+			if (skip) continue;
+			const { rows } = await this.find_many(resource, {
+				where,
+				take: 1,
+				include_inactive: false,
+				populate: false,
+			});
+			const found = rows[0];
+			if (!found?._id || String(found._id) === String(except_id ?? '')) continue;
+			const field = fields[0] ?? 'campo';
+			const value = String(where[field] ?? '').trim();
 			const label = field === '_ref' ? 'la referencia' : `el campo ${field}`;
 			throw new Error(`Ya existe un registro con ${label} "${value}".`);
 		}
