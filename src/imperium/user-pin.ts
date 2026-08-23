@@ -309,3 +309,293 @@ export async function verify_user_pin(
 		message: 'PIN verificado correctamente',
 	};
 }
+
+const USER_PIN_DEFAULT_LENGTH = 4;
+const USER_PIN_MAX_LENGTH = 12;
+const USER_PIN_NOTICE_MESSAGE =
+	'Guarda este PIN en un lugar seguro. El sistema no lo volvera a mostrar en texto plano.';
+
+export type UserPinWriteNotice = {
+	pin_id: string;
+	document_id: string;
+	document_model: string;
+	document_collection: string;
+	document_label?: string;
+	generated_pin: string;
+	pin_type: string;
+	pin_length: number;
+	pin_version: number;
+};
+
+function text(value: unknown): string {
+	return String(value ?? '').trim();
+}
+
+function as_bool(value: unknown, fallback = false): boolean {
+	if (typeof value === 'boolean') return value;
+	if (typeof value === 'number') return value !== 0;
+	if (value == null) return fallback;
+	return !['', '0', 'false', 'off', 'no'].includes(String(value).trim().toLowerCase());
+}
+
+function normalize_user_pin_type(value: unknown): 'numeric' | 'letters' {
+	return String(value ?? 'numeric').trim().toLowerCase() === 'letters' ? 'letters' : 'numeric';
+}
+
+function clamp_user_pin_length(value: unknown): number {
+	const parsed = Number(value ?? USER_PIN_DEFAULT_LENGTH);
+	if (!Number.isFinite(parsed)) return USER_PIN_DEFAULT_LENGTH;
+	return Math.max(1, Math.min(USER_PIN_MAX_LENGTH, Math.trunc(parsed)));
+}
+
+function normalize_user_pin_plain_value(value: unknown, pin_type: string): string {
+	const raw = String(value ?? '').trim().toUpperCase();
+	if (normalize_user_pin_type(pin_type) === 'letters') return raw.replace(/[^A-Z]/g, '');
+	return raw.replace(/\D/g, '');
+}
+
+function generate_user_pin_plain_value(pin_type: string, pin_length: number): string {
+	const alphabet =
+		normalize_user_pin_type(pin_type) === 'letters'
+			? 'ABCDEFGHJKLMNPQRSTUVWXYZ'
+			: '0123456789';
+	const length = clamp_user_pin_length(pin_length);
+	let generated = '';
+	for (let i = 0; i < length; i++) generated += alphabet[randomInt(0, alphabet.length)];
+	return generated;
+}
+
+function normalize_route_method(method: unknown): string {
+	return String(method ?? 'GET').trim().toUpperCase() || 'GET';
+}
+
+function normalize_route_path(path: unknown): string {
+	const trimmed = String(path ?? '').trim().replace(/\\/g, '/');
+	const with_slash = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+	const normalized = with_slash.replace(/\/+/g, '/');
+	return normalized === '/' ? normalized : normalized.replace(/\/$/, '');
+}
+
+function parse_routes_text(value: string): Array<{ method: string; path: string; route_key: string }> {
+	return value
+		.split(/\n+/)
+		.map((entry) => entry.trim())
+		.filter(Boolean)
+		.map((entry) => {
+			const [method, ...path_parts] = entry.split(/\s+/);
+			const path = path_parts.join(' ').trim();
+			if (!method || !path) {
+				throw new Error(`La ruta protegida "${entry}" debe usar el formato "METODO /ruta".`);
+			}
+			const normalized_method = normalize_route_method(method);
+			const normalized_path = normalize_route_path(path);
+			return {
+				method: normalized_method,
+				path: normalized_path,
+				route_key: `${normalized_method} ${normalized_path}`,
+			};
+		});
+}
+
+function resolve_protected_routes(
+	payload: ImperiumDoc,
+	document_model: string,
+): Array<{ method: string; path: string; route_key: string; label?: string }> {
+	const provided = Array.isArray(payload.protected_routes)
+		? as_array(payload.protected_routes).map(as_object)
+		: parse_routes_text(String(payload.protected_routes_text ?? ''));
+	const unique = new Map<string, { method: string; path: string; route_key: string; label?: string }>();
+	for (const raw of provided) {
+		const method = normalize_route_method(raw.method);
+		const path = normalize_route_path(raw.path);
+		const route_key = String(raw.route_key ?? `${method} ${path}`);
+		unique.set(route_key, {
+			method,
+			path,
+			route_key,
+			label: text(raw.label) || undefined,
+		});
+	}
+	if (!unique.size) {
+		throw new Error(`Debes indicar al menos una ruta protegida para ${document_model}.`);
+	}
+	return [...unique.values()];
+}
+
+function parse_assigned_user_tokens(payload: ImperiumDoc): string[] {
+	const from_array = as_array(payload.assigned_users).map((value) => String(value).trim()).filter(Boolean);
+	const from_text = String(payload.assigned_users_text ?? '')
+		.split(/[\n,]+/)
+		.map((value) => value.trim())
+		.filter(Boolean);
+	return [...new Set([...from_array, ...from_text])];
+}
+
+async function resolve_assigned_users(
+	store: ImperiumStore,
+	payload: ImperiumDoc,
+	is_global: boolean,
+	existing_users: unknown[],
+): Promise<string[]> {
+	if (is_global) return [];
+	const tokens = parse_assigned_user_tokens(payload);
+	if (!tokens.length && existing_users.length) return existing_users.map((id) => String(id));
+	if (!tokens.length) {
+		throw new Error(
+			'Debes indicar al menos un usuario asignado o marcar el PIN como global.',
+		);
+	}
+	const resolved_ids: string[] = [];
+	const resolved_tokens = new Set<string>();
+	for (const token of tokens) {
+		const by_id = /^[a-fA-F0-9]{24}$/.test(token) ? await store.find_id('user', token) : null;
+		const by_email =
+			by_id ??
+			(await store.find_where('user', { email: token.toLowerCase() })) ??
+			(await store.find_where('user', { ref: token }));
+		const hit = by_id ?? by_email;
+		if (!hit) continue;
+		resolved_ids.push(String(hit._id));
+		resolved_tokens.add(String(hit._id));
+		if (hit.email) resolved_tokens.add(String(hit.email).toLowerCase());
+		if (hit.ref) resolved_tokens.add(String(hit.ref).toLowerCase());
+	}
+	const unresolved = tokens.filter((token) => !resolved_tokens.has(token.toLowerCase()));
+	if (unresolved.length) {
+		throw new Error(`No se pudieron resolver los usuarios: ${unresolved.join(', ')}`);
+	}
+	return [...new Set(resolved_ids)];
+}
+
+function resolve_document_collection(store: ImperiumStore, document_model: string): string {
+	const hit = store
+		.available_mongoose_models()
+		.find((row) => row.model_name === document_model);
+	if (!hit) {
+		throw new Error(
+			`El modelo protegido "${document_model}" no existe en el tracker de Mongoose.`,
+		);
+	}
+	return hit.collection;
+}
+
+/**
+ * Create/update de PIN admin: mismo contrato que
+ * `UserPinService.prepare_write_payload` del original.
+ */
+export async function prepare_user_pin_write(
+	store: ImperiumStore,
+	incoming: ImperiumDoc,
+	existing: ImperiumDoc | null,
+): Promise<{ persisted: ImperiumDoc; notice?: UserPinWriteNotice }> {
+	const document_model = text(incoming.document_model ?? existing?.document_model);
+	const document_id = text(incoming.document_id ?? existing?.document_id);
+	if (!document_model) throw new Error('Debes indicar el modelo del documento protegido.');
+	if (!document_id) throw new Error('Debes indicar el id del documento protegido.');
+	const document_collection = resolve_document_collection(store, document_model);
+	const document_label = text(incoming.document_label ?? existing?.document_label);
+	const pin_type = normalize_user_pin_type(incoming.pin_type ?? existing?.pin_type);
+	const pin_length = clamp_user_pin_length(incoming.pin_length ?? existing?.pin_length);
+	const is_global = as_bool(incoming.is_global ?? existing?.is_global, false);
+	const protected_routes = resolve_protected_routes(incoming, document_model);
+	const assigned_users = await resolve_assigned_users(
+		store,
+		incoming,
+		is_global,
+		as_array(existing?.assigned_users),
+	);
+	const name =
+		text(incoming.name ?? existing?.name) ||
+		(document_label ? `PIN ${document_label}` : `PIN ${document_model} ${document_id}`);
+	const description =
+		text(incoming.description ?? existing?.description) ||
+		`PIN de proteccion para ${document_model} ${document_id}`;
+	const plain_pin_input = normalize_user_pin_plain_value(incoming.plain_pin, pin_type);
+	const should_regenerate = as_bool(incoming.regenerate_pin, false);
+	let pin_hash = String(existing?.pin_hash ?? '');
+	let pin_version = Number(existing?.pin_version ?? 1);
+	let notice: UserPinWriteNotice | undefined;
+	if (!existing || plain_pin_input || should_regenerate) {
+		const generated_pin = plain_pin_input || generate_user_pin_plain_value(pin_type, pin_length);
+		pin_hash = await hash_pin(generated_pin);
+		pin_version = existing ? Number(existing.pin_version ?? 1) + 1 : 1;
+		notice = {
+			pin_id: existing?._id ? String(existing._id) : '',
+			document_id,
+			document_model,
+			document_collection,
+			document_label: document_label || name,
+			generated_pin,
+			pin_type,
+			pin_length,
+			pin_version,
+		};
+	}
+	const persisted: ImperiumDoc = {
+		name,
+		description,
+		document_id,
+		document_collection,
+		document_model,
+		document_label,
+		is_global,
+		assigned_users,
+		protected_routes,
+		pin_hash,
+		pin_type,
+		pin_length,
+		pin_version,
+		auto_generated: Boolean(existing?.auto_generated ?? false),
+		feature_toggle_key:
+			document_model === 'PosSession'
+				? USER_PIN_POS_FEATURE_TOGGLE_KEY
+				: text(existing?.feature_toggle_key),
+		is_active: as_bool(incoming.is_active ?? existing?.is_active, true),
+	};
+	delete persisted.plain_pin;
+	delete persisted.regenerate_pin;
+	delete persisted.assigned_users_text;
+	delete persisted.protected_routes_text;
+	return { persisted, notice };
+}
+
+export function finalize_user_pin_notice(
+	notice: UserPinWriteNotice,
+	pin: { _id?: unknown },
+	actor_id?: string,
+): UserPinNotice {
+	const pin_id = String(pin._id ?? notice.pin_id);
+	const issued = issue_unlock_token(
+		{
+			_id: pin_id,
+			document_id: notice.document_id,
+			document_model: notice.document_model,
+			pin_version: notice.pin_version,
+		},
+		actor_id,
+	);
+	return {
+		...notice,
+		pin_id,
+		message: USER_PIN_NOTICE_MESSAGE,
+		unlock_token: issued.token,
+		unlock_expires_at: issued.expires_at,
+	};
+}
+
+export function serialize_user_pin_record(doc: ImperiumDoc): ImperiumDoc {
+	const routes = as_array(doc.protected_routes).map(as_object);
+	return {
+		...doc,
+		assigned_users_text: as_array(doc.assigned_users)
+			.map((value) => (typeof value === 'object' ? String(as_object(value)._id ?? '') : String(value)))
+			.filter(Boolean)
+			.join('\n'),
+		protected_routes_text: routes
+			.map((route) => `${String(route.method ?? '').trim()} ${String(route.path ?? '').trim()}`.trim())
+			.filter(Boolean)
+			.join('\n'),
+		plain_pin: '',
+		regenerate_pin: false,
+	};
+}

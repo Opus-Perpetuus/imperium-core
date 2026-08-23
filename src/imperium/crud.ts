@@ -5,7 +5,14 @@ import { as_array, as_object, fail, ok, type ImperiumDoc } from './envelope.ts';
 import { run_batch_import } from './batch-import.ts';
 import { query_list, read_imperium_body } from './body.ts';
 import type { ImperiumStore } from './store.ts';
-import { assert_pos_pin, maybe_create_pos_session_pin } from './user-pin.ts';
+import {
+	assert_pos_pin,
+	finalize_user_pin_notice,
+	maybe_create_pos_session_pin,
+	prepare_user_pin_write,
+	serialize_user_pin_record,
+	type UserPinWriteNotice,
+} from './user-pin.ts';
 import { apply_uploads, link_attachments_to_record } from './uploads.ts';
 import {
 	after_pedido_mutate,
@@ -677,10 +684,18 @@ export async function handle_crud(
 		if (resource === 'auto-increment-control') {
 			incoming = await prepare_increment_create(store, incoming);
 		}
+		let user_pin_notice: UserPinWriteNotice | undefined;
+		if (resource === 'user-pin') {
+			const prepared = await prepare_user_pin_write(store, incoming, null);
+			incoming = prepared.persisted;
+			user_pin_notice = prepared.notice;
+		}
 		const doc = await before_create(store, resource, incoming, actor);
 		const created = await store.insert(resource, doc);
 		await link_attachments_to_record(store, resource, created);
-		const notice = await after_create(store, resource, created, actor);
+		const notice = user_pin_notice
+			? finalize_user_pin_notice(user_pin_notice, created, actor ? String(actor._id) : '')
+			: await after_create(store, resource, created, actor);
 		if (is_pattern_parts_resource(resource)) await after_pattern_part_write(store, created);
 		if (is_pattern_condition_resource(resource)) {
 			await after_pattern_condition_create(store, created);
@@ -774,7 +789,9 @@ export async function handle_crud(
 																						? pattern_condition_create_message()
 																						: resource === 'auto-increment-control'
 																							? 'Control de auto-incremento creado correctamente.'
-																							: 'Ruta creada';
+																							: resource === 'user-pin'
+																								? 'PIN creado correctamente'
+																								: 'Ruta creada';
 		const created_body = notice
 			? { ...ok([populated], message), user_pin_notice: notice }
 			: ok([populated], message);
@@ -880,6 +897,13 @@ export async function handle_crud(
 		if (is_pattern_parts_resource(resource)) {
 			b = await prepare_pattern_part_update(b, previous);
 		}
+		let user_pin_notice: UserPinWriteNotice | undefined;
+		if (resource === 'user-pin') {
+			if (!previous) throw new Error('No se encontro el PIN a actualizar');
+			const prepared = await prepare_user_pin_write(store, b, previous);
+			b = prepared.persisted;
+			user_pin_notice = prepared.notice;
+		}
 		const updated = await store.update(resource, id, b);
 		if (updated) await link_attachments_to_record(store, resource, updated);
 		if (!updated) return json(resource, fail('No encontrado', 404).body, 404);
@@ -914,45 +938,49 @@ export async function handle_crud(
 			await store.populate_docs(resource, [shown]),
 			'detail',
 		);
-		return json(
-			resource,
-			await with_module_info(
-				store,
-				resource,
-			ok(
-				[populated],
-				resource === 'pedidos'
-					? 'Pedido actualizado'
-					: resource === 'delivery-package'
-						? 'Bulto actualizado correctamente'
-						: resource === 'delivery-return'
-							? 'Devolución actualizada correctamente'
-							: resource === 'purchase-order'
-								? 'Orden de compra actualizada correctamente'
-								: resource === 'vehicle'
-									? 'Vehículo actualizado correctamente'
-									: is_location_resource(resource)
-										? 'Ubicación actualizada correctamente'
-									: is_physical_count_resource(resource)
-										? 'Conteo actualizado correctamente'
-										: is_project_resource(resource)
-										? 'Proyecto actualizado correctamente'
-										: is_project_task_resource(resource)
-											? 'Tarea de proyecto actualizada correctamente'
-											: is_personal_task_resource(resource)
-												? 'Tarea personal actualizada correctamente'
-												: is_incidencia_resource(resource)
-													? 'Incidencia actualizada correctamente'
-													: is_registro_asistencia_resource(resource)
-														? 'Actualizado correctamente'
-														: is_lista_asistencia_resource(resource)
-															? 'Fila de asistencia actualizada correctamente'
-															: is_pattern_parts_resource(resource)
-																? pattern_part_update_message()
-																: 'Actualizado correctamente',
-			),
-			),
-		);
+		const update_message =
+			resource === 'pedidos'
+				? 'Pedido actualizado'
+				: resource === 'delivery-package'
+					? 'Bulto actualizado correctamente'
+					: resource === 'delivery-return'
+						? 'Devolución actualizada correctamente'
+						: resource === 'purchase-order'
+							? 'Orden de compra actualizada correctamente'
+							: resource === 'vehicle'
+								? 'Vehículo actualizado correctamente'
+								: is_location_resource(resource)
+									? 'Ubicación actualizada correctamente'
+								: is_physical_count_resource(resource)
+									? 'Conteo actualizado correctamente'
+									: is_project_resource(resource)
+									? 'Proyecto actualizado correctamente'
+									: is_project_task_resource(resource)
+										? 'Tarea de proyecto actualizada correctamente'
+										: is_personal_task_resource(resource)
+											? 'Tarea personal actualizada correctamente'
+											: is_incidencia_resource(resource)
+												? 'Incidencia actualizada correctamente'
+												: is_registro_asistencia_resource(resource)
+													? 'Actualizado correctamente'
+													: is_lista_asistencia_resource(resource)
+														? 'Fila de asistencia actualizada correctamente'
+														: is_pattern_parts_resource(resource)
+															? pattern_part_update_message()
+															: resource === 'user-pin'
+																? 'PIN actualizado correctamente'
+																: 'Actualizado correctamente';
+		const update_body = user_pin_notice
+			? {
+					...ok([populated], update_message),
+					user_pin_notice: finalize_user_pin_notice(
+						user_pin_notice,
+						updated,
+						actor ? String(actor._id) : '',
+					),
+				}
+			: ok([populated], update_message);
+		return json(resource, await with_module_info(store, resource, update_body));
 	}
 	if (method === 'PATCH' && segs.length === 1) {
 		assert_inventory_ledger_write(resource, 'update');
@@ -1236,6 +1264,7 @@ function decorate_rows(resource: string, rows: ImperiumDoc[]): ImperiumDoc[] {
 	if (resource === 'pos-tickets') return rows.map(decorate_pos_ticket);
 	if (is_physical_count_resource(resource)) return rows.map(decorate_physical_count);
 	if (resource === 'custom-field-control') return rows.map(decorate_custom_field_control);
+	if (resource === 'user-pin') return rows.map(serialize_user_pin_record);
 	return rows;
 }
 
