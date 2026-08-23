@@ -1247,7 +1247,7 @@ async function purchase_order_parse_document(ctx: Ctx) {
 async function list_auto_increment_controls(ctx: Ctx) {
 	const q = query_list(ctx.url);
 	const { rows } = await ctx.store.find_many('auto-increment-control', {
-		take: 5000,
+		take: 20000,
 		include_inactive: true,
 	});
 	const mapped = rows
