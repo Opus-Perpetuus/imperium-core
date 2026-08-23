@@ -3182,7 +3182,7 @@ async function stock_consistency(ctx: Ctx) {
 	// aparece como inconsistente con nombre vacío y existencia 0.
 	const products = (
 		await ctx.store.find_many('products', {
-			take: 5000,
+			take: 20000,
 			populate: false,
 			include_inactive: true,
 		})
@@ -3190,7 +3190,7 @@ async function stock_consistency(ctx: Ctx) {
 	const quants = ctx.store.has('inventory-stock-quant')
 		? (
 				await ctx.store.find_many('inventory-stock-quant', {
-					take: 10000,
+					take: 20000,
 					populate: false,
 					include_inactive: true,
 				})
