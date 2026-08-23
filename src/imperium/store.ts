@@ -26,7 +26,7 @@ import {
 	format_increment_real_value,
 	type PatternContext,
 } from './custom-pattern-render.ts';
-import { apply_schema_setters, assert_required_fields } from './required-fields.ts';
+import { apply_schema_setters, assert_required_fields, FieldValidationError } from './required-fields.ts';
 
 export type ExtraCol = {
 	name: string;
@@ -90,6 +90,89 @@ const REFS: RefBook = JSON.parse(
 
 function field_map_for(resource: string): Record<string, string> | undefined {
 	return REFS.fields[resource] ?? REFS.fields[RESOURCE_ALIASES[resource] ?? ''];
+}
+
+const OBJECT_ID_HEX = /^[a-fA-F0-9]{24}$/;
+
+function objectid_model_label(resource: string) {
+	const canonical = RESOURCE_ALIASES[resource] ?? resource;
+	return canonical.replace(/(^|-)([a-z])/g, (_, __, letter: string) => letter.toUpperCase());
+}
+
+function objectid_cast_message(value: unknown, path: string) {
+	const type = value === null ? 'null' : Array.isArray(value) ? 'Array' : typeof value;
+	const shown = typeof value === 'string' ? value : JSON.stringify(value);
+	return `Cast to ObjectId failed for value "${shown}" (type ${type}) at path "${path}" because of "BSONError"`;
+}
+
+function assert_objectid_leaf(
+	value: unknown,
+	path: string,
+	add: (path: string, raw: unknown) => void,
+) {
+	if (value == null || value === '') return;
+	if (Array.isArray(value)) {
+		value.forEach((item, index) => assert_objectid_leaf(item, `${path}.${index}`, add));
+		return;
+	}
+	if (typeof value === 'object') {
+		const id = ref_id(value);
+		if (!id) return;
+		if (!OBJECT_ID_HEX.test(id)) add(path, id);
+		return;
+	}
+	const text = String(value).trim();
+	if (!text) return;
+	if (!OBJECT_ID_HEX.test(text)) add(path, value);
+}
+
+function visit_objectid_path(
+	value: unknown,
+	segs: string[],
+	path: string,
+	add: (path: string, raw: unknown) => void,
+) {
+	if (!segs.length) {
+		assert_objectid_leaf(value, path, add);
+		return;
+	}
+	if (value == null) return;
+	if (Array.isArray(value)) {
+		value.forEach((item, index) => {
+			visit_objectid_path(item, segs, path ? `${path}.${index}` : String(index), add);
+		});
+		return;
+	}
+	if (typeof value !== 'object') return;
+	const [head, ...rest] = segs;
+	if (!head) return;
+	const next = path ? `${path}.${head}` : head;
+	visit_objectid_path((value as Record<string, unknown>)[head], rest, next, add);
+}
+
+/**
+ * Replica el CastError de Mongoose 9 (ObjectId inválido → ValidationError + field_errors).
+ */
+function assert_objectid_refs(resource: string, doc: ImperiumDoc) {
+	const field_map = field_map_for(resource);
+	if (!field_map) return;
+	const field_errors: Record<string, string[]> = {};
+	const add = (path: string, raw: unknown) => {
+		const message = objectid_cast_message(raw, path);
+		if (!field_errors[path]) field_errors[path] = [];
+		if (!field_errors[path].includes(message)) field_errors[path].push(message);
+	};
+	for (const field of Object.keys(field_map)) {
+		visit_objectid_path(doc, field.split('.'), '', add);
+	}
+	if (!Object.keys(field_errors).length) return;
+	const detail = Object.entries(field_errors)
+		.map(([field, messages]) => `${field}: ${messages[0]}`)
+		.join(', ');
+	throw new FieldValidationError(
+		field_errors,
+		`${objectid_model_label(resource)} validation failed: ${detail}`,
+	);
 }
 
 /** Campos que el original guarda como id string (sin $lookup a name). */
@@ -767,6 +850,7 @@ export class ImperiumStore {
 	async insert(resource: string, doc: ImperiumDoc): Promise<ImperiumDoc> {
 		apply_schema_setters(resource, doc);
 		assert_required_fields(resource, doc);
+		assert_objectid_refs(resource, doc);
 		await this.assert_unique_business_keys(resource, doc);
 		const cols = this.column_names(resource);
 		const jsons = this.json_cols(resource);
@@ -806,6 +890,7 @@ export class ImperiumStore {
 		};
 		apply_schema_setters(resource, merged);
 		assert_required_fields(resource, merged);
+		assert_objectid_refs(resource, merged);
 		await this.assert_unique_business_keys(resource, merged, id);
 		const row = from_imperium(merged, cols);
 		row.id = id;
