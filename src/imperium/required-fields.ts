@@ -22,6 +22,13 @@ const STRING_LIMITS: StringLimits = JSON.parse(
 	readFileSync(join(import.meta.dir, 'schema-string-limits.json'), 'utf8'),
 ) as StringLimits;
 
+type MatchRule = { pattern: string; flags: string; message: string };
+const MATCH_RULES: Record<string, Record<string, MatchRule>> = (
+	JSON.parse(readFileSync(join(import.meta.dir, 'schema-match.json'), 'utf8')) as {
+		match: Record<string, Record<string, MatchRule>>;
+	}
+).match;
+
 const RESOURCE_ALIASES: Record<string, string> = {
 	proyectos: 'planeacion-proyectos',
 	'mis-tareas': 'planeacion-mis-tareas',
@@ -75,6 +82,19 @@ export function assert_required_fields(resource: string, doc: Record<string, unk
 	for (const [field, rule] of Object.entries(maxs)) {
 		for (const value of string_values(doc[field])) {
 			if (value.length > rule.max) add(field, rule.message);
+		}
+	}
+	const matches = MATCH_RULES[canonical] ?? MATCH_RULES[resource] ?? {};
+	for (const [field, rule] of Object.entries(matches)) {
+		if (is_missing(doc[field])) continue;
+		let regex: RegExp;
+		try {
+			regex = new RegExp(rule.pattern, rule.flags);
+		} catch {
+			continue;
+		}
+		for (const value of string_values(doc[field])) {
+			if (!regex.test(value)) add(field, rule.message);
 		}
 	}
 	if (!Object.keys(field_errors).length) return;

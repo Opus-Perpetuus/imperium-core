@@ -1,0 +1,37 @@
+{
+  "match": {
+    "tags": {
+      "color": {
+        "pattern": "^#[0-9a-fA-F]{6}$",
+        "flags": "",
+        "message": "El color debe ser un valor hexadecimal válido"
+      }
+    },
+    "cfdi-issuer-profile": {
+      "lugar_expedicion": {
+        "pattern": "^\\d{5}$",
+        "flags": "",
+        "message": "Lugar de expedición debe ser un CP de 5 dígitos"
+      }
+    },
+    "citizen-report": {
+      "citizen_email": {
+        "pattern": "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$",
+        "flags": "",
+        "message": "Debes definir un email valido"
+      },
+      "citizen_phone": {
+        "pattern": "^\\+?[1-9]\\d{7,14}$",
+        "flags": "",
+        "message": "Debes definir un telefono valido"
+      }
+    },
+    "ticketing-system-turn-youtube": {
+      "video_id": {
+        "pattern": "^[A-Za-z0-9_-]{11}$",
+        "flags": "",
+        "message": "ID de YouTube inválido: Debe tener exactamente 11 caracteres alfanuméricos, guiones o guiones bajos."
+      }
+    }
+  }
+}
