@@ -19,6 +19,13 @@ import { vehicle_by_status } from './vehicle-flow.ts';
 import { pedidos_sales_stats } from './pedidos-flow.ts';
 import { purchase_order_stats } from './purchase-order-flow.ts';
 import { record_document_history } from './history.ts';
+import {
+	find_increment_control,
+	find_or_create_increment_segment,
+	format_increment_real_value,
+	pattern_reset_key,
+	type PatternContext,
+} from './custom-pattern-render.ts';
 
 export type ExtraCol = {
 	name: string;
@@ -470,11 +477,20 @@ export class ImperiumStore {
 	async next_auto_increment(
 		model_name: string,
 		increment_field: string,
-		opts: { resource?: string } = {},
+		opts: { resource?: string; context?: PatternContext } = {},
 	): Promise<number> {
+		const config = this.has('auto-increment-control')
+			? await find_increment_control(this, model_name, increment_field)
+			: null;
+		const reset_key = pattern_reset_key(String(config?.custom_pattern ?? ''));
 		let floor = 0;
 		const resource = opts.resource;
-		if (resource && this.has(resource) && this.column_names(resource).has(increment_field)) {
+		if (
+			!reset_key &&
+			resource &&
+			this.has(resource) &&
+			this.column_names(resource).has(increment_field)
+		) {
 			const col = qident(increment_field);
 			const rows = await this.sql.unsafe(
 				`SELECT MAX(CASE
@@ -486,28 +502,35 @@ export class ImperiumStore {
 			floor = Number(rows[0]?.m ?? 0) || 0;
 		}
 		if (!this.has('auto-increment-control')) return floor + 1;
+		const target = config
+			? await find_or_create_increment_segment(this, config, reset_key)
+			: null;
+		if (!target?._id) return floor + 1;
 		const qt = this.qt('auto-increment-control');
 		const now = new Date().toISOString();
 		const updated = await this.sql.unsafe(
 			`UPDATE ${qt}
 			 SET current_sequence = GREATEST(COALESCE(current_sequence, 0), $1) + 1,
 			     updated_at = $2
-			 WHERE increment_field = $3
-			   AND (model_name = $4 OR name = $5)
+			 WHERE id = $3
 			 RETURNING id, current_sequence`,
-			[floor, now, increment_field, model_name, `${model_name}.${increment_field}`],
+			[floor, now, String(target._id)],
 		);
 		const row = updated[0] as { id?: string; current_sequence?: number } | undefined;
 		if (row?.current_sequence == null) return floor + 1;
 		const next = Number(row.current_sequence);
-		if (row.id) {
-			await this.update('auto-increment-control', String(row.id), {
-				current_sequence: next,
-				current: next,
-				valor: next,
-				current_real_value: next,
-			});
-		}
+		const real_value = await format_increment_real_value(
+			this,
+			config ?? target,
+			next,
+			opts.context,
+		);
+		await this.update('auto-increment-control', String(row.id), {
+			current_sequence: next,
+			current: next,
+			valor: next,
+			current_real_value: real_value,
+		});
 		return next;
 	}
 

@@ -321,6 +321,55 @@ async function external_sequences(
 	return out;
 }
 
+export function is_global_ref(value: unknown): boolean {
+	if (value == null) return true;
+	const text = typeof value === 'string' ? value.trim() : String(value);
+	return text === '' || text === 'null';
+}
+
+const DATE_RESET_TOKENS = [
+	'yy',
+	'yyyy',
+	'LL',
+	'LLL',
+	'LLLL',
+	'WW',
+	'ooo',
+	'dd',
+	'c',
+	'ccc',
+	'cccc',
+] as const;
+
+export function pattern_reset_key(pattern: string): string | null {
+	if (!pattern) return null;
+	const fragments: string[] = [];
+	for (const token of DATE_RESET_TOKENS) {
+		const matches = pattern.match(new RegExp(`\\[${token}\\]`, 'g'));
+		if (!matches?.length) continue;
+		const replacement = date_token_value(token);
+		for (let i = 0; i < matches.length; i++) fragments.push(replacement);
+	}
+	return fragments.join('') || null;
+}
+
+export function tracker_unique_ref(
+	control: ImperiumDoc,
+	ref_value: unknown,
+): string {
+	return [
+		control.collection ?? '',
+		control.model_name ?? '',
+		control.increment_field ?? '',
+		control.index_name ?? control.increment_field ?? '',
+		JSON.stringify(ref_value ?? null),
+	].join('::');
+}
+
+function field_matches(row: ImperiumDoc, increment_field: string) {
+	return String(row.increment_field ?? row.campo ?? '') === increment_field;
+}
+
 export async function find_increment_control(
 	store: ImperiumStore,
 	model_name: string,
@@ -329,14 +378,89 @@ export async function find_increment_control(
 	if (!store.has('auto-increment-control') || !model_name) return null;
 	const { rows } = await store.find_many('auto-increment-control', {
 		where: { model_name },
-		take: 20,
+		take: 50,
 		include_inactive: true,
 	});
+	const matches = increment_field
+		? rows.filter((row) => field_matches(row, increment_field))
+		: rows;
 	return (
-		rows.find((row) => String(row.increment_field ?? row.campo ?? '') === increment_field) ??
+		matches.find((row) => is_global_ref(row.ref_value)) ??
+		matches[0] ??
+		rows.find((row) => is_global_ref(row.ref_value)) ??
 		rows[0] ??
 		null
 	);
+}
+
+export async function find_increment_segment(
+	store: ImperiumStore,
+	control: ImperiumDoc,
+	reset_key: string | null,
+): Promise<ImperiumDoc | null> {
+	if (!reset_key) return control;
+	const model_name = String(control.model_name ?? '');
+	const increment_field = String(control.increment_field ?? '');
+	const { rows } = await store.find_many('auto-increment-control', {
+		where: { model_name },
+		take: 100,
+		include_inactive: true,
+	});
+	return (
+		rows.find(
+			(row) =>
+				field_matches(row, increment_field) && String(row.ref_value ?? '') === reset_key,
+		) ?? null
+	);
+}
+
+export async function find_or_create_increment_segment(
+	store: ImperiumStore,
+	control: ImperiumDoc,
+	reset_key: string | null,
+): Promise<ImperiumDoc> {
+	const existing = await find_increment_segment(store, control, reset_key);
+	if (existing) return existing;
+	if (!reset_key) return control;
+	const increment_field = String(control.increment_field ?? 'sequence');
+	const model_name = String(control.model_name ?? '');
+	return store.insert('auto-increment-control', {
+		name: `${model_name}.${increment_field}`,
+		model_name,
+		collection: control.collection ?? '',
+		increment_field,
+		index_name: control.index_name ?? increment_field,
+		type: control.type ?? 'custom',
+		custom_pattern: control.custom_pattern ?? null,
+		current_sequence: 0,
+		current: 0,
+		valor: 0,
+		current_real_value: 0,
+		ref_value: reset_key,
+		segment: reset_key,
+		_unique_string_reference: tracker_unique_ref(control, reset_key),
+		is_active: true,
+	});
+}
+
+export async function resolve_increment_preview_target(
+	store: ImperiumStore,
+	model_name: string,
+	increment_field: string,
+): Promise<{ config: ImperiumDoc | null; target: ImperiumDoc | null }> {
+	const config = await find_increment_control(store, model_name, increment_field);
+	if (!config) return { config: null, target: null };
+	const reset_key = pattern_reset_key(String(config.custom_pattern ?? ''));
+	const target = reset_key
+		? ((await find_increment_segment(store, config, reset_key)) ?? {
+				...config,
+				current_sequence: 0,
+				current: 0,
+				valor: 0,
+				ref_value: reset_key,
+			})
+		: config;
+	return { config, target };
 }
 
 export async function format_increment_real_value(

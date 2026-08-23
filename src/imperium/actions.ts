@@ -20,8 +20,8 @@ import {
 } from './location-path.ts';
 import { compose_location_code } from './location-flow.ts';
 import {
-	find_increment_control,
 	format_increment_real_value,
+	resolve_increment_preview_target,
 } from './custom-pattern-render.ts';
 import { AguaMssqlService } from './agua-mssql.ts';
 import { calcular_importe } from './agua-importe.ts';
@@ -1338,9 +1338,19 @@ async function increment_counter(ctx: Ctx) {
 		for (let i = 0; i < amount; i++) {
 			next = await ctx.store.next_auto_increment(model_name, increment_field);
 		}
-	} else {
-		next += amount;
+		const { target } = await resolve_increment_preview_target(
+			ctx.store,
+			model_name,
+			increment_field,
+		);
+		const shown = target ?? (await ctx.store.find_id('auto-increment-control', String(doc._id)));
+		const real_value = shown?.current_real_value ?? next;
+		return ok(
+			[{ ...(shown ?? {}), real_value, sequence: next, next_sequence: next }],
+			`Secuencia incrementada a ${String(real_value)}.`,
+		);
 	}
+	next += amount;
 	const real_value = await format_increment_real_value(ctx.store, doc, next);
 	const updated = await ctx.store.update('auto-increment-control', String(doc._id), {
 		current_sequence: next,
@@ -1360,16 +1370,25 @@ async function preview_counter(ctx: Ctx) {
 	const increment_field = String(ctx.params.increment_field ?? '').trim() || 'sequence';
 	if (!model_name) throw new Error('Debes indicar el nombre del modelo.');
 	try {
-		const hit = await find_increment_control(ctx.store, model_name, increment_field);
-		const next_sequence = Number(hit?.current_sequence ?? hit?.current ?? hit?.valor ?? 0) + 1;
-		const next_real_value = await format_increment_real_value(ctx.store, hit, next_sequence);
+		const { config, target } = await resolve_increment_preview_target(
+			ctx.store,
+			model_name,
+			increment_field,
+		);
+		const next_sequence =
+			Number(target?.current_sequence ?? target?.current ?? target?.valor ?? 0) + 1;
+		const next_real_value = await format_increment_real_value(
+			ctx.store,
+			config ?? target,
+			next_sequence,
+		);
 		return ok(
 			[
 				{
 					next_sequence,
 					next_consecutive: next_sequence,
 					next_real_value,
-					tracker: hit ?? null,
+					tracker: target ?? null,
 				},
 			],
 			`Siguiente valor: ${String(next_real_value)}.`,
