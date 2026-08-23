@@ -1549,7 +1549,7 @@ async function read_chofer_queue(ctx: Ctx) {
 		);
 	}
 	const vehicles = (
-		await ctx.store.find_many('vehicle', { where: { chofer: employee }, take: 200 })
+		await ctx.store.find_many('vehicle', { where: { chofer: employee }, take: 20000 })
 	).rows;
 	const vehicle_ids = new Set(vehicles.map((v) => String(v._id)));
 	if (!vehicle_ids.size) {
@@ -1725,7 +1725,7 @@ async function delivery_chofer_routes(ctx: Ctx) {
 		? (
 				await ctx.store.find_many('vehicle', {
 					where: { chofer: employee_id },
-					take: 2000,
+					take: 20000,
 					include_inactive: false,
 				})
 			).rows
