@@ -95,8 +95,19 @@ function lookup_empty_message(can_violation: boolean, can_agua: boolean): string
 
 async function module_enabled(store: ImperiumStore, module_name: string): Promise<boolean> {
 	if (!store.has('module-management')) return false;
+	const exact = await store.find_where('module-management', { module_name });
+	if (exact) {
+		return Boolean(access_flag(exact.is_enable) && exact.is_active !== false);
+	}
 	const { rows } = await store.find_many('module-management', {
-		take: 500,
+		mongo_match: {
+			$or: [
+				{ module_name },
+				{ name: module_name },
+				{ model_id: module_name },
+			],
+		},
+		take: 8,
 		include_inactive: true,
 		populate: false,
 	});
