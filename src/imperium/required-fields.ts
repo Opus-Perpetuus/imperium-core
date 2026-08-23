@@ -94,6 +94,15 @@ const SCHEMA_DEFAULTS: Record<string, Record<string, unknown>> = {
 	'delivery-return': { estado: 'borrador' },
 	'citizen-report': { priority: 'BAJA', status: 'pendiente' },
 	'labor-schedule': { days: DEFAULT_LABOR_SCHEDULE_DAYS, is_default: true },
+	'cfdi-document': { status: 'draft', perfil_emision: 'comercial', flow_direction: 'outbound' },
+	'view-config-preset': { scope: 'private' },
+	payments: { status: 'PENDIENTE', currency: 'mxn', provider: 'stripe' },
+	products: { objeto_imp_default: '02' },
+	reports: {
+		page_size: 'A4',
+		excel_sheet_name: 'Reporte',
+		generated_report_name: '{{name}}_{{hora_actual}}_{{usuario_genera}}',
+	},
 };
 
 export function apply_schema_setters(
