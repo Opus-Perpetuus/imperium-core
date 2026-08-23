@@ -24,6 +24,7 @@ import {
 	resolve_increment_preview_target,
 } from './custom-pattern-render.ts';
 import { normalize_all_counters } from './increment-normalize.ts';
+import { model_tracker_field_values } from './model-tracker-field-values.ts';
 import { AguaMssqlService } from './agua-mssql.ts';
 import { calcular_importe } from './agua-importe.ts';
 import { looks_like_canonical, serialize_cfdi_to_xml, type CfdiCanonical } from './cfdi-xml.ts';
@@ -6329,67 +6330,6 @@ async function model_tracker_reindex(ctx: Ctx) {
 			? `Reindexado de "${only_model}" iniciado${forced}. El progreso se emite por sockets.`
 			: `Reindexado de todos los modelos iniciado${forced}. El progreso se emite por sockets.`,
 	);
-}
-
-async function model_tracker_field_values(ctx: Ctx) {
-	const model_tracker_id = String(ctx.params.model_tracker_id ?? '').trim();
-	const field_path = String(ctx.params.field_path ?? '').trim();
-	if (!model_tracker_id || !field_path) {
-		throw new Error('Se requiere el ID del modelo y la ruta del campo.');
-	}
-	if (!/^[A-Za-z0-9_][A-Za-z0-9_.]*$/.test(field_path)) {
-		throw new Error('La ruta del campo contiene caracteres no permitidos.');
-	}
-	const tracker =
-		(await ctx.store.find_id('model-tracker', model_tracker_id)) ??
-		(await ctx.store.find_where('model-tracker', { __model_name: model_tracker_id }));
-	if (!tracker) throw new Error('No se encontró el modelo especificado.');
-	const model_name = String(tracker.__model_name ?? tracker.name ?? '');
-	const resource = ctx.store.resource_for_model(model_name);
-	if (!resource || !ctx.store.has(resource)) {
-		throw new Error('El modelo no tiene una colección asociada.');
-	}
-	const termino = (ctx.url.searchParams.get('termino') ?? '').trim();
-	const desde = Math.max(Number.parseInt(ctx.url.searchParams.get('desde') ?? '0', 10) || 0, 0);
-	const limite = Math.min(
-		Number.parseInt(ctx.url.searchParams.get('limite') ?? '2000', 10) || 2000,
-		10000,
-	);
-	const cols = ctx.store.column_names(resource);
-	const qt = ctx.store.qt(resource);
-	const top = field_path.split('.')[0]!;
-	const params: unknown[] = [];
-	let value_expr: string;
-	if (cols.has(field_path)) value_expr = qident(field_path);
-	else if (cols.has(top)) value_expr = qident(top);
-	else {
-		params.push(field_path);
-		value_expr = `payload ->> $${params.length}`;
-	}
-	let where = `${value_expr} IS NOT NULL AND ${value_expr}::text <> ''`;
-	if (termino) {
-		params.push(`%${termino}%`);
-		where += ` AND ${value_expr}::text ILIKE $${params.length}`;
-	}
-	params.push(limite, desde);
-	const rows = await ctx.sql.unsafe(
-		`SELECT ${value_expr}::text AS value, count(*)::int AS count
-     FROM ${qt}
-     WHERE ${where}
-     GROUP BY 1
-     ORDER BY count DESC, value ASC
-     LIMIT $${params.length - 1} OFFSET $${params.length}`,
-		params,
-	);
-	const data = rows.map((row) => {
-		const value = String((row as { value: unknown }).value ?? '');
-		return {
-			value,
-			label: value,
-			count: Number((row as { count: unknown }).count ?? 0),
-		};
-	});
-	return ok(data, 'Valores');
 }
 
 function cfg_text(value: unknown, fallback = '') {
