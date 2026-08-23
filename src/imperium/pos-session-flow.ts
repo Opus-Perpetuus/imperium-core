@@ -279,6 +279,7 @@ export async function prepare_pos_session_create(
 	}
 	const consecutivo = await store.next_auto_increment('PosSession', 'consecutivo', {
 		resource: 'pos-session',
+		context: out,
 	});
 	const unix = Math.floor(new Date(String(opening)).getTime() / 1000);
 	const slug = normalize_branch_slug(await resolve_branch_name(store, branch_id));

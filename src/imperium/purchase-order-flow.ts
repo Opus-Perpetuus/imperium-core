@@ -139,6 +139,7 @@ export async function prepare_purchase_order_create(
 	out.state = 'borrador';
 	out.folio_interno = await store.next_auto_increment('PurchaseOrder', 'folio_interno', {
 		resource: 'purchase-order',
+		context: out,
 	});
 	if (!out.tipo_origen) out.tipo_origen = 'manual';
 	return out;

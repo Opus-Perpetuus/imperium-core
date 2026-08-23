@@ -82,6 +82,7 @@ export async function prepare_citizen_report_write(
 		}
 		const sequence = await store.next_auto_increment('CitizenReport', 'sequence', {
 			resource: 'citizen-report',
+			context: doc,
 		});
 		doc.sequence = sequence;
 		doc.name = String(

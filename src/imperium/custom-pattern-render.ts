@@ -9,6 +9,8 @@ const TZ = 'America/Mexico_City';
 
 export type PatternContext = Record<string, unknown>;
 
+export type CustomTokenValue = { value: string; is_reset_key: boolean };
+
 export function numero_a_columna(valor_col: number): string {
 	let n = valor_col;
 	let out = '';
@@ -259,7 +261,7 @@ export async function resolve_custom_values(
 	store: ImperiumStore,
 	control: ImperiumDoc | null,
 	context?: PatternContext,
-): Promise<string[]> {
+): Promise<CustomTokenValue[]> {
 	if (!control || !context || !store.has('custom-pattern-increment-sequence-parts')) {
 		return [];
 	}
@@ -273,10 +275,10 @@ export async function resolve_custom_values(
 		.sort((a, b) => Number(a.order ?? 0) - Number(b.order ?? 0));
 	if (!custom_parts.length) return [];
 	const has_conditions = store.has('custom-pattern-condition');
-	const values: string[] = [];
+	const values: CustomTokenValue[] = [];
 	for (const part of custom_parts) {
 		if (!has_conditions) {
-			values.push('');
+			values.push({ value: '', is_reset_key: false });
 			continue;
 		}
 		const { rows: conditions } = await store.find_many('custom-pattern-condition', {
@@ -284,38 +286,74 @@ export async function resolve_custom_values(
 			take: 200,
 		});
 		let matched = '';
+		let matched_reset = false;
 		let fallback = '';
+		let fallback_reset = false;
 		for (const condition of conditions) {
 			const expected = String(condition.expected_value ?? '').trim();
 			const ret = String(condition.return_value ?? '').trim();
+			const own_count = !!condition.own_count;
 			if (condition.is_default_value) {
-				fallback = ret;
+				if (!fallback) {
+					fallback = ret;
+					fallback_reset = own_count;
+				}
 				continue;
 			}
 			const field_path = String(condition.field_path ?? part.field_path ?? '').trim();
+			if (!field_path) continue;
 			const candidates = candidate_values(context_value(context, field_path));
 			if (expected && candidates.includes(expected)) {
 				matched = ret;
+				matched_reset = own_count;
 				break;
 			}
 		}
-		values.push(matched || fallback);
+		values.push(
+			matched
+				? { value: matched, is_reset_key: matched_reset }
+				: { value: fallback, is_reset_key: fallback_reset },
+		);
 	}
 	return values;
+}
+
+async function find_external_counter(
+	store: ImperiumStore,
+	id: string,
+	ref_value: string | null,
+): Promise<ImperiumDoc | null> {
+	const { rows } = await store.find_many('auto-increment-control', {
+		take: 80,
+		include_inactive: true,
+	});
+	const matches = rows.filter(
+		(row) =>
+			String(row.index_name ?? '') === id ||
+			String(row.increment_field ?? '') === id ||
+			String(row.name ?? '') === id,
+	);
+	if (ref_value) {
+		return (
+			matches.find((row) => String(row.ref_value ?? '') === ref_value) ??
+			matches.find((row) => is_global_ref(row.ref_value)) ??
+			matches[0] ??
+			null
+		);
+	}
+	return matches.find((row) => is_global_ref(row.ref_value)) ?? matches[0] ?? null;
 }
 
 async function external_sequences(
 	store: ImperiumStore,
 	pattern: string,
+	ref_value: string | null = null,
 ): Promise<Record<string, number>> {
 	const ids = [...pattern.matchAll(/\[counter=([^\]\[;]*)/gi)].map((m) => String(m[1] ?? '').trim());
 	const out: Record<string, number> = {};
 	if (!ids.length || !store.has('auto-increment-control')) return out;
 	for (const id of ids) {
-		const hit =
-			(await store.find_where('auto-increment-control', { index_name: id })) ??
-			(await store.find_where('auto-increment-control', { increment_field: id })) ??
-			(await store.find_where('auto-increment-control', { name: id }));
+		const hit = await find_external_counter(store, id, ref_value);
 		out[id] = Number(hit?.current_sequence ?? hit?.current ?? hit?.valor ?? 0);
 	}
 	return out;
@@ -341,16 +379,46 @@ const DATE_RESET_TOKENS = [
 	'cccc',
 ] as const;
 
-export function pattern_reset_key(pattern: string): string | null {
-	if (!pattern) return null;
+export function date_reset_fragments(pattern: string, date = new Date()): string[] {
 	const fragments: string[] = [];
+	if (!pattern) return fragments;
 	for (const token of DATE_RESET_TOKENS) {
 		const matches = pattern.match(new RegExp(`\\[${token}\\]`, 'g'));
 		if (!matches?.length) continue;
-		const replacement = date_token_value(token);
+		const replacement = date_token_value(token, date);
 		for (let i = 0; i < matches.length; i++) fragments.push(replacement);
 	}
+	return fragments;
+}
+
+export function pattern_reset_key(pattern: string, date = new Date()): string | null {
+	return date_reset_fragments(pattern, date).join('') || null;
+}
+
+export async function compute_reset_key(
+	store: ImperiumStore,
+	control: ImperiumDoc | null,
+	context?: PatternContext,
+	date = new Date(),
+): Promise<string | null> {
+	const pattern = String(control?.custom_pattern ?? '');
+	if (!pattern) return null;
+	const fragments = date_reset_fragments(pattern, date);
+	const custom_matches = [...pattern.matchAll(/\[custom\]/g)];
+	if (custom_matches.length) {
+		const custom_values = await resolve_custom_values(store, control, context);
+		for (let i = 0; i < custom_matches.length; i++) {
+			const entry = custom_values[i];
+			if (entry?.is_reset_key && entry.value) fragments.push(entry.value);
+			else fragments.push('');
+		}
+	}
 	return fragments.join('') || null;
+}
+
+export function custom_counter_ref(values: CustomTokenValue[]): string | null {
+	const fragments = values.filter((entry) => entry.is_reset_key && entry.value).map((entry) => entry.value);
+	return fragments.length ? fragments.join('') : null;
 }
 
 export function tracker_unique_ref(
@@ -452,7 +520,7 @@ export async function resolve_increment_preview_target(
 ): Promise<{ config: ImperiumDoc | null; target: ImperiumDoc | null }> {
 	const config = await find_increment_control(store, model_name, increment_field);
 	if (!config) return { config: null, target: null };
-	const reset_key = pattern_reset_key(String(config.custom_pattern ?? ''));
+	const reset_key = await compute_reset_key(store, config);
 	const target = reset_key
 		? ((await find_increment_segment(store, config, reset_key)) ?? {
 				...config,
@@ -476,11 +544,57 @@ export async function format_increment_real_value(
 	if (type === 'alphanumeric') return numero_a_columna(sequence);
 	if (type !== 'custom') return sequence;
 	const pattern = String(control?.custom_pattern ?? '');
-	const [external, custom_values] = await Promise.all([
-		external_sequences(store, pattern),
-		resolve_custom_values(store, control, context),
-	]);
-	return render_custom_pattern_sync(pattern, sequence, context, external, custom_values);
+	const custom_values = await resolve_custom_values(store, control, context);
+	const external = await external_sequences(store, pattern, custom_counter_ref(custom_values));
+	return render_custom_pattern_sync(
+		pattern,
+		sequence,
+		context,
+		external,
+		custom_values.map((entry) => entry.value),
+	);
+}
+
+export async function assign_document_increments(
+	store: ImperiumStore,
+	resource: string,
+	doc: ImperiumDoc,
+): Promise<ImperiumDoc> {
+	if (resource === 'auto-increment-control' || !store.has('auto-increment-control')) {
+		return doc;
+	}
+	const { rows } = await store.find_many('auto-increment-control', {
+		take: 5000,
+		include_inactive: true,
+	});
+	const seen = new Set<string>();
+	const configs = rows
+		.filter((row) => {
+			if (!is_global_ref(row.ref_value) || row.is_active === false) return false;
+			const model_name = String(row.model_name ?? '').trim();
+			const field = String(row.increment_field ?? '').trim();
+			if (!model_name || !field) return false;
+			if (store.resource_for_model(model_name) !== resource) return false;
+			if (seen.has(field)) return false;
+			seen.add(field);
+			return true;
+		})
+		.sort(
+			(a, b) =>
+				(String(a.type ?? '') === 'custom' ? 1 : 0) - (String(b.type ?? '') === 'custom' ? 1 : 0),
+		);
+	const out: ImperiumDoc = { ...doc };
+	for (const config of configs) {
+		const field = String(config.increment_field ?? '');
+		const current = out[field];
+		if (current !== undefined && current !== null && current !== '') continue;
+		const next = await store.next_auto_increment(String(config.model_name), field, {
+			resource,
+			context: out,
+		});
+		out[field] = await format_increment_real_value(store, config, next, out);
+	}
+	return out;
 }
 
 export async function format_model_field_value(

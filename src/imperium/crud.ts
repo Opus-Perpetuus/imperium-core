@@ -119,6 +119,7 @@ import {
 	prepare_pattern_part_update,
 	soft_delete_pattern_part,
 } from './pattern-parts-flow.ts';
+import { assign_document_increments } from './custom-pattern-render.ts';
 import { build_access } from './auth.ts';
 import { is_seed_admin } from './group-access.ts';
 import {
@@ -327,7 +328,16 @@ export async function handle_crud(
 					continue;
 				}
 			}
-			out.push(await store.insert(resource, await prepare_user_write(resource, doc, true)));
+			out.push(
+				await store.insert(
+					resource,
+					await assign_document_increments(
+						store,
+						resource,
+						await prepare_user_write(resource, doc, true),
+					),
+				),
+			);
 		}
 		return json(resource, ok(out, 'Lote aplicado', out.length));
 	}
@@ -1244,9 +1254,9 @@ async function before_create(
 	store: ImperiumStore,
 	resource: string,
 	doc: ImperiumDoc,
-	actor: ImperiumDoc | null,
+	_actor: ImperiumDoc | null,
 ): Promise<ImperiumDoc> {
-	return doc;
+	return assign_document_increments(store, resource, doc);
 }
 
 async function after_create(

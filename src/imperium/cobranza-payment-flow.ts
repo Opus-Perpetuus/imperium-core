@@ -64,9 +64,10 @@ function is_cash_provider(value: unknown): boolean {
 	return raw === COBRANZA_PAYMENT_CASH || raw === 'CASH';
 }
 
-async function next_payment_folio(store: ImperiumStore): Promise<number> {
+async function next_payment_folio(store: ImperiumStore, context?: ImperiumDoc): Promise<number> {
 	return store.next_auto_increment('CobranzaPayment', 'folio', {
 		resource: 'cobranza-payment',
+		context,
 	});
 }
 
@@ -160,7 +161,11 @@ export async function apply_cobranza_payment(ctx: CobranzaPaymentCtx) {
 		throw new Error('La sesión de caja no está abierta.');
 	}
 	const cashier = actor_id(ctx.actor);
-	const folio = await next_payment_folio(ctx.store);
+	const folio = await next_payment_folio(ctx.store, {
+		charge_id: charge._id,
+		amount,
+		pos_session_id,
+	});
 	const created = await ctx.store.insert('cobranza-payment', {
 		name: `Pago ${charge.reference}`,
 		folio,
@@ -226,7 +231,11 @@ export async function apply_online_cobranza_payment(
 	}
 	const method_name = String(params.provider).toUpperCase() === 'MITEC' ? 'Mitec' : 'Stripe';
 	const method_id = await method_id_for(store, method_name);
-	const folio = await next_payment_folio(store);
+	const folio = await next_payment_folio(store, {
+		name: payment_name,
+		charge_id: charge._id,
+		provider: params.provider,
+	});
 	await store.insert('cobranza-payment', {
 		name: payment_name,
 		folio,

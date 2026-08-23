@@ -4,6 +4,7 @@
  */
 import { as_object, type ImperiumDoc } from './envelope.ts';
 import {
+	compute_reset_key,
 	date_token_value,
 	find_or_create_increment_segment,
 	format_token_numeric_value,
@@ -50,20 +51,6 @@ type PatternToken = {
 	counter_id?: string;
 	same_model_field?: string | null;
 };
-
-const DATE_RESET_TOKENS = [
-	'yy',
-	'yyyy',
-	'LL',
-	'LLL',
-	'LLLL',
-	'WW',
-	'ooo',
-	'dd',
-	'c',
-	'ccc',
-	'cccc',
-] as const;
 
 export function columna_a_numero(str: string): number {
 	let total = 0;
@@ -263,7 +250,9 @@ async function rerender_folio(params: {
 	segment_ref_value?: string | null;
 }): Promise<string> {
 	const custom_values = params.tokens.some((token) => token.kind === 'custom')
-		? await resolve_custom_values(params.store, params.config, as_object(params.document))
+		? (await resolve_custom_values(params.store, params.config, as_object(params.document))).map(
+				(entry) => entry.value,
+			)
 		: [];
 	let custom_index = 0;
 	let counter_index = 0;
@@ -368,18 +357,6 @@ async function compute_normalized_value(params: {
 	});
 }
 
-function document_reset_key(pattern: string, date: Date): string | null {
-	if (!pattern) return null;
-	const fragments: string[] = [];
-	for (const token of DATE_RESET_TOKENS) {
-		const matches = pattern.match(new RegExp(`\\[${token}\\]`, 'g'));
-		if (!matches?.length) continue;
-		const replacement = date_token_value(token, date);
-		for (let i = 0; i < matches.length; i++) fragments.push(replacement);
-	}
-	return fragments.join('') || null;
-}
-
 async function load_all(store: ImperiumStore, resource: string): Promise<ImperiumDoc[]> {
 	const out: ImperiumDoc[] = [];
 	let skip = 0;
@@ -468,7 +445,7 @@ async function normalize_index(params: {
 				const when = reference_date(doc);
 				const segment =
 					type === 'custom'
-						? document_reset_key(String(params.config.custom_pattern ?? ''), when)
+						? await compute_reset_key(params.store, params.config, as_object(doc), when)
 						: null;
 				const next = (segment_counts.get(segment) ?? 0) + 1;
 				segment_counts.set(segment, next);

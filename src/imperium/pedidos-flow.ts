@@ -109,6 +109,7 @@ export async function prepare_pedido_create(
 	out.folio = build_folio(actor);
 	out.folio_interno = await store.next_auto_increment('Pedidos', 'folio_interno', {
 		resource: 'pedidos',
+		context: out,
 	});
 	out.name = `PEDIDO-${out.folio}`;
 	return out;

@@ -271,7 +271,7 @@ async function resolve_next_package_number(
 
 async function resolve_package_codigo(
 	store: ImperiumStore,
-	params: { is_create: boolean; existing_codigo?: string },
+	params: { is_create: boolean; existing_codigo?: string; context?: ImperiumDoc },
 ) {
 	if (!params.is_create) {
 		const existing = text(params.existing_codigo).toUpperCase();
@@ -282,6 +282,7 @@ async function resolve_package_codigo(
 	}
 	const next = await store.next_auto_increment('DeliveryPackage', 'codigo_bulto', {
 		resource: 'delivery-package',
+		context: params.context,
 	});
 	const codigo = String(
 		await format_model_field_value(
@@ -289,7 +290,7 @@ async function resolve_package_codigo(
 			'DeliveryPackage',
 			'codigo_bulto',
 			next,
-			undefined,
+			params.context,
 			format_codigo_bulto(next),
 		),
 	);
@@ -358,6 +359,7 @@ async function normalize_payload(
 		is_create,
 		existing_codigo:
 			existing_record?.codigo_bulto ?? (is_create ? undefined : text(payload.codigo_bulto)),
+		context: payload,
 	});
 	const requested_estado = text(payload.estado);
 	const estado = PACKAGE_STATES.includes(requested_estado as (typeof PACKAGE_STATES)[number])

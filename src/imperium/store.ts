@@ -21,9 +21,9 @@ import { purchase_order_stats } from './purchase-order-flow.ts';
 import { record_document_history } from './history.ts';
 import {
 	find_increment_control,
+	compute_reset_key,
 	find_or_create_increment_segment,
 	format_increment_real_value,
-	pattern_reset_key,
 	type PatternContext,
 } from './custom-pattern-render.ts';
 
@@ -482,7 +482,9 @@ export class ImperiumStore {
 		const config = this.has('auto-increment-control')
 			? await find_increment_control(this, model_name, increment_field)
 			: null;
-		const reset_key = pattern_reset_key(String(config?.custom_pattern ?? ''));
+		const reset_key = config
+			? await compute_reset_key(this, config, opts.context)
+			: null;
 		let floor = 0;
 		const resource = opts.resource;
 		if (
