@@ -107,7 +107,7 @@ export async function recompute_cobranza_charge(
 	if (store.has('cobranza-payment')) {
 		const { rows } = await store.find_many('cobranza-payment', {
 			where: { charge_id },
-			take: 5000,
+			take: 20000,
 			include_inactive: true,
 			populate: false,
 		});
