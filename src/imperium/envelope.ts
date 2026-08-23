@@ -36,10 +36,29 @@ export function fail(message: string, status = 400, extra?: Record<string, unkno
  * Traduce unique de Postgres (`23505`) al mismo texto que el original
  * mapeaba desde Mongo `E11000`.
  */
-export function humanize_caught_error(err: unknown): { message: string; code?: string } {
+export function humanize_caught_error(err: unknown): {
+	message: string;
+	code?: string;
+	field_errors?: Record<string, string[]>;
+} {
+	const rec = err as {
+		message?: unknown;
+		code?: unknown;
+		field_errors?: unknown;
+	};
+	if (rec.field_errors && typeof rec.field_errors === 'object' && !Array.isArray(rec.field_errors)) {
+		const message =
+			typeof rec.message === 'string' && rec.message.trim()
+				? rec.message
+				: 'Error de validación';
+		return {
+			message,
+			code: typeof rec.code === 'string' && rec.code.trim() ? rec.code : 'ValidationError',
+			field_errors: rec.field_errors as Record<string, string[]>,
+		};
+	}
 	const duplicate = map_pg_duplicate_message(err);
 	if (duplicate) return { message: duplicate };
-	const rec = err as { message?: unknown; code?: unknown };
 	const message =
 		typeof rec.message === 'string' && rec.message.trim()
 			? rec.message

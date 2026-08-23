@@ -165,12 +165,12 @@ async function dispatch(
 				const message = humanized.message;
 				const status = e.status ?? 400;
 				debug_error(message);
+				const extra: Record<string, unknown> = {};
+				if (humanized.code) extra.code = humanized.code;
+				if (humanized.field_errors) extra.field_errors = humanized.field_errors;
 				return add_cors(
 					req,
-					Response.json(
-						fail(message, status, humanized.code ? { code: humanized.code } : undefined).body,
-						{ status },
-					),
+					Response.json(fail(message, status, extra).body, { status }),
 				);
 			}
 }
