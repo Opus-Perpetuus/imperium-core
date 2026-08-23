@@ -701,7 +701,7 @@ export async function assert_http_access(
 async function build_menus(store: ImperiumStore, access: Awaited<ReturnType<typeof build_access>>) {
 	if (!store.has('menu-management')) return [];
 	const { rows } = await store.find_many('menu-management', {
-		take: 5000,
+		take: 20000,
 		include_inactive: false,
 		populate: false,
 	});
@@ -725,7 +725,15 @@ async function build_menus(store: ImperiumStore, access: Awaited<ReturnType<type
 	}
 	filtered = [...keep.values()];
 	if (store.has('module-management')) {
-		const mods = (await store.find_many('module-management', { take: 2000, include_inactive: true })).rows;
+		const mods = (
+			await store.find_many('module-management', {
+				mongo_match: {
+					$or: [{ is_enable: false }, { is_active: false }],
+				},
+				take: 20000,
+				include_inactive: true,
+			})
+		).rows;
 		const disabled = new Set(
 			mods.filter((m) => m.is_enable === false || m.is_enable === 'false').map((m) => String(m.model_id ?? m._id)),
 		);
