@@ -186,10 +186,13 @@ async function resolve_route_from_contact(store: ImperiumStore, contact_id: stri
 		const route = rows.find((row) => row.is_active !== false);
 		if (route) return map_route_suggestion(route);
 	}
-	const { rows } = await store.find_many('delivery-route', { take: 500, populate: false });
-	const route = rows.find(
-		(row) => row.is_active !== false && ids_from(row.contacts).includes(contact_id),
-	);
+	const { rows } = await store.find_many('delivery-route', {
+		mongo_match: { contacts: { $regex: contact_id } },
+		take: 1,
+		include_inactive: false,
+		populate: false,
+	});
+	const route = rows[0];
 	return route ? map_route_suggestion(route) : null;
 }
 
