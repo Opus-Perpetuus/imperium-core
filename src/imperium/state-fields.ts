@@ -6,6 +6,11 @@
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import {
+	load_custom_field_definitions,
+	merge_custom_fields_into_schema,
+	merge_custom_state_fields,
+} from './custom-fields.ts';
 import { as_array, as_object } from './envelope.ts';
 import { RESOURCE_ALIASES, type ImperiumStore } from './store.ts';
 
@@ -584,22 +589,27 @@ export async function load_state_fields_metadata(
 
 export async function schema_validation_for(store: ImperiumStore, resource: string) {
 	const canonical = canonical_state_resource(resource);
-	const [state_fields, tracker] = await Promise.all([
+	const model_id = model_id_for_resource(resource);
+	const [state_fields, tracker, custom_fields] = await Promise.all([
 		load_state_fields_metadata(store, resource),
 		load_tracker_doc(store, canonical),
+		load_custom_field_definitions(store, model_id),
 	]);
 	const properties = build_schema_properties(store, canonical, tracker);
-	return {
-		type: 'object',
-		properties,
-		required: constraint_list(CONSTRAINTS.required, canonical),
-		metadata: {
-			state_fields,
-			model_id: model_id_for_resource(resource),
-			attachment_fields: attachment_fields_for(store, canonical, tracker),
-			batch_import: build_batch_import(store, canonical, tracker, properties),
+	return merge_custom_fields_into_schema(
+		{
+			type: 'object',
+			properties,
+			required: constraint_list(CONSTRAINTS.required, canonical),
+			metadata: {
+				state_fields: merge_custom_state_fields(state_fields, custom_fields),
+				model_id,
+				attachment_fields: attachment_fields_for(store, canonical, tracker),
+				batch_import: build_batch_import(store, canonical, tracker, properties),
+			},
 		},
-	};
+		custom_fields,
+	);
 }
 
 export function state_field_for(
