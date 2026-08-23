@@ -43,6 +43,7 @@ async function load_issuer(store: ImperiumStore, issuer_profile_id?: string): Pr
 	const { rows: defaults } = await store.find_many('cfdi-issuer-profile', {
 		where: { is_default: true },
 		take: 1,
+		sort: 'id:asc',
 		include_inactive: false,
 		populate: false,
 	});
