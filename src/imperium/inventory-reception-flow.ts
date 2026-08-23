@@ -474,7 +474,9 @@ export async function in_transit_for_product(
 	const id = text(producto_id);
 	if (!id || !is_object_id(id)) throw new Error('Se necesita el id del producto');
 	const { rows } = await store.find_many('inventory-reception', {
-		take: 500,
+		where: { estado: { in: ['pendiente', 'parcial'] } },
+		take: 20000,
+		include_inactive: false,
 		populate: false,
 	});
 	let en_camino = 0;
@@ -503,7 +505,9 @@ export async function list_pending_for_product(
 	const id = text(producto_id);
 	if (!id || !is_object_id(id)) throw new Error('Se necesita el id del producto');
 	const { rows } = await store.find_many('inventory-reception', {
-		take: 500,
+		where: { estado: { in: ['pendiente', 'parcial'] } },
+		take: 20000,
+		include_inactive: false,
 		populate: false,
 	});
 	return rows
