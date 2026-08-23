@@ -586,22 +586,13 @@ export async function build_last_closure_reference(
 		throw new Error('Se necesita la sucursal para consultar el último cierre');
 	}
 	const { rows } = await store.find_many('pos-session', {
-		take: 500,
+		where: { branch_office: branch, status: 'cerrada' },
+		take: 1,
+		sort: 'closing_date:desc',
 		include_inactive: false,
 		populate: false,
 	});
-	const closed = rows
-		.filter((row) => ref_id(row.branch_office) === branch || text(row.branch_office) === branch)
-		.filter((row) => {
-			const status = text(row.status ?? row.estado).toLowerCase();
-			return status === 'cerrada' || status === 'closed';
-		})
-		.sort((a, b) =>
-			String(b.closing_date ?? b.fecha_cierre ?? '').localeCompare(
-				String(a.closing_date ?? a.fecha_cierre ?? ''),
-			),
-		);
-	const last = closed[0];
+	const last = rows[0];
 	if (!last) {
 		return {
 			found: false,
