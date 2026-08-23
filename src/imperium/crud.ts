@@ -1221,6 +1221,55 @@ async function attach_custom_list_fields(
 	return apply_custom_list_values(source, projected, fields);
 }
 
+function tag_ids(value: unknown): string[] {
+	return as_array(value)
+		.map((item) => {
+			if (item && typeof item === 'object') {
+				const rec = item as Record<string, unknown>;
+				return String(rec._id ?? rec.id ?? '');
+			}
+			return String(item ?? '');
+		})
+		.filter(Boolean);
+}
+
+async function populate_shared_tags(
+	store: ImperiumStore,
+	docs: ImperiumDoc[],
+): Promise<ImperiumDoc[]> {
+	if (!store.has('tags') || !docs.length) return docs;
+	const ids = [...new Set(docs.flatMap((doc) => tag_ids(doc.tags)))];
+	if (!ids.length) return docs;
+	const { rows } = await store.find_many('tags', {
+		ids,
+		take: ids.length,
+		include_inactive: true,
+		populate: false,
+	});
+	const by_id = new Map(rows.map((row) => [String(row._id), row]));
+	return docs.map((doc) => {
+		const current = as_array(doc.tags);
+		if (!current.length) return doc;
+		return {
+			...doc,
+			tags: current.map((item) => {
+				const id =
+					item && typeof item === 'object'
+						? String((item as ImperiumDoc)._id ?? (item as ImperiumDoc).id ?? '')
+						: String(item ?? '');
+				const tag = by_id.get(id);
+				if (!tag) return item;
+				return {
+					_id: tag._id,
+					name: tag.name,
+					description: tag.description ?? '',
+					color: tag.color ?? '',
+				};
+			}),
+		};
+	});
+}
+
 async function finalize_rows(
 	store: ImperiumStore,
 	resource: string,
@@ -1253,7 +1302,7 @@ async function finalize_rows(
 		return project ? project_list_docs(resource, flat) : flat;
 	}
 	const decorated = decorate_rows(resource, rows);
-	if (mode === 'detail') return decorated;
+	if (mode === 'detail') return populate_shared_tags(store, decorated);
 	const flat = store.flatten_list_docs(resource, decorated);
 	return project ? project_list_docs(resource, flat) : flat;
 }
