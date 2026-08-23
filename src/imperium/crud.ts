@@ -470,7 +470,11 @@ export async function handle_crud(
 			}));
 		}
 		return json(resource, await with_module_info(store, resource, {
-			...ok(listed.rows, list_message(resource), listed.total),
+			...ok(
+				listed.rows,
+				listed.excel ? 'Datos exportados para Excel con todas las columnas' : list_message(resource),
+				listed.total,
+			),
 			tipo_de_instancia: tipo,
 			schema_validation,
 		}));
@@ -1031,12 +1035,17 @@ export async function handle_crud(
 	return null;
 }
 
+function is_excel_export(url: URL) {
+	const raw = String(url.searchParams.get('export_excel') ?? '').trim().toLowerCase();
+	return raw === '1' || raw === 'true';
+}
+
 async function read_list_docs(
 	store: ImperiumStore,
 	resource: string,
 	url: URL,
 	actor: ImperiumDoc | null,
-): Promise<{ rows: ImperiumDoc[]; total: number; empty_project?: boolean }> {
+): Promise<{ rows: ImperiumDoc[]; total: number; empty_project?: boolean; excel?: boolean }> {
 	const q = query_list(url);
 	if (is_project_task_resource(resource) && !q.where.project_id) {
 		return { rows: [], total: 0, empty_project: true };
@@ -1078,17 +1087,18 @@ async function read_list_docs(
 		});
 	}
 	const total = filtered.length === found.rows.length ? found.total : filtered.length;
-	let decorated = await finalize_rows(store, resource, filtered, 'list');
+	const excel = is_excel_export(url);
+	let decorated = await finalize_rows(store, resource, filtered, excel ? 'excel' : 'list');
 	if (is_dashboard_resource(resource)) {
 		const access = await dashboard_access(store, actor);
 		if (!access.full) {
 			decorated = decorated.filter((doc) => dashboard_is_visible(doc, access));
 			decorated = await attach_custom_list_fields(store, resource, filtered, decorated);
-			return { rows: decorated, total: decorated.length };
+			return { rows: decorated, total: decorated.length, excel };
 		}
 	}
 	decorated = await attach_custom_list_fields(store, resource, filtered, decorated);
-	return { rows: decorated, total };
+	return { rows: decorated, total, excel };
 }
 
 async function attach_custom_list_fields(
@@ -1105,46 +1115,37 @@ async function finalize_rows(
 	store: ImperiumStore,
 	resource: string,
 	rows: ImperiumDoc[],
-	mode: 'list' | 'detail',
+	mode: 'list' | 'detail' | 'excel',
 ): Promise<ImperiumDoc[]> {
-	if (is_pedido_resource(resource) && mode === 'list') {
-		return project_list_docs(
-			resource,
-			store.flatten_list_docs(resource, await enrich_pedidos_list(store, rows)),
-		);
+	const project = mode === 'list';
+	if (is_pedido_resource(resource) && mode !== 'detail') {
+		const flat = store.flatten_list_docs(resource, await enrich_pedidos_list(store, rows));
+		return project ? project_list_docs(resource, flat) : flat;
 	}
 	if (is_delivery_route_resource(resource)) {
-		const decorated = await decorate_delivery_routes(store, rows, mode);
+		const decorated = await decorate_delivery_routes(store, rows, mode === 'excel' ? 'list' : mode);
 		const flat = store.flatten_list_docs(resource, decorated);
-		return mode === 'list' ? project_list_docs(resource, flat) : flat;
+		return project ? project_list_docs(resource, flat) : flat;
 	}
-	if (resource === 'inventory-reception' && mode === 'list') {
-		return project_list_docs(
-			resource,
-			store.flatten_list_docs(resource, decorate_inventory_reception_list(rows)),
-		);
+	if (resource === 'inventory-reception' && mode !== 'detail') {
+		const flat = store.flatten_list_docs(resource, decorate_inventory_reception_list(rows));
+		return project ? project_list_docs(resource, flat) : flat;
 	}
-	if (resource === 'inventory-stock-quant' && mode === 'list') {
-		return project_list_docs(
+	if (resource === 'inventory-stock-quant' && mode !== 'detail') {
+		const flat = store.flatten_list_docs(
 			resource,
-			store.flatten_list_docs(
-				resource,
-				await decorate_inventory_stock_quant_list(store, rows),
-			),
+			await decorate_inventory_stock_quant_list(store, rows),
 		);
+		return project ? project_list_docs(resource, flat) : flat;
 	}
-	if (resource === 'attachment-management' && mode === 'list') {
-		return project_list_docs(
-			resource,
-			store.flatten_list_docs(
-				resource,
-				await decorate_attachment_list(store, rows),
-			),
-		);
+	if (resource === 'attachment-management' && mode !== 'detail') {
+		const flat = store.flatten_list_docs(resource, await decorate_attachment_list(store, rows));
+		return project ? project_list_docs(resource, flat) : flat;
 	}
 	const decorated = decorate_rows(resource, rows);
-	if (mode !== 'list') return decorated;
-	return project_list_docs(resource, store.flatten_list_docs(resource, decorated));
+	if (mode === 'detail') return decorated;
+	const flat = store.flatten_list_docs(resource, decorated);
+	return project ? project_list_docs(resource, flat) : flat;
 }
 
 function decorate_rows(resource: string, rows: ImperiumDoc[]): ImperiumDoc[] {
