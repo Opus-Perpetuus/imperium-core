@@ -105,6 +105,7 @@ import {
 	cancel_delivery_package,
 	list_packages_by_pedido,
 } from './delivery-package-flow.ts';
+import { decorate_delivery_routes } from './delivery-route-flow.ts';
 import { register_package_delivery_exit } from './inventory-logistics-flow.ts';
 import {
 	apply_quant_delta,
@@ -1562,7 +1563,10 @@ async function delivery_chofer_routes(ctx: Ctx) {
 		include_inactive: false,
 	});
 	const routes = sort_by_name(rows.filter((r) => vehicle_ids.has(ref_id(r.vehicle))));
-	return ok(routes, 'Rutas del chofer cargadas correctamente');
+	return ok(
+		await decorate_delivery_routes(ctx.store, routes, 'detail'),
+		'Rutas del chofer cargadas correctamente',
+	);
 }
 
 async function logistics_event(ctx: Ctx) {

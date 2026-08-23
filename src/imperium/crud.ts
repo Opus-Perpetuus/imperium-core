@@ -25,6 +25,12 @@ import {
 	prepare_delivery_return_update,
 } from './delivery-return-flow.ts';
 import {
+	decorate_delivery_routes,
+	delivery_route_list_instance_type,
+	is_delivery_route_resource,
+	prepare_delivery_route_write,
+} from './delivery-route-flow.ts';
+import {
 	prepare_purchase_order_create,
 	prepare_purchase_order_update,
 } from './purchase-order-flow.ts';
@@ -433,9 +439,11 @@ export async function handle_crud(
 		}
 		const scope = await record_rule_scope(store, actor, resource, method);
 		await assert_id_in_scope(store, resource, segs[0]!, scope, method);
-		const [populated] = decorate_rows(
+		const [populated] = await finalize_rows(
+			store,
 			resource,
 			await store.populate_docs(resource, [doc]),
+			'detail',
 		);
 		const detail = is_project_resource(resource)
 			? await hydrate_project(store, populated)
@@ -475,6 +483,9 @@ export async function handle_crud(
 		}
 		if (resource === 'delivery-return') {
 			incoming = await prepare_delivery_return_create(incoming);
+		}
+		if (is_delivery_route_resource(resource)) {
+			incoming = await prepare_delivery_route_write(store, incoming);
 		}
 		if (resource === 'purchase-order') {
 			incoming = await prepare_purchase_order_create(store, incoming);
@@ -575,7 +586,12 @@ export async function handle_crud(
 		if (is_registro_asistencia_resource(resource)) {
 			result = await snapshot_attendance_entries(store, created);
 		}
-		const [populated] = decorate_rows(resource, await store.populate_docs(resource, [result]));
+		const [populated] = await finalize_rows(
+			store,
+			resource,
+			await store.populate_docs(resource, [result]),
+			'detail',
+		);
 		const message =
 			resource === 'pos-session'
 				? 'Sesión creada'
@@ -656,6 +672,9 @@ export async function handle_crud(
 		}
 		if (resource === 'delivery-return') {
 			b = await prepare_delivery_return_update(b, previous);
+		}
+		if (is_delivery_route_resource(resource)) {
+			b = await prepare_delivery_route_write(store, b, previous);
 		}
 		if (resource === 'purchase-order') {
 			b = await prepare_purchase_order_update(b, previous);
@@ -739,7 +758,12 @@ export async function handle_crud(
 		if (is_project_resource(resource)) {
 			shown = await hydrate_project(store, updated);
 		}
-		const [populated] = decorate_rows(resource, await store.populate_docs(resource, [shown]));
+		const [populated] = await finalize_rows(
+			store,
+			resource,
+			await store.populate_docs(resource, [shown]),
+			'detail',
+		);
 		return json(
 			resource,
 			ok(
@@ -796,6 +820,9 @@ export async function handle_crud(
 		}
 		if (resource === 'delivery-return') {
 			patched = await prepare_delivery_return_update(patched, previous);
+		}
+		if (is_delivery_route_resource(resource)) {
+			patched = await prepare_delivery_route_write(store, patched, previous);
 		}
 		if (resource === 'purchase-order') {
 			patched = await prepare_purchase_order_update(patched, previous);
@@ -876,7 +903,12 @@ export async function handle_crud(
 		if (is_project_resource(resource)) {
 			shown = await hydrate_project(store, updated);
 		}
-		const [decorated] = decorate_rows(resource, [shown]);
+		const [decorated] = await finalize_rows(
+			store,
+			resource,
+			await store.populate_docs(resource, [shown]),
+			'detail',
+		);
 		return json(
 			resource,
 			ok(
@@ -923,6 +955,12 @@ async function finalize_rows(
 	if (is_pedido_resource(resource) && mode === 'list') {
 		return store.flatten_list_docs(resource, await enrich_pedidos_list(store, rows));
 	}
+	if (is_delivery_route_resource(resource)) {
+		return store.flatten_list_docs(
+			resource,
+			await decorate_delivery_routes(store, rows, mode),
+		);
+	}
 	const decorated = decorate_rows(resource, rows);
 	return mode === 'list' ? store.flatten_list_docs(resource, decorated) : decorated;
 }
@@ -952,6 +990,7 @@ function instance_type(
 	resource: string,
 	_rows: ImperiumDoc[],
 ): Record<string, { nombre_encabezado: string; tipo: string }> {
+	if (is_delivery_route_resource(resource)) return delivery_route_list_instance_type();
 	const keys = ['_id', 'name', 'description', 'is_active', '_ref'];
 	for (const col of store.loc(resource).columns) {
 		if (!keys.includes(col.name)) keys.push(col.name);
