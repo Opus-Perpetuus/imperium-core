@@ -546,7 +546,7 @@ export async function resolve_report_records(
 	body: Record<string, unknown>,
 ): Promise<ImperiumDoc[]> {
 	if (body.apply_to_all === true) {
-		return (await store.find_many(resource, { take: 200 })).rows;
+		return (await store.find_many(resource, { take: 20000, sort: 'id:asc' })).rows;
 	}
 	const ids = as_array(body.record_ids)
 		.map((id) => String(id ?? '').trim())
