@@ -533,3 +533,25 @@ export async function list_packages_by_pedido(
 		message: include_cancelled ? 'Bultos del pedido (incl. anulados)' : 'Bultos del pedido',
 	};
 }
+
+/** `__get_statistics` original: `by_status` agrupa `$estado`. */
+export async function delivery_package_by_status(
+	store: ImperiumStore,
+	mongo_match?: Record<string, unknown> | null,
+): Promise<Array<{ _id: string | null; count: number }>> {
+	const { rows } = await store.find_many('delivery-package', {
+		take: 10000,
+		include_inactive: true,
+		populate: false,
+		mongo_match,
+	});
+	const counts = new Map<string | null, number>();
+	for (const row of rows) {
+		const raw = text(row.estado);
+		const key = raw || null;
+		counts.set(key, (counts.get(key) ?? 0) + 1);
+	}
+	return [...counts.entries()]
+		.sort((a, b) => String(a[0] ?? '').localeCompare(String(b[0] ?? '')))
+		.map(([_id, count]) => ({ _id, count }));
+}

@@ -16,6 +16,7 @@ import { SearchEngine, search_text_from_doc } from './search-engine.ts';
 import { mongo_match_to_sql } from './record-rules.ts';
 import { products_inventory_cost } from './products-flow.ts';
 import { vehicle_by_status } from './vehicle-flow.ts';
+import { delivery_package_by_status } from './delivery-package-flow.ts';
 import { pedidos_sales_stats } from './pedidos-flow.ts';
 import { purchase_order_stats } from './purchase-order-flow.ts';
 import { planeacion_statistics } from './planeacion-flow.ts';
@@ -1238,6 +1239,9 @@ export class ImperiumStore {
 		}
 		if (resource === 'vehicle') {
 			domain.by_status = await vehicle_by_status(this, mongo_match);
+		}
+		if (resource === 'delivery-package') {
+			domain.by_status = await delivery_package_by_status(this, mongo_match);
 		}
 		const now = new Date();
 		const daily_where = extra ? `created_at >= $1 AND ${extra}` : `created_at >= $1`;
