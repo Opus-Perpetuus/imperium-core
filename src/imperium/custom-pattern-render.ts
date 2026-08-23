@@ -445,8 +445,8 @@ export async function find_increment_control(
 ): Promise<ImperiumDoc | null> {
 	if (!store.has('auto-increment-control') || !model_name) return null;
 	const { rows } = await store.find_many('auto-increment-control', {
-		where: { model_name },
-		take: 50,
+		where: increment_field ? { model_name, increment_field } : { model_name },
+		take: 20000,
 		include_inactive: true,
 	});
 	const matches = increment_field
