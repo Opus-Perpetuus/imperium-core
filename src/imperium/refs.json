@@ -165,6 +165,9 @@
       "assignee_users": "User",
       "observer_users": "User"
     },
+    "time-sheets": {
+      "user_id": "User"
+    },
     "ticketing-system-turn": {
       "customer_type": "TicketingSystemCustomerType",
       "assigned_box": "TicketingSystemBoxConfig",
@@ -453,6 +456,9 @@
     "Materias": "materias",
     "GradosEscolares": "grados-escolares",
     "Escuelas": "escuelas",
-    "RegistroIncidencias": "registro-incidencias"
+    "RegistroIncidencias": "registro-incidencias",
+    "TimeSheets": "time-sheets",
+    "time-sheets": "time-sheets",
+    "timesheets": "time-sheets"
   }
 }

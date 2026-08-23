@@ -11,6 +11,7 @@ const RESOURCE_ALIASES: Record<string, string> = {
 	'proyectos-task': 'planeacion-proyectos-task',
 	'pedidos-surtir': 'pedidos',
 	usuario: 'user',
+	__time_sheets: 'time-sheets',
 };
 
 type ListProjection = {
@@ -275,6 +276,20 @@ const LIST_PROJECTIONS: Record<string, ListProjection> = {
 			'due_date',
 			'project_id',
 			'parent_task_id',
+			'is_active',
+		],
+	},
+	'time-sheets': {
+		rows: [
+			'_id',
+			'name',
+			'collection',
+			'model',
+			'document_id',
+			'user_id',
+			'started_at',
+			'ended_at',
+			'duration_minutes',
 			'is_active',
 		],
 	},

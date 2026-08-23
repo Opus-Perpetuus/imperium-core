@@ -82,6 +82,7 @@ export const RESOURCE_ALIASES: Record<string, string> = {
 	'mis-tareas': 'planeacion-mis-tareas',
 	'proyectos-task': 'planeacion-proyectos-task',
 	usuario: 'user',
+	__time_sheets: 'time-sheets',
 };
 
 function round_qty(value: number): number {
@@ -413,6 +414,7 @@ export class ImperiumStore {
 				'mcp-user-token',
 				'proyectos-time-log',
 				'user-print-template',
+				'time-sheets',
 			];
 			for (const resource of orphans) {
 				if (this.locs.has(resource)) continue;
@@ -442,8 +444,14 @@ export class ImperiumStore {
 				time_logs.table = 'proyectos_time_log';
 				time_logs.collection = 'proyectos-time-log';
 			}
+			const time_sheets = this.locs.get('time-sheets');
+			if (time_sheets) time_sheets.collection = '__time_sheets';
 			const tokens = this.locs.get('mcp-user-token');
 			if (tokens) tokens.collection = 'mcp_user_tokens';
+			for (const [alias, resource] of Object.entries(RESOURCE_ALIASES)) {
+				const loc = this.locs.get(resource);
+				if (loc && !this.locs.has(alias)) this.locs.set(alias, loc);
+			}
 		}
 	}
 
@@ -643,6 +651,7 @@ export class ImperiumStore {
 			'mcp-user-token',
 			'proyectos-time-log',
 			'user-print-template',
+			'time-sheets',
 		]) {
 			if (!this.locs.has(resource)) continue;
 			const qt = this.qt(resource);

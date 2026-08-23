@@ -55,6 +55,7 @@ const RESOURCE_ALIASES: Record<string, string> = {
 	'proyectos-task': 'planeacion-proyectos-task',
 	'pedidos-surtir': 'pedidos',
 	usuario: 'user',
+	__time_sheets: 'time-sheets',
 };
 
 const FIELD_MESSAGES: Record<string, string> = {
