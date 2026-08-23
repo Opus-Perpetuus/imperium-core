@@ -535,8 +535,8 @@ export function report_validation_ok(
 	return ok(
 		[validation],
 		validation.is_valid
-			? 'Plantilla válida'
-			: `La plantilla contiene placeholders inválidos para el modelo ${model_name}`,
+			? 'La plantilla es válida'
+			: 'La plantilla contiene placeholders inválidos',
 	);
 }
 

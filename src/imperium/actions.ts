@@ -4254,10 +4254,42 @@ async function po_replenish(ctx: Ctx) {
 	return ok([result], 'Reabasto automático actualizado');
 }
 
+async function resolve_report_module(ctx: Ctx, raw: string) {
+	if (!ctx.store.has('module-management')) return null;
+	const ident = String(raw ?? '').trim();
+	if (!ident) return null;
+	if (/^[a-f0-9]{24}$/i.test(ident)) {
+		const by_id = await ctx.store.find_id('module-management', ident);
+		if (by_id) return by_id;
+	}
+	return (
+		(await ctx.store.find_where('module-management', { model_id: ident })) ??
+		(await ctx.store.find_where('module-management', { module_name: ident })) ??
+		(await ctx.store.find_where('module-management', { name: ident }))
+	);
+}
+
 async function resolve_report_target(ctx: Ctx, raw: string) {
-	const resource = resolve_model(ctx, raw);
-	await assert_target_model_read(ctx.store, ctx.actor, resource);
-	return resource;
+	const ident = String(raw ?? '').trim();
+	if (!ident) throw new Error('No se recibió un identificador de modelo válido');
+	const module_record = await resolve_report_module(ctx, ident);
+	if (module_record && module_record.is_enable === false) {
+		throw new Error(
+			`El módulo '${String(module_record.name || module_record.model_id || ident)}' está deshabilitado`,
+		);
+	}
+	const model_name = String(module_record?.model_id || ident);
+	try {
+		const resource = resolve_model(ctx, model_name);
+		await assert_target_model_read(ctx.store, ctx.actor, resource);
+		return resource;
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		if (message.startsWith('Modelo desconocido:')) {
+			throw new Error(`Model ${model_name} not found`);
+		}
+		throw error;
+	}
 }
 
 async function report_first(ctx: Ctx) {
@@ -4508,18 +4540,23 @@ async function report_validate(ctx: Ctx) {
 		related = related || String(stored?.related_model ?? '');
 		html = html || String(stored?.html_content ?? '');
 	}
-	if (!related || !html) {
-		return ok(
-			[{ is_valid: true, placeholders: [], invalid_placeholders: [], model_name: related }],
-			'Plantilla válida',
-		);
-	}
 	try {
 		const resource = await resolve_report_target(ctx, related);
 		const fields = await build_report_field_metadata(ctx, resource);
-		return report_validation_ok(html, fields, related);
-	} catch {
-		return ok([], `Error obteniendo campos del modelo ${related}`);
+		return report_validation_ok(html, fields, related || resource);
+	} catch (error) {
+		const reason = error instanceof Error ? error.message : 'Error desconocido';
+		return ok(
+			[
+				{
+					is_valid: false,
+					placeholders: [],
+					invalid_placeholders: [{ placeholder: '', reason }],
+					model_name: related,
+				},
+			],
+			'No se pudo validar la plantilla',
+		);
 	}
 }
 
@@ -4680,10 +4717,23 @@ function resolve_model(ctx: Ctx, raw: string) {
 }
 
 async function attachment_base64(ctx: Ctx, id: string) {
-	if (!ctx.store.has('attachment-management')) throw new Error('Sin adjuntos');
-	const doc = await ctx.store.find_id('attachment-management', id);
-	if (!doc) throw new Error('Adjunto no encontrado');
-	return ok([{ base64: doc.base64 ?? doc.data ?? '', mime: doc.mime ?? 'image/png' }], 'Imagen');
+	const attach_id = String(id ?? '').trim();
+	if (!/^[a-f0-9]{24}$/i.test(attach_id)) {
+		throw new Error('ID de attachment inválido');
+	}
+	const doc = ctx.store.has('attachment-management')
+		? await ctx.store.find_id('attachment-management', attach_id)
+		: null;
+	if (!doc || doc.is_active === false) {
+		return ok([''], 'Data URL de imagen generada correctamente');
+	}
+	const raw = String(doc.base64 ?? doc.data ?? '').trim();
+	if (!raw) {
+		return ok([''], 'Data URL de imagen generada correctamente');
+	}
+	const mime = String(doc.mimetype ?? doc.mime ?? 'image/jpeg');
+	const dataurl = raw.startsWith('data:') ? raw : `data:${mime};base64,${raw}`;
+	return ok([dataurl], 'Data URL de imagen generada correctamente');
 }
 
 async function attachment_view(ctx: Ctx) {
