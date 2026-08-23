@@ -400,11 +400,63 @@ export async function handle_crud(
 		);
 	}
 	if (method === 'GET' && segs.length === 3 && segs[1] === 'array') {
+		const field_path = decodeURIComponent(segs[2] ?? '').trim();
+		if (!field_path) {
+			throw new Error('No se proporciono el campo de arreglo solicitado.');
+		}
+		if (resource === 'pos-session') {
+			await assert_pos_pin(
+				store,
+				req,
+				segs[0]!,
+				{ method: 'GET', path: '/pos-session/:id', label: 'Restaurar sesion POS' },
+				actor,
+			);
+		}
 		const doc = await store.find_id(resource, segs[0]!);
-		if (!doc) return json(resource, fail('No encontrado', 404).body, 404);
-		const field = decodeURIComponent(segs[2]!);
-		const arr = Array.isArray(doc[field]) ? doc[field] : [];
-		return json(resource, ok(arr as ImperiumDoc[], 'Campo arreglo'));
+		if (!doc) {
+			return json(resource, ok([], 'No se encontro el registro solicitado.', 0));
+		}
+		if (is_dashboard_resource(resource)) {
+			const access = await dashboard_access(store, actor);
+			if (!dashboard_is_visible(doc, access)) {
+				return json(resource, ok([], 'No se encontro el registro solicitado.', 0));
+			}
+		}
+		const scope = await record_rule_scope(store, actor, resource, method);
+		await assert_id_in_scope(store, resource, segs[0]!, scope, method);
+		const [populated] = await finalize_rows(
+			store,
+			resource,
+			await store.populate_docs(resource, [doc]),
+			'detail',
+		);
+		const detail = is_project_resource(resource)
+			? await hydrate_project(store, populated)
+			: populated;
+		const resolved = resolve_value_by_path(detail, field_path);
+		if (!Array.isArray(resolved)) {
+			throw new Error(`El campo "${field_path}" no es un arreglo en el registro solicitado.`);
+		}
+		const sort_field = String(url.searchParams.get('campoSort') ?? '').trim();
+		const sort_order = Number(url.searchParams.get('sort')) === -1 ? -1 : 1;
+		const sorted = sort_array_items([...resolved], sort_field, sort_order);
+		const desde = non_negative_int(url.searchParams.get('desde'), 0);
+		const limite_raw = url.searchParams.get('limite');
+		const limite =
+			limite_raw == null || limite_raw === ''
+				? sorted.length
+				: non_negative_int(limite_raw, sorted.length);
+		const sliced =
+			limite > 0 ? sorted.slice(desde, desde + limite) : sorted.slice(desde);
+		return json(
+			resource,
+			ok(
+				sliced as ImperiumDoc[],
+				`Campo "${field_path}" obtenido correctamente.`,
+				sorted.length,
+			),
+		);
 	}
 	if (method === 'DELETE' && segs[0] === 'id' && segs[1] && segs.length === 2) {
 		if (is_print_template_resource(resource)) {
@@ -1320,6 +1372,61 @@ async function prepare_user_write(
 		parallelism: 1,
 	});
 	return out;
+}
+
+function resolve_value_by_path(source: Record<string, unknown>, path: string): unknown {
+	return path.split('.').reduce<unknown>((current, segment) => {
+		if (
+			current === null ||
+			current === undefined ||
+			typeof current !== 'object' ||
+			Array.isArray(current)
+		) {
+			return undefined;
+		}
+		return (current as Record<string, unknown>)[segment];
+	}, source);
+}
+
+function non_negative_int(raw: string | null, fallback: number): number {
+	const parsed = Number(raw);
+	if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+	return Math.trunc(parsed);
+}
+
+function sort_array_items(items: unknown[], sort_field: string, sort_order: 1 | -1): unknown[] {
+	if (!sort_field) return items;
+	return items.sort((left, right) => {
+		const left_value = resolve_sort_value(left, sort_field);
+		const right_value = resolve_sort_value(right, sort_field);
+		return compare_sort_values(left_value, right_value, sort_order);
+	});
+}
+
+function resolve_sort_value(item: unknown, sort_field: string): unknown {
+	if (item === null || item === undefined) return item;
+	if (typeof item !== 'object' || Array.isArray(item)) {
+		return sort_field === 'value' ? item : undefined;
+	}
+	return resolve_value_by_path(item as Record<string, unknown>, sort_field);
+}
+
+function compare_sort_values(left: unknown, right: unknown, sort_order: 1 | -1): number {
+	if (left === right) return 0;
+	if (left === null || left === undefined) return 1;
+	if (right === null || right === undefined) return -1;
+	const normalized_left = normalize_sort_value(left);
+	const normalized_right = normalize_sort_value(right);
+	if (normalized_left < normalized_right) return -1 * sort_order;
+	if (normalized_left > normalized_right) return 1 * sort_order;
+	return 0;
+}
+
+function normalize_sort_value(value: unknown): number | string | boolean {
+	if (value instanceof Date) return value.getTime();
+	if (typeof value === 'string') return value.toLocaleLowerCase();
+	if (typeof value === 'number' || typeof value === 'boolean') return value;
+	return JSON.stringify(value);
 }
 
 function json(resource: string, body: unknown, status = 200): Response {
