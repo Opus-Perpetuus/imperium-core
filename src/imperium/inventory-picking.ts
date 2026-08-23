@@ -88,7 +88,7 @@ export async function compute_picking_route(
 		? (
 				await store.find_many('inventory-stock-quant', {
 					where: { producto },
-					take: 5000,
+					take: 20000,
 					include_inactive: false,
 					populate: false,
 				})
