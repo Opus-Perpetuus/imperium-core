@@ -510,7 +510,16 @@ async function sync_planning_reminders(store: ImperiumStore, uid: string) {
 	if (!store.has('planeacion-proyectos') && !store.has('planeacion-mis-tareas')) return;
 	const inputs: ImperiumDoc[] = [];
 	if (store.has('planeacion-proyectos')) {
-		const { rows } = await store.find_many('planeacion-proyectos', { take: 500 });
+		const { rows } = await store.find_many('planeacion-proyectos', {
+			mongo_match: {
+				$or: [
+					{ owner_user: uid },
+					{ collaborator_users: { $regex: uid } },
+				],
+			},
+			take: 20000,
+			include_inactive: false,
+		});
 		for (const project of rows) {
 			if (CLOSED_STATES.has(String(project.status ?? project.state ?? ''))) continue;
 			const related =
