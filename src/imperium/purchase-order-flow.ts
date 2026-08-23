@@ -323,7 +323,7 @@ export async function purchase_order_stats(
 	mongo_match?: Record<string, unknown> | null,
 ): Promise<Record<string, unknown>> {
 	const { rows } = await store.find_many('purchase-order', {
-		take: 5000,
+		take: 20000,
 		include_inactive: true,
 		populate: false,
 		mongo_match,
