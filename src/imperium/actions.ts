@@ -1724,20 +1724,22 @@ async function delivery_chofer_routes(ctx: Ctx) {
 	const vehicles = ctx.store.has('vehicle')
 		? (
 				await ctx.store.find_many('vehicle', {
+					where: { chofer: employee_id },
 					take: 2000,
 					include_inactive: false,
 				})
-			).rows.filter((v) => ref_id(v.chofer) === employee_id)
+			).rows
 		: [];
 	if (!vehicles.length) {
 		return ok([], 'El chofer no tiene vehículos asignados.');
 	}
-	const vehicle_ids = new Set(vehicles.map((v) => String(v._id)));
+	const vehicle_ids = vehicles.map((v) => String(v._id));
 	const { rows } = await ctx.store.find_many('delivery-route', {
+		where: { vehicle: { in: vehicle_ids } },
 		take: 2000,
 		include_inactive: false,
 	});
-	const routes = sort_by_name(rows.filter((r) => vehicle_ids.has(ref_id(r.vehicle))));
+	const routes = sort_by_name(rows);
 	return ok(
 		await decorate_delivery_routes(ctx.store, routes, 'detail'),
 		'Rutas del chofer cargadas correctamente',
