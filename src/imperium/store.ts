@@ -79,6 +79,24 @@ export const RESOURCE_ALIASES: Record<string, string> = {
 	usuario: 'user',
 };
 
+function round_qty(value: number): number {
+	return Math.round((value + Number.EPSILON) * 10000) / 10000;
+}
+
+/**
+ * El service original (`create_system_movements`) siempre recalcula
+ * stock_disponible_resultante = total − apartado. El default Mongoose es 0
+ * y no debe quedarse si el total resultante es distinto.
+ */
+function apply_inventory_movement_ledger(resource: string, doc: ImperiumDoc) {
+	const canonical = RESOURCE_ALIASES[resource] ?? resource;
+	if (canonical !== 'inventory-movement') return;
+	const total = Number(doc.stock_total_resultante ?? 0);
+	const apartado = Number(doc.stock_apartado_resultante ?? 0);
+	if (!Number.isFinite(total) || !Number.isFinite(apartado)) return;
+	doc.stock_disponible_resultante = round_qty(total - apartado);
+}
+
 /** Unique de negocio que el original imponía en Mongoose y Postgres aún no indexa. */
 const UNIQUE_FIELDS: Record<string, string[]> = {
 	user: ['email'],
@@ -1033,6 +1051,7 @@ export class ImperiumStore {
 
 	async insert(resource: string, doc: ImperiumDoc): Promise<ImperiumDoc> {
 		apply_schema_setters(resource, doc);
+		apply_inventory_movement_ledger(resource, doc);
 		assert_required_fields(resource, doc);
 		assert_objectid_refs(resource, doc);
 		await this.assert_unique_business_keys(resource, doc);
