@@ -87,6 +87,7 @@ export async function compute_picking_route(
 	const quants = store.has('inventory-stock-quant')
 		? (
 				await store.find_many('inventory-stock-quant', {
+					where: { producto },
 					take: 5000,
 					include_inactive: false,
 					populate: false,
@@ -139,6 +140,11 @@ async function compute_weighted_consumption(
 	const now = new Date();
 	const start = new Date(now.getFullYear(), now.getMonth() - (periodos - 1), 1);
 	const { rows } = await store.find_many('inventory-movement', {
+		where: {
+			producto,
+			tipo_movimiento: 'salida_entrega',
+			fecha_movimiento: { gte: start.toISOString() },
+		},
 		take: 5000,
 		include_inactive: true,
 		populate: false,
@@ -178,15 +184,12 @@ async function upsert_draft_replenishment_item(
 	const cantidad = round_quantity(faltante + consumo);
 	const costo_unitario = round_quantity(params.costo_unitario);
 	const { rows } = await store.find_many('purchase-order', {
-		take: 50,
+		where: { estado: 'borrador', tipo_origen: 'reabasto' },
+		take: 1,
 		include_inactive: false,
 		populate: false,
 	});
-	let order =
-		rows.find(
-			(row) =>
-				String(row.estado ?? '') === 'borrador' && String(row.tipo_origen ?? '') === 'reabasto',
-		) ?? null;
+	let order = rows[0] ?? null;
 	const articulos = as_array(order?.articulos).map(as_object);
 	const existing = articulos.find((item) => ref_id(item.producto) === params.producto);
 	if (existing) {
