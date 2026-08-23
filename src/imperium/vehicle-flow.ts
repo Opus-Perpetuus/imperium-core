@@ -119,7 +119,7 @@ export async function vehicle_by_status(
 	mongo_match?: Record<string, unknown> | null,
 ): Promise<Array<{ _id: string; count: number }>> {
 	const { rows } = await store.find_many('vehicle', {
-		take: 5000,
+		take: 20000,
 		include_inactive: true,
 		populate: false,
 		mongo_match,
