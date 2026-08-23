@@ -425,6 +425,10 @@ const PUBLIC_EXTRA_ACTIONS = new Set([
 	'mitec_webhook',
 	'receive_interinstance_message',
 	'receive_interinstance_ticket',
+	// El router original de reports va `secured: false` para que el
+	// `<img src=".../reports/image-base64/:id">` de las plantillas cargue
+	// sin Authorization (preview HTML / iframe).
+	'get_image_base64',
 ]);
 
 /** Extras del original que solo exigen sesión (el handler acota al usuario). */
