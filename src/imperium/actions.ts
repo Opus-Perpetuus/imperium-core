@@ -4051,7 +4051,7 @@ const SKU_OFFLINE_OMIT = new Set([
 async function sku_sync_offline(ctx: Ctx) {
 	if (!ctx.store.has('sku')) return Response.json({ skus: [] });
 	const { rows } = await ctx.store.find_many('sku', {
-		take: 5000,
+		take: 20000,
 		populate: false,
 	});
 	const skus = rows
