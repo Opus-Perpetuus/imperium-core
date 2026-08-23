@@ -323,16 +323,28 @@ async function find_external_counter(
 	id: string,
 	ref_value: string | null,
 ): Promise<ImperiumDoc | null> {
-	const { rows } = await store.find_many('auto-increment-control', {
-		take: 80,
+	const by_index = await store.find_many('auto-increment-control', {
+		where: { index_name: id },
+		take: 20000,
 		include_inactive: true,
+		sort: 'updated_at:desc',
 	});
-	const matches = rows.filter(
-		(row) =>
-			String(row.index_name ?? '') === id ||
-			String(row.increment_field ?? '') === id ||
-			String(row.name ?? '') === id,
-	);
+	let matches = by_index.rows;
+	if (!matches.length) {
+		const by_field = await store.find_many('auto-increment-control', {
+			where: { increment_field: id },
+			take: 20000,
+			include_inactive: true,
+			sort: 'updated_at:desc',
+		});
+		const by_name = await store.find_many('auto-increment-control', {
+			where: { name: id },
+			take: 20000,
+			include_inactive: true,
+			sort: 'updated_at:desc',
+		});
+		matches = [...by_field.rows, ...by_name.rows];
+	}
 	if (ref_value) {
 		return (
 			matches.find((row) => String(row.ref_value ?? '') === ref_value) ??
