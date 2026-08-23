@@ -1736,7 +1736,7 @@ async function delivery_chofer_routes(ctx: Ctx) {
 	const vehicle_ids = vehicles.map((v) => String(v._id));
 	const { rows } = await ctx.store.find_many('delivery-route', {
 		where: { vehicle: { in: vehicle_ids } },
-		take: 2000,
+		take: 20000,
 		include_inactive: false,
 	});
 	const routes = sort_by_name(rows);
