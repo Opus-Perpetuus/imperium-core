@@ -86,6 +86,12 @@ const UNIQUE_FIELDS: Record<string, string[]> = {
 	'user-settings': ['user_id'],
 	'interface-restriction': ['html_element_hash'],
 	'inventory-internal-location': ['codigo'],
+	'violation-mobility-law': ['name'],
+};
+
+/** Unique solo entre activos (`partialFilterExpression: { is_active: { $ne: false } }`). */
+const UNIQUE_FIELDS_ACTIVE: Record<string, string[]> = {
+	'custom-field-control': ['module_id'],
 };
 
 /** Unique compuesto que el original imponía con índice multi-campo. */
@@ -104,6 +110,14 @@ function unique_composites_for(resource: string): string[][] {
 	return (
 		UNIQUE_COMPOSITES[resource] ??
 		UNIQUE_COMPOSITES[RESOURCE_ALIASES[resource] ?? ''] ??
+		[]
+	);
+}
+
+function unique_fields_active_for(resource: string): string[] {
+	return (
+		UNIQUE_FIELDS_ACTIVE[resource] ??
+		UNIQUE_FIELDS_ACTIVE[RESOURCE_ALIASES[resource] ?? ''] ??
 		[]
 	);
 }
@@ -900,6 +914,22 @@ export class ImperiumStore {
 			const value = String(raw).trim();
 			if (!value) continue;
 			const found = await this.find_where(resource, { [field]: value });
+			if (!found?._id || String(found._id) === String(except_id ?? '')) continue;
+			const label = field === '_ref' ? 'la referencia' : `el campo ${field}`;
+			throw new Error(`Ya existe un registro con ${label} "${value}".`);
+		}
+		for (const field of unique_fields_active_for(resource)) {
+			const raw = doc[field];
+			if (raw === undefined || raw === null) continue;
+			const value = String(raw).trim();
+			if (!value) continue;
+			const { rows } = await this.find_many(resource, {
+				where: { [field]: value },
+				take: 1,
+				include_inactive: false,
+				populate: false,
+			});
+			const found = rows[0];
 			if (!found?._id || String(found._id) === String(except_id ?? '')) continue;
 			const label = field === '_ref' ? 'la referencia' : `el campo ${field}`;
 			throw new Error(`Ya existe un registro con ${label} "${value}".`);
