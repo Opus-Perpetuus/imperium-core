@@ -313,15 +313,27 @@ export async function handle_crud(
 	if (method === 'GET' && segs[0] === 'export.csv' && segs.length === 1) {
 		const { q, include_inactive, where, ids } = query_list(url);
 		const scope = await record_rule_scope(store, actor, resource, method);
-		const { rows } = await store.find_many(resource, {
-			q,
-			take: 5000,
-			include_inactive,
-			where: Object.keys(where).length ? where : undefined,
-			ids,
-			mongo_match: scope.match,
-		});
-		const decorated = await finalize_rows(store, resource, rows, 'list');
+		const page_size = 1000;
+		const max_rows = Number(process.env.EXPORT_STREAM_MAX_ROWS ?? 1_000_000);
+		const collected: ImperiumDoc[] = [];
+		let skip = 0;
+		while (collected.length < max_rows) {
+			const take = Math.min(page_size, max_rows - collected.length);
+			const { rows } = await store.find_many(resource, {
+				q,
+				take,
+				skip,
+				include_inactive,
+				where: Object.keys(where).length ? where : undefined,
+				ids,
+				mongo_match: scope.match,
+			});
+			if (!rows.length) break;
+			collected.push(...rows);
+			skip += rows.length;
+			if (rows.length < take) break;
+		}
+		const decorated = await finalize_rows(store, resource, collected, 'list');
 		const keys = new Set<string>();
 		for (const r of decorated) for (const k of Object.keys(r)) keys.add(k);
 		const cols = [...keys]
