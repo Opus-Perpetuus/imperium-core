@@ -3399,15 +3399,29 @@ function message_participants(doc: ImperiumDoc, uid: string): string[] {
 	]
 		.map((v) => String(v ?? ''))
 		.filter(Boolean);
-	return [...new Set([...parts, ...extra, uid].filter(Boolean))];
+	return [...new Set([...parts, ...extra].filter(Boolean))];
+}
+
+async function find_user_messages(store: ImperiumStore, uid: string, take = 20000) {
+	return store.find_many('messages', {
+		mongo_match: {
+			$or: [
+				{ senderUserId: uid },
+				{ sender_user_id: uid },
+				{ created_by: uid },
+				{ recipientUserIds: { $regex: uid } },
+				{ participantUserIds: { $regex: uid } },
+				{ participants: { $regex: uid } },
+			],
+		},
+		take,
+		include_inactive: true,
+	});
 }
 
 async function my_conversations(ctx: Ctx) {
 	const uid = actor_id(ctx);
-	const { rows } = await ctx.store.find_many('messages', {
-		take: 500,
-		include_inactive: true,
-	});
+	const { rows } = await find_user_messages(ctx.store, uid);
 	const groups = new Map<string, ImperiumDoc[]>();
 	for (const m of rows) {
 		const parts = message_participants(m, uid);
@@ -3454,10 +3468,7 @@ async function search_chat_messages(ctx: Ctx) {
 	}
 	const needle = raw_term.toLowerCase();
 	const limit = Math.min(100, Math.max(1, Number(ctx.url.searchParams.get('limit') ?? 25) || 25));
-	const { rows } = await ctx.store.find_many('messages', {
-		take: 5000,
-		include_inactive: true,
-	});
+	const { rows } = await find_user_messages(ctx.store, uid, 5000);
 	const hits = rows
 		.filter((row) => {
 			const source = String(row.sourceType ?? row.source_type ?? 'chat');
@@ -3530,10 +3541,7 @@ async function conversation(ctx: Ctx) {
 	const other = String(ctx.params.participantId ?? '').trim();
 	const uid = actor_id(ctx);
 	const expected_key = conversation_key_for([uid, other]);
-	const { rows } = await ctx.store.find_many('messages', {
-		take: 500,
-		include_inactive: true,
-	});
+	const { rows } = await find_user_messages(ctx.store, uid);
 	const mine = rows
 		.filter((m) => {
 			const key = String(m.conversationKey ?? m.conversation_key ?? '');
