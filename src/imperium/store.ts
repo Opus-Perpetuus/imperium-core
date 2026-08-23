@@ -69,6 +69,10 @@ const REFS: RefBook = JSON.parse(
 	readFileSync(join(import.meta.dir, 'refs.json'), 'utf8'),
 ) as RefBook;
 
+function field_map_for(resource: string): Record<string, string> | undefined {
+	return REFS.fields[resource] ?? REFS.fields[RESOURCE_ALIASES[resource] ?? ''];
+}
+
 /** Campos que el original guarda como id string (sin $lookup a name). */
 const LIST_REF_KEEP_AS_ID = new Set(['invoice_request_id']);
 
@@ -440,7 +444,7 @@ export class ImperiumStore {
 	}
 
 	field_refs(resource: string): Record<string, string> {
-		return REFS.fields[resource] ?? {};
+		return field_map_for(resource) ?? {};
 	}
 
 	json_cols(resource: string): Set<string> {
@@ -732,7 +736,7 @@ export class ImperiumStore {
 	}
 
 	async populate_docs(resource: string, docs: ImperiumDoc[]): Promise<ImperiumDoc[]> {
-		const field_map = REFS.fields[resource];
+		const field_map = field_map_for(resource);
 		if (!field_map || !docs.length) return docs;
 		const needed = new Map<string, Set<string>>();
 		for (const [field, model] of Object.entries(field_map)) {
@@ -771,7 +775,7 @@ export class ImperiumStore {
 	 * El detalle sigue con el objeto lite para los formularios.
 	 */
 	flatten_list_docs(resource: string, docs: ImperiumDoc[]): ImperiumDoc[] {
-		const field_map = REFS.fields[resource];
+		const field_map = field_map_for(resource);
 		if (!field_map || !docs.length) return docs;
 		return docs.map((doc) => {
 			const out = { ...doc };
