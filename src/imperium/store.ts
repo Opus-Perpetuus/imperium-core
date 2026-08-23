@@ -250,7 +250,20 @@ function assert_objectid_refs(resource: string, doc: ImperiumDoc) {
 const LIST_REF_KEEP_AS_ID = new Set(['invoice_request_id', 'cfdi_document_id']);
 
 /** `__get_statistics` del scaffold con `charts.daily_stats` (línea 30 días). */
-const DAILY_LINE_CHART = new Set(['cfdi-document', 'payments', 'dynamic-dashboard']);
+const DAILY_LINE_CHART = new Set([
+	'cfdi-document',
+	'cfdi-catalog',
+	'cfdi-issuer-profile',
+	'cfdi',
+	'payments',
+	'dynamic-dashboard',
+	'payroll-concept',
+	'payroll-period',
+	'payroll-receipt',
+	'labor-schedule',
+	'labor-incident',
+	'nomina',
+]);
 
 const GENERAL = new Set([
 	'id',
