@@ -172,7 +172,8 @@
       "priority_level": "TicketingSystemPriority"
     },
     "purchase-order": {
-      "recepcion_pendiente": "InventoryReception"
+      "recepcion_pendiente": "InventoryReception",
+      "proveedor": "Contacto"
     },
     "invoice-request": {
       "pedido": "Pedidos",

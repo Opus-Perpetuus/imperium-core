@@ -761,6 +761,35 @@ export class ImperiumStore {
 		});
 	}
 
+	/**
+	 * En listados el original deja refs como nombre (lookup) y el id en `campo_id`.
+	 * El detalle sigue con el objeto lite para los formularios.
+	 */
+	flatten_list_docs(resource: string, docs: ImperiumDoc[]): ImperiumDoc[] {
+		const field_map = REFS.fields[resource];
+		if (!field_map || !docs.length) return docs;
+		return docs.map((doc) => {
+			const out = { ...doc };
+			for (const field of Object.keys(field_map)) {
+				if (field.includes('.')) continue;
+				const val = out[field];
+				if (Array.isArray(val)) continue;
+				if (!val || typeof val !== 'object') continue;
+				const id = ref_id(val);
+				if (!id) continue;
+				if (/(_id|Id)$/.test(field)) {
+					out[field] = id;
+					continue;
+				}
+				const id_key = `${field}_id`;
+				if (out[id_key] == null || out[id_key] === '') out[id_key] = id;
+				const name = String((val as ImperiumDoc).name ?? '').trim();
+				if (name) out[field] = name;
+			}
+			return out;
+		});
+	}
+
 	resource_for_model(model: string): string | null {
 		const direct = REFS.models[model] ?? REFS.models[model.toLowerCase()];
 		if (direct && this.has(direct)) return direct;

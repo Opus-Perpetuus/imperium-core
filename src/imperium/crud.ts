@@ -921,9 +921,10 @@ async function finalize_rows(
 	mode: 'list' | 'detail',
 ): Promise<ImperiumDoc[]> {
 	if (is_pedido_resource(resource) && mode === 'list') {
-		return enrich_pedidos_list(store, rows);
+		return store.flatten_list_docs(resource, await enrich_pedidos_list(store, rows));
 	}
-	return decorate_rows(resource, rows);
+	const decorated = decorate_rows(resource, rows);
+	return mode === 'list' ? store.flatten_list_docs(resource, decorated) : decorated;
 }
 
 function decorate_rows(resource: string, rows: ImperiumDoc[]): ImperiumDoc[] {
