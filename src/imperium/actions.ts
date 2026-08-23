@@ -2192,7 +2192,7 @@ async function collect_debug_logs(ctx: Ctx): Promise<ImperiumDoc[]> {
 	const date_from = Date.parse(String(ctx.url.searchParams.get('date_from') ?? ''));
 	const date_to = Date.parse(String(ctx.url.searchParams.get('date_to') ?? ''));
 	const { rows } = await ctx.store.find_many('debug-log', {
-		take: 5000,
+		take: 20000,
 		include_inactive: true,
 	});
 	return rows.filter((row) => {
