@@ -76,6 +76,10 @@ const UNIQUE_FIELDS: Record<string, string[]> = {
 	'cfdi-document': ['uuid'],
 	pedidos: ['offline_uuid'],
 	patient: ['numero_expediente'],
+	'payroll-concept': ['clave_interna'],
+	sku: ['codigo'],
+	'ticketing-system-consecutive': ['name'],
+	'api-keys': ['api_key'],
 };
 
 function unique_fields_for(resource: string): string[] {
