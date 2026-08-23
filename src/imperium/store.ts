@@ -92,6 +92,8 @@ const UNIQUE_FIELDS: Record<string, string[]> = {
 const UNIQUE_COMPOSITES: Record<string, string[][]> = {
 	cobranza: [['source_module', 'source_id']],
 	'cfdi-catalog': [['catalog', 'code']],
+	'custom-user-themes': [['user_id', 'theme_name']],
+	'documentation-page': [['slug', 'folder_path']],
 };
 
 function unique_fields_for(resource: string): string[] {
