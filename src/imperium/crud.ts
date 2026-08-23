@@ -86,6 +86,10 @@ import {
 	prepare_project_write,
 	strip_root_parent_where,
 } from './planeacion-flow.ts';
+import {
+	is_print_template_resource,
+	prepare_print_template_write,
+} from './print-template-flow.ts';
 import { build_access } from './auth.ts';
 import { is_seed_admin } from './group-access.ts';
 import {
@@ -255,6 +259,9 @@ export async function handle_crud(
 		return json(resource, ok(decorate_rows(resource, rows), 'Consulta masiva', total));
 	}
 	if (method === 'PUT' && segs[0] === 'batch' && segs.length === 1) {
+		if (is_print_template_resource(resource)) {
+			throw new Error('Method not implemented.');
+		}
 		if (is_physical_count_resource(resource)) {
 			throw new Error('Los conteos físicos no soportan operaciones batch');
 		}
@@ -300,6 +307,9 @@ export async function handle_crud(
 		return json(resource, ok(arr as ImperiumDoc[], 'Campo arreglo'));
 	}
 	if (method === 'DELETE' && segs[0] === 'id' && segs[1] && segs.length === 2) {
+		if (is_print_template_resource(resource)) {
+			throw new Error('Method not implemented.');
+		}
 		if (resource === 'delivery-package') {
 			throw new Error('No se eliminan bultos. Usa «Anular bulto» para liberar el empaque.');
 		}
@@ -530,6 +540,9 @@ export async function handle_crud(
 		if (resource === 'reports') {
 			await assert_report_template_write(store, incoming);
 		}
+		if (is_print_template_resource(resource)) {
+			incoming = await prepare_print_template_write(store, incoming);
+		}
 		const doc = await before_create(store, resource, incoming, actor);
 		const created = await store.insert(resource, doc);
 		await link_attachments_to_record(store, resource, created);
@@ -694,6 +707,9 @@ export async function handle_crud(
 		if (resource === 'reports') {
 			await assert_report_template_write(store, { ...previous, ...b });
 		}
+		if (is_print_template_resource(resource)) {
+			b = await prepare_print_template_write(store, { ...previous, ...b });
+		}
 		const updated = await store.update(resource, id, b);
 		if (updated) await link_attachments_to_record(store, resource, updated);
 		if (!updated) return json(resource, fail('No encontrado', 404).body, 404);
@@ -827,6 +843,9 @@ export async function handle_crud(
 		}
 		if (resource === 'reports') {
 			await assert_report_template_write(store, { ...previous, ...patched });
+		}
+		if (is_print_template_resource(resource)) {
+			patched = await prepare_print_template_write(store, { ...previous, ...patched });
 		}
 		const updated = await store.update(resource, segs[0]!, patched);
 		if (updated) await link_attachments_to_record(store, resource, updated);

@@ -166,6 +166,7 @@ export class ImperiumStore {
 				'font-awesome-icon-catalog',
 				'mcp-user-token',
 				'proyectos-time-log',
+				'user-print-template',
 			];
 			for (const resource of orphans) {
 				if (this.locs.has(resource)) continue;
@@ -183,6 +184,8 @@ export class ImperiumStore {
 			}
 			const icons = this.locs.get('font-awesome-icon-catalog');
 			if (icons) icons.collection = '__font_awesome_icon_catalog';
+			const print_templates = this.locs.get('user-print-template');
+			if (print_templates) print_templates.collection = '__plantillas_de_usuario';
 			const time_logs = this.locs.get('proyectos-time-log');
 			if (time_logs) {
 				const planeacion = this.all_locs.find((l) => l.slug === 'planeacion');
@@ -230,6 +233,25 @@ export class ImperiumStore {
 						});
 					}
 				}
+			}
+		}
+		if (this.has('access-rights')) {
+			const print_right =
+				(await this.find_where('access-rights', {
+					_ref: 'user-print-template-access-rights-0',
+				})) ??
+				(await this.find_where('access-rights', { model_id: 'UserPrintTemplate' }));
+			if (!print_right) {
+				await this.insert('access-rights', {
+					_ref: 'user-print-template-access-rights-0',
+					name: 'Plantillas de usuario | Permisos generales',
+					description: 'Permisos para administrar plantillas del designer',
+					model_id: 'UserPrintTemplate',
+					allow_read: true,
+					allow_create: true,
+					allow_update: true,
+					allow_delete: true,
+				});
 			}
 		}
 		if (process.env.AUTO_REINDEX_SEARCH_ON_STARTUP !== 'false') {
@@ -374,6 +396,7 @@ export class ImperiumStore {
 			'font-awesome-icon-catalog',
 			'mcp-user-token',
 			'proyectos-time-log',
+			'user-print-template',
 		]) {
 			if (!this.locs.has(resource)) continue;
 			const qt = this.qt(resource);
