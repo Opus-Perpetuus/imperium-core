@@ -2,6 +2,7 @@
  * CRUD Imperium: mismas rutas que `crud_routes()` del backend Express.
  */
 import { as_array, as_object, fail, ok, type ImperiumDoc } from './envelope.ts';
+import { run_batch_import } from './batch-import.ts';
 import { query_list, read_imperium_body } from './body.ts';
 import type { ImperiumStore } from './store.ts';
 import { assert_pos_pin, maybe_create_pos_session_pin } from './user-pin.ts';
@@ -375,35 +376,28 @@ export async function handle_crud(
 		}
 		const b = await body();
 		const items = Array.isArray(b) ? b : Array.isArray(b.rows) ? b.rows : [];
-		const match = String(url.searchParams.get('batch_match_field') ?? '_id');
-		const out: ImperiumDoc[] = [];
-		for (const raw of items) {
-			const doc = raw as ImperiumDoc;
-			const key = String(doc[match] ?? doc._id ?? doc.id ?? '');
-			if (key) {
-				const existing = await store.find_id(resource, key);
-				if (existing) {
-					const updated = await store.update(
+		const match = String(url.searchParams.get('batch_match_field') ?? '').trim();
+		return json(
+			resource,
+			await run_batch_import({
+				store,
+				resource,
+				rows: items,
+				match_field: match || null,
+				persist_create: async (doc) =>
+					store.insert(
 						resource,
-						String(existing._id),
-						await prepare_user_write(resource, doc, false),
-					);
-					if (updated) out.push(updated);
-					continue;
-				}
-			}
-			out.push(
-				await store.insert(
-					resource,
-					await assign_document_increments(
-						store,
-						resource,
-						await prepare_user_write(resource, doc, true),
+						await before_create(
+							store,
+							resource,
+							await prepare_user_write(resource, doc, true),
+							actor,
+						),
 					),
-				),
-			);
-		}
-		return json(resource, ok(out, 'Lote aplicado', out.length));
+				persist_update: async (id, doc) =>
+					store.update(resource, id, await prepare_user_write(resource, doc, false)),
+			}),
+		);
 	}
 	if (method === 'GET' && segs.length === 3 && segs[1] === 'array') {
 		const doc = await store.find_id(resource, segs[0]!);
