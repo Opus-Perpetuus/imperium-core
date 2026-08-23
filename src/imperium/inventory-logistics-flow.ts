@@ -103,7 +103,7 @@ export async function sync_order_logistics_reservation(
 
 	const { rows } = await store.find_many('delivery-package', {
 		where: { pedido: normalized_order_id },
-		take: 5000,
+		take: 20000,
 		include_inactive: false,
 		populate: false,
 	});
