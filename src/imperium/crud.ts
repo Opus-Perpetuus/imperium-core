@@ -123,6 +123,14 @@ import { assign_document_increments } from './custom-pattern-render.ts';
 import { build_access } from './auth.ts';
 import { is_seed_admin } from './group-access.ts';
 import {
+	build_field_values,
+	field_values_limit,
+	field_values_message,
+	field_values_missing_field_error,
+	filter_pedido_estado_options,
+} from './field-values.ts';
+import { load_state_fields_metadata, schema_validation_for, state_field_for } from './state-fields.ts';
+import {
 	assert_record_in_scope,
 	operation_flag,
 	record_rule_lookup_keys,
@@ -235,15 +243,21 @@ export async function handle_crud(
 		return json(resource, ok([stats], message));
 	}
 	if (method === 'GET' && segs[0] === 'field-values' && segs[1]) {
-		const { q } = query_list(url);
-		const values = await store.distinct(resource, decodeURIComponent(segs[1]), q);
-		return json(
+		const field_path = decodeURIComponent(segs[1] ?? '').trim();
+		if (!field_path) throw new Error(field_values_missing_field_error());
+		const list_url = new URL(url);
+		list_url.searchParams.set('limite', String(field_values_limit(url.searchParams.get('limite'))));
+		if (!list_url.searchParams.get('desde')) list_url.searchParams.set('desde', '0');
+		const { rows } = await read_list_docs(store, resource, list_url, actor);
+		const metadata = await load_state_fields_metadata(store, resource);
+		const options = await filter_pedido_estado_options(
+			store,
+			actor,
 			resource,
-			ok(
-				values.map((v) => ({ value: v, label: String(v) })),
-				'Valores de campo',
-			),
+			field_path,
+			build_field_values(rows, field_path, state_field_for(metadata, field_path)),
 		);
+		return json(resource, ok(options, field_values_message(field_path), options.length));
 	}
 	if (method === 'GET' && segs[0] === 'export.csv' && segs.length === 1) {
 		const { q, include_inactive, where, ids } = query_list(url);
@@ -391,70 +405,20 @@ export async function handle_crud(
 		);
 	}
 	if (method === 'GET' && segs.length === 0) {
-		const q = query_list(url);
-		if (is_project_task_resource(resource) && !q.where.project_id) {
+		const listed = await read_list_docs(store, resource, url, actor);
+		if (listed.empty_project) {
 			return json(resource, {
 				...ok([], 'Sin proyecto especificado', 0),
 				tipo_de_instancia: instance_type(store, resource, []),
 				module_info: { name: resource, model: resource, model_id: resource },
+				schema_validation: await schema_validation_for(store, resource),
 			});
-		}
-		if (is_personal_task_resource(resource)) {
-			const uid = String(actor?._id ?? '');
-			if (!uid) throw new Error('No se pudo resolver el usuario actual');
-			q.where.owner_user = uid;
-		}
-		if (is_incidencia_resource(resource)) {
-			q.where = apply_incidencia_list_where(q.where);
-		}
-		if (is_registro_asistencia_resource(resource)) {
-			q.where = apply_registro_asistencia_list_where(q.where);
-		}
-		if (is_lista_asistencia_resource(resource)) {
-			q.where = apply_lista_asistencia_list_where(q.where);
-		}
-		if (resource === 'reports') {
-			q.where = apply_report_list_where(store, q.where);
-		}
-		const where = strip_root_parent_where(q.where);
-		const scope = await record_rule_scope(store, actor, resource, method);
-		const found = await store.find_many(resource, {
-			...q,
-			where: Object.keys(where).length ? where : undefined,
-			mongo_match: scope.match,
-			take: q.where.parent_task === '__root__' || q.where.parent_task_id === '__root__' ? 2000 : q.take,
-		});
-		let filtered = apply_root_parent_filter(resource, q.where, found.rows);
-		if (is_lista_asistencia_resource(resource) && !url.searchParams.get('campoSort')) {
-			filtered = [...filtered].sort((a, b) => {
-				const by_number = Number(a.numero_lista ?? 0) - Number(b.numero_lista ?? 0);
-				if (by_number) return by_number;
-				return String(a.alumno_nombre_snapshot ?? a.name ?? '').localeCompare(
-					String(b.alumno_nombre_snapshot ?? b.name ?? ''),
-					'es',
-				);
-			});
-		}
-		const { rows, total } = {
-			rows: filtered,
-			total:
-				filtered.length === found.rows.length
-					? found.total
-					: filtered.length,
-		};
-		let decorated = await finalize_rows(store, resource, rows, 'list');
-		let visible_total = total;
-		if (is_dashboard_resource(resource)) {
-			const access = await dashboard_access(store, actor);
-			if (!access.full) {
-				decorated = decorated.filter((doc) => dashboard_is_visible(doc, access));
-				visible_total = decorated.length;
-			}
 		}
 		return json(resource, {
-			...ok(decorated, list_message(resource), visible_total),
-			tipo_de_instancia: instance_type(store, resource, decorated),
+			...ok(listed.rows, list_message(resource), listed.total),
+			tipo_de_instancia: instance_type(store, resource, listed.rows),
 			module_info: { name: resource, model: resource, model_id: resource },
+			schema_validation: await schema_validation_for(store, resource),
 		});
 	}
 	if (method === 'GET' && segs.length === 1) {
@@ -486,7 +450,10 @@ export async function handle_crud(
 		const detail = is_project_resource(resource)
 			? await hydrate_project(store, populated)
 			: populated;
-		return json(resource, ok([detail], detail_message(resource)));
+		return json(resource, {
+			...ok([detail], detail_message(resource)),
+			schema_validation: await schema_validation_for(store, resource),
+		});
 	}
 	if (method === 'POST' && segs.length === 0) {
 		assert_inventory_ledger_write(resource, 'create');
@@ -1001,6 +968,64 @@ export async function handle_crud(
 		);
 	}
 	return null;
+}
+
+async function read_list_docs(
+	store: ImperiumStore,
+	resource: string,
+	url: URL,
+	actor: ImperiumDoc | null,
+): Promise<{ rows: ImperiumDoc[]; total: number; empty_project?: boolean }> {
+	const q = query_list(url);
+	if (is_project_task_resource(resource) && !q.where.project_id) {
+		return { rows: [], total: 0, empty_project: true };
+	}
+	if (is_personal_task_resource(resource)) {
+		const uid = String(actor?._id ?? '');
+		if (!uid) throw new Error('No se pudo resolver el usuario actual');
+		q.where.owner_user = uid;
+	}
+	if (is_incidencia_resource(resource)) {
+		q.where = apply_incidencia_list_where(q.where);
+	}
+	if (is_registro_asistencia_resource(resource)) {
+		q.where = apply_registro_asistencia_list_where(q.where);
+	}
+	if (is_lista_asistencia_resource(resource)) {
+		q.where = apply_lista_asistencia_list_where(q.where);
+	}
+	if (resource === 'reports') {
+		q.where = apply_report_list_where(store, q.where);
+	}
+	const where = strip_root_parent_where(q.where);
+	const scope = await record_rule_scope(store, actor, resource, 'GET');
+	const found = await store.find_many(resource, {
+		...q,
+		where: Object.keys(where).length ? where : undefined,
+		mongo_match: scope.match,
+		take: q.where.parent_task === '__root__' || q.where.parent_task_id === '__root__' ? 2000 : q.take,
+	});
+	let filtered = apply_root_parent_filter(resource, q.where, found.rows);
+	if (is_lista_asistencia_resource(resource) && !url.searchParams.get('campoSort')) {
+		filtered = [...filtered].sort((a, b) => {
+			const by_number = Number(a.numero_lista ?? 0) - Number(b.numero_lista ?? 0);
+			if (by_number) return by_number;
+			return String(a.alumno_nombre_snapshot ?? a.name ?? '').localeCompare(
+				String(b.alumno_nombre_snapshot ?? b.name ?? ''),
+				'es',
+			);
+		});
+	}
+	const total = filtered.length === found.rows.length ? found.total : filtered.length;
+	let decorated = await finalize_rows(store, resource, filtered, 'list');
+	if (is_dashboard_resource(resource)) {
+		const access = await dashboard_access(store, actor);
+		if (!access.full) {
+			decorated = decorated.filter((doc) => dashboard_is_visible(doc, access));
+			return { rows: decorated, total: decorated.length };
+		}
+	}
+	return { rows: decorated, total };
 }
 
 async function finalize_rows(
