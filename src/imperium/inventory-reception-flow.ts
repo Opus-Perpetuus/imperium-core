@@ -295,7 +295,8 @@ async function quant_disponible(store: ImperiumStore, producto: string, ubicacio
 	if (!store.has('inventory-stock-quant')) return 0;
 	const { rows } = await store.find_many('inventory-stock-quant', {
 		where: { producto, ubicacion },
-		take: 8,
+		take: 1,
+		sort: 'id:asc',
 		include_inactive: true,
 		populate: false,
 	});

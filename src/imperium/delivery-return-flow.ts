@@ -169,6 +169,7 @@ export async function find_quant_for_pair(
 		const { rows } = await store.find_many('inventory-stock-quant', {
 			where: { producto, ubicacion },
 			take: 1,
+			sort: 'id:asc',
 			include_inactive: true,
 			populate: false,
 		});
@@ -178,6 +179,7 @@ export async function find_quant_for_pair(
 		const { rows } = await store.find_many('inventory-stock-quant', {
 			where: { producto, ubicacion_codigo: codigo },
 			take: 1,
+			sort: 'id:asc',
 			include_inactive: true,
 			populate: false,
 		});
