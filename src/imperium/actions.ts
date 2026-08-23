@@ -4439,10 +4439,12 @@ async function report_first(ctx: Ctx) {
 	const model = ctx.params.model_name ?? ctx.params.modelName ?? '';
 	try {
 		const resource = await resolve_report_target(ctx, model);
-		const { rows } = await ctx.store.find_many(resource, { take: 1 });
-		return ok(rows, 'Primer registro');
+		const { rows } = await ctx.store.find_many(resource, { take: 1, sort: 'id:asc' });
+		const raw = rows[0] ?? null;
+		const record = raw ? await hydrate_loose_product_references(ctx.store, raw) : null;
+		return ok(record ? [record] : [], record ? 'Record found' : 'No record found', record ? 1 : 0);
 	} catch {
-		return ok([], 'Primer registro');
+		return ok([], 'No record found');
 	}
 }
 
@@ -4658,7 +4660,17 @@ async function report_records(ctx: Ctx) {
 	const model = ctx.params.model_identifier ?? '';
 	try {
 		const resource = await resolve_report_target(ctx, model);
-		return list_resource({ ...ctx, resource } as Ctx, resource);
+		const desde = Math.max(0, Number(ctx.url.searchParams.get('desde') ?? 0) || 0);
+		const limite = Math.max(
+			1,
+			Math.min(200, Number(ctx.url.searchParams.get('limite') ?? 30) || 30),
+		);
+		const { rows, total } = await ctx.store.find_many(resource, {
+			q: ctx.url.searchParams.get('termino') ?? '',
+			skip: desde,
+			take: limite,
+		});
+		return ok(rows, 'Registros del modelo obtenidos correctamente', total);
 	} catch {
 		return ok([], `Error obteniendo registros del modelo ${model}`);
 	}
@@ -4666,9 +4678,19 @@ async function report_records(ctx: Ctx) {
 
 async function report_record(ctx: Ctx) {
 	const model = ctx.params.model_identifier ?? '';
+	const record_id = String(ctx.params.record_id ?? '').trim();
 	try {
+		if (!/^[a-f0-9]{24}$/i.test(record_id)) {
+			return ok([], 'ID de registro inválido', 0);
+		}
 		const resource = await resolve_report_target(ctx, model);
-		return one(ctx, resource, ctx.params.record_id);
+		const loaded = await ctx.store.find_id(resource, record_id);
+		if (!loaded || loaded.is_active === false) {
+			return ok([], 'Registro no encontrado', 0);
+		}
+		const [populated] = await ctx.store.populate_docs(resource, [loaded]);
+		const record = await hydrate_loose_product_references(ctx.store, populated ?? loaded);
+		return ok([record], 'Registro obtenido correctamente', 1);
 	} catch {
 		return ok([], `Error obteniendo registro del modelo ${model}`);
 	}
