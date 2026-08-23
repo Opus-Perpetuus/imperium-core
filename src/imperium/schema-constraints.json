@@ -1,0 +1,617 @@
+{
+  "required": {
+    "__auto_increment_control": [
+      "name",
+      "model_name",
+      "collection",
+      "increment_field",
+      "index_name",
+      "_unique_string_reference"
+    ],
+    "__custom-pattern-increment-sequence-parts": [
+      "counter_config_id",
+      "token_type",
+      "order"
+    ],
+    "__custom_pattern_conditions": [
+      "part_id",
+      "modelo",
+      "return_value"
+    ],
+    "__mongoose_model_tracker": [
+      "name",
+      "__model_name",
+      "__collection"
+    ],
+    "__physical_devices": [
+      "name",
+      "install_uuid"
+    ],
+    "__tags": [
+      "name"
+    ],
+    "__view_config_presets": [
+      "name"
+    ],
+    "access-rights": [
+      "name"
+    ],
+    "access_rights": [
+      "name"
+    ],
+    "agua": [
+      "name",
+      "vigencia_actual",
+      "periodo_actual"
+    ],
+    "agua_contrato": [
+      "name",
+      "contrato"
+    ],
+    "agua_impedimento": [
+      "name"
+    ],
+    "agua_incidencia": [
+      "name"
+    ],
+    "agua_lectura": [
+      "name",
+      "contrato",
+      "lectura_actual"
+    ],
+    "agua_lecturista": [
+      "name"
+    ],
+    "agua_periodo": [
+      "name"
+    ],
+    "agua_ruta": [
+      "name"
+    ],
+    "agua_tarifa": [
+      "name",
+      "vigencia"
+    ],
+    "alumnos": [
+      "name"
+    ],
+    "api-keys": [
+      "name",
+      "api_key",
+      "domain",
+      "client"
+    ],
+    "asociaciones": [
+      "name"
+    ],
+    "attachment-management": [
+      "name",
+      "name_stored"
+    ],
+    "aulas": [
+      "name"
+    ],
+    "auto-increment-control": [
+      "name",
+      "model_name",
+      "collection",
+      "increment_field",
+      "index_name",
+      "_unique_string_reference"
+    ],
+    "boroughs": [
+      "name"
+    ],
+    "branchoffice": [
+      "name"
+    ],
+    "cfdi": [
+      "name"
+    ],
+    "cfdi-catalog": [
+      "name",
+      "catalog",
+      "code"
+    ],
+    "cfdi-document": [
+      "name"
+    ],
+    "cfdi-issuer-profile": [
+      "name",
+      "rfc",
+      "regimen_fiscal",
+      "lugar_expedicion"
+    ],
+    "ciclos-escolares": [
+      "name"
+    ],
+    "citizen-report": [
+      "citizen_name",
+      "citizen_email",
+      "citizen_phone",
+      "citizen_street",
+      "report_description",
+      "priority",
+      "status",
+      "citizen_report_problem",
+      "reporting_medium"
+    ],
+    "citizen-report-problem": [
+      "name"
+    ],
+    "citizen-report-reporting-medium": [
+      "name"
+    ],
+    "cobranza": [
+      "name",
+      "source_module",
+      "source_id",
+      "reference",
+      "concept",
+      "total_amount",
+      "paid_amount",
+      "balance"
+    ],
+    "configuration": [
+      "name",
+      "value"
+    ],
+    "contrato": [
+      "name",
+      "contrato"
+    ],
+    "country": [
+      "name"
+    ],
+    "cuadrillas": [
+      "name"
+    ],
+    "custom-field-control": [
+      "name",
+      "module_id",
+      "model_id"
+    ],
+    "custom-pattern-condition": [
+      "part_id",
+      "modelo",
+      "return_value"
+    ],
+    "custom-pattern-increment-sequence-parts": [
+      "counter_config_id",
+      "token_type",
+      "order"
+    ],
+    "delivery-package": [
+      "name",
+      "pedido",
+      "pedido_folio",
+      "codigo_bulto",
+      "numero_bulto",
+      "estado"
+    ],
+    "delivery-return": [
+      "name",
+      "estado"
+    ],
+    "delivery-route": [
+      "name"
+    ],
+    "departments": [
+      "name"
+    ],
+    "despensa-solidaria": [
+      "name",
+      "categoria",
+      "estado"
+    ],
+    "directorio-contactos": [
+      "name",
+      "categoria"
+    ],
+    "dynamic-dashboard": [
+      "name"
+    ],
+    "employee": [
+      "name"
+    ],
+    "epson-ticket-template": [
+      "name",
+      "template_key",
+      "content"
+    ],
+    "escuelas": [
+      "name"
+    ],
+    "grados-escolares": [
+      "name"
+    ],
+    "grupo": [
+      "name"
+    ],
+    "horarios": [
+      "name"
+    ],
+    "impedimento": [
+      "name"
+    ],
+    "incidencia": [
+      "name"
+    ],
+    "interface-restriction": [
+      "html_element_hash"
+    ],
+    "inventario-sanitario": [
+      "name",
+      "categoria",
+      "estado"
+    ],
+    "inventory-cost-entry": [
+      "name",
+      "receipt_key",
+      "orden_compra",
+      "orden_compra_nombre",
+      "producto",
+      "producto_nombre",
+      "tipo_origen",
+      "cantidad",
+      "costo_unitario",
+      "costo_total",
+      "stock_previo",
+      "stock_resultante",
+      "costo_promedio_resultante",
+      "fecha_entrada"
+    ],
+    "inventory-internal-location": [
+      "name",
+      "segmento_codigo",
+      "tipo"
+    ],
+    "inventory-movement": [
+      "name",
+      "producto",
+      "producto_nombre",
+      "tipo_movimiento",
+      "cantidad",
+      "stock_total_previo",
+      "stock_total_resultante",
+      "stock_apartado_previo",
+      "stock_apartado_resultante",
+      "stock_disponible_resultante",
+      "fecha_movimiento"
+    ],
+    "inventory-physical-count": [
+      "name",
+      "ubicacion",
+      "estado"
+    ],
+    "inventory-reception": [
+      "name",
+      "estado",
+      "purchase_order"
+    ],
+    "inventory-stock-quant": [
+      "name",
+      "producto",
+      "producto_nombre",
+      "ubicacion"
+    ],
+    "invoice-request": [
+      "name",
+      "pedido",
+      "pedido_folio",
+      "pedido_estado",
+      "contacto_nombre",
+      "monto_total",
+      "monto_umbral"
+    ],
+    "labor-incident": [
+      "name",
+      "employee",
+      "tipo",
+      "fecha_inicio",
+      "fecha_fin"
+    ],
+    "labor-schedule": [
+      "name",
+      "employee"
+    ],
+    "lectura": [
+      "name",
+      "contrato",
+      "lectura_actual"
+    ],
+    "lecturista": [
+      "name"
+    ],
+    "lista-asistencia": [
+      "name",
+      "registro_asistencia_id",
+      "alumno_id",
+      "grupo_id",
+      "alumno_nombre_snapshot"
+    ],
+    "lista-de-precios": [
+      "name"
+    ],
+    "materias": [
+      "name"
+    ],
+    "medical": [
+      "nombre_completo",
+      "cedula_profesional"
+    ],
+    "medical-file": [
+      "paciente_id",
+      "numero_expediente",
+      "nombre_paciente",
+      "fecha_consulta",
+      "hora_consulta"
+    ],
+    "menu-management": [
+      "name"
+    ],
+    "mis-tareas": [
+      "name"
+    ],
+    "model-tracker": [
+      "name",
+      "__model_name",
+      "__collection"
+    ],
+    "module-management": [
+      "name",
+      "module_location",
+      "module_name"
+    ],
+    "municipality": [
+      "name"
+    ],
+    "news-banner-control": [
+      "name"
+    ],
+    "patient": [
+      "numero_expediente",
+      "nombre_completo",
+      "fecha_nacimiento",
+      "edad",
+      "sexo",
+      "estado_civil"
+    ],
+    "payments": [
+      "name",
+      "amount",
+      "service_slug"
+    ],
+    "payroll-concept": [
+      "name",
+      "clave_interna",
+      "categoria",
+      "tipo_sat"
+    ],
+    "payroll-period": [
+      "name",
+      "tipo_nomina",
+      "fecha_pago",
+      "fecha_inicial",
+      "fecha_final",
+      "num_dias_pagados",
+      "estado"
+    ],
+    "payroll-receipt": [
+      "name",
+      "payroll_period",
+      "employee",
+      "estado"
+    ],
+    "periodo": [
+      "name"
+    ],
+    "physical-device": [
+      "name",
+      "install_uuid"
+    ],
+    "pos": [
+      "reference",
+      "date_order",
+      "amount_total",
+      "sync",
+      "state"
+    ],
+    "pos-order": [
+      "reference",
+      "date_order",
+      "amount_total",
+      "sync",
+      "state"
+    ],
+    "pos-session": [
+      "name",
+      "opening_date",
+      "cashier",
+      "branch_office",
+      "cash_register_opening_money",
+      "created_by"
+    ],
+    "pos-tickets": [
+      "ticket_sequence",
+      "pos_session",
+      "subtotal",
+      "total_paid",
+      "change"
+    ],
+    "pos_order": [
+      "reference",
+      "date_order",
+      "amount_total",
+      "sync",
+      "state"
+    ],
+    "products": [
+      "name"
+    ],
+    "proyectos": [
+      "name"
+    ],
+    "purchase-order": [
+      "name",
+      "estado",
+      "tipo_origen"
+    ],
+    "record-rules": [
+      "name",
+      "model_id",
+      "domain"
+    ],
+    "registro-asistencias": [
+      "name",
+      "grupo_id",
+      "fecha_asistencia"
+    ],
+    "registro-emergencias": [
+      "name",
+      "tipo_emergencia",
+      "prioridad",
+      "resultado"
+    ],
+    "registro-incidencias": [
+      "name"
+    ],
+    "reports": [
+      "name",
+      "related_model",
+      "html_content"
+    ],
+    "reports-pdf-setting": [
+      "name",
+      "page_size_preset",
+      "orientation"
+    ],
+    "rescate-animal": [
+      "name",
+      "estado"
+    ],
+    "ruta": [
+      "name"
+    ],
+    "servicios-realizados": [
+      "name",
+      "tipo_servicio"
+    ],
+    "sku": [
+      "name"
+    ],
+    "states": [
+      "name"
+    ],
+    "status-option-control": [
+      "name"
+    ],
+    "tags": [
+      "name"
+    ],
+    "tarifa": [
+      "name",
+      "vigencia"
+    ],
+    "ticketing-system-box-config": [
+      "name",
+      "box_number",
+      "allowed_services",
+      "allowed_customer_types"
+    ],
+    "ticketing-system-consecutive": [
+      "name",
+      "consecutive"
+    ],
+    "ticketing-system-customer-type": [
+      "name"
+    ],
+    "ticketing-system-priority": [
+      "name",
+      "priority_level"
+    ],
+    "ticketing-system-service-type": [
+      "name"
+    ],
+    "ticketing-system-turn": [
+      "name"
+    ],
+    "ticketing-system-turn-youtube": [
+      "name",
+      "video_id"
+    ],
+    "unit-of-measure": [
+      "name"
+    ],
+    "user": [
+      "name",
+      "email"
+    ],
+    "user-group": [
+      "name"
+    ],
+    "user-pin": [
+      "name",
+      "document_id",
+      "document_collection",
+      "document_model",
+      "pin_hash"
+    ],
+    "vehicle": [
+      "name",
+      "placas",
+      "tipo_unidad",
+      "estado_operativo"
+    ],
+    "view-config-preset": [
+      "name"
+    ],
+    "violation": [
+      "name",
+      "vehicle_type_id",
+      "vehicle_brand_id",
+      "color",
+      "police_officer_id",
+      "city_zone_id",
+      "img_signature_police_officer"
+    ],
+    "violation-city-zone": [
+      "name"
+    ],
+    "violation-mobility-law": [
+      "name"
+    ],
+    "violation-offender-guarantee": [
+      "name"
+    ],
+    "violation-payment-method": [
+      "name"
+    ],
+    "violation-user-id-type": [
+      "name"
+    ],
+    "violation-vehicle-brand": [
+      "name"
+    ],
+    "violation-vehicle-type": [
+      "name"
+    ],
+    "voluntariado": [
+      "name",
+      "estado"
+    ],
+    "zpl-management": [
+      "name"
+    ]
+  },
+  "attachment_fields": {
+    "citizen-report": [
+      "evidence_before_images",
+      "evidence_after_images"
+    ],
+    "violation": [
+      "img_reason_id",
+      "img_plate_id"
+    ]
+  }
+}

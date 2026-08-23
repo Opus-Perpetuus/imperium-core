@@ -1,9 +1,22 @@
 /**
  * Metadata de campos de estatus: mismos defaults que `__state_fields` de los
  * schemas Mongoose, mezclados con `status-option-control` y el tracker.
+ * `schema_validation.required` y `attachment_fields` salen de los schemas
+ * Mongoose (`jsonSchema()` / refs a AttachmentManagement).
  */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { as_array, as_object } from './envelope.ts';
 import { RESOURCE_ALIASES, type ImperiumStore } from './store.ts';
+
+type SchemaConstraints = {
+	required: Record<string, string[]>;
+	attachment_fields: Record<string, string[]>;
+};
+
+const CONSTRAINTS: SchemaConstraints = JSON.parse(
+	readFileSync(join(import.meta.dir, 'schema-constraints.json'), 'utf8'),
+) as SchemaConstraints;
 
 const STATUS_OPTION_CONFIGURATION_TYPE = 'status-options-by-module';
 const DEFAULT_FIELD = 'state';
@@ -510,6 +523,34 @@ function build_batch_import(
 	};
 }
 
+function constraint_list(map: Record<string, string[]>, resource: string) {
+	const canonical = canonical_state_resource(resource);
+	return map[canonical] ?? map[resource] ?? [];
+}
+
+function is_attachment_ref(model: string) {
+	return model.replace(/[_-]/g, '').toLowerCase() === 'attachmentmanagement';
+}
+
+function attachment_fields_for(
+	store: ImperiumStore,
+	resource: string,
+	tracker: Record<string, unknown> | null,
+) {
+	const canonical = canonical_state_resource(resource);
+	const from_file = constraint_list(CONSTRAINTS.attachment_fields, canonical);
+	const from_refs = Object.entries(store.field_refs(canonical))
+		.filter(([, model]) => is_attachment_ref(model))
+		.map(([field]) => field)
+		.filter((field) => field && !field.includes('.'));
+	const from_tracker = as_array(tracker?.__schema_fields)
+		.map((item) => as_object(item))
+		.filter((rec) => is_attachment_ref(text(rec.ref)))
+		.map((rec) => text(rec.path))
+		.filter((path) => path && !path.includes('.'));
+	return [...new Set([...from_file, ...from_refs, ...from_tracker])];
+}
+
 async function find_persisted_config(store: ImperiumStore, resource: string) {
 	if (!store.has('module-management') || !store.has('configuration')) return null;
 	const model_id = model_id_for_resource(resource);
@@ -551,11 +592,11 @@ export async function schema_validation_for(store: ImperiumStore, resource: stri
 	return {
 		type: 'object',
 		properties,
-		required: [] as string[],
+		required: constraint_list(CONSTRAINTS.required, canonical),
 		metadata: {
 			state_fields,
 			model_id: model_id_for_resource(resource),
-			attachment_fields: [] as string[],
+			attachment_fields: attachment_fields_for(store, canonical, tracker),
 			batch_import: build_batch_import(store, canonical, tracker, properties),
 		},
 	};

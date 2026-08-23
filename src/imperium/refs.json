@@ -94,7 +94,9 @@
       "jefe_de_cuadrilla": "Employee",
       "parent_report_id": "CitizenReport",
       "citizen_report_problem": "CitizenReportProblem",
-      "reporting_medium": "CitizenReportReportingMedium"
+      "reporting_medium": "CitizenReportReportingMedium",
+      "evidence_before_images": "AttachmentManagement",
+      "evidence_after_images": "AttachmentManagement"
     },
     "citizen-report-problem": {
       "department": "Departments"
