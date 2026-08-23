@@ -149,7 +149,7 @@ async function payments_of(store: ImperiumStore, charge_id: string) {
 	if (!store.has('cobranza-payment')) return [];
 	const { rows } = await store.find_many('cobranza-payment', {
 		where: { charge_id },
-		take: 200,
+		take: 20000,
 		include_inactive: true,
 		populate: true,
 	});
