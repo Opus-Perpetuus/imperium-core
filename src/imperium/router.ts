@@ -121,6 +121,7 @@ async function dispatch(
 					await assert_http_access(store, actor, hit.resource, req.method, {
 						extra: Boolean(extra_hit),
 						action: extra_hit?.action,
+						rest: hit.rest,
 					});
 				}
 				if (extra_hit) {

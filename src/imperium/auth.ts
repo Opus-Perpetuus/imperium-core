@@ -705,15 +705,31 @@ export async function assert_target_model_read(
 	);
 }
 
+const REPORTS_PDF_SETTING_ID = /^[a-f0-9]{24}$/i;
+
+function reports_pdf_setting_public_read(resource: string, method: string, rest = '') {
+	if (resource !== 'reports-pdf-setting' || method !== 'GET') return false;
+	const id = rest.replace(/^\/+|\/+$/g, '').split('/')[0] ?? '';
+	return REPORTS_PDF_SETTING_ID.test(id);
+}
+
 export async function assert_http_access(
 	store: ImperiumStore,
 	actor: ImperiumDoc | null,
 	resource: string,
 	method: string,
-	opts: { action?: string; extra?: boolean } = {},
+	opts: { action?: string; extra?: boolean; rest?: string } = {},
 ): Promise<void> {
 	if (opts.extra && is_public_extra_action(opts.action)) return;
-	if (!actor) throw new HttpAuthRequiredError();
+	if (reports_pdf_setting_public_read(resource, method, opts.rest)) return;
+	if (!actor) {
+		if (resource === 'reports-pdf-setting' && method === 'GET') {
+			throw new HttpAccessDeniedError(
+				build_model_denied_message('GET', 'ReportsPdfSetting', []),
+			);
+		}
+		throw new HttpAuthRequiredError();
+	}
 	if (opts.extra && is_session_scoped_extra(resource, opts.action)) return;
 	const access = await build_access(store, actor);
 	if (access.has_full_access) return;
