@@ -537,6 +537,36 @@ export class ImperiumStore {
 		return this.locs.has(resource);
 	}
 
+	/**
+	 * Lista `{ model_name, collection }` como `GET /available-models` del original
+	 * (`mongoose.models`, sin nombres `__`, orden alfabético).
+	 */
+	available_mongoose_models(): Array<{ model_name: string; collection: string }> {
+		const resource_to_model = new Map<string, string>();
+		for (const [model, resource] of Object.entries(REFS.models)) {
+			if (!/^[A-Z]/.test(model) || !this.has(resource)) continue;
+			if (!resource_to_model.has(resource)) resource_to_model.set(resource, model);
+		}
+		const seen = new Set<string>();
+		const out: Array<{ model_name: string; collection: string }> = [];
+		for (const loc of this.locs.values()) {
+			if (loc.resource.startsWith('__') || String(loc.collection).startsWith('__')) continue;
+			const model_name =
+				resource_to_model.get(loc.resource) ??
+				(loc.resource === 'branchoffice'
+					? 'Branchoffice'
+					: loc.resource
+							.split('-')
+							.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+							.join(''));
+			if (!model_name || seen.has(model_name)) continue;
+			seen.add(model_name);
+			out.push({ model_name, collection: loc.collection });
+		}
+		out.sort((a, b) => a.model_name.localeCompare(b.model_name));
+		return out;
+	}
+
 	loc(resource: string): ModuleLoc {
 		const hit = this.locs.get(resource);
 		if (!hit) throw new Error(`Recurso desconocido: ${resource}`);

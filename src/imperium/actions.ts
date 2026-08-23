@@ -250,8 +250,8 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return preview_counter(ctx);
 		case 'auto-increment-control:get_available_models':
 			return ok(
-				[...ctx.store.locs.keys()].map((r) => ({ value: r, label: r })),
-				'Modelos disponibles',
+				ctx.store.available_mongoose_models(),
+				'Modelos disponibles cargados correctamente.',
 			);
 		case 'auto-increment-control:consolidate_duplicates':
 			return increment_consolidate(ctx);
