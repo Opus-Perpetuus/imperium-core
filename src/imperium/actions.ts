@@ -3485,14 +3485,25 @@ async function search_chat_messages(ctx: Ctx) {
 	}
 	const needle = raw_term.toLowerCase();
 	const limit = Math.min(100, Math.max(1, Number(ctx.url.searchParams.get('limit') ?? 25) || 25));
-	const { rows } = await find_user_messages(ctx.store, uid, 5000);
+	const expected_key = participant_id ? conversation_key_for([uid, participant_id]) : '';
+	const { rows } = await find_user_messages(ctx.store, uid, 20000);
 	const hits = rows
 		.filter((row) => {
-			const source = String(row.sourceType ?? row.source_type ?? 'chat');
-			if (source && source !== 'chat') return false;
-			const parts = message_participants(row, uid);
-			if (uid && !parts.includes(uid)) return false;
-			if (participant_id && !parts.includes(participant_id)) return false;
+			if (message_source_type(row) !== 'chat') return false;
+			if (
+				uid &&
+				!id_list(
+					row.participantUserIds ?? row.participant_user_ids ?? row.participants,
+				).includes(uid)
+			) {
+				return false;
+			}
+			if (participant_id && expected_key && message_conversation_key(row) !== expected_key) {
+				return false;
+			}
+			const snapshots = as_array(row.participantSnapshot ?? row.participant_snapshot);
+			const attachments = as_array(row.attachments);
+			const reply = as_object(row.replyPreview ?? row.reply_preview);
 			const hay = [
 				row.search_field,
 				row.message,
@@ -3501,8 +3512,15 @@ async function search_chat_messages(ctx: Ctx) {
 				row.senderEmail,
 				row.sender_name,
 				row.sender_email,
-				as_object(row.participantSnapshot).name,
-				as_object(row.participantSnapshot).email,
+				...snapshots.flatMap((item) => {
+					const rec = as_object(item);
+					return [rec.name, rec.email];
+				}),
+				...attachments.flatMap((item) => {
+					const rec = as_object(item);
+					return [rec.name, rec.fileExt, rec.mimetype];
+				}),
+				reply.textPreview,
 			]
 				.map((v) => String(v ?? '').toLowerCase())
 				.join(' ');
