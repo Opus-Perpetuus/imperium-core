@@ -66,7 +66,11 @@ function is_mock(doc: ImperiumDoc) {
 }
 
 async function list_mocks(store: ImperiumStore, resource: string) {
-	const { rows } = await store.find_many(resource, { take: 5000, include_inactive: true });
+	const { rows } = await store.find_many(resource, {
+		where: { __mock: true },
+		take: 20000,
+		include_inactive: true,
+	});
 	return rows.filter(is_mock);
 }
 
