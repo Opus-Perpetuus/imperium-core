@@ -3702,8 +3702,11 @@ async function create_chat_message(ctx: Ctx) {
 	let reply_preview: ImperiumDoc | undefined;
 	if (reply_to) {
 		const replied = await ctx.store.find_id('messages', reply_to);
-		const replied_key = String(replied?.conversationKey ?? replied?.conversation_key ?? '');
-		if (!replied || replied_key !== conversation_key) {
+		if (
+			!replied ||
+			message_source_type(replied) !== 'chat' ||
+			message_conversation_key(replied) !== conversation_key
+		) {
 			throw new Error(
 				'El mensaje que intentas responder no pertenece a esta conversación.',
 			);
