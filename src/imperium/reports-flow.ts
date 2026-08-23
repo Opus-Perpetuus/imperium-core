@@ -553,6 +553,10 @@ export async function resolve_report_records(
 		.filter(Boolean);
 	const single = String(body.record_id ?? '').trim();
 	if (single && !ids.includes(single)) ids.unshift(single);
+	if (!ids.length) {
+		const { rows } = await store.find_many(resource, { take: 1, sort: 'id:asc' });
+		return rows;
+	}
 	const out: ImperiumDoc[] = [];
 	for (const id of ids) {
 		const doc = await store.find_id(resource, id);
