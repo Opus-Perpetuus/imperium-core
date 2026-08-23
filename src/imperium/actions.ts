@@ -1571,14 +1571,15 @@ async function read_load_manifest(ctx: Ctx) {
 	const vehicle_id = String(ctx.url.searchParams.get('vehicle_id') ?? '').trim();
 	const route_id = String(ctx.url.searchParams.get('route_id') ?? '').trim();
 	const estado = String(ctx.url.searchParams.get('estado') ?? '').trim();
-	const { rows } = await ctx.store.find_many('delivery-package', { take: 500 });
-	const records = rows.filter((row) => {
-		if (row.is_active === false) return false;
-		if (vehicle_id && ref_id(row.vehicle) !== vehicle_id) return false;
-		if (route_id && ref_id(row.delivery_route) !== route_id) return false;
-		if (estado && String(row.estado) !== estado) return false;
-		return true;
+	const where: Record<string, unknown> = {};
+	if (vehicle_id) where.vehicle = vehicle_id;
+	if (route_id) where.delivery_route = route_id;
+	if (estado) where.estado = estado;
+	const { rows } = await ctx.store.find_many('delivery-package', {
+		where,
+		take: 20000,
 	});
+	const records = rows.filter((row) => row.is_active !== false);
 	const groups = new Map<
 		string,
 		{
