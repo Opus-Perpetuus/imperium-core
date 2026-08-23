@@ -13,6 +13,7 @@ import {
 	messaging_settings,
 	validate_interinstance_api_key,
 } from './interinstance.ts';
+import { status_options_for_model_field } from './status-options.ts';
 import type { ImperiumStore } from './store.ts';
 
 export type TicketCtx = {
@@ -25,11 +26,51 @@ export type TicketCtx = {
 };
 
 const TICKET_STATUS_VALUES = [
-	{ value: 'open', type: 'warning', display_leyend: 'Abierto', icon: 'fas fa-exclamation' },
-	{ value: 'in_progress', type: 'info', display_leyend: 'En proceso', icon: 'fas fa-gears' },
-	{ value: 'resolved', type: 'success', display_leyend: 'Resuelto', icon: 'fas fa-check' },
-	{ value: 'closed', type: 'neutral', display_leyend: 'Cerrado', icon: 'fas fa-ban' },
+	{
+		value: 'open',
+		type: 'warning',
+		display_leyend: 'Abierto',
+		icon: 'fas fa-exclamation',
+		color: '#ffc107',
+	},
+	{
+		value: 'in_progress',
+		type: 'info',
+		display_leyend: 'En proceso',
+		icon: 'fas fa-gears',
+		color: '#0dcaf0',
+	},
+	{
+		value: 'resolved',
+		type: 'success',
+		display_leyend: 'Resuelto',
+		icon: 'fas fa-check',
+		color: '#198754',
+	},
+	{
+		value: 'closed',
+		type: 'neutral',
+		display_leyend: 'Cerrado',
+		icon: 'fas fa-ban',
+		color: '#6c757d',
+	},
 ];
+
+function ticket_status_defaults() {
+	return TICKET_STATUS_VALUES.map((option) => ({
+		value: option.value,
+		label: option.display_leyend,
+		type: option.type,
+		color: option.color,
+		icon: option.icon,
+		field_name: 'status',
+		is_user_defined: false,
+	}));
+}
+
+async function ticket_status_options(store: ImperiumStore) {
+	return status_options_for_model_field(store, 'Ticket', 'status', ticket_status_defaults());
+}
 
 const ADMIN_INSTANCE_TYPE = {
 	title: 'String',
@@ -132,7 +173,14 @@ function has_planning_assignment(ticket?: Partial<ImperiumDoc> | null): boolean 
 	);
 }
 
-function ticket_schema_validation() {
+async function ticket_schema_validation(store: ImperiumStore) {
+	const values = (await ticket_status_options(store)).map((option) => ({
+		value: option.value,
+		type: option.type,
+		display_leyend: option.label,
+		icon: option.icon,
+		color: option.color,
+	}));
 	return {
 		properties: {
 			title: { type: 'String' },
@@ -147,7 +195,7 @@ function ticket_schema_validation() {
 					{
 						field_name: 'status',
 						enabled: true,
-						values: TICKET_STATUS_VALUES,
+						values,
 					},
 				],
 			},
@@ -458,7 +506,7 @@ export async function tickets_admin_list(ctx: TicketCtx) {
 	return {
 		...ok(page, 'Tickets cargados correctamente.', matched.length),
 		tipo_de_instancia: ADMIN_INSTANCE_TYPE,
-		schema_validation: ticket_schema_validation(),
+		schema_validation: await ticket_schema_validation(ctx.store),
 	};
 }
 
@@ -469,7 +517,7 @@ export async function tickets_admin_one(ctx: TicketCtx) {
 	if (!ticket) throw new Error('No se encontró el ticket solicitado.');
 	return {
 		...ok([ticket], 'Ticket cargado correctamente.'),
-		schema_validation: ticket_schema_validation(),
+		schema_validation: await ticket_schema_validation(ctx.store),
 	};
 }
 
@@ -478,9 +526,10 @@ export async function tickets_field_values(ctx: TicketCtx) {
 	if (field_name !== 'status') {
 		throw new Error('El campo solicitado no soporta catálogos dinámicos.');
 	}
-	const values = TICKET_STATUS_VALUES.map((option) => ({
+	const values = (await ticket_status_options(ctx.store)).map((option) => ({
 		value: option.value,
-		label: option.display_leyend,
+		label: option.label,
+		color: option.color,
 		icon: option.icon,
 		count: 0,
 	}));

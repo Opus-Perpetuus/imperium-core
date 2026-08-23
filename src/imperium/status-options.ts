@@ -165,6 +165,33 @@ async function list_status_configurations(store: ImperiumStore) {
 	return rows;
 }
 
+/**
+ * Opciones efectivas de un campo de estado: defaults del schema + overrides
+ * persistidos en `status-options-by-module` (mismo merge que el original).
+ */
+export async function status_options_for_model_field(
+	store: ImperiumStore,
+	model_id: string,
+	field: string,
+	defaults: StatusOption[] = [],
+) {
+	const configurations = await list_status_configurations(store);
+	const configuration = configurations.find((row) => {
+		const value = configuration_value(row);
+		return text(value.model_id) === model_id || text(row.model_id) === model_id;
+	});
+	const configured = configuration
+		? normalize_options(configuration_value(configuration).options)
+		: [];
+	const stamped_defaults = defaults.map((option) => ({
+		...option,
+		field_name: option.field_name || field,
+	}));
+	return merge_options(configured, stamped_defaults).filter(
+		(option) => !option.field_name || option.field_name === field,
+	);
+}
+
 async function find_module(store: ImperiumStore, module_id: string) {
 	if (!module_id) return null;
 	return (
