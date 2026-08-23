@@ -187,12 +187,11 @@ async function resolve_route_from_contact(store: ImperiumStore, contact_id: stri
 		if (route) return map_route_suggestion(route);
 	}
 	const { rows } = await store.find_many('delivery-route', {
-		mongo_match: { contacts: { $regex: contact_id } },
-		take: 1,
+		take: 20000,
 		include_inactive: false,
 		populate: false,
 	});
-	const route = rows[0];
+	const route = rows.find((row) => ids_from(row.contacts).includes(contact_id));
 	return route ? map_route_suggestion(route) : null;
 }
 
