@@ -1221,14 +1221,28 @@ async function increment_consolidate(ctx: Ctx) {
 
 async function increment_counter(ctx: Ctx) {
 	const doc = await need(ctx, 'auto-increment-control', ctx.params.id);
-	const current = Number(doc.current ?? doc.valor ?? doc.counter ?? 0);
-	const next = current + 1;
+	const amount = Math.max(1, Number(ctx.body.amount ?? ctx.url.searchParams.get('amount') ?? 1));
+	const model_name = String(doc.model_name ?? '');
+	const increment_field = String(doc.increment_field ?? doc.campo ?? 'sequence');
+	let next = Number(doc.current_sequence ?? doc.current ?? doc.valor ?? 0);
+	if (model_name) {
+		for (let i = 0; i < amount; i++) {
+			next = await ctx.store.next_auto_increment(model_name, increment_field);
+		}
+	} else {
+		next += amount;
+	}
 	const updated = await ctx.store.update('auto-increment-control', String(doc._id), {
+		current_sequence: next,
 		current: next,
 		valor: next,
 		counter: next,
+		current_real_value: next,
 	});
-	return ok([updated], 'Consecutivo incrementado');
+	return ok(
+		[{ ...(updated ?? {}), real_value: next, sequence: next, next_sequence: next }],
+		`Secuencia incrementada a ${String(next)}.`,
+	);
 }
 
 async function preview_counter(ctx: Ctx) {
@@ -1242,8 +1256,18 @@ async function preview_counter(ctx: Ctx) {
 	const hit =
 		rows.find((r) => String(r.increment_field ?? r.campo ?? '') === increment_field) ??
 		rows[0];
-	const next_sequence = Number(hit?.current ?? hit?.valor ?? 0) + 1;
-	return ok([{ next_sequence, next_consecutive: next_sequence }], 'Vista previa');
+	const next_sequence = Number(hit?.current_sequence ?? hit?.current ?? hit?.valor ?? 0) + 1;
+	return ok(
+		[
+			{
+				next_sequence,
+				next_consecutive: next_sequence,
+				next_real_value: next_sequence,
+				tracker: hit ?? null,
+			},
+		],
+		`Siguiente valor: ${String(next_sequence)}.`,
+	);
 }
 
 async function normalize_counters(ctx: Ctx) {
