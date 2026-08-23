@@ -26,10 +26,10 @@ import {
 } from './delivery-return-flow.ts';
 import {
 	decorate_delivery_routes,
-	delivery_route_list_instance_type,
 	is_delivery_route_resource,
 	prepare_delivery_route_write,
 } from './delivery-route-flow.ts';
+import { list_instance_type, project_list_docs } from './list-projection.ts';
 import {
 	prepare_purchase_order_create,
 	prepare_purchase_order_update,
@@ -953,16 +953,19 @@ async function finalize_rows(
 	mode: 'list' | 'detail',
 ): Promise<ImperiumDoc[]> {
 	if (is_pedido_resource(resource) && mode === 'list') {
-		return store.flatten_list_docs(resource, await enrich_pedidos_list(store, rows));
-	}
-	if (is_delivery_route_resource(resource)) {
-		return store.flatten_list_docs(
+		return project_list_docs(
 			resource,
-			await decorate_delivery_routes(store, rows, mode),
+			store.flatten_list_docs(resource, await enrich_pedidos_list(store, rows)),
 		);
 	}
+	if (is_delivery_route_resource(resource)) {
+		const decorated = await decorate_delivery_routes(store, rows, mode);
+		const flat = store.flatten_list_docs(resource, decorated);
+		return mode === 'list' ? project_list_docs(resource, flat) : flat;
+	}
 	const decorated = decorate_rows(resource, rows);
-	return mode === 'list' ? store.flatten_list_docs(resource, decorated) : decorated;
+	if (mode !== 'list') return decorated;
+	return project_list_docs(resource, store.flatten_list_docs(resource, decorated));
 }
 
 function decorate_rows(resource: string, rows: ImperiumDoc[]): ImperiumDoc[] {
@@ -990,7 +993,8 @@ function instance_type(
 	resource: string,
 	_rows: ImperiumDoc[],
 ): Record<string, { nombre_encabezado: string; tipo: string }> {
-	if (is_delivery_route_resource(resource)) return delivery_route_list_instance_type();
+	const projected = list_instance_type(resource);
+	if (projected) return projected;
 	const keys = ['_id', 'name', 'description', 'is_active', '_ref'];
 	for (const col of store.loc(resource).columns) {
 		if (!keys.includes(col.name)) keys.push(col.name);
