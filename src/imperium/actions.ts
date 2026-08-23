@@ -3156,13 +3156,28 @@ async function picking_route(ctx: Ctx) {
 async function stock_consistency(ctx: Ctx) {
 	const solo_inconsistentes = ctx.url.searchParams.get('solo_inconsistentes') !== '0';
 	const reparar = ctx.url.searchParams.get('reparar') === '1';
-	const products = (await ctx.store.find_many('products', { take: 5000, populate: false })).rows;
+	// Original: ProductsModel.find + aggregate de quants sin filtrar is_active.
+	// Sin inactivos, un producto borrado (sonda o real) con quants vivos
+	// aparece como inconsistente con nombre vacío y existencia 0.
+	const products = (
+		await ctx.store.find_many('products', {
+			take: 5000,
+			populate: false,
+			include_inactive: true,
+		})
+	).rows;
 	const quants = ctx.store.has('inventory-stock-quant')
-		? (await ctx.store.find_many('inventory-stock-quant', { take: 10000, populate: false })).rows
+		? (
+				await ctx.store.find_many('inventory-stock-quant', {
+					take: 10000,
+					populate: false,
+					include_inactive: true,
+				})
+			).rows
 		: [];
 	const by_prod = new Map<string, { suma: number; ubicaciones: number }>();
 	for (const q of quants) {
-		const id = String(q.producto ?? '');
+		const id = ref_id(q.producto);
 		if (!id) continue;
 		const cur = by_prod.get(id) ?? { suma: 0, ubicaciones: 0 };
 		cur.suma += Number(q.cantidad ?? 0);
