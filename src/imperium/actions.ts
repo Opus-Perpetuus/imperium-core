@@ -6,6 +6,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { as_array, as_object, fail, ok, type ImperiumDoc } from './envelope.ts';
+import { serve_attachment_bytes } from './media.ts';
 import { query_list, read_imperium_body } from './body.ts';
 import { qident, type ImperiumStore } from './store.ts';
 import { SearchEngine, search_text_from_doc } from './search-engine.ts';
@@ -5103,24 +5104,29 @@ async function attachment_base64(ctx: Ctx, id: string) {
 	if (!doc || doc.is_active === false) {
 		return ok([''], 'Data URL de imagen generada correctamente');
 	}
-	const raw = String(doc.base64 ?? doc.data ?? '').trim();
-	if (!raw) {
+	const served = await serve_attachment_bytes(doc);
+	if (!served) {
 		return ok([''], 'Data URL de imagen generada correctamente');
 	}
-	const mime = String(doc.mimetype ?? doc.mime ?? 'image/jpeg');
-	const dataurl = raw.startsWith('data:') ? raw : `data:${mime};base64,${raw}`;
+	const dataurl = `data:${served.mime};base64,${Buffer.from(served.body).toString('base64')}`;
 	return ok([dataurl], 'Data URL de imagen generada correctamente');
 }
 
 async function attachment_view(ctx: Ctx) {
 	const doc = await ctx.store.find_id('attachment-management', ctx.params.id);
 	if (!doc) return Response.json(fail('No encontrado', 404).body, { status: 404 });
-	const b64 = String(doc.base64 ?? '');
-	if (b64) {
-		const buf = Buffer.from(b64, 'base64');
-		return new Response(buf, { headers: { 'content-type': String(doc.mime ?? 'application/octet-stream') } });
+	const served = await serve_attachment_bytes(doc);
+	if (!served) {
+		return Response.json({ error: 'Failed to download file' }, { status: 500 });
 	}
-	return Response.json(ok([doc], 'Adjunto'));
+	const ext = String(doc.file_ext ?? '').trim();
+	const file_name = `${doc.name ?? 'adjunto'}${ext ? ` .${ext}` : ''}`;
+	return new Response(served.body, {
+		headers: {
+			'content-type': served.mime,
+			'content-disposition': `attachment; filename="${file_name}"`,
+		},
+	});
 }
 
 async function field_values(ctx: Ctx, resource: string, field: string) {
