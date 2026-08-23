@@ -333,7 +333,7 @@ export async function load_record_rules_by_model(
 ): Promise<Record<string, ImperiumDoc[]>> {
 	if (!store.has('record-rules')) return {};
 	const all_rules = (
-		await store.find_many('record-rules', { take: 2000, include_inactive: false, populate: false })
+		await store.find_many('record-rules', { take: 20000, include_inactive: false, populate: false })
 	).rows;
 	if (!all_rules.length) return {};
 	const all_groups = store.has('user-group')
