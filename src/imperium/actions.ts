@@ -2366,7 +2366,7 @@ async function debug_read_related(ctx: Ctx) {
 	}
 	const status_code = Number(ctx.url.searchParams.get('status') ?? '');
 	const { rows } = await ctx.store.find_many('debug-log', {
-		take: 2000,
+		take: 20000,
 		include_inactive: true,
 	});
 	const hits = rows
