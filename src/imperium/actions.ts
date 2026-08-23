@@ -873,7 +873,7 @@ async function catalog_search(ctx: Ctx) {
 }
 
 async function cfdi_validate(ctx: Ctx) {
-	const doc = await need(ctx, 'cfdi-document', ctx.params.id);
+	const doc = await need(ctx, 'cfdi-document', ctx.params.id, 'No se encontró el documento CFDI.');
 	const canonical = as_object(doc.canonical ?? doc.payload_canonico);
 	if (!looks_like_canonical(canonical)) {
 		throw new Error('El documento no tiene un payload canónico para validar.');
@@ -947,7 +947,7 @@ async function sync_cfdi_source_stamp(
 }
 
 async function cfdi_stamp(ctx: Ctx) {
-	const doc = await need(ctx, 'cfdi-document', ctx.params.id);
+	const doc = await need(ctx, 'cfdi-document', ctx.params.id, 'No se encontró el documento CFDI.');
 	const canonical = as_object(doc.canonical ?? doc.payload_canonico);
 	if (!looks_like_canonical(canonical)) {
 		throw new Error('El documento no tiene payload canónico para timbrar.');
@@ -1045,7 +1045,7 @@ async function cfdi_stamp(ctx: Ctx) {
 }
 
 async function cfdi_export(ctx: Ctx, kind: 'xml' | 'json') {
-	const doc = await need(ctx, 'cfdi-document', ctx.params.id);
+	const doc = await need(ctx, 'cfdi-document', ctx.params.id, 'No se encontró el documento CFDI.');
 	const canonical = as_object(doc.canonical ?? doc.payload_canonico);
 	if (kind === 'xml') {
 		if (!looks_like_canonical(canonical)) {
@@ -1270,7 +1270,12 @@ async function increment_consolidate(ctx: Ctx) {
 }
 
 async function increment_counter(ctx: Ctx) {
-	const doc = await need(ctx, 'auto-increment-control', ctx.params.id);
+	const doc = await need(
+		ctx,
+		'auto-increment-control',
+		ctx.params.id,
+		'No se encontró el control solicitado.',
+	);
 	const amount = Math.max(1, Number(ctx.body.amount ?? ctx.url.searchParams.get('amount') ?? 1));
 	const model_name = String(doc.model_name ?? '');
 	const increment_field = String(doc.increment_field ?? doc.campo ?? 'sequence');
@@ -2918,7 +2923,12 @@ async function reception_from_po(ctx: Ctx) {
 }
 
 async function confirm_reception(ctx: Ctx) {
-	const rec = await need(ctx, 'inventory-reception', ctx.params.id);
+	const rec = await need(
+		ctx,
+		'inventory-reception',
+		ctx.params.id,
+		'No se encontró la recepción indicada',
+	);
 	const estado = String(rec.estado ?? '');
 	if (estado && !['pendiente', 'parcial', 'PENDING', 'PARTIAL'].includes(estado)) {
 		throw new Error('La recepción ya fue cerrada o cancelada');
@@ -3149,13 +3159,47 @@ async function invoice_mark(ctx: Ctx) {
 }
 
 async function invoice_link_cfdi(ctx: Ctx) {
-	return patch_doc(ctx, 'invoice-request', ctx.params.id, {
-		cfdi_document: ctx.body.cfdi_document ?? ctx.body.cfdi_id,
-	}, 'CFDI vinculado');
+	const rec = await need(
+		ctx,
+		'invoice-request',
+		ctx.params.id,
+		'No se encontró la solicitud de facturación.',
+	);
+	const estado = String(rec.estado ?? '').trim().toLowerCase();
+	if (estado === 'cancelado' || estado === 'cancelada') {
+		throw new Error('No se puede vincular un CFDI a una solicitud cancelada.');
+	}
+	const cfdi_document_id = String(
+		ctx.body.cfdi_document_id ?? ctx.body.cfdiDocumentId ?? '',
+	).trim();
+	if (!cfdi_document_id) {
+		throw new Error('Debes indicar cfdi_document_id para vincular el documento CFDI.');
+	}
+	const cfdi_document_status = String(
+		ctx.body.cfdi_document_status ?? ctx.body.cfdiDocumentStatus ?? '',
+	).trim();
+	const cfdi_document_name = String(
+		ctx.body.cfdi_document_name ?? ctx.body.cfdiDocumentName ?? '',
+	).trim();
+	const patch: ImperiumDoc = { cfdi_document_id };
+	if (cfdi_document_status) patch.cfdi_document_status = cfdi_document_status;
+	if (cfdi_document_name) patch.cfdi_document_name = cfdi_document_name;
+	return patch_doc(
+		ctx,
+		'invoice-request',
+		String(rec._id),
+		patch,
+		'Documento CFDI vinculado a la solicitud',
+	);
 }
 
 async function invoice_cfdi_draft(ctx: Ctx) {
-	const rec = await need(ctx, 'invoice-request', ctx.params.id);
+	const rec = await need(
+		ctx,
+		'invoice-request',
+		ctx.params.id,
+		'No se encontró la solicitud de facturación.',
+	);
 	const estado = String(rec.estado ?? '').trim().toLowerCase();
 	if (estado === 'cancelado' || estado === 'cancelada') {
 		throw new Error('No se puede generar un borrador CFDI desde una solicitud cancelada.');
@@ -3763,7 +3807,7 @@ async function payroll_drafts(ctx: Ctx) {
 }
 
 async function payroll_prepare_stamp(ctx: Ctx) {
-	const rec = await need(ctx, 'payroll-receipt', ctx.params.id);
+	const rec = await need(ctx, 'payroll-receipt', ctx.params.id, 'No se encontró el recibo de nómina.');
 	const payload = rec.payload_cfdi ?? {
 		meta: { source: 'payroll_receipt', source_id: rec._id },
 		receptor: { nombre: rec.name },
@@ -3783,7 +3827,7 @@ async function payroll_prepare_stamp(ctx: Ctx) {
 }
 
 async function payroll_export_payload(ctx: Ctx) {
-	const rec = await need(ctx, 'payroll-receipt', ctx.params.id);
+	const rec = await need(ctx, 'payroll-receipt', ctx.params.id, 'No se encontró el recibo de nómina.');
 	const payload =
 		rec.payload_cfdi ??
 		({
@@ -4105,7 +4149,7 @@ async function pos_cancel(ctx: Ctx) {
 		{ method: 'POST', path: '/pos-session/cancel/:id', label: 'Cancelar sesion POS' },
 		ctx.actor,
 	);
-	const session = await need(ctx, 'pos-session', ctx.params.id);
+	const session = await pos_session_for_report(ctx);
 	if (!is_pos_session_open(session)) {
 		throw new Error('Solo se pueden cancelar sesiones abiertas');
 	}
@@ -4119,7 +4163,7 @@ async function pos_cancel(ctx: Ctx) {
 }
 
 async function po_approve(ctx: Ctx) {
-	const po = await need(ctx, 'purchase-order', ctx.params.id);
+	const po = await need(ctx, 'purchase-order', ctx.params.id, 'No se encontró la orden de compra indicada');
 	const estado = String(po.estado ?? po.state ?? 'borrador');
 	if (estado !== 'borrador' && estado !== 'DRAFT' && estado) {
 		if (estado !== 'borrador') {
@@ -4141,7 +4185,7 @@ async function po_approve(ctx: Ctx) {
 }
 
 async function po_receive(ctx: Ctx, confirm_all: boolean) {
-	const po = await need(ctx, 'purchase-order', ctx.params.id);
+	const po = await need(ctx, 'purchase-order', ctx.params.id, 'No se encontró la orden de compra indicada');
 	if (String(po.estado) === 'archivada') throw new Error('No puedes recibir una orden archivada');
 	if (String(po.estado) === 'confirmada') throw new Error('La orden de compra ya fue recibida por completo');
 	const articulos = as_array(po.articulos).map(as_object);
@@ -4189,7 +4233,7 @@ async function po_apply_receipt(
 	receipt_key = `receipt-${po_id}-${Date.now()}`,
 	referencia = '',
 ): Promise<ImperiumDoc> {
-	const po = await need(ctx, 'purchase-order', po_id);
+	const po = await need(ctx, 'purchase-order', po_id, 'No se encontró la orden de compra indicada');
 	const articulos = as_array(po.articulos).map(as_object);
 	for (const line of lines) {
 		const item = articulos.find((a) => String(a.producto ?? a.product_id) === line.producto);
@@ -4226,7 +4270,7 @@ async function po_apply_receipt(
 }
 
 async function po_register_invoice(ctx: Ctx) {
-	const po = await need(ctx, 'purchase-order', ctx.params.id);
+	const po = await need(ctx, 'purchase-order', ctx.params.id, 'No se encontró la orden de compra indicada');
 	const numero = String(ctx.body.numero_factura ?? ctx.body.folio ?? '').trim();
 	if (!numero) throw new Error('La factura 1 requiere número de factura');
 	const facturas = as_array(po.facturas_proveedor).map(as_object);
@@ -5379,10 +5423,10 @@ async function medical_pending(ctx: Ctx) {
 	return medical_list(ctx, { estado: 'pendiente' }, 'Pendientes');
 }
 
-async function need(ctx: Ctx, resource: string, id?: string) {
+async function need(ctx: Ctx, resource: string, id?: string, missing = 'No se encontró el documento') {
 	if (!id) throw new Error('Se necesita el id');
 	const doc = await ctx.store.find_id(resource, id);
-	if (!doc || doc.is_active === false) throw new Error('No se encontró el documento');
+	if (!doc || doc.is_active === false) throw new Error(missing);
 	return doc;
 }
 

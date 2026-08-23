@@ -388,7 +388,9 @@ export async function acomodar_reception(
 	const producto_id = text(body.producto);
 	let codigo = text(body.ubicacion_destino_codigo).toUpperCase();
 	const cantidad = round_qty(Number(body.cantidad ?? 0));
-	if (!producto_id) throw new Error('Se necesita un producto válido');
+	if (!producto_id || !is_object_id(producto_id)) {
+		throw new Error('Se necesita un producto válido');
+	}
 	if (!(cantidad > 0)) throw new Error('La cantidad a acomodar debe ser mayor que cero');
 	if (!codigo) {
 		const product = await store.find_id('products', producto_id);
@@ -437,7 +439,9 @@ export async function reservar_reception(
 	const documento_tipo = text(body.documento_tipo);
 	const documento_id = text(body.documento_id);
 	const documento_nombre = text(body.documento_nombre);
-	if (!producto_id) throw new Error('Se necesita un producto válido');
+	if (!producto_id || !is_object_id(producto_id)) {
+		throw new Error('Se necesita un producto válido');
+	}
 	if (!(cantidad > 0)) throw new Error('La cantidad a reservar debe ser mayor que cero');
 	if (!documento_tipo || !documento_id) {
 		throw new Error('Se necesita el documento que reserva la mercancía');
@@ -465,7 +469,7 @@ export async function in_transit_for_product(
 	producto_id: string,
 ): Promise<ImperiumDoc> {
 	const id = text(producto_id);
-	if (!id) throw new Error('Se necesita el id del producto');
+	if (!id || !is_object_id(id)) throw new Error('Se necesita el id del producto');
 	const { rows } = await store.find_many('inventory-reception', {
 		take: 500,
 		populate: false,
@@ -494,7 +498,7 @@ export async function list_pending_for_product(
 	producto_id: string,
 ): Promise<ImperiumDoc[]> {
 	const id = text(producto_id);
-	if (!id) throw new Error('Se necesita el id del producto');
+	if (!id || !is_object_id(id)) throw new Error('Se necesita el id del producto');
 	const { rows } = await store.find_many('inventory-reception', {
 		take: 500,
 		populate: false,
