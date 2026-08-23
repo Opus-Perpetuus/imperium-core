@@ -96,12 +96,18 @@ const SCHEMA_DEFAULTS: Record<string, Record<string, unknown>> = {
 	'labor-schedule': { days: DEFAULT_LABOR_SCHEDULE_DAYS, is_default: true },
 };
 
-export function apply_schema_setters(resource: string, doc: Record<string, unknown>) {
+export function apply_schema_setters(
+	resource: string,
+	doc: Record<string, unknown>,
+	opts: { apply_defaults?: boolean } = {},
+) {
 	const canonical = RESOURCE_ALIASES[resource] ?? resource;
-	const defaults = SCHEMA_DEFAULTS[canonical] ?? SCHEMA_DEFAULTS[resource] ?? {};
-	for (const [field, value] of Object.entries(defaults)) {
-		if (is_missing(doc[field])) {
-			doc[field] = value !== null && typeof value === 'object' ? structuredClone(value) : value;
+	if (opts.apply_defaults !== false) {
+		const defaults = SCHEMA_DEFAULTS[canonical] ?? SCHEMA_DEFAULTS[resource] ?? {};
+		for (const [field, value] of Object.entries(defaults)) {
+			if (is_missing(doc[field])) {
+				doc[field] = value !== null && typeof value === 'object' ? structuredClone(value) : value;
+			}
 		}
 	}
 	const fields = (kind: 'trim' | 'lowercase' | 'uppercase') =>
@@ -122,14 +128,25 @@ export function required_fields_for(resource: string): string[] {
 	return CONSTRAINTS.required[canonical] ?? CONSTRAINTS.required[resource] ?? [];
 }
 
-export function assert_required_fields(resource: string, doc: Record<string, unknown>) {
+export function assert_required_fields(
+	resource: string,
+	doc: Record<string, unknown>,
+	only_keys?: string[],
+) {
 	const field_errors: Record<string, string[]> = {};
 	const add = (field: string, message: string) => {
 		if (!field_errors[field]) field_errors[field] = [];
 		if (!field_errors[field].includes(message)) field_errors[field].push(message);
 	};
+	const scoped = only_keys ? new Set(only_keys) : null;
+	const in_scope = (path: string) => {
+		if (!scoped) return true;
+		const top = path.split('.')[0] ?? path;
+		return scoped.has(path) || scoped.has(top);
+	};
 	for (const field of required_fields_for(resource)) {
 		if (field.includes('.')) continue;
+		if (scoped && !scoped.has(field)) continue;
 		if (!is_missing(doc[field])) continue;
 		add(field, required_message(resource, field));
 	}
@@ -141,6 +158,7 @@ export function assert_required_fields(resource: string, doc: Record<string, unk
 	const mins_n = NUMBER_LIMITS.min[canonical] ?? NUMBER_LIMITS.min[resource] ?? {};
 	const maxs_n = NUMBER_LIMITS.max[canonical] ?? NUMBER_LIMITS.max[resource] ?? {};
 	for (const { path, value } of collect_leaves(doc)) {
+		if (!in_scope(path)) continue;
 		const key = rule_key(path);
 		const min_rule = mins[key];
 		if (min_rule) {

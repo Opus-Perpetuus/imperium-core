@@ -1072,8 +1072,8 @@ export class ImperiumStore {
 			_id: id,
 			payload: { ...as_object(existing), ...as_object(patch) },
 		};
-		apply_schema_setters(resource, merged);
-		assert_required_fields(resource, merged);
+		apply_schema_setters(resource, merged, { apply_defaults: false });
+		assert_required_fields(resource, merged, Object.keys(patch));
 		assert_objectid_refs(resource, merged);
 		await this.assert_unique_business_keys(resource, merged, id);
 		const row = from_imperium(merged, cols);
