@@ -5085,6 +5085,8 @@ async function report_pdf(ctx: Ctx) {
 }
 
 function resolve_model(ctx: Ctx, raw: string) {
+	const from_refs = ctx.store.resource_for_model(raw);
+	if (from_refs) return from_refs;
 	const name = raw.replace(/^\/+/, '').replace(/Model$/, '').replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase();
 	if (ctx.store.has(name)) return name;
 	if (ctx.store.has(raw)) return raw;

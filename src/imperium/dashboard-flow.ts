@@ -127,6 +127,8 @@ function widget_resource_candidates(raw: string): string[] {
 }
 
 function resolve_widget_resource(store: ImperiumStore, raw: string) {
+	const from_refs = store.resource_for_model(raw);
+	if (from_refs) return from_refs;
 	for (const name of widget_resource_candidates(raw)) {
 		if (store.has(name)) return name;
 	}
