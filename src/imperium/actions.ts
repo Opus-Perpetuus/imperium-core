@@ -57,6 +57,7 @@ import {
 	send_password_reset_email,
 } from './email.ts';
 import { generate_password_reset } from './password-reset.ts';
+import { reset_auth_rate_limits_for_email } from './auth-rate-limit.ts';
 import {
 	clear_notifications,
 	delete_notification,
@@ -548,7 +549,7 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'user:recovery_link':
 			return user_recovery(ctx);
 		case 'user:unlock_auth':
-			return patch_doc(ctx, 'user', ctx.params.id, { locked: false, auth_locked: false }, 'Usuario desbloqueado');
+			return user_unlock_auth(ctx);
 		case 'user-pin:verify':
 			return verify_pin(ctx);
 		case 'user-settings:get':
@@ -717,6 +718,15 @@ async function actor_access(ctx: Ctx) {
 		};
 	}
 	return build_access(ctx.store, ctx.actor);
+}
+
+async function can_manage_other_user_auth(ctx: Ctx): Promise<boolean> {
+	if (String(ctx.actor?._ref ?? '') === 'user-menu-management-0') return true;
+	const access = await actor_access(ctx);
+	if (access.has_full_access) return true;
+	const perms = (access as { permissions_by_model?: Record<string, { allow_update?: boolean }> })
+		.permissions_by_model;
+	return Boolean(perms?.User?.allow_update);
 }
 
 async function one(ctx: Ctx, resource: string, id: string) {
@@ -4998,9 +5008,11 @@ async function save_delivery_signature(ctx: Ctx, package_id: string): Promise<st
 
 async function user_recovery(ctx: Ctx) {
 	if (!ctx.params.id) throw new Error('Se necesita el id del usuario.');
-	const is_admin = ctx.actor?._ref === 'user-menu-management-0';
-	if (!is_admin) {
-		throw new Error('No tienes permisos para generar enlaces de acceso de otros usuarios.');
+	if (!(await can_manage_other_user_auth(ctx))) {
+		throw Object.assign(
+			new Error('No tienes permisos para generar enlaces de acceso de otros usuarios.'),
+			{ status: 403, code: 'access_denied' },
+		);
 	}
 	const user = await ctx.store.find_id('user', ctx.params.id);
 	if (!user) throw new Error('No se encontró el usuario.');
@@ -5056,6 +5068,28 @@ async function user_recovery(ctx: Ctx) {
 			},
 		],
 		email_sent ? 'Enlace generado y enviado por correo.' : 'Enlace generado correctamente.',
+	);
+}
+
+async function user_unlock_auth(ctx: Ctx) {
+	if (!(await can_manage_other_user_auth(ctx))) {
+		throw Object.assign(
+			new Error('No tienes permisos para desbloquear intentos de acceso de otros usuarios.'),
+			{ status: 403, code: 'access_denied' },
+		);
+	}
+	const user_id = String(ctx.params.id ?? '').trim();
+	if (!user_id) throw new Error('Se necesita el id del usuario.');
+	const user = await ctx.store.find_id('user', user_id);
+	if (!user) throw new Error('No se encontró el usuario.');
+	const email = String(user.email ?? '').trim();
+	if (!email) throw new Error('El usuario no tiene correo asociado.');
+	const deleted = await reset_auth_rate_limits_for_email(ctx.sql, email);
+	return ok(
+		[{ email, deleted }],
+		deleted > 0
+			? 'Intentos de acceso desbloqueados para este usuario.'
+			: 'No había bloqueos por email pendientes para este usuario.',
 	);
 }
 

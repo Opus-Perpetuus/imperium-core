@@ -11,6 +11,14 @@ import {
 } from './email.ts';
 import { find_user_by_reset_token, generate_password_reset } from './password-reset.ts';
 import {
+	consume_login_limits,
+	consume_password_reset_ip_limit,
+	consume_password_reset_request_limits,
+	ensure_auth_rate_limit_table,
+	normalize_auth_rate_limit_email,
+	request_ip,
+} from './auth-rate-limit.ts';
+import {
 	access_flag,
 	build_model_denied_message,
 	load_record_rules_by_model,
@@ -39,6 +47,7 @@ export async function ensure_session_table(sql: Bun.SQL): Promise<void> {
       expires_at TIMESTAMPTZ NOT NULL
     )
   `);
+	await ensure_auth_rate_limit_table(sql);
 }
 
 export async function handle_auth(
@@ -54,8 +63,12 @@ export async function handle_auth(
 
 	if (method === 'POST' && (rest === '/login' || rest === '/login/')) {
 		const body = await read_imperium_body(req);
-		const email = String(body.email ?? '').trim().toLowerCase();
+		const email = normalize_auth_rate_limit_email(body.email);
 		const password = String(body.password ?? '');
+		const limited = await consume_login_limits(sql, email, request_ip(req));
+		if (limited) {
+			return Response.json(limited, { status: 429 });
+		}
 		if (!email || !password) {
 			return Response.json(
 				{ message: 'Usuario o contraseña no válido', error: 'Usuario o contraseña no válido' },
@@ -103,7 +116,11 @@ export async function handle_auth(
 
 	if (method === 'POST' && rest.startsWith('/password-reset/request')) {
 		const body = await read_imperium_body(req);
-		const email = String(body.email ?? '').trim().toLowerCase();
+		const email = normalize_auth_rate_limit_email(body.email);
+		const limited = await consume_password_reset_request_limits(sql, email, request_ip(req));
+		if (limited) {
+			return Response.json(limited, { status: 429 });
+		}
 		const user = email ? await store.find_where('user', { email }) : null;
 		if (user && user.is_active !== false) {
 			const settings = await resolve_email_settings(store);
@@ -129,6 +146,10 @@ export async function handle_auth(
 		});
 	}
 	if (method === 'GET' && rest.startsWith('/password-reset/validate')) {
+		const limited = await consume_password_reset_ip_limit(sql, request_ip(req));
+		if (limited) {
+			return Response.json(limited, { status: 429 });
+		}
 		const codigo = String(url.searchParams.get('codigo') ?? '').trim();
 		const user = await find_user_by_reset_token(store, codigo);
 		return Response.json({
@@ -144,6 +165,10 @@ export async function handle_auth(
 	}
 
 	if (method === 'POST' && rest.startsWith('/password-reset/login')) {
+		const limited = await consume_password_reset_ip_limit(sql, request_ip(req));
+		if (limited) {
+			return Response.json(limited, { status: 429 });
+		}
 		const body = await read_imperium_body(req);
 		const codigo = String(body.codigo ?? '').trim();
 		const user = await find_user_by_reset_token(store, codigo);
