@@ -416,7 +416,7 @@ export async function hydrate_project(store: ImperiumStore, project: ImperiumDoc
 		? (
 				await store.find_many(task_resource(store), {
 					where: { project_id },
-					take: 2000,
+					take: 20000,
 					sort: 'sort_order:asc',
 					populate: false,
 				})
@@ -426,7 +426,7 @@ export async function hydrate_project(store: ImperiumStore, project: ImperiumDoc
 		? (
 				await store.find_many(TIME_LOG, {
 					where: { project_id },
-					take: 2000,
+					take: 20000,
 					populate: false,
 				})
 			).rows
