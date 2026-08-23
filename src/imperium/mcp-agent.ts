@@ -833,7 +833,14 @@ async function get_history(
 	await get_record(store, access, user, model_id, id);
 	const resource = resolve_resource(store, model_id);
 	const { rows } = await store.find_many('document-change-history', {
-		take: 2000,
+		mongo_match: {
+			$or: [
+				{ documentId: id },
+				{ document_id: id },
+				{ record_id: id },
+			],
+		},
+		take: 20000,
 		include_inactive: true,
 	});
 	const matched = rows
