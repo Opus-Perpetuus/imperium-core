@@ -543,7 +543,7 @@ export async function delivery_package_by_status(
 	mongo_match?: Record<string, unknown> | null,
 ): Promise<Array<{ _id: string | null; count: number }>> {
 	const { rows } = await store.find_many('delivery-package', {
-		take: 10000,
+		take: 20000,
 		include_inactive: true,
 		populate: false,
 		mongo_match,
