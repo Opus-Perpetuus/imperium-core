@@ -2106,12 +2106,65 @@ async function read_history_by_id(ctx: Ctx) {
 	return ok([record], 'Registro de historial obtenido correctamente');
 }
 
+function documentation_section(doc: ImperiumDoc) {
+	return String(doc.section ?? '');
+}
+
+function documentation_order(doc: ImperiumDoc) {
+	return Number(doc.order ?? 0);
+}
+
+function documentation_adjacent_card(doc: ImperiumDoc | null) {
+	if (!doc) return null;
+	const meta = as_object(doc.metadata);
+	return {
+		_id: doc._id,
+		title: meta.title ?? doc.title ?? doc.name,
+		slug: doc.slug,
+		section: doc.section,
+		folder_path: doc.folder_path,
+		metadata: doc.metadata ?? meta,
+		order: documentation_order(doc),
+	};
+}
+
 async function documentation_adjacent(ctx: Ctx) {
-	const { rows } = await ctx.store.find_many('documentation-page', { take: 20000 });
-	const i = rows.findIndex((r) => String(r.slug) === ctx.params.slug);
+	const slug = String(ctx.params.slug ?? '').trim();
+	const folder = String(ctx.url.searchParams.get('folder') ?? '').trim();
+	const section = String(ctx.url.searchParams.get('section') ?? '').trim();
+	const { rows } = await ctx.store.find_many('documentation-page', {
+		take: 20000,
+		include_inactive: false,
+	});
+	const active = rows.filter((row) => row.is_active !== false);
+	const current = active.find((row) => {
+		if (String(row.slug ?? '') !== slug) return false;
+		if (folder && String(row.folder_path ?? '') !== folder) return false;
+		if (section && documentation_section(row) !== section) return false;
+		return true;
+	});
+	if (!current) {
+		return ok([{ previous: null, next: null }], 'Documento no encontrado.', 0);
+	}
+	const sorted = [...active].sort((left, right) => {
+		const by_section = documentation_section(left).localeCompare(documentation_section(right));
+		if (by_section) return by_section;
+		const by_order = documentation_order(left) - documentation_order(right);
+		if (by_order) return by_order;
+		return String(left._id ?? '').localeCompare(String(right._id ?? ''));
+	});
+	const index = sorted.findIndex((row) => String(row._id) === String(current._id));
 	return ok(
-		[{ prev: rows[i - 1] ?? null, next: rows[i + 1] ?? null, current: rows[i] ?? null }],
+		[
+			{
+				previous: documentation_adjacent_card(index > 0 ? sorted[index - 1] : null),
+				next: documentation_adjacent_card(
+					index >= 0 && index < sorted.length - 1 ? sorted[index + 1] : null,
+				),
+			},
+		],
 		'Documentos adyacentes obtenidos.',
+		1,
 	);
 }
 
