@@ -4757,7 +4757,21 @@ function report_json_item_fields(value: unknown) {
 async function build_report_field_metadata(ctx: Ctx, resource: string) {
 	const loc = ctx.store.loc(resource);
 	const refs = ctx.store.field_refs(resource);
-	const sample = (await ctx.store.find_many(resource, { take: 1, populate: false })).rows[0] ?? {};
+	/* El original valida contra el schema Mongoose (todas las paths), no contra
+	 * un sample name ASC. Campos de payload como `observaciones` viven en filas
+	 * leftover y no en columnas SQL. */
+	const { rows } = await ctx.store.find_many(resource, {
+		take: 20000,
+		populate: false,
+	});
+	const sample =
+		rows.find((row) => Array.isArray(row.articulos) && as_array(row.articulos).length) ??
+		rows[0] ??
+		{};
+	const payload_keys = new Set<string>();
+	for (const row of rows) {
+		for (const key of Object.keys(row)) payload_keys.add(key);
+	}
 	const fields: Array<{
 		field_name: string;
 		field_type: string;
@@ -4855,6 +4869,19 @@ async function build_report_field_metadata(ctx: Ctx, resource: string) {
 				: is_array
 					? report_json_item_fields(raw)
 					: [],
+		});
+	}
+	for (const field_name of payload_keys) {
+		if (seen.has(field_name) || is_report_system_path(field_name)) continue;
+		const reference_model = refs[field_name] ?? null;
+		push({
+			field_name,
+			field_type: reference_model ? 'ObjectID' : 'String',
+			is_required: false,
+			is_reference: Boolean(reference_model),
+			reference_model,
+			is_array: false,
+			related_fields: reference_model ? report_related_candidates(ctx, reference_model) : [],
 		});
 	}
 	return fields;
