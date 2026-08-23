@@ -4,7 +4,7 @@
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { as_object, type ImperiumDoc } from './envelope.ts';
-import { notify_document_subscription_event } from './notifications.ts';
+import { notify_document_subscription_event, register_document_mentions } from './notifications.ts';
 
 export type HistoryCapableStore = {
 	has(resource: string): boolean;
@@ -220,5 +220,11 @@ export async function record_document_history(
 		was_new: !before,
 		current_document: after,
 		module_label: loc?.name ?? canonical,
+	}).catch(() => undefined);
+	await register_document_mentions(store as never, ctx.actor ?? null, {
+		current_document: after,
+		previous_document: before ?? undefined,
+		resource: canonical,
+		document_id,
 	}).catch(() => undefined);
 }
