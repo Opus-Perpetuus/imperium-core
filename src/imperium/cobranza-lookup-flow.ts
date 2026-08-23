@@ -163,7 +163,8 @@ async function agua_outstanding_amount(store: ImperiumStore, contrato: ImperiumD
 	const number = text(contrato.contrato);
 	const { rows } = await store.find_many('lectura', {
 		where: number ? { contrato: number } : undefined,
-		take: 50,
+		take: 1,
+		sort: 'fecha_lectura:desc',
 		include_inactive: false,
 		populate: false,
 	});
