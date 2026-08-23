@@ -90,7 +90,7 @@ async function active_parts(
 	if (!store.has('custom-pattern-increment-sequence-parts')) return [];
 	const { rows } = await store.find_many('custom-pattern-increment-sequence-parts', {
 		where: { counter_config_id },
-		take: 500,
+		take: 20000,
 		sort: 'order:asc',
 	});
 	return [...rows].sort((a, b) => Number(a.order ?? 0) - Number(b.order ?? 0));

@@ -769,7 +769,7 @@ async function pattern_parts_by_counter(ctx: Ctx) {
 	}
 	const { rows } = await ctx.store.find_many('custom-pattern-increment-sequence-parts', {
 		where: { counter_config_id },
-		take: 500,
+		take: 20000,
 		sort: 'order:asc',
 	});
 	const ordered = [...rows].sort((a, b) => Number(a.order ?? 0) - Number(b.order ?? 0));

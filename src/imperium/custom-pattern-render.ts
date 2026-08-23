@@ -267,7 +267,7 @@ export async function resolve_custom_values(
 	}
 	const { rows: parts } = await store.find_many('custom-pattern-increment-sequence-parts', {
 		where: { counter_config_id: String(control._id) },
-		take: 200,
+		take: 20000,
 		sort: 'order:asc',
 	});
 	const custom_parts = parts
