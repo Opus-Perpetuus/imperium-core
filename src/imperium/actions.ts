@@ -1890,7 +1890,7 @@ async function optimize_route(ctx: Ctx) {
 	const { rows: packages } = ctx.store.has('delivery-package')
 		? await ctx.store.find_many('delivery-package', {
 				where: { delivery_route: route_id },
-				take: 5000,
+				take: 20000,
 			})
 		: { rows: [] };
 	const grouped = new Map<
