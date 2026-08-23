@@ -255,7 +255,7 @@ function candidate_values(raw: unknown): string[] {
 	return [...new Set(out.map((v) => v.trim()).filter(Boolean))];
 }
 
-async function resolve_custom_values(
+export async function resolve_custom_values(
 	store: ImperiumStore,
 	control: ImperiumDoc | null,
 	context?: PatternContext,
@@ -385,9 +385,11 @@ export async function find_increment_control(
 		? rows.filter((row) => field_matches(row, increment_field))
 		: rows;
 	return (
+		matches.find((row) => is_global_ref(row.ref_value) && row.is_active !== false) ??
+		matches.find((row) => row.is_active !== false) ??
 		matches.find((row) => is_global_ref(row.ref_value)) ??
 		matches[0] ??
-		rows.find((row) => is_global_ref(row.ref_value)) ??
+		rows.find((row) => is_global_ref(row.ref_value) && row.is_active !== false) ??
 		rows[0] ??
 		null
 	);

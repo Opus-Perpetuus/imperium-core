@@ -23,6 +23,7 @@ import {
 	format_increment_real_value,
 	resolve_increment_preview_target,
 } from './custom-pattern-render.ts';
+import { normalize_all_counters } from './increment-normalize.ts';
 import { AguaMssqlService } from './agua-mssql.ts';
 import { calcular_importe } from './agua-importe.ts';
 import { looks_like_canonical, serialize_cfdi_to_xml, type CfdiCanonical } from './cfdi-xml.ts';
@@ -1402,12 +1403,22 @@ async function preview_counter(ctx: Ctx) {
 }
 
 async function normalize_counters(ctx: Ctx) {
-	const { rows } = await ctx.store.find_many('auto-increment-control', { take: 500 });
-	for (const r of rows) {
-		const n = Number(r.current ?? r.valor ?? r.counter ?? 0);
-		await ctx.store.update('auto-increment-control', String(r._id), { current: n, valor: n });
+	const force = ctx.body.force === true;
+	const summary = await normalize_all_counters(ctx.store, { force });
+	const unresolved_note = summary.unresolved_documents
+		? ` ${summary.unresolved_documents} no se pudieron interpretar y se dejaron intactos.`
+		: '';
+	let message: string;
+	if (force) {
+		message = summary.updated_documents
+			? `Reparación forzosa completada: ${summary.renumbered_documents} documentos renumerados de ${summary.scanned_documents} revisados y ${summary.adjusted_trackers} contadores ajustados.${unresolved_note}`
+			: `Reparación forzosa ejecutada sobre ${summary.scanned_documents} documentos; los números ya eran contiguos (${summary.adjusted_trackers} contadores verificados).${unresolved_note}`;
+	} else {
+		message = summary.updated_documents
+			? `Normalización completada: ${summary.updated_documents} folios actualizados de ${summary.scanned_documents} revisados en ${summary.normalized_indexes} contadores.${unresolved_note}`
+			: `La normalización se ejecutó sobre ${summary.scanned_documents} documentos, pero ninguno requirió cambios de formato.${unresolved_note}`;
 	}
-	return ok(rows, 'Contadores normalizados');
+	return ok([summary], message, summary.results.length);
 }
 
 
