@@ -982,6 +982,15 @@ async function finalize_rows(
 			),
 		);
 	}
+	if (resource === 'attachment-management' && mode === 'list') {
+		return project_list_docs(
+			resource,
+			store.flatten_list_docs(
+				resource,
+				await decorate_attachment_list(store, rows),
+			),
+		);
+	}
 	const decorated = decorate_rows(resource, rows);
 	if (mode !== 'list') return decorated;
 	return project_list_docs(resource, store.flatten_list_docs(resource, decorated));
@@ -993,7 +1002,44 @@ function decorate_rows(resource: string, rows: ImperiumDoc[]): ImperiumDoc[] {
 	if (resource === 'vehicle') return rows.map(decorate_vehicle);
 	if (resource === 'pos-tickets') return rows.map(decorate_pos_ticket);
 	if (is_physical_count_resource(resource)) return rows.map(decorate_physical_count);
+	if (resource === 'custom-field-control') return rows.map(decorate_custom_field_control);
 	return rows;
+}
+
+function decorate_custom_field_control(doc: ImperiumDoc): ImperiumDoc {
+	return { ...doc, fields_count: as_array(doc.fields).length };
+}
+
+/**
+ * El original hace $lookup de `created_by_id` → `usuarios.nombre`.
+ */
+async function decorate_attachment_list(
+	store: ImperiumStore,
+	rows: ImperiumDoc[],
+): Promise<ImperiumDoc[]> {
+	const ids = [
+		...new Set(
+			rows
+				.map((row) => String(row.created_by_id ?? '').trim())
+				.filter((id) => /^[a-f0-9]{24}$/i.test(id)),
+		),
+	];
+	const names = new Map<string, string>();
+	if (ids.length && store.has('user')) {
+		const { rows: users } = await store.find_many('user', {
+			ids,
+			take: ids.length,
+			include_inactive: true,
+			populate: false,
+		});
+		for (const user of users) {
+			names.set(String(user._id), String(user.name ?? user.nombre ?? '').trim());
+		}
+	}
+	return rows.map((row) => ({
+		...row,
+		created_by: names.get(String(row.created_by_id ?? '').trim()) ?? '',
+	}));
 }
 
 function decorate_pos_ticket(doc: ImperiumDoc): ImperiumDoc {
@@ -1016,7 +1062,7 @@ function instance_type(
 	if (projected) return projected;
 	const keys = ['_id', 'name', 'description', 'is_active', '_ref'];
 	for (const col of store.loc(resource).columns) {
-		if (USER_SECRET_KEYS.has(col.name)) continue;
+		if (USER_SECRET_KEYS.has(col.name) || ALWAYS_SECRET_KEYS.has(col.name)) continue;
 		if (!keys.includes(col.name)) keys.push(col.name);
 	}
 	const out: Record<string, { nombre_encabezado: string; tipo: string }> = {};
@@ -1032,6 +1078,8 @@ const USER_SECRET_KEYS = new Set([
 	'reset_password_expires',
 	'reset_password_kind',
 ]);
+/** El original nunca selecciona `pin_hash` en list/detalle; solo en verify. */
+const ALWAYS_SECRET_KEYS = new Set(['pin_hash']);
 const PASSWORD_MIN_LENGTH = 12;
 const PASSWORD_MAX_LENGTH = 1024;
 const PASSWORD_TOO_SHORT_MESSAGE = `La contraseña debe tener al menos ${PASSWORD_MIN_LENGTH} caracteres`;
@@ -1047,15 +1095,23 @@ function strip_user_secrets(doc: ImperiumDoc): ImperiumDoc {
 	return out;
 }
 
+function strip_always_secrets(doc: ImperiumDoc): ImperiumDoc {
+	const out = { ...doc };
+	for (const key of ALWAYS_SECRET_KEYS) delete out[key];
+	return out;
+}
+
 function sanitize_payload(resource: string, body: unknown): unknown {
-	if (!is_user_resource(resource) || !body || typeof body !== 'object') return body;
+	if (!body || typeof body !== 'object') return body;
 	const payload = body as Record<string, unknown>;
 	if (!Array.isArray(payload.data)) return payload;
 	return {
 		...payload,
-		data: payload.data.map((item) =>
-			item && typeof item === 'object' ? strip_user_secrets(item as ImperiumDoc) : item,
-		),
+		data: payload.data.map((item) => {
+			if (!item || typeof item !== 'object') return item;
+			const stripped = strip_always_secrets(item as ImperiumDoc);
+			return is_user_resource(resource) ? strip_user_secrets(stripped) : stripped;
+		}),
 	};
 }
 
