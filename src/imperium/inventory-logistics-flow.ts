@@ -417,7 +417,7 @@ export async function cost_entry_stats(
 	const date_from = parse_stats_date(url?.searchParams.get('date_from'), first_day);
 	const date_to = parse_stats_date(url?.searchParams.get('date_to'), now);
 	const { rows: entries } = await store.find_many('inventory-cost-entry', {
-		take: 10000,
+		take: 20000,
 		include_inactive: true,
 		populate: false,
 		mongo_match,
@@ -449,7 +449,7 @@ export async function cost_entry_stats(
 		fifo_queues.set(product_id, queue);
 	}
 	const { rows: pedidos } = await store.find_many('pedidos', {
-		take: 10000,
+		take: 20000,
 		include_inactive: false,
 		populate: false,
 	});
