@@ -183,9 +183,17 @@ async function assert_widget_module_enabled(
 	model_id: string,
 ) {
 	if (!store.has('module-management')) return;
+	const exact = await store.find_many('module-management', {
+		where: { model_id, is_enable: true },
+		take: 1,
+		include_inactive: false,
+		populate: false,
+	});
+	if (exact.rows[0] && access_flag(exact.rows[0].is_enable)) return;
 	const { rows } = await store.find_many('module-management', {
-		take: 5000,
-		include_inactive: true,
+		where: { is_enable: true },
+		take: 20000,
+		include_inactive: false,
 		populate: false,
 	});
 	if (!rows.length) return;
@@ -564,8 +572,9 @@ export async function resolve_dashboard_catalog(
 	const modules = store.has('module-management')
 		? (
 				await store.find_many('module-management', {
-					take: 5000,
-					include_inactive: true,
+					where: { is_enable: true },
+					take: 20000,
+					include_inactive: false,
 					populate: false,
 				})
 			).rows
