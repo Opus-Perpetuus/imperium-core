@@ -691,7 +691,7 @@ export class ImperiumStore {
 		const seen = new Set<string>();
 		const out: Array<{ model_name: string; collection: string }> = [];
 		for (const loc of this.locs.values()) {
-			if (loc.resource.startsWith('__') || String(loc.collection).startsWith('__')) continue;
+			if (loc.resource.startsWith('__')) continue;
 			const model_name =
 				resource_to_model.get(loc.resource) ??
 				(loc.resource === 'branchoffice'
@@ -700,7 +700,7 @@ export class ImperiumStore {
 							.split('-')
 							.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
 							.join(''));
-			if (!model_name || seen.has(model_name)) continue;
+			if (!model_name || model_name.startsWith('__') || seen.has(model_name)) continue;
 			seen.add(model_name);
 			out.push({ model_name, collection: loc.collection });
 		}
