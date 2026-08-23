@@ -1,7 +1,7 @@
 /**
  * Rutas de entrega: `vehicle` + `vehicle_name` como `delivery-route.service.ts`.
  */
-import { type ImperiumDoc } from './envelope.ts';
+import { as_array, type ImperiumDoc } from './envelope.ts';
 import type { ImperiumStore } from './store.ts';
 
 function text(value: unknown): string {
@@ -49,12 +49,30 @@ export async function decorate_delivery_routes(
 		if (id) missing.add(id);
 	}
 	const names = await vehicle_names(store, [...missing]);
-	return rows.map((row) => {
+	const decorated = rows.map((row) => {
 		const vehicle = ref_id(row.vehicle) || null;
 		const vehicle_name =
 			text(row.vehicle_name) || (vehicle ? names.get(vehicle) ?? '' : '');
 		return { ...row, vehicle, vehicle_name };
 	});
+	if (mode !== 'detail' || !store.has('contacto')) return decorated;
+	return Promise.all(decorated.map((row) => hydrate_route_contacts(store, row)));
+}
+
+async function hydrate_route_contacts(
+	store: ImperiumStore,
+	row: ImperiumDoc,
+): Promise<ImperiumDoc> {
+	const ids = as_array(row.contacts)
+		.map((item) => ref_id(item))
+		.filter(Boolean);
+	if (!ids.length) return row;
+	const contacts: ImperiumDoc[] = [];
+	for (const id of ids) {
+		const contact = await store.find_id('contacto', id);
+		contacts.push(contact ?? { _id: id, name: '' });
+	}
+	return { ...row, contacts };
 }
 
 export async function prepare_delivery_route_write(
