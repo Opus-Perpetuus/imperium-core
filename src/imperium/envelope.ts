@@ -32,6 +32,49 @@ export function fail(message: string, status = 400, extra?: Record<string, unkno
 	};
 }
 
+/**
+ * Traduce unique de Postgres (`23505`) al mismo texto que el original
+ * mapeaba desde Mongo `E11000`.
+ */
+export function humanize_caught_error(err: unknown): { message: string; code?: string } {
+	const duplicate = map_pg_duplicate_message(err);
+	if (duplicate) return { message: duplicate };
+	const rec = err as { message?: unknown; code?: unknown };
+	const message =
+		typeof rec.message === 'string' && rec.message.trim()
+			? rec.message
+			: String(err);
+	const code = typeof rec.code === 'string' && rec.code.trim() ? rec.code : undefined;
+	return { message, code };
+}
+
+function map_pg_duplicate_message(err: unknown): string | null {
+	if (!err || typeof err !== 'object') return null;
+	const rec = err as {
+		code?: unknown;
+		errno?: unknown;
+		detail?: unknown;
+		constraint?: unknown;
+		message?: unknown;
+	};
+	const code = String(rec.errno ?? rec.code ?? '');
+	const message = String(rec.message ?? '');
+	const is_unique =
+		code === '23505' || /duplicate key value violates unique constraint/i.test(message);
+	if (!is_unique) return null;
+
+	const detail = String(rec.detail ?? '');
+	const key_match = detail.match(/Key \(([^)]+)\)=\(([\s\S]*)\) already exists\.?/i);
+	if (key_match) {
+		const raw_field = (key_match[1] ?? '').split(',')[0]?.trim().replace(/"/g, '') ?? '';
+		const raw_value = (key_match[2] ?? '').trim();
+		const field = raw_field === 'ref' ? '_ref' : raw_field === 'id' ? '_id' : raw_field;
+		const field_label = field === '_ref' ? 'la referencia' : `el campo ${field}`;
+		if (raw_value) return `Ya existe un registro con ${field_label} "${raw_value}".`;
+	}
+	return 'Ya existe un registro con un valor único repetido.';
+}
+
 export function to_imperium(row: Record<string, unknown> | null): ImperiumDoc | null {
 	if (!row) return null;
 	const payload = as_object(row.payload);

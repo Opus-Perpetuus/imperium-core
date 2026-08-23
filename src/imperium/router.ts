@@ -14,7 +14,7 @@ import { handle_action } from './actions.ts';
 import { handle_mcp_agent, seed_mcp_access } from './mcp-agent.ts';
 import { serve_media } from './media.ts';
 import { ImperiumStore, load_catalog_path } from './store.ts';
-import { fail } from './envelope.ts';
+import { fail, humanize_caught_error } from './envelope.ts';
 import { PinChallengeError } from './user-pin.ts';
 import { bind_debug_store, debug_error, persist_request_log } from './debug-request-log.ts';
 import { run_with_history_context } from './history.ts';
@@ -161,14 +161,16 @@ async function dispatch(
 					);
 				}
 				const e = err as Error & { status?: number; code?: string };
-				const message = e.message ?? String(err);
+				const humanized = humanize_caught_error(err);
+				const message = humanized.message;
 				const status = e.status ?? 400;
 				debug_error(message);
 				return add_cors(
 					req,
-					Response.json(fail(message, status, e.code ? { code: e.code } : undefined).body, {
-						status,
-					}),
+					Response.json(
+						fail(message, status, humanized.code ? { code: humanized.code } : undefined).body,
+						{ status },
+					),
 				);
 			}
 }
