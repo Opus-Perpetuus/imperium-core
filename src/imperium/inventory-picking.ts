@@ -145,7 +145,7 @@ async function compute_weighted_consumption(
 			tipo_movimiento: 'salida_entrega',
 			fecha_movimiento: { gte: start.toISOString() },
 		},
-		take: 5000,
+		take: 20000,
 		include_inactive: true,
 		populate: false,
 	});
