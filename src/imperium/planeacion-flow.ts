@@ -225,7 +225,7 @@ async function sync_project_tasks(
 	const resource = task_resource(store);
 	const { rows: existing } = await store.find_many(resource, {
 		where: { project_id },
-		take: 5000,
+		take: 20000,
 		include_inactive: false,
 		populate: false,
 	});
@@ -278,10 +278,10 @@ async function sync_project_tasks(
 			await store.update(resource, task_id, { parent_task_id: null });
 		}
 	}
-	for (const row of existing) {
-		const id = String(row._id);
-		if (!retained.has(id)) await store.update(resource, id, { is_active: false });
-	}
+	await store.set_inactive_ids(
+		resource,
+		existing.map((row) => String(row._id)).filter((id) => !retained.has(id)),
+	);
 	return map;
 }
 
@@ -295,7 +295,7 @@ async function sync_project_time_logs(
 	if (!Array.isArray(raw_logs) || !store.has(TIME_LOG)) return;
 	const { rows: existing } = await store.find_many(TIME_LOG, {
 		where: { project_id },
-		take: 5000,
+		take: 20000,
 		include_inactive: false,
 		populate: false,
 	});
@@ -330,10 +330,10 @@ async function sync_project_time_logs(
 		if (!saved) saved = await store.insert(TIME_LOG, payload);
 		retained.add(String(saved._id));
 	}
-	for (const row of existing) {
-		const id = String(row._id);
-		if (!retained.has(id)) await store.update(TIME_LOG, id, { is_active: false });
-	}
+	await store.set_inactive_ids(
+		TIME_LOG,
+		existing.map((row) => String(row._id)).filter((id) => !retained.has(id)),
+	);
 }
 
 async function notify_new_collaborators(

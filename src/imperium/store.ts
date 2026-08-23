@@ -1143,6 +1143,19 @@ export class ImperiumStore {
 		return saved;
 	}
 
+	/** Como `updateMany({ _id: { $in } }, { is_active: false })` del original. */
+	async set_inactive_ids(resource: string, ids: string[]): Promise<number> {
+		const wanted = [...new Set(ids.map(String).filter(Boolean))];
+		if (!wanted.length || !this.has(resource)) return 0;
+		const now = new Date().toISOString();
+		const marks = wanted.map((_, i) => `$${i + 2}`).join(', ');
+		await this.sql.unsafe(
+			`UPDATE ${this.qt(resource)} SET is_active = false, updated_at = $1 WHERE id IN (${marks}) AND is_active IS DISTINCT FROM false`,
+			[now, ...wanted],
+		);
+		return wanted.length;
+	}
+
 	async sync_search(resource: string, doc: ImperiumDoc) {
 		const collection = this.loc(resource).collection;
 		const id = String(doc._id ?? '');
