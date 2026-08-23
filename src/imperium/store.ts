@@ -780,7 +780,10 @@ export class ImperiumStore {
 				if (Array.isArray(val)) continue;
 				if (!val || typeof val !== 'object') continue;
 				const id = ref_id(val);
-				if (!id) continue;
+				if (!id) {
+					out[field] = '';
+					continue;
+				}
 				// String denormalizado en el original (no es ObjectId + $lookup).
 				// El form de pedidos lee `invoice_request_id` como id.
 				if (LIST_REF_KEEP_AS_ID.has(field)) {
@@ -1287,7 +1290,11 @@ export class ImperiumStore {
 			if (!Number.isFinite(lat) || !Number.isFinite(lon)) return '';
 			return `${lat.toFixed(2)},${lon.toFixed(2)}`;
 		};
-		const export_sheet = (title: string, chart_type: string) => ({
+		const export_sheet = (
+			title: string,
+			chart_type: string,
+			lookups: Record<string, string> = {},
+		) => ({
 			records: filtered,
 			metadata: {
 				title,
@@ -1295,7 +1302,7 @@ export class ImperiumStore {
 				total_records: filtered.length,
 				chart_type,
 			},
-			lookups: {},
+			lookups,
 		});
 		return {
 			kpis: {
@@ -1330,8 +1337,12 @@ export class ImperiumStore {
 			__export_data: {
 				priority_distribution: export_sheet('Distribución por Prioridad', 'pie'),
 				status_distribution: export_sheet('Distribución por Estatus', 'pie'),
-				employee_workload: export_sheet('Carga de Trabajo por Empleado', 'bar'),
-				department_distribution: export_sheet('Distribución por Departamento', 'pie'),
+				employee_workload: export_sheet('Carga de Trabajo por Empleado', 'bar', {
+					employee_taken_the_report: 'name',
+				}),
+				department_distribution: export_sheet('Distribución por Departamento', 'pie', {
+					department: 'name',
+				}),
 				recent_activity: export_sheet('Actividad Reciente (7 días)', 'line'),
 			},
 		};

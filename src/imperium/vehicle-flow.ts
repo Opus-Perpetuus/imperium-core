@@ -36,14 +36,21 @@ function build_name(payload: ImperiumDoc): string {
 export function decorate_vehicle(doc: ImperiumDoc): ImperiumDoc {
 	const chofer = doc.chofer;
 	if (chofer && typeof chofer === 'object') {
+		const id = ref_id(chofer);
 		const name = text((chofer as { name?: unknown }).name) || text(doc.chofer_nombre);
+		if (!id) {
+			return { ...doc, chofer: null, chofer_nombre: name };
+		}
 		return {
 			...doc,
-			chofer: { ...(chofer as object), name },
+			chofer: { ...(chofer as object), _id: id, name },
 			chofer_nombre: text(doc.chofer_nombre) || name,
 		};
 	}
 	const id = ref_id(chofer);
+	if (!id) {
+		return { ...doc, chofer: null, chofer_nombre: text(doc.chofer_nombre) };
+	}
 	return {
 		...doc,
 		chofer: { _id: id, name: text(doc.chofer_nombre) },
