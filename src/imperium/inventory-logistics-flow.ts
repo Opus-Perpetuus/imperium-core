@@ -291,3 +291,69 @@ export async function register_package_delivery_exit(
 		});
 	}
 }
+
+function round_qty(value: unknown): number {
+	return Number(Number(value ?? 0).toFixed(4));
+}
+
+/** `__get_statistics` de existencias: cantidad total y ubicaciones con stock. */
+export async function stock_quant_stats_extras(
+	store: ImperiumStore,
+	mongo_match?: Record<string, unknown> | null,
+): Promise<{ total_cantidad: number; ubicaciones_con_existencia: number }> {
+	const { rows } = await store.find_many('inventory-stock-quant', {
+		take: 10000,
+		include_inactive: true,
+		populate: false,
+		mongo_match,
+	});
+	let total_cantidad = 0;
+	let ubicaciones_con_existencia = 0;
+	for (const row of rows) {
+		const qty = round_qty(row.cantidad);
+		total_cantidad += qty;
+		if (qty > 0) ubicaciones_con_existencia += 1;
+	}
+	return {
+		total_cantidad: round_qty(total_cantidad),
+		ubicaciones_con_existencia,
+	};
+}
+
+/** `__get_statistics` de movimientos: `total_quantity` + `by_type`. */
+export async function inventory_movement_stats_extras(
+	store: ImperiumStore,
+	mongo_match?: Record<string, unknown> | null,
+): Promise<{
+	total_quantity: number;
+	by_type: Array<{ type: string | null; count: number; total_quantity: number }>;
+}> {
+	const { rows } = await store.find_many('inventory-movement', {
+		take: 10000,
+		include_inactive: true,
+		populate: false,
+		mongo_match,
+	});
+	const grouped = new Map<string | null, { count: number; total_quantity: number }>();
+	let total_quantity = 0;
+	for (const row of rows) {
+		const raw = row.tipo_movimiento;
+		const key = raw == null || raw === '' ? null : String(raw);
+		const qty = round_qty(row.cantidad);
+		total_quantity += qty;
+		const current = grouped.get(key) ?? { count: 0, total_quantity: 0 };
+		current.count += 1;
+		current.total_quantity += qty;
+		grouped.set(key, current);
+	}
+	return {
+		total_quantity: round_qty(total_quantity),
+		by_type: [...grouped.entries()]
+			.sort((a, b) => String(a[0] ?? '').localeCompare(String(b[0] ?? '')))
+			.map(([type, value]) => ({
+				type,
+				count: value.count,
+				total_quantity: round_qty(value.total_quantity),
+			})),
+	};
+}

@@ -20,6 +20,12 @@ import { delivery_package_by_status } from './delivery-package-flow.ts';
 import { pedidos_sales_stats } from './pedidos-flow.ts';
 import { purchase_order_stats } from './purchase-order-flow.ts';
 import { planeacion_statistics } from './planeacion-flow.ts';
+import { invoice_request_stats } from './invoice-request-flow.ts';
+import { physical_count_by_state } from './inventory-physical-count-flow.ts';
+import {
+	inventory_movement_stats_extras,
+	stock_quant_stats_extras,
+} from './inventory-logistics-flow.ts';
 import { record_document_history } from './history.ts';
 import {
 	find_increment_control,
@@ -1211,6 +1217,7 @@ export class ImperiumStore {
 		}
 		const planning = await planeacion_statistics(this, resource, url, actor, mongo_match);
 		if (planning) return planning;
+		if (resource === 'invoice-request') return invoice_request_stats(this, mongo_match);
 		const qt = this.qt(resource);
 		const cols = this.column_names(resource);
 		const from = new Date();
@@ -1242,6 +1249,15 @@ export class ImperiumStore {
 		}
 		if (resource === 'delivery-package') {
 			domain.by_status = await delivery_package_by_status(this, mongo_match);
+		}
+		if (resource === 'inventory-physical-count') {
+			domain.by_state = await physical_count_by_state(this, mongo_match);
+		}
+		if (resource === 'inventory-stock-quant') {
+			Object.assign(domain, await stock_quant_stats_extras(this, mongo_match));
+		}
+		if (resource === 'inventory-movement') {
+			Object.assign(domain, await inventory_movement_stats_extras(this, mongo_match));
 		}
 		const now = new Date();
 		const daily_where = extra ? `created_at >= $1 AND ${extra}` : `created_at >= $1`;

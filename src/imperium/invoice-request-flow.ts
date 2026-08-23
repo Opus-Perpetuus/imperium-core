@@ -513,3 +513,37 @@ export async function cancel_invoice_request(
 	await sync_order_invoice_state(store, updated);
 	return updated;
 }
+
+/** `__get_statistics` original: solo activos + `by_state` con monto. */
+export async function invoice_request_stats(
+	store: ImperiumStore,
+	mongo_match?: Record<string, unknown> | null,
+): Promise<Record<string, unknown>> {
+	const { rows } = await store.find_many('invoice-request', {
+		take: 10000,
+		include_inactive: false,
+		populate: false,
+		mongo_match,
+	});
+	const grouped = new Map<string | null, { total: number; monto_total: number }>();
+	for (const row of rows) {
+		const raw = row.estado;
+		const key = raw == null || raw === '' ? null : String(raw);
+		const current = grouped.get(key) ?? { total: 0, monto_total: 0 };
+		current.total += 1;
+		current.monto_total += Number(row.monto_total ?? 0);
+		grouped.set(key, current);
+	}
+	const by_state = [...grouped.entries()]
+		.sort((a, b) => String(a[0] ?? '').localeCompare(String(b[0] ?? '')))
+		.map(([_id, value]) => ({ _id, total: value.total, monto_total: value.monto_total }));
+	const total_records = rows.length;
+	return {
+		total_records,
+		by_state,
+		last_updated: new Date(),
+		kpis: {
+			total_records: { label: 'Total', value: total_records },
+		},
+	};
+}
