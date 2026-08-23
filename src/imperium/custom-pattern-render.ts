@@ -471,9 +471,17 @@ export async function find_increment_segment(
 	if (!reset_key) return control;
 	const model_name = String(control.model_name ?? '');
 	const increment_field = String(control.increment_field ?? '');
+	const exact = await store.find_where('auto-increment-control', {
+		model_name,
+		increment_field,
+		ref_value: reset_key,
+	});
+	if (exact && field_matches(exact, increment_field) && String(exact.ref_value ?? '') === reset_key) {
+		return exact;
+	}
 	const { rows } = await store.find_many('auto-increment-control', {
-		where: { model_name },
-		take: 100,
+		where: { model_name, increment_field },
+		take: 20000,
 		include_inactive: true,
 	});
 	return (
