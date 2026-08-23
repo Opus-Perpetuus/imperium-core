@@ -857,7 +857,16 @@ export async function read_my_tickets(ctx: TicketCtx) {
 	const uid = actor_id(ctx.actor);
 	if (!uid) throw new Error('No hay una sesión válida para consultar tickets.');
 	const { rows } = await ctx.store.find_many('tickets', {
-		take: 2000,
+		mongo_match: {
+			$or: [
+				{ assignedUserId: uid },
+				{ assigned_user_id: uid },
+				{ reporter: { $regex: uid } },
+				{ assignedPersonalTaskIds: { $regex: uid } },
+				{ assigned_personal_task_ids: { $regex: uid } },
+			],
+		},
+		take: 20000,
 		include_inactive: true,
 	});
 	const mine = rows
