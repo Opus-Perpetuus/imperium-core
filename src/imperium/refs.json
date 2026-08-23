@@ -171,6 +171,10 @@
     "ticketing-system-customer-type": {
       "priority_level": "TicketingSystemPriority"
     },
+    "ticketing-system-box-config": {
+      "allowed_services": "TicketingSystemServiceType",
+      "allowed_customer_types": "TicketingSystemCustomerType"
+    },
     "purchase-order": {
       "recepcion_pendiente": "InventoryReception",
       "proveedor": "Contacto"
