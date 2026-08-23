@@ -606,7 +606,7 @@ async function install_module_comprehensive(
 	}
 	const { rows: children } = await store.find_many('module-management', {
 		where: { parent_module: String(fresh.module_name ?? '') },
-		take: 500,
+		take: 20000,
 		include_inactive: true,
 	});
 	for (const child of children) {
