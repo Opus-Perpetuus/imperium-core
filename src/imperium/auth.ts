@@ -237,7 +237,15 @@ export async function current_user(
 }
 
 function public_user(user: ImperiumDoc): ImperiumDoc {
-	const { password: _p, ...rest } = user;
+	const {
+		password: _p,
+		reset_password_token_hash: _h,
+		reset_password_expires: _e,
+		reset_password_kind: _k,
+		recovery_token: _rt,
+		recovery_expires: _re,
+		...rest
+	} = user;
 	return rest;
 }
 

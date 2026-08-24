@@ -1990,6 +1990,8 @@ function strip_populated_secrets(resource: string, doc: ImperiumDoc): ImperiumDo
 		delete out.reset_password_token_hash;
 		delete out.reset_password_expires;
 		delete out.reset_password_kind;
+		delete out.recovery_token;
+		delete out.recovery_expires;
 	}
 	return out;
 }

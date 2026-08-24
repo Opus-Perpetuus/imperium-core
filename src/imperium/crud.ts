@@ -1421,6 +1421,8 @@ const USER_SECRET_KEYS = new Set([
 	'reset_password_token_hash',
 	'reset_password_expires',
 	'reset_password_kind',
+	'recovery_token',
+	'recovery_expires',
 ]);
 /** El original nunca selecciona `pin_hash` en list/detalle; solo en verify. */
 const ALWAYS_SECRET_KEYS = new Set(['pin_hash']);
