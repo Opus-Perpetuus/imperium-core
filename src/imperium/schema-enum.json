@@ -138,7 +138,9 @@
           "poblados",
           "hacienda",
           "transporte",
-          "servicios_municipales"
+          "servicios_municipales",
+          "gobierno",
+          "comunidad_autonoma"
         ],
         "message": "La categoría \"{VALUE}\" no existe"
       }

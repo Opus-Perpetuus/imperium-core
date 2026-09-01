@@ -49,6 +49,14 @@
         "min": 0,
         "message": "La cantidad no puede ser negativa"
       },
+      "entradas": {
+        "min": 0,
+        "message": "Las entradas no pueden ser negativas"
+      },
+      "salidas": {
+        "min": 0,
+        "message": "Las salidas no pueden ser negativas"
+      },
       "stock_minimo": {
         "min": 0,
         "message": "El stock mínimo no puede ser negativo"

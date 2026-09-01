@@ -36,7 +36,7 @@
     "access": "public",
     "registry": "https://registry.npmjs.org/"
   },
-  "description": "Imperium Core kit — subject (súbdito) contracts, forked from kirel-nox-kit 0.5.18",
+  "description": "Imperium Core kit — subject (app) contracts, forked from kirel-nox-kit 0.5.18",
   "license": "MIT",
   "repository": {
     "type": "git",

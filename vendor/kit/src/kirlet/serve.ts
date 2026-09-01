@@ -448,14 +448,16 @@ export function serve_kirlet(
       return res;
     } finally {
       const duration_ms = Date.now() - started;
-      nox.logs.record({
-        level: status >= 500 ? "error" : status >= 400 ? "warn" : "info",
-        message: `${method} ${path} ${status}`,
-        path,
-        method,
-        status,
-        duration_ms,
-      });
+      if (status >= 400) {
+        nox.logs.record({
+          level: status >= 500 ? "error" : "warn",
+          message: `${method} ${path} ${status}`,
+          path,
+          method,
+          status,
+          duration_ms,
+        });
+      }
       // structured JSON log line
       console.log(
         JSON.stringify({

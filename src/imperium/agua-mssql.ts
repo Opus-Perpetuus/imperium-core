@@ -226,15 +226,14 @@ export class AguaMssqlService {
 	): Promise<AguaSyncResult & { stub: true; message: string }> {
 		const where: Record<string, unknown> = {};
 		if (id_ruta) where.id_ruta = id_ruta;
-		const { rows, total } = await this.store.find_many('contrato', {
+		const total = await this.store.count('contrato', {
 			where: Object.keys(where).length ? where : undefined,
-			take: 20_000,
 		});
 		const enabled = await this.is_enabled();
 		return {
 			catalogo: 'contratos',
-			recibidos: total || rows.length,
-			guardados: total || rows.length,
+			recibidos: total,
+			guardados: total,
 			stub: true,
 			message: enabled
 				? 'MSSQL no expone SP de contratos documentado; se reutilizan contratos Mongo por IdRuta.'

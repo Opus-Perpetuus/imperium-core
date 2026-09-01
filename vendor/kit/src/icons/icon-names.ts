@@ -22,7 +22,8 @@ export function is_nox_icon_name(name: string): name is NoxIconName {
  */
 export function is_valid_icon_ref(ref: string): boolean {
   if (NAME_SET.has(ref)) return true;
-  return /^kirlet:[a-z][a-z0-9-]*$/.test(ref);
+  if (/^kirlet:[a-z][a-z0-9-]*$/.test(ref)) return true;
+  return /^subject:[a-z][a-z0-9-]*$/.test(ref);
 }
 
 // (o-----------------------------------------------------------/\-----o)

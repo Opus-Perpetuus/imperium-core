@@ -43,11 +43,20 @@ export type KirletDefinitionInput = {
   port?: number;
   storage_files?: boolean;
   /**
+   * App-level public realm opt-in. Absent or false ⇒ deny-by-default: the
+   * derived manifest has no `public` block even if pages/routes mark
+   * `public_access` or `public_files` is set. When true, only those explicit
+   * public pages/routes/files appear on the allowlist.
+   */
+  public?: boolean;
+  /**
    * Attachment resources to expose for public read via `GET /api/p/files/:id`.
    *
    * `resource` may be written bare (`"product"`) — it is namespaced to
    * `kirlet.<slug>.` automatically, which is also the only namespace NOX will
    * accept, so a kirlet cannot publish another's files by mistake.
+   *
+   * Ignored unless `public: true`.
    */
   public_files?: Array<{ resource: string; access?: KirletPublicAccess }>;
   /** Other kirlets that must be installed first (technical ids). */
@@ -345,7 +354,10 @@ export function define_kirlet(def: KirletDefinitionInput): KirletDefinition {
       access: entry.access ?? ("anonymous" as KirletPublicAccess),
     }));
 
-    if (public_pages.length || public_api.length || public_files.length) {
+    if (
+      def.public === true &&
+      (public_pages.length || public_api.length || public_files.length)
+    ) {
       raw.public = {};
       if (public_pages.length) raw.public.pages = public_pages;
       if (public_api.length) raw.public.api = public_api;

@@ -147,13 +147,31 @@ async function can_lookup_source(
 
 async function payments_of(store: ImperiumStore, charge_id: string) {
 	if (!store.has('cobranza-payment')) return [];
-	const { rows } = await store.find_many('cobranza-payment', {
+	const ids: string[] = [];
+	for await (const page of store.scan('cobranza-payment', {
 		where: { charge_id },
-		take: 20000,
 		include_inactive: true,
-		populate: true,
-	});
-	return rows.sort((a, b) => String(b.createdAt ?? b.created_at ?? '').localeCompare(String(a.createdAt ?? a.created_at ?? '')));
+	})) {
+		for (const row of page) {
+			const id = String(row._id ?? '');
+			if (id) ids.push(id);
+		}
+	}
+	const rows: ImperiumDoc[] = [];
+	for (let i = 0; i < ids.length; i += 500) {
+		const chunk = ids.slice(i, i + 500);
+		const page = await store.find_many('cobranza-payment', {
+			ids: chunk,
+			take: chunk.length,
+			include_inactive: true,
+			populate: true,
+			skip_total: true,
+		});
+		rows.push(...page.rows);
+	}
+	return rows.sort((a, b) =>
+		String(b.createdAt ?? b.created_at ?? '').localeCompare(String(a.createdAt ?? a.created_at ?? '')),
+	);
 }
 
 async function agua_outstanding_amount(store: ImperiumStore, contrato: ImperiumDoc): Promise<number> {

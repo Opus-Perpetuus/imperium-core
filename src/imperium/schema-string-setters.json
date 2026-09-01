@@ -48,7 +48,6 @@
       "direccion",
       "web",
       "email",
-      "fax",
       "observaciones"
     ],
     "inventario-sanitario": [

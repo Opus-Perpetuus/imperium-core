@@ -4,6 +4,13 @@
  * (mismo `processArrayFields` del backend Express).
  */
 
+export function is_truncated_multipart_error(error: unknown): boolean {
+	const message = error instanceof Error ? error.message : String(error ?? '');
+	return /unexpected end of form|malformed multipart|failed to parse body as FormData/i.test(
+		message,
+	);
+}
+
 export function process_array_fields(
 	obj: Record<string, unknown>,
 ): Record<string, unknown> {
@@ -31,7 +38,17 @@ export async function read_imperium_body(
 	if (req.method === 'GET' || req.method === 'HEAD') return {};
 	const ctype = req.headers.get('content-type') ?? '';
 	if (ctype.includes('multipart/form-data') || ctype.includes('application/x-www-form-urlencoded')) {
-		const form = await req.formData();
+		let form: FormData;
+		try {
+			form = await req.formData();
+		} catch (error) {
+			if (is_truncated_multipart_error(error)) {
+				throw new Error(
+					'La evidencia fotográfica no se recibió completa. Vuelve a guardar; si el problema continúa, usa una foto más ligera.',
+				);
+			}
+			throw error;
+		}
 		const files: Record<string, unknown> = {};
 		for (const [k, v] of form.entries()) {
 			if (typeof v !== 'string') files[k] = v;

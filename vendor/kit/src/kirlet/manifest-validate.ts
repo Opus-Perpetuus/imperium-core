@@ -580,7 +580,7 @@ function parse_public_block(
         }
         // A kirlet may only publish resources it owns. Without this a manifest
         // could name another kirlet's namespace and expose its attachments.
-        const namespace = `kirlet.${technical_id.replace(/^kirlet-/, "")}.`;
+        const namespace = `kirlet.${technical_id.replace(/^(?:kirlet|subject)-/, "")}.`;
         if (
           !resourcePrefix.startsWith(namespace) ||
           resourcePrefix.length === namespace.length
@@ -697,11 +697,12 @@ function validate_widgets(
     if (
       is_nonempty_string(item["permission"]) &&
       slug &&
-      !item["permission"].startsWith(`kirlet.${slug}.`)
+      !item["permission"].startsWith(`kirlet.${slug}.`) &&
+      !item["permission"].startsWith(`subject.${slug}.`)
     ) {
       issues.push({
         path: `${p}.permission`,
-        message: `permission must be namespaced kirlet.${slug}.*`,
+        message: `permission must be namespaced kirlet.${slug}.* or subject.${slug}.*`,
       });
     }
     const widget: KirletManifestWidget = {

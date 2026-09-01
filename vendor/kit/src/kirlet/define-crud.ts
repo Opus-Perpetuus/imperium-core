@@ -284,27 +284,26 @@ export function define_crud(opts: DefineCrudOptions): KirletRouteTable {
           },
           [`GET /${resource}/field-values/:field`]: async (ctx: KirletCtx) => {
             const field = ctx.params.field;
-            const rows = await ctx.data.findMany(table, { limit: 500 });
-            const seen = new Set<string>();
-            const data = [];
-            for (const r of rows) {
-              const v = r[field];
-              if (v == null) continue;
-              const k = String(v);
-              if (seen.has(k)) continue;
-              seen.add(k);
-              data.push({ value: v, label: k });
+            if (!/^[a-z_][a-z0-9_]*$/i.test(field)) {
+              throw new KirletHttpError(400, "validation_error", "Campo inválido");
             }
+            const termino = String(ctx.query.get("termino") ?? "");
+            const values = await ctx.data.distinct(table, field, termino);
+            const data = values.map((value) => ({
+              value,
+              label: String(value),
+            }));
             return { data, total_elementos: data.length, message: "Valores de campo" };
           },
           [`POST /${resource}/mass-query`]: async (ctx: KirletCtx) => {
             const body = (await ctx.body<{ ids?: string[] }>()) ?? {};
-            const ids = body.ids ?? [];
-            const rows = [];
-            for (const id of ids) {
-              const row = await ctx.data.findOne(table, { id });
-              if (row) rows.push(row);
-            }
+            const ids = (body.ids ?? []).map(String).filter(Boolean).slice(0, 500);
+            const rows = ids.length
+              ? await ctx.data.findMany(table, {
+                  where: { id: { in: ids } },
+                  limit: ids.length,
+                })
+              : [];
             return { data: rows, total_elementos: rows.length, message: "Consulta masiva" };
           },
           [`PUT /${resource}`]: async (ctx: KirletCtx) => {

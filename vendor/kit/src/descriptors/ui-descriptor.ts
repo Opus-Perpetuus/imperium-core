@@ -504,7 +504,7 @@ export function validate_page_descriptor(
   let page_node: NoxUiNode | null = null;
   if ("page" in input) {
     const tree = validate_ui_tree(input["page"], "$.page");
-    if (!tree.ok) {
+    if (tree.ok === false) {
       issues.push(...tree.issues);
     } else {
       page_node = tree.node;

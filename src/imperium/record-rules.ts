@@ -327,55 +327,63 @@ function ref_id(value: unknown): string {
 	return String(value);
 }
 
+async function collect_assigned_record_rule_ids(store: ImperiumStore) {
+	const ids = new Set<string>();
+	if (!store.has('user-group')) return ids;
+	for await (const page of store.scan('user-group', { include_inactive: false })) {
+		for (const group of page) {
+			for (const raw of as_array(group.record_rules_ids)) {
+				const id = ref_id(raw);
+				if (id) ids.add(id);
+			}
+		}
+	}
+	return ids;
+}
+
 export async function load_record_rules_by_model(
 	store: ImperiumStore,
 	user_groups: ImperiumDoc[],
+	assigned_rule_ids?: Set<string>,
 ): Promise<Record<string, ImperiumDoc[]>> {
 	if (!store.has('record-rules')) return {};
-	const all_rules = (
-		await store.find_many('record-rules', { take: 20000, include_inactive: false, populate: false })
-	).rows;
-	if (!all_rules.length) return {};
-	const all_groups = store.has('user-group')
-		? (await store.find_many('user-group', { take: 20000, include_inactive: false, populate: false }))
-				.rows
-		: [];
+	const record_rule_ids_assigned_to_any_group =
+		assigned_rule_ids ?? (await collect_assigned_record_rule_ids(store));
 	const user_group_record_rule_ids = new Set(
 		user_groups.flatMap((group) => as_array(group.record_rules_ids).map((id) => ref_id(id))),
-	);
-	const record_rule_ids_assigned_to_any_group = new Set(
-		all_groups.flatMap((group) => as_array(group.record_rules_ids).map((id) => ref_id(id))),
 	);
 	const user_group_reference_ids = new Set(
 		user_groups.flatMap((group) => [String(group._id ?? ''), String(group._ref ?? '')]).filter(Boolean),
 	);
 	const out: Record<string, ImperiumDoc[]> = {};
-	for (const rule of all_rules) {
-		const rule_id = String(rule._id ?? '');
-		const rule_group_id = ref_id(rule.group_id);
-		if (
-			!is_rule_effective({
-				rule_id,
-				rule_group_id,
-				user_group_record_rule_ids,
-				user_group_reference_ids,
-				record_rule_ids_assigned_to_any_group,
-			})
-		) {
-			continue;
-		}
-		const model_id = String(rule.model_id ?? '');
-		if (!model_id) continue;
-		const group_name =
-			user_groups.find((group) => {
-				const ids = as_array(group.record_rules_ids).map((id) => ref_id(id));
-				if (ids.includes(rule_id)) return true;
-				return String(group._id) === rule_group_id || String(group._ref ?? '') === rule_group_id;
-			})?.name ?? (rule_group_id ? undefined : 'global');
-		const decorated = { ...rule, __group_name: group_name };
-		const resource = store.resource_for_model(model_id) ?? model_id.toLowerCase();
-		for (const key of new Set([model_id, resource])) {
-			(out[key] ??= []).push(decorated);
+	for await (const page of store.scan('record-rules', { include_inactive: false })) {
+		for (const rule of page) {
+			const rule_id = String(rule._id ?? '');
+			const rule_group_id = ref_id(rule.group_id);
+			if (
+				!is_rule_effective({
+					rule_id,
+					rule_group_id,
+					user_group_record_rule_ids,
+					user_group_reference_ids,
+					record_rule_ids_assigned_to_any_group,
+				})
+			) {
+				continue;
+			}
+			const model_id = String(rule.model_id ?? '');
+			if (!model_id) continue;
+			const group_name =
+				user_groups.find((group) => {
+					const ids = as_array(group.record_rules_ids).map((id) => ref_id(id));
+					if (ids.includes(rule_id)) return true;
+					return String(group._id) === rule_group_id || String(group._ref ?? '') === rule_group_id;
+				})?.name ?? (rule_group_id ? undefined : 'global');
+			const decorated = { ...rule, __group_name: group_name };
+			const resource = store.resource_for_model(model_id) ?? model_id.toLowerCase();
+			for (const key of new Set([model_id, resource])) {
+				(out[key] ??= []).push(decorated);
+			}
 		}
 	}
 	return out;
@@ -405,7 +413,7 @@ function field_extract(field: string, cols: Set<string>): string {
 						: field;
 	if (name === 'id' || cols.has(name)) return qident(name);
 	const key = literal(field);
-	return `(COALESCE(payload ->> ${key}, CASE WHEN jsonb_typeof(payload) = 'string' THEN ((payload #>> '{}')::jsonb) ->> ${key} END))`;
+	return `payload ->> ${key}`;
 }
 
 /**

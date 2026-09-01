@@ -187,14 +187,11 @@ async function resolve_route_from_contact(store: ImperiumStore, contact_id: stri
 		});
 		if (rows[0]) return map_route_suggestion(rows[0]);
 	}
-	const { rows } = await store.find_many('delivery-route', {
-		take: 20000,
-		sort: 'id:asc',
-		include_inactive: false,
-		populate: false,
-	});
-	const route = rows.find((row) => ids_from(row.contacts).includes(contact_id));
-	return route ? map_route_suggestion(route) : null;
+	for await (const page of store.scan('delivery-route', { include_inactive: false })) {
+		const route = page.find((row) => ids_from(row.contacts).includes(contact_id));
+		if (route) return map_route_suggestion(route);
+	}
+	return null;
 }
 
 function normalize_content_items(
@@ -262,15 +259,14 @@ async function resolve_next_package_number(
 	pedido_id: string,
 	current_record_id?: string,
 ) {
-	const { rows } = await store.find_many('delivery-package', {
+	const total = await store.count('delivery-package', {
 		where: { pedido: pedido_id },
-		take: 20000,
 		include_inactive: true,
-		populate: false,
 	});
-	const count = rows.filter((row) => !current_record_id || String(row._id) !== current_record_id)
-		.length;
-	return count + 1;
+	if (!current_record_id) return total + 1;
+	const current = await store.find_id('delivery-package', current_record_id);
+	const same_order = Boolean(current) && ref_id(current?.pedido) === pedido_id;
+	return same_order ? total : total + 1;
 }
 
 async function resolve_package_codigo(
@@ -440,13 +436,15 @@ export async function after_delivery_package_mutate(
 }
 
 async function sync_order_package_totals(store: ImperiumStore, pedido_id: string) {
-	const { rows } = await store.find_many('delivery-package', {
+	const package_records: ImperiumDoc[] = [];
+	for await (const page of store.scan('delivery-package', {
 		where: { pedido: pedido_id },
-		take: 20000,
 		include_inactive: false,
-		populate: false,
-	});
-	const package_records = rows.filter((row) => row.is_active !== false);
+	})) {
+		for (const row of page) {
+			if (row.is_active !== false) package_records.push(row);
+		}
+	}
 	const total_packages = Math.max(package_records.length, 1);
 	for (const pack of package_records) {
 		if (Number(pack.pedido_total_bultos ?? 0) === total_packages) continue;
@@ -518,12 +516,13 @@ export async function list_packages_by_pedido(
 ): Promise<{ rows: ImperiumDoc[]; message: string }> {
 	const id = text(pedido_id);
 	if (!id) throw new Error('Debes indicar el pedido');
-	const { rows } = await store.find_many('delivery-package', {
+	const rows: ImperiumDoc[] = [];
+	for await (const page of store.scan('delivery-package', {
 		where: { pedido: id },
-		take: 20000,
 		include_inactive: true,
-		populate: false,
-	});
+	})) {
+		rows.push(...page);
+	}
 	const filtered = include_cancelled ? rows : rows.filter((row) => row.is_active !== false);
 	filtered.sort((a, b) => {
 		const active = Number(b.is_active !== false) - Number(a.is_active !== false);
@@ -543,17 +542,16 @@ export async function delivery_package_by_status(
 	store: ImperiumStore,
 	mongo_match?: Record<string, unknown> | null,
 ): Promise<Array<{ _id: string | null; count: number }>> {
-	const { rows } = await store.find_many('delivery-package', {
-		take: 20000,
-		include_inactive: true,
-		populate: false,
-		mongo_match,
-	});
 	const counts = new Map<string | null, number>();
-	for (const row of rows) {
-		const raw = text(row.estado);
-		const key = raw || null;
-		counts.set(key, (counts.get(key) ?? 0) + 1);
+	for await (const page of store.scan('delivery-package', {
+		include_inactive: true,
+		mongo_match,
+	})) {
+		for (const row of page) {
+			const raw = text(row.estado);
+			const key = raw || null;
+			counts.set(key, (counts.get(key) ?? 0) + 1);
+		}
 	}
 	return [...counts.entries()]
 		.sort((a, b) => String(a[0] ?? '').localeCompare(String(b[0] ?? '')))

@@ -283,12 +283,14 @@ async function location_by_codigo(store: ImperiumStore, codigo: string) {
 	if (!wanted || !store.has('inventory-internal-location')) return null;
 	const exact = await store.find_where('inventory-internal-location', { codigo: wanted });
 	if (exact) return exact;
-	const { rows } = await store.find_many('inventory-internal-location', {
-		take: 2000,
+	for await (const page of store.scan('inventory-internal-location', {
 		include_inactive: true,
-		populate: false,
-	});
-	return rows.find((row) => text(row.codigo).toUpperCase() === wanted) ?? null;
+		fields: ['codigo'],
+	})) {
+		const hit = page.find((row) => text(row.codigo).toUpperCase() === wanted);
+		if (hit) return hit;
+	}
+	return null;
 }
 
 async function quant_disponible(store: ImperiumStore, producto: string, ubicacion: string) {
@@ -475,23 +477,22 @@ export async function in_transit_for_product(
 ): Promise<ImperiumDoc> {
 	const id = text(producto_id);
 	if (!id || !is_object_id(id)) throw new Error('Se necesita el id del producto');
-	const { rows } = await store.find_many('inventory-reception', {
-		where: { estado: { in: ['pendiente', 'parcial'] } },
-		take: 20000,
-		include_inactive: false,
-		populate: false,
-	});
 	let en_camino = 0;
 	let recepciones = 0;
-	for (const record of rows) {
-		if (record.is_active === false) continue;
-		if (!['pendiente', 'parcial'].includes(text(record.estado))) continue;
-		const item = as_array(record.articulos)
-			.map(as_object)
-			.find((line) => ref_id(line.producto) === id);
-		if (!item) continue;
-		recepciones += 1;
-		en_camino += Math.max(0, round_qty(pending_of(item) - reserved_of(item)));
+	for await (const page of store.scan('inventory-reception', {
+		where: { estado: { in: ['pendiente', 'parcial'] } },
+		include_inactive: false,
+	})) {
+		for (const record of page) {
+			if (record.is_active === false) continue;
+			if (!['pendiente', 'parcial'].includes(text(record.estado))) continue;
+			const item = as_array(record.articulos)
+				.map(as_object)
+				.find((line) => ref_id(line.producto) === id);
+			if (!item) continue;
+			recepciones += 1;
+			en_camino += Math.max(0, round_qty(pending_of(item) - reserved_of(item)));
+		}
 	}
 	return {
 		producto: id,
@@ -506,30 +507,29 @@ export async function list_pending_for_product(
 ): Promise<ImperiumDoc[]> {
 	const id = text(producto_id);
 	if (!id || !is_object_id(id)) throw new Error('Se necesita el id del producto');
-	const { rows } = await store.find_many('inventory-reception', {
+	const out: ImperiumDoc[] = [];
+	for await (const page of store.scan('inventory-reception', {
 		where: { estado: { in: ['pendiente', 'parcial'] } },
-		take: 20000,
 		include_inactive: false,
-		populate: false,
-	});
-	return rows
-		.filter((record) => record.is_active !== false)
-		.filter((record) => ['pendiente', 'parcial'].includes(text(record.estado)))
-		.map((record) => {
+	})) {
+		for (const record of page) {
+			if (record.is_active === false) continue;
+			if (!['pendiente', 'parcial'].includes(text(record.estado))) continue;
 			const item = as_array(record.articulos)
 				.map(as_object)
 				.find((line) => ref_id(line.producto) === id);
-			if (!item) return null;
+			if (!item) continue;
 			const disponible = round_qty(pending_of(item) - reserved_of(item));
-			if (!(disponible > 0)) return null;
-			return {
+			if (!(disponible > 0)) continue;
+			out.push({
 				_id: record._id,
 				name: record.name,
 				purchase_order_nombre: record.purchase_order_nombre ?? record.orden_compra_nombre,
 				disponible,
-			};
-		})
-		.filter((row): row is ImperiumDoc => Boolean(row));
+			});
+		}
+	}
+	return out;
 }
 
 /**

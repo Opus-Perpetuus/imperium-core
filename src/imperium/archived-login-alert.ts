@@ -125,51 +125,41 @@ async function notify_admins_of_archived_login(store: ImperiumStore, user: Imper
 	const archived_user_id = text(user._id ?? user.id);
 	if (!archived_user_id || !store.has('notifications') || !store.has('user')) return;
 
-	const { rows: users } = await store.find_many('user', {
-		take: 20000,
-		include_inactive: false,
-	});
-	const seed_admin_ids = users
-		.filter((row) => ref_of(row) === SEED_ADMIN_USER_REF && is_active(row))
-		.map((row) => text(row._id ?? row.id));
+	const seed_admin = await store.find_where('user', { _ref: SEED_ADMIN_USER_REF });
+	const seed_admin_ids =
+		seed_admin && is_active(seed_admin) ? [text(seed_admin._id ?? seed_admin.id)] : [];
 
 	let group_user_ids: string[] = [];
 	if (store.has('user-group')) {
-		const { rows: groups } = await store.find_many('user-group', {
-			take: 20000,
-			include_inactive: false,
-		});
-		const admin_group = groups.find(
-			(row) => ref_of(row) === ADMIN_USER_GROUP_REF && is_active(row),
-		);
-		group_user_ids = id_list(admin_group?.user_ids ?? admin_group?.userIds);
+		const admin_group = await store.find_where('user-group', { _ref: ADMIN_USER_GROUP_REF });
+		if (admin_group && is_active(admin_group)) {
+			group_user_ids = id_list(admin_group.user_ids ?? admin_group.userIds);
+		}
 	}
 
 	const candidate_ids = unique_id_list([...seed_admin_ids, ...group_user_ids], archived_user_id);
 	if (!candidate_ids.length) return;
 
-	const active_admin_ids = unique_id_list(
-		users
-			.filter((row) => candidate_ids.includes(text(row._id ?? row.id)) && is_active(row))
-			.map((row) => text(row._id ?? row.id)),
-	);
+	const active_admin_ids: string[] = [];
+	for (const id of candidate_ids) {
+		const row = await store.find_id('user', id);
+		if (row && is_active(row)) active_admin_ids.push(text(row._id ?? row.id));
+	}
 	if (!active_admin_ids.length) return;
 
-	const { rows: notes } = await store.find_many('notifications', {
-		take: 20000,
+	const unread_recipient_ids: string[] = [];
+	for await (const page of store.scan('notifications', {
+		where: { type: ARCHIVED_LOGIN_ALERT_TYPE },
 		include_inactive: true,
-	});
-	const unread_recipient_ids = unique_id_list(
-		notes
-			.filter(
-				(row) =>
-					text(row.type) === ARCHIVED_LOGIN_ALERT_TYPE &&
-					!is_read(row) &&
-					source_document_id(row) === archived_user_id &&
-					active_admin_ids.includes(text(row.recipientId ?? row.user ?? row.to)),
-			)
-			.map((row) => text(row.recipientId ?? row.user ?? row.to)),
-	);
+	})) {
+		for (const row of page) {
+			if (text(row.type) !== ARCHIVED_LOGIN_ALERT_TYPE || is_read(row)) continue;
+			if (source_document_id(row) !== archived_user_id) continue;
+			const recipient = text(row.recipientId ?? row.user ?? row.to);
+			if (!active_admin_ids.includes(recipient)) continue;
+			unread_recipient_ids.push(recipient);
+		}
+	}
 	const unread = new Set(unread_recipient_ids);
 	const recipient_ids = active_admin_ids.filter((id) => !unread.has(id));
 	if (!recipient_ids.length) return;

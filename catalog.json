@@ -1,9 +1,9 @@
 {
   "unit": "subject",
-  "unit_es": "súbdito",
+  "unit_es": "app",
   "kit": "@opus-perpetuus/imperium-core-kit",
   "forked_from": "@opus-perpetuus/kirel-nox-kit@0.5.18",
-  "count": 19,
+  "count": 20,
   "subjects": [
     {
       "slug": "almacen",
@@ -4965,7 +4965,7 @@
       "menu_ref": "control-emergencias-menu-root",
       "catalog_id": "SUBJECT-control-emergencias",
       "technical_id": "subject-control-emergencias",
-      "image": "ghcr.io/opus-perpetuus/subject-control-emergencias:0.1.0",
+      "image": "ghcr.io/opus-perpetuus/subject-control-emergencias:0.1.1",
       "repo": "Opus-Perpetuus/imperium-subject-control-emergencias",
       "dir": "modular/subjects/imperium-subject-control-emergencias",
       "modules": [
@@ -5057,6 +5057,30 @@
               "crud": "string",
               "component": "input-text",
               "label": "observaciones"
+            },
+            {
+              "name": "fecha_interaccion",
+              "mongo": "fecha_interaccion",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-date",
+              "label": "fecha interaccion"
+            },
+            {
+              "name": "tipo_interaccion",
+              "mongo": "tipo_interaccion",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-menu",
+              "label": "tipo interaccion"
+            },
+            {
+              "name": "notas_interaccion",
+              "mongo": "notas_interaccion",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "notas interaccion"
             }
           ]
         },
@@ -5623,14 +5647,6 @@
               "label": "email"
             },
             {
-              "name": "fax",
-              "mongo": "fax",
-              "pg": "text",
-              "crud": "string",
-              "component": "input-text",
-              "label": "fax"
-            },
-            {
               "name": "observaciones",
               "mongo": "observaciones",
               "pg": "text",
@@ -5664,6 +5680,30 @@
               "crud": "number",
               "component": "input-number",
               "label": "cantidad"
+            },
+            {
+              "name": "entradas",
+              "mongo": "entradas",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "entradas"
+            },
+            {
+              "name": "salidas",
+              "mongo": "salidas",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "salidas"
+            },
+            {
+              "name": "fecha_salida",
+              "mongo": "fecha_salida",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-date",
+              "label": "fecha salida"
             },
             {
               "name": "stock_minimo",
@@ -5942,6 +5982,92 @@
               "crud": "string",
               "component": "input-text",
               "label": "motivos"
+            }
+          ]
+        },
+        {
+          "resource": "inventario-general",
+          "table": "inventario_general",
+          "name": "Inventario general",
+          "path": "/inventario-general",
+          "collection": "inventario-general",
+          "model_file": "components/control-emergencias/inventario-general/inventario-general.model.ts",
+          "menu_ref": "inventario-general-menu-management-0",
+          "columns": [
+            {
+              "name": "cantidad",
+              "mongo": "cantidad",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "cantidad"
+            },
+            {
+              "name": "ubicacion",
+              "mongo": "ubicacion",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "ubicacion"
+            },
+            {
+              "name": "retiradas",
+              "mongo": "retiradas",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "retiradas"
+            }
+          ]
+        },
+        {
+          "resource": "libro-cuentas",
+          "table": "libro_cuentas",
+          "name": "Libro de cuentas",
+          "path": "/libro-cuentas",
+          "collection": "libro-cuentas",
+          "model_file": "components/control-emergencias/libro-cuentas/libro-cuentas.model.ts",
+          "menu_ref": "libro-cuentas-menu-management-0",
+          "columns": [
+            {
+              "name": "fecha",
+              "mongo": "fecha",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-date",
+              "label": "fecha"
+            },
+            {
+              "name": "tipo",
+              "mongo": "tipo",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-menu",
+              "label": "tipo"
+            },
+            {
+              "name": "motivo",
+              "mongo": "motivo",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "motivo"
+            },
+            {
+              "name": "importe",
+              "mongo": "importe",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "importe"
+            },
+            {
+              "name": "saldo",
+              "mongo": "saldo",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "saldo"
             }
           ]
         }
@@ -10586,121 +10712,105 @@
           "table": "pos_session",
           "name": "Sesiones POS",
           "path": "/pos-session",
-          "collection": "pos_order",
-          "model_file": "components/pos-order/pos-order.model.ts",
+          "collection": "pos-session",
+          "model_file": "components/pos-session/pos-session.model.ts",
           "menu_ref": "pos-session-menu-management-0",
           "columns": [
             {
-              "name": "reference",
-              "mongo": "reference",
-              "pg": "text",
-              "crud": "string",
-              "component": "input-text",
-              "label": "reference"
-            },
-            {
-              "name": "partner_id",
-              "mongo": "partner_id",
-              "pg": "text",
-              "crud": "string",
-              "component": "input-text",
-              "label": "partner id"
-            },
-            {
-              "name": "partner_name",
-              "mongo": "partner_name",
-              "pg": "text",
-              "crud": "string",
-              "component": "input-text",
-              "label": "partner name"
-            },
-            {
-              "name": "partner_lastname",
-              "mongo": "partner_lastname",
-              "pg": "text",
-              "crud": "string",
-              "component": "input-text",
-              "label": "partner lastname"
-            },
-            {
-              "name": "partner_home",
-              "mongo": "partner_home",
-              "pg": "text",
-              "crud": "string",
-              "component": "input-text",
-              "label": "partner home"
-            },
-            {
-              "name": "date_order",
-              "mongo": "date_order",
-              "pg": "text",
-              "crud": "string",
-              "component": "input-text",
-              "label": "date order"
-            },
-            {
-              "name": "amount_total",
-              "mongo": "amount_total",
+              "name": "cash_register_opening_money",
+              "mongo": "cash_register_opening_money",
               "pg": "real",
               "crud": "number",
               "component": "input-number",
-              "label": "amount total"
+              "label": "cash register opening money"
             },
             {
-              "name": "lines",
-              "mongo": "lines",
-              "pg": "text",
-              "crud": "string",
-              "component": "input-text",
-              "label": "lines"
-            },
-            {
-              "name": "sync",
-              "mongo": "sync",
+              "name": "on_use",
+              "mongo": "on_use",
               "pg": "boolean",
               "crud": "boolean",
               "component": "input-checkbox",
-              "label": "sync"
+              "label": "on use"
             },
             {
-              "name": "product_id",
-              "mongo": "product_id",
+              "name": "status",
+              "mongo": "status",
               "pg": "text",
               "crud": "string",
               "component": "input-text",
-              "label": "product id"
+              "label": "status"
             },
             {
-              "name": "product",
-              "mongo": "product",
+              "name": "opening_date",
+              "mongo": "opening_date",
               "pg": "text",
               "crud": "string",
               "component": "input-text",
-              "label": "product"
+              "label": "opening date"
             },
             {
-              "name": "price_unit",
-              "mongo": "price_unit",
+              "name": "branch_office",
+              "mongo": "branch_office",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "branch office"
+            },
+            {
+              "name": "razon_de_diferencia_con_ultimo_cierre",
+              "mongo": "razon_de_diferencia_con_ultimo_cierre",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "razon de diferencia con ultimo cierre"
+            },
+            {
+              "name": "cashier",
+              "mongo": "cashier",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "cashier"
+            },
+            {
+              "name": "consecutivo",
+              "mongo": "consecutivo",
               "pg": "real",
               "crud": "number",
               "component": "input-number",
-              "label": "price unit"
+              "label": "consecutivo"
             },
             {
-              "name": "quantity",
-              "mongo": "quantity",
-              "pg": "real",
-              "crud": "number",
-              "component": "input-number",
-              "label": "quantity"
+              "name": "usage_history",
+              "mongo": "usage_history",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "usage history"
             },
             {
-              "name": "sale_order_id",
-              "mongo": "sale_order_id",
+              "name": "closing_date",
+              "mongo": "closing_date",
               "pg": "text",
               "crud": "string",
               "component": "input-text",
-              "label": "sale order id"
+              "label": "closing date"
+            },
+            {
+              "name": "runtime_state",
+              "mongo": "runtime_state",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "runtime state"
+            },
+            {
+              "name": "diferencia_de_ultimo_cierre",
+              "mongo": "diferencia_de_ultimo_cierre",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "diferencia de ultimo cierre"
             }
           ]
         },
@@ -11230,7 +11340,7 @@
     },
     {
       "slug": "rh",
-      "name": "RH",
+      "name": "Recursos Humanos",
       "path": "/rh",
       "kind": "module",
       "menu_ref": "employee_menu_root",
@@ -13113,7 +13223,7 @@
       "menu_ref": "pedidos_menu_root",
       "catalog_id": "SUBJECT-ventas",
       "technical_id": "subject-ventas",
-      "image": "ghcr.io/opus-perpetuus/subject-ventas:0.1.0",
+      "image": "ghcr.io/opus-perpetuus/subject-ventas:0.1.1",
       "repo": "Opus-Perpetuus/imperium-subject-ventas",
       "dir": "modular/subjects/imperium-subject-ventas",
       "modules": [
@@ -14479,6 +14589,179 @@
               "crud": "string",
               "component": "input-text",
               "label": "etiquetas"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "slug": "tienda",
+      "name": "Tienda",
+      "path": "/tienda",
+      "kind": "module",
+      "menu_ref": "tienda-menu-root",
+      "catalog_id": "SUBJECT-tienda",
+      "technical_id": "subject-tienda",
+      "image": "ghcr.io/opus-perpetuus/subject-tienda:0.1.0",
+      "repo": "Opus-Perpetuus/imperium-subject-tienda",
+      "dir": "modular/subjects/imperium-subject-tienda",
+      "modules": [
+        {
+          "resource": "providers",
+          "table": "providers",
+          "name": "Proveedores",
+          "path": "/providers",
+          "collection": "providers",
+          "model_file": "subjects/tienda/providers",
+          "menu_ref": "tienda-providers",
+          "columns": [
+            {
+              "name": "slug",
+              "mongo": "slug",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "slug"
+            },
+            {
+              "name": "adapter",
+              "mongo": "adapter",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "adapter"
+            },
+            {
+              "name": "connector_slug",
+              "mongo": "connector_slug",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "conector"
+            }
+          ]
+        },
+        {
+          "resource": "catalog",
+          "table": "products",
+          "name": "Catálogo",
+          "path": "/catalog",
+          "collection": "products",
+          "model_file": "subjects/tienda/catalog",
+          "menu_ref": "tienda-catalog",
+          "columns": [
+            {
+              "name": "title",
+              "mongo": "title",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "título"
+            },
+            {
+              "name": "sku",
+              "mongo": "sku",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "sku"
+            },
+            {
+              "name": "base_price_cents",
+              "mongo": "base_price_cents",
+              "pg": "integer",
+              "crud": "number",
+              "component": "input-number",
+              "label": "precio base ¢"
+            },
+            {
+              "name": "is_published",
+              "mongo": "is_published",
+              "pg": "integer",
+              "crud": "number",
+              "component": "input-checkbox",
+              "label": "publicado"
+            }
+          ]
+        },
+        {
+          "resource": "pricing",
+          "table": "exchange_rates",
+          "name": "Precios",
+          "path": "/pricing",
+          "collection": "pricing",
+          "model_file": "subjects/tienda/pricing",
+          "menu_ref": "tienda-pricing",
+          "columns": [
+            {
+              "name": "global_margin_bp",
+              "mongo": "global_margin_bp",
+              "pg": "integer",
+              "crud": "number",
+              "component": "input-number",
+              "label": "margen global bp"
+            }
+          ]
+        },
+        {
+          "resource": "sync",
+          "table": "sync_jobs",
+          "name": "Sincronización",
+          "path": "/sync",
+          "collection": "sync_jobs",
+          "model_file": "subjects/tienda/sync",
+          "menu_ref": "tienda-sync",
+          "columns": [
+            {
+              "name": "kind",
+              "mongo": "kind",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "tipo"
+            },
+            {
+              "name": "status",
+              "mongo": "status",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "estado"
+            }
+          ]
+        },
+        {
+          "resource": "orders",
+          "table": "orders",
+          "name": "Pedidos",
+          "path": "/orders",
+          "collection": "orders",
+          "model_file": "subjects/tienda/orders",
+          "menu_ref": "tienda-orders",
+          "columns": [
+            {
+              "name": "folio",
+              "mongo": "folio",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "folio"
+            },
+            {
+              "name": "status",
+              "mongo": "status",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "estado"
+            },
+            {
+              "name": "total_cents",
+              "mongo": "total_cents",
+              "pg": "integer",
+              "crud": "number",
+              "component": "input-number",
+              "label": "total ¢"
             }
           ]
         }

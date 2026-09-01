@@ -11,6 +11,39 @@ export type PatternContext = Record<string, unknown>;
 
 export type CustomTokenValue = { value: string; is_reset_key: boolean };
 
+async function collect_scan(
+	store: ImperiumStore,
+	resource: string,
+	opts: {
+		where?: Record<string, unknown>;
+		include_inactive?: boolean;
+		fields?: string[];
+	} = {},
+): Promise<ImperiumDoc[]> {
+	const out: ImperiumDoc[] = [];
+	for await (const page of store.scan(resource, opts)) out.push(...page);
+	return out;
+}
+
+/** Lookups de incremento. Sin `search_field` (n-gramas). */
+const INCREMENT_LOOKUP_FIELDS = [
+	'name',
+	'model_name',
+	'collection',
+	'increment_field',
+	'campo',
+	'index_name',
+	'type',
+	'custom_pattern',
+	'ref_value',
+	'is_active',
+	'current_sequence',
+	'current',
+	'valor',
+	'current_real_value',
+	'updated_at',
+];
+
 export function numero_a_columna(valor_col: number): string {
 	let n = valor_col;
 	let out = '';
@@ -265,10 +298,8 @@ export async function resolve_custom_values(
 	if (!control || !context || !store.has('custom-pattern-increment-sequence-parts')) {
 		return [];
 	}
-	const { rows: parts } = await store.find_many('custom-pattern-increment-sequence-parts', {
+	const parts = await collect_scan(store, 'custom-pattern-increment-sequence-parts', {
 		where: { counter_config_id: String(control._id) },
-		take: 20000,
-		sort: 'order:asc',
 	});
 	const custom_parts = parts
 		.filter((part) => String(part.token_type ?? '') === 'custom')
@@ -281,9 +312,8 @@ export async function resolve_custom_values(
 			values.push({ value: '', is_reset_key: false });
 			continue;
 		}
-		const { rows: conditions } = await store.find_many('custom-pattern-condition', {
+		const conditions = await collect_scan(store, 'custom-pattern-condition', {
 			where: { part_id: String(part._id) },
-			take: 20000,
 		});
 		let matched = '';
 		let matched_reset = false;
@@ -323,28 +353,29 @@ async function find_external_counter(
 	id: string,
 	ref_value: string | null,
 ): Promise<ImperiumDoc | null> {
-	const by_index = await store.find_many('auto-increment-control', {
+	let matches = await collect_scan(store, 'auto-increment-control', {
 		where: { index_name: id },
-		take: 20000,
 		include_inactive: true,
-		sort: 'updated_at:desc',
+		fields: INCREMENT_LOOKUP_FIELDS,
 	});
-	let matches = by_index.rows;
 	if (!matches.length) {
-		const by_field = await store.find_many('auto-increment-control', {
+		const by_field = await collect_scan(store, 'auto-increment-control', {
 			where: { increment_field: id },
-			take: 20000,
 			include_inactive: true,
-			sort: 'updated_at:desc',
+			fields: INCREMENT_LOOKUP_FIELDS,
 		});
-		const by_name = await store.find_many('auto-increment-control', {
+		const by_name = await collect_scan(store, 'auto-increment-control', {
 			where: { name: id },
-			take: 20000,
 			include_inactive: true,
-			sort: 'updated_at:desc',
+			fields: INCREMENT_LOOKUP_FIELDS,
 		});
-		matches = [...by_field.rows, ...by_name.rows];
+		matches = [...by_field, ...by_name];
 	}
+	matches.sort((a, b) =>
+		String(b.updatedAt ?? b.updated_at ?? '').localeCompare(
+			String(a.updatedAt ?? a.updated_at ?? ''),
+		),
+	);
 	if (ref_value) {
 		return (
 			matches.find((row) => String(row.ref_value ?? '') === ref_value) ??
@@ -456,10 +487,10 @@ export async function find_increment_control(
 	increment_field: string,
 ): Promise<ImperiumDoc | null> {
 	if (!store.has('auto-increment-control') || !model_name) return null;
-	const { rows } = await store.find_many('auto-increment-control', {
+	const rows = await collect_scan(store, 'auto-increment-control', {
 		where: increment_field ? { model_name, increment_field } : { model_name },
-		take: 20000,
 		include_inactive: true,
+		fields: INCREMENT_LOOKUP_FIELDS,
 	});
 	const matches = increment_field
 		? rows.filter((row) => field_matches(row, increment_field))
@@ -491,10 +522,10 @@ export async function find_increment_segment(
 	if (exact && field_matches(exact, increment_field) && String(exact.ref_value ?? '') === reset_key) {
 		return exact;
 	}
-	const { rows } = await store.find_many('auto-increment-control', {
+	const rows = await collect_scan(store, 'auto-increment-control', {
 		where: { model_name, increment_field },
-		take: 20000,
 		include_inactive: true,
+		fields: INCREMENT_LOOKUP_FIELDS,
 	});
 	return (
 		rows.find(
@@ -583,9 +614,9 @@ export async function assign_document_increments(
 	if (resource === 'auto-increment-control' || !store.has('auto-increment-control')) {
 		return doc;
 	}
-	const { rows } = await store.find_many('auto-increment-control', {
-		take: 20000,
+	const rows = await collect_scan(store, 'auto-increment-control', {
 		include_inactive: true,
+		fields: INCREMENT_LOOKUP_FIELDS,
 	});
 	const seen = new Set<string>();
 	const configs = rows

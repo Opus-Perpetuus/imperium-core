@@ -359,18 +359,8 @@ async function compute_normalized_value(params: {
 
 async function load_all(store: ImperiumStore, resource: string): Promise<ImperiumDoc[]> {
 	const out: ImperiumDoc[] = [];
-	let skip = 0;
-	const take = 500;
-	for (;;) {
-		const { rows, total } = await store.find_many(resource, {
-			take,
-			skip,
-			include_inactive: true,
-			populate: false,
-		});
-		out.push(...rows);
-		skip += rows.length;
-		if (!rows.length || skip >= total) break;
+	for await (const page of store.scan(resource, { include_inactive: true })) {
+		out.push(...page);
 	}
 	return out;
 }
@@ -492,22 +482,22 @@ async function normalize_index(params: {
 			});
 			summary.adjusted_trackers = (summary.adjusted_trackers ?? 0) + 1;
 		}
-		const { rows: trackers } = await params.store.find_many('auto-increment-control', {
+		for await (const page of params.store.scan('auto-increment-control', {
 			where: { model_name },
-			take: 20000,
 			include_inactive: true,
-		});
-		for (const tracker of trackers) {
-			if (String(tracker.increment_field ?? '') !== field) continue;
-			if (is_global_ref(tracker.ref_value)) continue;
-			const ref = String(tracker.ref_value ?? '');
-			if (!ref || segment_counts.has(ref)) continue;
-			await params.store.update('auto-increment-control', String(tracker._id), {
-				current_sequence: 0,
-				current: 0,
-				valor: 0,
-			});
-			summary.adjusted_trackers = (summary.adjusted_trackers ?? 0) + 1;
+		})) {
+			for (const tracker of page) {
+				if (String(tracker.increment_field ?? '') !== field) continue;
+				if (is_global_ref(tracker.ref_value)) continue;
+				const ref = String(tracker.ref_value ?? '');
+				if (!ref || segment_counts.has(ref)) continue;
+				await params.store.update('auto-increment-control', String(tracker._id), {
+					current_sequence: 0,
+					current: 0,
+					valor: 0,
+				});
+				summary.adjusted_trackers = (summary.adjusted_trackers ?? 0) + 1;
+			}
 		}
 		return summary;
 	}
@@ -539,28 +529,28 @@ export async function normalize_all_counters(
 	opts: { force?: boolean } = {},
 ): Promise<CounterNormalizationSummary> {
 	const force = opts.force === true;
-	const { rows } = await store.find_many('auto-increment-control', {
-		take: 5000,
-		include_inactive: true,
-	});
 	const seen = new Set<string>();
-	const configs = rows
-		.filter((row) => {
-			if (!is_global_ref(row.ref_value)) return false;
-			if (row.is_active === false) return false;
+	const configs: ImperiumDoc[] = [];
+	for await (const page of store.scan('auto-increment-control', {
+		include_inactive: true,
+	})) {
+		for (const row of page) {
+			if (!is_global_ref(row.ref_value)) continue;
+			if (row.is_active === false) continue;
 			const model_name = String(row.model_name ?? '').trim();
 			const field = String(row.increment_field ?? '').trim();
-			if (!model_name || !field) return false;
+			if (!model_name || !field) continue;
 			const key = `${model_name}::${field}::${row.index_name ?? field}`;
-			if (seen.has(key)) return false;
+			if (seen.has(key)) continue;
 			seen.add(key);
-			return true;
-		})
-		.sort(
-			(a, b) =>
-				(String(a.type ?? '') === 'custom' ? 1 : 0) -
-				(String(b.type ?? '') === 'custom' ? 1 : 0),
-		);
+			configs.push(row);
+		}
+	}
+	configs.sort(
+		(a, b) =>
+			(String(a.type ?? '') === 'custom' ? 1 : 0) -
+			(String(b.type ?? '') === 'custom' ? 1 : 0),
+	);
 
 	const results: CounterNormalizationIndexSummary[] = [];
 	for (const config of configs) {
@@ -635,20 +625,19 @@ export async function prepare_increment_create(
 		increment_field,
 		index_name,
 	});
-	const { rows } = await store.find_many('auto-increment-control', {
+	for await (const page of store.scan('auto-increment-control', {
 		where: { model_name, increment_field },
-		take: 20000,
 		include_inactive: true,
-		populate: false,
-	});
-	const combo = rows.find(
-		(row) =>
-			text(row.index_name ?? row.increment_field) === index_name &&
-			(is_global_ref(row.ref_value) || !text(row.ref_value)),
-	);
-	const by_unique = rows.find((row) => text(row._unique_string_reference) === unique);
-	if (combo || by_unique) {
-		throw new Error('Ya existe un control de auto-incremento para esa combinación.');
+	})) {
+		const combo = page.find(
+			(row) =>
+				text(row.index_name ?? row.increment_field) === index_name &&
+				(is_global_ref(row.ref_value) || !text(row.ref_value)),
+		);
+		const by_unique = page.find((row) => text(row._unique_string_reference) === unique);
+		if (combo || by_unique) {
+			throw new Error('Ya existe un control de auto-incremento para esa combinación.');
+		}
 	}
 	return {
 		...incoming,

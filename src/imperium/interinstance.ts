@@ -87,19 +87,17 @@ export async function validate_interinstance_api_key(store: ImperiumStore, heade
 	if (!request_key) throw new Error(API_KEY_INVALID_ERROR);
 	if (!store.has('api-keys')) throw new Error(API_KEY_INVALID_ERROR);
 	const by_key = await store.find_where('api-keys', { api_key: request_key });
-	const scanned = by_key
-		? []
-		: (
-				await store.find_many('api-keys', {
-					where: { is_active: true },
-					take: 20000,
-					include_inactive: false,
-				})
-			).rows;
-	const matched =
-		by_key && cfg_text(by_key.api_key) === request_key
-			? by_key
-			: scanned.find((row) => cfg_text(row.api_key) === request_key);
+	let matched =
+		by_key && cfg_text(by_key.api_key) === request_key ? by_key : null;
+	if (!matched) {
+		for await (const page of store.scan('api-keys', {
+			where: { is_active: true },
+			include_inactive: false,
+		})) {
+			matched = page.find((row) => cfg_text(row.api_key) === request_key) ?? null;
+			if (matched) break;
+		}
+	}
 	if (!matched || matched.is_active === false) throw new Error(API_KEY_INVALID_ERROR);
 	if (matched.has_expiration === true || matched.has_expiration === 'true') {
 		const exp = matched.expiration_date ? new Date(String(matched.expiration_date)) : null;

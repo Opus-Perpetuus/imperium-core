@@ -5,8 +5,9 @@
     "": {
       "name": "imperium-core",
       "dependencies": {
-        "@opus-perpetuus/imperium-core-kit": "file:./vendor/kit",
+        "@opus-perpetuus/imperium-core-kit": "file:../kit",
         "argon2": "^0.45.1",
+        "isomorphic-dompurify": "^3.20.0",
         "mssql": "^12.5.5",
         "nodemailer": "^9.0.5",
         "qrcode": "^1.5.4",
@@ -73,7 +74,7 @@
 
     "@js-joda/core": ["@js-joda/core@6.1.0", "", {}, "sha512-H8NTMRDJqad/leyv/D/A3kSOsf5/58Ydj4DJGDyaCWk9OU/zuZOLhndVffJgQjsgrn5GC0znHMHie7TfvPPG4w=="],
 
-    "@opus-perpetuus/imperium-core-kit": ["@opus-perpetuus/imperium-core-kit@file:vendor/kit", { "devDependencies": { "@types/bun": "^1.2.8", "isomorphic-dompurify": "^3.20.0", "typescript": "^5.7.3" } }],
+    "@opus-perpetuus/imperium-core-kit": ["@opus-perpetuus/imperium-core-kit@file:../kit", { "devDependencies": { "@types/bun": "^1.2.8", "isomorphic-dompurify": "^3.20.0", "typescript": "^5.7.3" } }],
 
     "@phc/format": ["@phc/format@1.0.0", "", {}, "sha512-m7X9U6BG2+J+R1lSOdCiITLLrxm+cWlNI3HUFA92oLO77ObGNzaKdh8pMLqdZcshtkKuV84olNNXDfMc4FezBQ=="],
 

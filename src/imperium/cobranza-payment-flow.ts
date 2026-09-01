@@ -105,18 +105,19 @@ export async function recompute_cobranza_charge(
 	if (!charge || cobranza_charge_is_canceled(charge)) return charge;
 	let paid_amount = Number(charge.paid_amount ?? 0);
 	if (store.has('cobranza-payment')) {
-		const { rows } = await store.find_many('cobranza-payment', {
+		let applied_sum = 0;
+		let applied_count = 0;
+		for await (const page of store.scan('cobranza-payment', {
 			where: { charge_id },
-			take: 20000,
 			include_inactive: true,
-			populate: false,
-		});
-		const applied = rows.filter((row) => cobranza_payment_is_applied(row));
-		if (applied.length) {
-			paid_amount = applied.reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
-		} else {
-			paid_amount = 0;
+		})) {
+			for (const row of page) {
+				if (!cobranza_payment_is_applied(row)) continue;
+				applied_count += 1;
+				applied_sum += Number(row.amount ?? 0);
+			}
 		}
+		paid_amount = applied_count ? applied_sum : 0;
 	}
 	const total = Number(charge.total_amount ?? 0);
 	const balance = Math.max(total - paid_amount, 0);

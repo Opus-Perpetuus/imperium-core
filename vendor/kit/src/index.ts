@@ -10,14 +10,17 @@
 
 export * from './api/envelope.js';
 export * from './auth/types.js';
+export * from './auth/principal.js';
 export * from './contrast/pick-readable-text-color.js';
 export * from './descriptors/api-data-source.js';
 export * from './descriptors/ui-descriptor.js';
+export * from './descriptors/landing.js';
 export * from './descriptors/feature-shell.js';
 export * from './html/html-profile.js';
 export * from './html/normalize-html.js';
 export * from './html/sanitize-html.js';
 export * from './icons/icon-names.js';
+export * from './icons/subject-logos.js';
 export * from './kirlet/manifest.js';
 export * from './kirlet/manifest-validate.js';
 export * from './kirlet/semver-lite.js';

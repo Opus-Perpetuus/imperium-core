@@ -155,15 +155,36 @@ function sanitize_toast_entries(entries: unknown) {
 		.slice(0, 24) as Array<Record<string, unknown>>;
 }
 
-async function list_mine(store: ImperiumStore, uid: string, take = 20000) {
-	const { rows } = await store.find_many('notifications', {
-		mongo_match: {
-			$or: [{ recipientId: uid }, { user: uid }, { to: uid }],
-		},
-		take,
-		include_inactive: true,
-	});
-	return rows.filter((row) => recipient_of(row) === uid && row.is_active !== false);
+function mine_match(uid: string) {
+	return {
+		$or: [{ recipientId: uid }, { user: uid }, { to: uid }],
+	};
+}
+
+function created_stamp(doc: ImperiumDoc) {
+	return String(doc.createdAt ?? doc.created_at ?? '');
+}
+
+function consider_latest(rows: ImperiumDoc[], row: ImperiumDoc, limit: number) {
+	if (rows.length < limit) {
+		rows.push(row);
+		rows.sort((a, b) => created_stamp(b).localeCompare(created_stamp(a)));
+		return;
+	}
+	if (created_stamp(row).localeCompare(created_stamp(rows[rows.length - 1]!)) <= 0) return;
+	rows[rows.length - 1] = row;
+	rows.sort((a, b) => created_stamp(b).localeCompare(created_stamp(a)));
+}
+
+async function* scan_mine(store: ImperiumStore, uid: string) {
+	if (!uid || !store.has('notifications')) return;
+	for await (const page of store.scan('notifications', {
+		mongo_match: mine_match(uid),
+		include_inactive: false,
+	})) {
+		const kept = page.filter((row) => recipient_of(row) === uid && row.is_active !== false);
+		if (kept.length) yield kept;
+	}
 }
 
 async function hard_remove(ctx: NotificationCtx, resource: string, id: string) {
@@ -256,10 +277,15 @@ export async function notification_toast_digest(ctx: NotificationCtx) {
 	const summary_text =
 		query_text(body.summary) ||
 		`Hay ${normalized_total} eventos de toast pendientes por revisar en notificaciones.`;
-	const mine = await list_mine(ctx.store, uid);
-	const existing = mine
-		.filter((row) => String(row.type) === 'toast_digest' && !is_read(row))
-		.sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')))[0];
+	let existing: ImperiumDoc | undefined;
+	for await (const page of scan_mine(ctx.store, uid)) {
+		for (const row of page) {
+			if (String(row.type) !== 'toast_digest' || is_read(row)) continue;
+			if (!existing || created_stamp(row).localeCompare(created_stamp(existing)) > 0) {
+				existing = row;
+			}
+		}
+	}
 	const existing_pending = as_object(existing?.pendingToast);
 	const existing_payload = notification_payload(existing ?? {});
 	const existing_entries = sanitize_toast_entries(existing_payload.toast_digest_entries);
@@ -345,17 +371,18 @@ export async function notification_update_read(ctx: NotificationCtx) {
 
 export async function mark_all_notifications(ctx: NotificationCtx) {
 	const uid = actor_id(ctx);
-	const mine = await list_mine(ctx.store, uid);
 	let modified = 0;
-	for (const row of mine) {
-		if (is_read(row)) continue;
-		await ctx.store.update('notifications', String(row._id), {
-			isRead: true,
-			read: true,
-			leido: true,
-			readAt: new Date().toISOString(),
-		});
-		modified += 1;
+	for await (const page of scan_mine(ctx.store, uid)) {
+		for (const row of page) {
+			if (is_read(row)) continue;
+			await ctx.store.update('notifications', String(row._id), {
+				isRead: true,
+				read: true,
+				leido: true,
+				readAt: new Date().toISOString(),
+			});
+			modified += 1;
+		}
 	}
 	return ok(
 		[],
@@ -546,30 +573,32 @@ function has_project_access(project: ImperiumDoc, uid: string) {
 async function reminder_exists(store: ImperiumStore, input: ImperiumDoc) {
 	const reminder_key = payload_string(input, 'reminder_key');
 	const document_id = ref_id(as_object(input.source).documentId);
-	const mine = await list_mine(store, String(input.recipientId), 2000);
-	return mine.some((row) => {
-		if (String(row.type) !== String(input.type)) return false;
-		if (document_id && ref_id(as_object(row.source).documentId) !== document_id) return false;
-		if (reminder_key && payload_string(row, 'reminder_key') !== reminder_key) return false;
-		return true;
-	});
+	const uid = String(input.recipientId);
+	for await (const page of scan_mine(store, uid)) {
+		for (const row of page) {
+			if (String(row.type) !== String(input.type)) continue;
+			if (document_id && ref_id(as_object(row.source).documentId) !== document_id) continue;
+			if (reminder_key && payload_string(row, 'reminder_key') !== reminder_key) continue;
+			return true;
+		}
+	}
+	return false;
 }
 
 async function sync_planning_reminders(store: ImperiumStore, uid: string) {
 	if (!store.has('planeacion-proyectos') && !store.has('planeacion-mis-tareas')) return;
 	const inputs: ImperiumDoc[] = [];
 	if (store.has('planeacion-proyectos')) {
-		const { rows } = await store.find_many('planeacion-proyectos', {
+		for await (const page of store.scan('planeacion-proyectos', {
 			mongo_match: {
 				$or: [
 					{ owner_user: uid },
 					{ collaborator_users: { $regex: uid } },
 				],
 			},
-			take: 20000,
 			include_inactive: false,
-		});
-		for (const project of rows) {
+		})) {
+		for (const project of page) {
 			if (CLOSED_STATES.has(String(project.status ?? project.state ?? ''))) continue;
 			const related =
 				ref_id(project.owner_user) === uid ||
@@ -605,14 +634,14 @@ async function sync_planning_reminders(store: ImperiumStore, uid: string) {
 			if (start) inputs.push(start);
 			if (due) inputs.push(due);
 		}
+		}
 	}
 	if (store.has('planeacion-mis-tareas')) {
-		const { rows } = await store.find_many('planeacion-mis-tareas', {
+		for await (const page of store.scan('planeacion-mis-tareas', {
 			where: { owner_user: uid },
-			take: 20000,
 			include_inactive: false,
-		});
-		for (const task of rows) {
+		})) {
+		for (const task of page) {
 			if (CLOSED_STATES.has(String(task.status ?? task.state ?? ''))) continue;
 			const start = reminder_input({
 				recipient_id: uid,
@@ -644,6 +673,7 @@ async function sync_planning_reminders(store: ImperiumStore, uid: string) {
 			if (start) inputs.push(start);
 			if (due) inputs.push(due);
 		}
+		}
 	}
 	for (const input of inputs) {
 		if (await reminder_exists(store, input)) continue;
@@ -656,11 +686,18 @@ export async function notification_summary(ctx: NotificationCtx) {
 	if (!uid) throw new Error('No se encontró una sesión válida.');
 	await sync_planning_reminders(ctx.store, uid);
 	const size = Math.min(20, Math.max(1, Number.parseInt(String(ctx.url.searchParams.get('size') ?? '6'), 10) || 6));
-	const unread = (await list_mine(ctx.store, uid)).filter((row) => !is_read(row));
-	unread.sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')));
+	let unread_count = 0;
+	const unread_notifications: ImperiumDoc[] = [];
+	for await (const page of scan_mine(ctx.store, uid)) {
+		for (const row of page) {
+			if (is_read(row)) continue;
+			unread_count += 1;
+			consider_latest(unread_notifications, row, size);
+		}
+	}
 	return ok(
-		[{ unread_count: unread.length, unread_notifications: unread.slice(0, size) }],
-		unread.length
+		[{ unread_count, unread_notifications }],
+		unread_count
 			? 'Resumen de notificaciones obtenido correctamente'
 			: 'No hay notificaciones pendientes',
 	);
@@ -671,17 +708,36 @@ export async function my_notifications(ctx: NotificationCtx) {
 	const page = Math.max(1, Number.parseInt(String(ctx.url.searchParams.get('page') ?? '1'), 10) || 1);
 	const size = Math.min(100, Math.max(1, Number.parseInt(String(ctx.url.searchParams.get('size') ?? '25'), 10) || 25));
 	const status = query_text(ctx.url.searchParams.get('status'))?.toLowerCase();
-	let rows = await list_mine(ctx.store, uid);
-	if (status === 'unread') rows = rows.filter((row) => !is_read(row));
-	if (status === 'read') rows = rows.filter((row) => is_read(row));
-	rows.sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')));
-	const slice = rows.slice((page - 1) * size, page * size);
+	const refs: Array<{ id: string; stamp: string }> = [];
+	for await (const batch of scan_mine(ctx.store, uid)) {
+		for (const row of batch) {
+			if (status === 'unread' && is_read(row)) continue;
+			if (status === 'read' && !is_read(row)) continue;
+			refs.push({ id: String(row._id), stamp: created_stamp(row) });
+		}
+	}
+	refs.sort((a, b) => b.stamp.localeCompare(a.stamp));
+	const slice_refs = refs.slice((page - 1) * size, page * size);
+	let slice: ImperiumDoc[] = [];
+	if (slice_refs.length) {
+		const { rows } = await ctx.store.find_many('notifications', {
+			ids: slice_refs.map((item) => item.id),
+			take: slice_refs.length,
+			include_inactive: false,
+			populate: false,
+			skip_total: true,
+		});
+		const by_id = new Map(rows.map((row) => [String(row._id), row]));
+		slice = slice_refs
+			.map((item) => by_id.get(item.id))
+			.filter((row): row is ImperiumDoc => Boolean(row));
+	}
 	return ok(
 		slice,
 		slice.length
 			? 'Notificaciones obtenidas correctamente'
 			: 'No se encontraron notificaciones para este usuario',
-		rows.length,
+		refs.length,
 	);
 }
 
@@ -693,33 +749,33 @@ export async function my_mentions(ctx: NotificationCtx) {
 	}
 	const page = Math.max(1, Number.parseInt(String(ctx.url.searchParams.get('page') ?? '1'), 10) || 1);
 	const size = Math.min(100, Math.max(1, Number.parseInt(String(ctx.url.searchParams.get('size') ?? '25'), 10) || 25));
-	const { rows } = await ctx.store.find_many('mentions', {
-		mongo_match: { mentionedUserId: uid },
-		take: 20000,
-		include_inactive: true,
+	const { rows, total } = await ctx.store.find_many('mentions', {
+		where: { mentionedUserId: uid },
+		take: size,
+		skip: (page - 1) * size,
+		sort: 'created_at:desc',
+		include_inactive: false,
+		populate: false,
 	});
-	const mine = rows
-		.filter((row) => String(row.mentionedUserId ?? '') === uid && row.is_active !== false)
-		.sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')));
-	const slice = mine.slice((page - 1) * size, page * size);
 	return ok(
-		slice,
-		slice.length
+		rows,
+		rows.length
 			? 'Menciones obtenidas correctamente'
 			: 'No se encontraron menciones para este usuario',
-		mine.length,
+		total,
 	);
 }
 
 export async function clear_notifications(ctx: NotificationCtx) {
 	const uid = actor_id(ctx);
 	const scope = query_text(ctx.url.searchParams.get('scope'))?.toLowerCase();
-	const mine = await list_mine(ctx.store, uid);
 	let deleted = 0;
-	for (const row of mine) {
-		if (scope === 'read' && !is_read(row)) continue;
-		await hard_remove(ctx, 'notifications', String(row._id));
-		deleted += 1;
+	for await (const page of scan_mine(ctx.store, uid)) {
+		for (const row of page) {
+			if (scope === 'read' && !is_read(row)) continue;
+			await hard_remove(ctx, 'notifications', String(row._id));
+			deleted += 1;
+		}
 	}
 	return ok(
 		[],
@@ -1007,10 +1063,6 @@ export async function notify_document_subscription_event(
 	const event_kind = input.was_new ? 'create' : 'update';
 	const event_flag = input.was_new ? 'notify_on_create' : 'notify_on_update';
 	const actor_id_value = String(input.actor?._id ?? '');
-	const { rows } = await store.find_many('user-settings', {
-		take: 20000,
-		include_inactive: false,
-	});
 	const current = as_object(input.current_document);
 	const tags = as_array(current.tags ?? current.etiquetas).map((tag) =>
 		tag && typeof tag === 'object' && tag !== null
@@ -1018,43 +1070,45 @@ export async function notify_document_subscription_event(
 			: String(tag ?? ''),
 	);
 	const recipients = new Map<string, string[]>();
-	for (const row of rows) {
-		const recipient = settings_user_id(row);
-		if (!recipient) continue;
-		const subs = as_object(row.subscriptions);
-		const reasons: string[] = [];
-		if (event_kind === 'update') {
-			const hit = as_array(subs.document_subscriptions).find((item) => {
-				const sub = as_object(item);
-				return (
-					flag_on(sub.notify_on_update) &&
-					String(sub.document_id ?? '') === input.document_id &&
-					String(sub.collection_name ?? '') === input.collection_name
-				);
-			});
-			if (hit) reasons.push('documento específico');
-		}
-		if (actor_id_value) {
-			const hit = as_array(subs.user_subscriptions).find((item) => {
-				const sub = as_object(item);
-				return flag_on(sub[event_flag]) && String(sub.user_id ?? '') === actor_id_value;
-			});
-			if (hit) {
-				reasons.push(
-					`usuario ${String(as_object(hit).user_name ?? input.actor?.name ?? '').trim()}`,
-				);
+	for await (const page of store.scan('user-settings', { include_inactive: false })) {
+		for (const row of page) {
+			const recipient = settings_user_id(row);
+			if (!recipient) continue;
+			const subs = as_object(row.subscriptions);
+			const reasons: string[] = [];
+			if (event_kind === 'update') {
+				const hit = as_array(subs.document_subscriptions).find((item) => {
+					const sub = as_object(item);
+					return (
+						flag_on(sub.notify_on_update) &&
+						String(sub.document_id ?? '') === input.document_id &&
+						String(sub.collection_name ?? '') === input.collection_name
+					);
+				});
+				if (hit) reasons.push('documento específico');
 			}
-		}
-		for (const item of as_array(subs.tag_subscriptions)) {
-			const sub = as_object(item);
-			if (!flag_on(sub[event_flag])) continue;
-			const tag_id = String(sub.tag_id ?? '');
-			const tag_name = String(sub.tag_name ?? sub.tag_name_normalized ?? '');
-			if (tags.some((tag) => tag && (tag === tag_id || tag.toLowerCase() === tag_name.toLowerCase()))) {
-				reasons.push(`etiqueta ${tag_name || tag_id}`);
+			if (actor_id_value) {
+				const hit = as_array(subs.user_subscriptions).find((item) => {
+					const sub = as_object(item);
+					return flag_on(sub[event_flag]) && String(sub.user_id ?? '') === actor_id_value;
+				});
+				if (hit) {
+					reasons.push(
+						`usuario ${String(as_object(hit).user_name ?? input.actor?.name ?? '').trim()}`,
+					);
+				}
 			}
+			for (const item of as_array(subs.tag_subscriptions)) {
+				const sub = as_object(item);
+				if (!flag_on(sub[event_flag])) continue;
+				const tag_id = String(sub.tag_id ?? '');
+				const tag_name = String(sub.tag_name ?? sub.tag_name_normalized ?? '');
+				if (tags.some((tag) => tag && (tag === tag_id || tag.toLowerCase() === tag_name.toLowerCase()))) {
+					reasons.push(`etiqueta ${tag_name || tag_id}`);
+				}
+			}
+			if (reasons.length) recipients.set(recipient, reasons);
 		}
-		if (reasons.length) recipients.set(recipient, reasons);
 	}
 	if (!recipients.size) return;
 	const label = input.module_label || input.model_name || 'registro';

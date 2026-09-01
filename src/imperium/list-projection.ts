@@ -1,6 +1,6 @@
 /**
  * Proyección de listados = `campos_para_proyectar` / tipo del `__read` original.
- * El schema SQL de los súbditos sube campos anidados a columnas; sin esto
+ * El schema SQL de las apps sube campos anidados a columnas; sin esto
  * la lista Angular muestra partidas, widgets y eventos como columnas.
  */
 import { type ImperiumDoc } from './envelope.ts';
@@ -1042,12 +1042,21 @@ const LIST_PROJECTIONS: Record<string, ListProjection> = {
 			'is_active',
 		],
 	},
+	'inventario-general': {
+		rows: ['_id', 'name', 'cantidad', 'ubicacion', 'retiradas', 'is_active'],
+	},
+	'libro-cuentas': {
+		rows: ['_id', 'name', 'fecha', 'tipo', 'importe', 'saldo', 'is_active'],
+	},
 	'inventario-sanitario': {
 		rows: [
 			'_id',
 			'name',
 			'categoria',
 			'cantidad',
+			'entradas',
+			'salidas',
+			'fecha_salida',
 			'stock_minimo',
 			'fecha_caducidad',
 			'estado',
@@ -1064,7 +1073,6 @@ const LIST_PROJECTIONS: Record<string, ListProjection> = {
 			'direccion',
 			'web',
 			'email',
-			'fax',
 			'is_active',
 		],
 	},
@@ -1230,6 +1238,15 @@ const LIST_PROJECTIONS: Record<string, ListProjection> = {
 
 function projection_for(resource: string): ListProjection | undefined {
 	return LIST_PROJECTIONS[resource] ?? LIST_PROJECTIONS[RESOURCE_ALIASES[resource] ?? ''];
+}
+
+/** Claves que la lista Angular pinta (más `_id` de refs). Vacío = no hay spec. */
+export function list_projection_keys(resource: string): string[] {
+	const spec = projection_for(resource);
+	if (!spec) return [];
+	const keys = new Set<string>(spec.rows);
+	for (const key of spec.rows) keys.add(`${key}_id`);
+	return [...keys];
 }
 
 function instance_map(

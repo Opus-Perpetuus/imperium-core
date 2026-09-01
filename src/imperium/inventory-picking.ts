@@ -84,38 +84,51 @@ export async function compute_picking_route(
 	cantidad_requerida: number,
 ): Promise<PickingRoute> {
 	const requerido = round_quantity(cantidad_requerida);
-	const quants = store.has('inventory-stock-quant')
-		? (
-				await store.find_many('inventory-stock-quant', {
-					where: { producto },
-					take: 20000,
-					include_inactive: false,
-					populate: false,
-				})
-			).rows
-		: [];
 	const sources: Array<PickingSourceQuant & { secuencia: number }> = [];
-	for (const row of quants) {
-		const pid = ref_id(row.producto) || String(row.producto_id ?? '');
-		if (pid !== producto) continue;
-		const disponible = quant_disponible(row);
-		if (!(disponible > 0)) continue;
-		const loc_id = ref_id(row.ubicacion) || String(row.ubicacion_id ?? '');
-		let secuencia = 0;
-		let codigo = String(row.ubicacion_codigo ?? '');
-		if (loc_id && store.has('inventory-internal-location')) {
-			const loc = await store.find_id('inventory-internal-location', loc_id);
-			if (loc) {
-				secuencia = Number(loc.secuencia_surtido ?? 0) || 0;
-				if (!codigo) codigo = String(loc.codigo ?? loc.name ?? '');
+	const loc_ids = new Set<string>();
+	if (store.has('inventory-stock-quant')) {
+		for await (const page of store.scan('inventory-stock-quant', {
+			where: { producto },
+			include_inactive: false,
+		})) {
+			for (const row of page) {
+				const pid = ref_id(row.producto) || String(row.producto_id ?? '');
+				if (pid !== producto) continue;
+				const disponible = quant_disponible(row);
+				if (!(disponible > 0)) continue;
+				const loc_id = ref_id(row.ubicacion) || String(row.ubicacion_id ?? '');
+				if (loc_id) loc_ids.add(loc_id);
+				sources.push({
+					ubicacion: loc_id,
+					ubicacion_codigo: String(row.ubicacion_codigo ?? ''),
+					cantidad_disponible: disponible,
+					secuencia: 0,
+				});
 			}
 		}
-		sources.push({
-			ubicacion: loc_id,
-			ubicacion_codigo: codigo,
-			cantidad_disponible: disponible,
-			secuencia,
-		});
+	}
+	if (loc_ids.size && store.has('inventory-internal-location')) {
+		const by_id = new Map<string, ImperiumDoc>();
+		const wanted = [...loc_ids];
+		for (let i = 0; i < wanted.length; i += 500) {
+			const chunk = wanted.slice(i, i + 500);
+			const { rows } = await store.find_many('inventory-internal-location', {
+				ids: chunk,
+				take: chunk.length,
+				include_inactive: true,
+				populate: false,
+				skip_total: true,
+			});
+			for (const loc of rows) by_id.set(String(loc._id), loc);
+		}
+		for (const source of sources) {
+			const loc = by_id.get(source.ubicacion);
+			if (!loc) continue;
+			source.secuencia = Number(loc.secuencia_surtido ?? 0) || 0;
+			if (!source.ubicacion_codigo) {
+				source.ubicacion_codigo = String(loc.codigo ?? loc.name ?? '');
+			}
+		}
 	}
 	sources.sort((a, b) => {
 		if (a.secuencia !== b.secuencia) return a.secuencia - b.secuencia;
@@ -139,25 +152,24 @@ async function compute_weighted_consumption(
 	if (!store.has('inventory-movement')) return 0;
 	const now = new Date();
 	const start = new Date(now.getFullYear(), now.getMonth() - (periodos - 1), 1);
-	const { rows } = await store.find_many('inventory-movement', {
+	const totals = new Map<string, number>();
+	for await (const page of store.scan('inventory-movement', {
 		where: {
 			producto,
 			tipo_movimiento: 'salida_entrega',
 			fecha_movimiento: { gte: start.toISOString() },
 		},
-		take: 20000,
 		include_inactive: true,
-		populate: false,
-	});
-	const totals = new Map<string, number>();
-	for (const row of rows) {
-		const pid = ref_id(row.producto) || String(row.producto_id ?? '');
-		if (pid !== producto) continue;
-		if (String(row.tipo_movimiento ?? row.tipo ?? '') !== 'salida_entrega') continue;
-		const fecha = new Date(String(row.fecha_movimiento ?? row.createdAt ?? row.created_at ?? ''));
-		if (!Number.isFinite(fecha.getTime()) || fecha < start) continue;
-		const key = `${fecha.getFullYear()}-${fecha.getMonth() + 1}`;
-		totals.set(key, round_quantity((totals.get(key) ?? 0) + Number(row.cantidad ?? 0)));
+	})) {
+		for (const row of page) {
+			const pid = ref_id(row.producto) || String(row.producto_id ?? '');
+			if (pid !== producto) continue;
+			if (String(row.tipo_movimiento ?? row.tipo ?? '') !== 'salida_entrega') continue;
+			const fecha = new Date(String(row.fecha_movimiento ?? row.createdAt ?? row.created_at ?? ''));
+			if (!Number.isFinite(fecha.getTime()) || fecha < start) continue;
+			const key = `${fecha.getFullYear()}-${fecha.getMonth() + 1}`;
+			totals.set(key, round_quantity((totals.get(key) ?? 0) + Number(row.cantidad ?? 0)));
+		}
 	}
 	const values: number[] = [];
 	for (let offset = periodos - 1; offset >= 0; offset--) {

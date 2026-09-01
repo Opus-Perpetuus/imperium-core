@@ -46,14 +46,16 @@ export async function calcular_importe(
 	const consumo_raw = Number(lectura_actual ?? 0) - Number(lectura_anterior ?? 0);
 	const consumo_mts3 = consumo_raw > 0 ? consumo_raw : 0;
 	if (!id_tarifa) return { consumo_mts3, importe: 0 };
-	const { rows } = await store.find_many('tarifa', {
+	const rows: Bracket[] = [];
+	for await (const page of store.scan('tarifa', {
 		where: { id_tarifa },
-		take: 20000,
-		sort: 'consumo_minimo:asc',
-	});
+	})) {
+		for (const row of page) rows.push(row);
+	}
 	if (!rows.length) return { consumo_mts3, importe: 0 };
+	rows.sort((a, b) => Number(a.consumo_minimo ?? 0) - Number(b.consumo_minimo ?? 0));
 	return {
 		consumo_mts3,
-		importe: importe_from_bracket(consumo_mts3, rows[0] ? pick_bracket(rows, consumo_mts3) : {}),
+		importe: importe_from_bracket(consumo_mts3, pick_bracket(rows, consumo_mts3)),
 	};
 }

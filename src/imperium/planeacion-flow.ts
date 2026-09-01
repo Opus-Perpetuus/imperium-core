@@ -223,12 +223,13 @@ async function sync_project_tasks(
 	const map = new Map<string, string>();
 	if (!Array.isArray(raw_tasks) || !store.has(task_resource(store))) return map;
 	const resource = task_resource(store);
-	const { rows: existing } = await store.find_many(resource, {
+	const existing: ImperiumDoc[] = [];
+	for await (const page of store.scan(resource, {
 		where: { project_id },
-		take: 20000,
 		include_inactive: false,
-		populate: false,
-	});
+	})) {
+		existing.push(...page);
+	}
 	const retained = new Set<string>();
 	const parents = new Map<string, string>();
 	for (const [index, raw] of raw_tasks.entries()) {
@@ -293,12 +294,13 @@ async function sync_project_time_logs(
 	task_map = new Map<string, string>(),
 ) {
 	if (!Array.isArray(raw_logs) || !store.has(TIME_LOG)) return;
-	const { rows: existing } = await store.find_many(TIME_LOG, {
+	const existing: ImperiumDoc[] = [];
+	for await (const page of store.scan(TIME_LOG, {
 		where: { project_id },
-		take: 20000,
 		include_inactive: false,
-		populate: false,
-	});
+	})) {
+		existing.push(...page);
+	}
 	const retained = new Set<string>();
 	for (const raw of raw_logs) {
 		if (!raw || typeof raw !== 'object') continue;
@@ -412,25 +414,21 @@ function user_lite(row: ImperiumDoc | undefined, id: string) {
 
 export async function hydrate_project(store: ImperiumStore, project: ImperiumDoc): Promise<ImperiumDoc> {
 	const project_id = String(project._id ?? '');
-	const tasks = store.has(task_resource(store))
-		? (
-				await store.find_many(task_resource(store), {
-					where: { project_id },
-					take: 20000,
-					sort: 'sort_order:asc',
-					populate: false,
-				})
-			).rows
-		: [];
-	const time_logs = store.has(TIME_LOG)
-		? (
-				await store.find_many(TIME_LOG, {
-					where: { project_id },
-					take: 20000,
-					populate: false,
-				})
-			).rows
-		: [];
+	const tasks: ImperiumDoc[] = [];
+	if (store.has(task_resource(store))) {
+		for await (const page of store.scan(task_resource(store), {
+			where: { project_id },
+		})) {
+			tasks.push(...page);
+		}
+		tasks.sort((a, b) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0));
+	}
+	const time_logs: ImperiumDoc[] = [];
+	if (store.has(TIME_LOG)) {
+		for await (const page of store.scan(TIME_LOG, { where: { project_id } })) {
+			time_logs.push(...page);
+		}
+	}
 	const completed_task_count = tasks.filter((task) => text(task.status) === 'completado').length;
 	const task_count = tasks.length;
 	const user_ids = [
@@ -482,27 +480,24 @@ export function strip_root_parent_where(where: Record<string, unknown>) {
 }
 
 /** Agrupa como el `$group._id` de Mongoose: vacío o ausente → `null`. */
-function breakdown_field(
-	rows: ImperiumDoc[],
-	field: string,
+function breakdown_from_counts(
+	counts: Map<string | null, number>,
 ): Array<{ _id: string | null; count: number }> {
-	const counts = new Map<string | null, number>();
-	for (const row of rows) {
-		const raw = row[field];
-		const key = raw == null || raw === '' ? null : String(raw);
-		counts.set(key, (counts.get(key) ?? 0) + 1);
-	}
 	return [...counts.entries()]
 		.sort((a, b) => String(a[0] ?? '').localeCompare(String(b[0] ?? '')))
 		.map(([_id, count]) => ({ _id, count }));
 }
 
+function inc_breakdown(counts: Map<string | null, number>, raw: unknown) {
+	const key = raw == null || raw === '' ? null : String(raw);
+	counts.set(key, (counts.get(key) ?? 0) + 1);
+}
+
 function planning_stats_payload(
-	rows: ImperiumDoc[],
+	total_records: number,
+	active_records: number,
 	extra: Record<string, unknown>,
 ): Record<string, unknown> {
-	const total_records = rows.length;
-	const active_records = rows.filter((row) => row.is_active !== false).length;
 	const now = new Date();
 	return {
 		total_records,
@@ -514,6 +509,46 @@ function planning_stats_payload(
 			active_records: { label: 'Activos', value: active_records },
 		},
 	};
+}
+
+async function scan_planning_stats(
+	store: ImperiumStore,
+	resource: string,
+	opts: {
+		where?: Record<string, unknown>;
+		mongo_match?: Record<string, unknown> | null;
+		status_field?: string;
+		priority_field?: string;
+		normalize_status?: boolean;
+	},
+): Promise<Record<string, unknown>> {
+	let total_records = 0;
+	let active_records = 0;
+	const status = new Map<string | null, number>();
+	const priority = new Map<string | null, number>();
+	for await (const page of store.scan(resource, {
+		where: opts.where,
+		mongo_match: opts.mongo_match,
+		include_inactive: true,
+	})) {
+		for (const row of page) {
+			total_records += 1;
+			if (row.is_active !== false) active_records += 1;
+			const status_value = opts.normalize_status
+				? (row.status ?? row.state)
+				: row[opts.status_field ?? 'state'];
+			if (opts.status_field || opts.normalize_status) {
+				inc_breakdown(status, status_value);
+			}
+			if (opts.priority_field) inc_breakdown(priority, row[opts.priority_field]);
+		}
+	}
+	const extra: Record<string, unknown> = {};
+	if (opts.status_field || opts.normalize_status) {
+		extra.status_breakdown = breakdown_from_counts(status);
+	}
+	if (opts.priority_field) extra.priority_breakdown = breakdown_from_counts(priority);
+	return planning_stats_payload(total_records, active_records, extra);
 }
 
 /**
@@ -529,47 +564,28 @@ export async function planeacion_statistics(
 	mongo_match?: Record<string, unknown> | null,
 ): Promise<Record<string, unknown> | null> {
 	if (is_project_resource(resource)) {
-		const { rows } = await store.find_many(resource, {
-			take: 20000,
-			include_inactive: true,
-			populate: false,
+		return scan_planning_stats(store, resource, {
 			mongo_match,
-		});
-		return planning_stats_payload(rows, {
-			status_breakdown: breakdown_field(rows, 'state'),
-			priority_breakdown: breakdown_field(rows, 'priority'),
+			status_field: 'state',
+			priority_field: 'priority',
 		});
 	}
 	if (is_project_task_resource(resource)) {
 		const project_id = String(url?.searchParams.get('project_id') ?? '').trim();
 		if (!project_id) return null;
-		const { rows } = await store.find_many(resource, {
-			take: 20000,
-			include_inactive: true,
-			populate: false,
+		return scan_planning_stats(store, resource, {
 			where: { project_id },
 			mongo_match,
-		});
-		const normalized = rows.map((row) => ({
-			...row,
-			status: row.status ?? row.state,
-		}));
-		return planning_stats_payload(normalized, {
-			status_breakdown: breakdown_field(normalized, 'status'),
+			normalize_status: true,
 		});
 	}
 	if (is_personal_task_resource(resource)) {
 		const uid = ref_id(actor?._id ?? actor?.id);
 		if (!uid) throw new Error('No se pudo resolver el usuario actual');
-		const { rows } = await store.find_many(resource, {
-			take: 20000,
-			include_inactive: true,
-			populate: false,
+		return scan_planning_stats(store, resource, {
 			where: { owner_user: uid },
 			mongo_match,
-		});
-		return planning_stats_payload(rows, {
-			status_breakdown: breakdown_field(rows, 'state'),
+			status_field: 'state',
 		});
 	}
 	return null;

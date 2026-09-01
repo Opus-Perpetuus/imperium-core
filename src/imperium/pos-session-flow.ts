@@ -226,15 +226,7 @@ export function assert_pos_runtime_writable(session: ImperiumDoc | null, actor: 
 export async function preview_pos_consecutive(store: ImperiumStore): Promise<number> {
 	let floor = 0;
 	if (store.has('pos-session')) {
-		const { rows } = await store.find_many('pos-session', {
-			take: 5000,
-			include_inactive: true,
-			populate: false,
-		});
-		for (const row of rows) {
-			const n = Number(row.consecutivo ?? 0);
-			if (Number.isFinite(n)) floor = Math.max(floor, n);
-		}
+		floor = await store.max_numeric('pos-session', 'consecutivo');
 	}
 	if (store.has('auto-increment-control')) {
 		const hit = await find_increment_control(store, 'PosSession', 'consecutivo');
@@ -473,16 +465,19 @@ async function ticket_summaries_for_session(
 	generated_at: Date,
 ): Promise<ImperiumDoc[]> {
 	if (!store.has('pos-tickets')) return [];
-	const { rows } = await store.find_many('pos-tickets', {
+	const summaries: ImperiumDoc[] = [];
+	for await (const page of store.scan('pos-tickets', {
 		where: { pos_session: session_id },
-		take: 20000,
 		include_inactive: true,
-		populate: false,
-	});
-	return rows
-		.filter((ticket) => is_reportable_ticket(ticket, generated_at))
-		.sort((a, b) => ticket_created_at(a).getTime() - ticket_created_at(b).getTime())
-		.map(summarize_pos_ticket);
+	})) {
+		for (const ticket of page) {
+			if (!is_reportable_ticket(ticket, generated_at)) continue;
+			summaries.push(summarize_pos_ticket(ticket));
+		}
+	}
+	return summaries.sort(
+		(a, b) => ticket_created_at(a).getTime() - ticket_created_at(b).getTime(),
+	);
 }
 
 function total_sales_of(summaries: ImperiumDoc[]): number {

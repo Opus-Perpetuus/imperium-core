@@ -294,62 +294,80 @@ function is_product_like_key(key: string): boolean {
 	);
 }
 
+function collect_loose_product_ids(node: unknown, ids: Set<string>) {
+	if (!node || typeof node !== 'object') return;
+	if (Array.isArray(node)) {
+		node.forEach((item) => collect_loose_product_ids(item, ids));
+		return;
+	}
+	for (const [key, value] of Object.entries(as_object(node))) {
+		if (is_product_like_key(key)) {
+			const id = extract_reference_id(value);
+			const raw =
+				typeof value === 'string' ||
+				typeof value === 'number' ||
+				(typeof value === 'object' &&
+					value !== null &&
+					!as_object(value).name &&
+					!as_object(value).codigo);
+			if (id && raw) ids.add(id);
+		} else if (value && typeof value === 'object') {
+			collect_loose_product_ids(value, ids);
+		}
+	}
+}
+
+function replace_loose_product_ids(node: unknown, by_id: Map<string, ImperiumDoc>) {
+	if (!node || typeof node !== 'object') return;
+	if (Array.isArray(node)) {
+		node.forEach((item) => replace_loose_product_ids(item, by_id));
+		return;
+	}
+	const obj = as_object(node);
+	for (const [key, value] of Object.entries(obj)) {
+		if (is_product_like_key(key)) {
+			const hydrated = by_id.get(extract_reference_id(value));
+			if (hydrated) {
+				obj[key] = hydrated;
+				continue;
+			}
+		}
+		if (value && typeof value === 'object') replace_loose_product_ids(value, by_id);
+	}
+}
+
+export async function hydrate_loose_product_references_many(
+	store: ImperiumStore,
+	records: Record<string, unknown>[],
+): Promise<Record<string, unknown>[]> {
+	if (!store.has('products') || !records.length) return records;
+	const ids = new Set<string>();
+	for (const record of records) collect_loose_product_ids(record, ids);
+	if (!ids.size) return records;
+	const by_id = new Map<string, ImperiumDoc>();
+	const wanted = [...ids];
+	for (let i = 0; i < wanted.length; i += 500) {
+		const chunk = wanted.slice(i, i + 500);
+		const { rows } = await store.find_many('products', {
+			ids: chunk,
+			take: chunk.length,
+			include_inactive: true,
+			populate: false,
+			skip_total: true,
+		});
+		for (const row of rows) by_id.set(String(row._id), row);
+	}
+	if (!by_id.size) return records;
+	for (const record of records) replace_loose_product_ids(record, by_id);
+	return records;
+}
+
 export async function hydrate_loose_product_references(
 	store: ImperiumStore,
 	record: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-	if (!store.has('products')) return record;
-	const ids = new Set<string>();
-	const collect = (node: unknown) => {
-		if (!node || typeof node !== 'object') return;
-		if (Array.isArray(node)) {
-			node.forEach(collect);
-			return;
-		}
-		for (const [key, value] of Object.entries(as_object(node))) {
-			if (is_product_like_key(key)) {
-				const id = extract_reference_id(value);
-				const raw =
-					typeof value === 'string' ||
-					typeof value === 'number' ||
-					(typeof value === 'object' &&
-						value !== null &&
-						!as_object(value).name &&
-						!as_object(value).codigo);
-				if (id && raw) ids.add(id);
-			} else if (value && typeof value === 'object') {
-				collect(value);
-			}
-		}
-	};
-	collect(record);
-	if (!ids.size) return record;
-	const by_id = new Map<string, ImperiumDoc>();
-	for (const id of ids) {
-		const product = await store.find_id('products', id);
-		if (product) by_id.set(id, product);
-	}
-	if (!by_id.size) return record;
-	const replace = (node: unknown) => {
-		if (!node || typeof node !== 'object') return;
-		if (Array.isArray(node)) {
-			node.forEach(replace);
-			return;
-		}
-		const obj = as_object(node);
-		for (const [key, value] of Object.entries(obj)) {
-			if (is_product_like_key(key)) {
-				const hydrated = by_id.get(extract_reference_id(value));
-				if (hydrated) {
-					obj[key] = hydrated;
-					continue;
-				}
-			}
-			if (value && typeof value === 'object') replace(value);
-		}
-	};
-	replace(record);
-	return record;
+	const [hydrated] = await hydrate_loose_product_references_many(store, [record]);
+	return hydrated ?? record;
 }
 
 async function attachment_data_url(store: ImperiumStore | undefined, attach_id: string) {
@@ -540,13 +558,16 @@ export function report_validation_ok(
 	);
 }
 
-export async function resolve_report_records(
+export async function* iter_report_record_pages(
 	store: ImperiumStore,
 	resource: string,
 	body: Record<string, unknown>,
-): Promise<ImperiumDoc[]> {
+): AsyncGenerator<ImperiumDoc[]> {
 	if (body.apply_to_all === true) {
-		return (await store.find_many(resource, { take: 20000, sort: 'id:asc' })).rows;
+		for await (const page of store.scan(resource, { page_size: 200 })) {
+			if (page.length) yield page;
+		}
+		return;
 	}
 	const ids = as_array(body.record_ids)
 		.map((id) => String(id ?? '').trim())
@@ -554,16 +575,75 @@ export async function resolve_report_records(
 	const single = String(body.record_id ?? '').trim();
 	if (single && !ids.includes(single)) ids.unshift(single);
 	if (!ids.length) {
-		const { rows } = await store.find_many(resource, { take: 1, sort: 'id:asc' });
-		return rows;
+		const { rows } = await store.find_many(resource, {
+			take: 1,
+			sort: 'id:asc',
+			populate: false,
+			skip_total: true,
+		});
+		if (rows.length) yield rows;
+		return;
+	}
+	for (let i = 0; i < ids.length; i += 200) {
+		const chunk: ImperiumDoc[] = [];
+		for (const id of ids.slice(i, i + 200)) {
+			const doc = await store.find_id(resource, id);
+			if (doc) chunk.push(doc);
+		}
+		if (!chunk.length) continue;
+		yield await store.populate_docs(resource, chunk, { full: true });
+	}
+}
+
+export async function render_report_from_pages(
+	store: ImperiumStore,
+	template: string,
+	pages: AsyncIterable<ImperiumDoc[]>,
+	user_name: string,
+	now: Date,
+	opts: InterpolateReportOpts,
+): Promise<{ html: string; count: number; first: Record<string, unknown> | null }> {
+	const token = delimiter_token(template);
+	let html = '';
+	let count = 0;
+	let first: Record<string, unknown> | null = null;
+	for await (const page of pages) {
+		const hydrated = await hydrate_loose_product_references_many(
+			store,
+			page.map((row) => as_object(row)),
+		);
+		for (const record of hydrated) {
+			count += 1;
+			if (!first) first = record;
+			if (!token) continue;
+			const piece = await interpolate_report_template(template, record, user_name, now, opts);
+			html = count === 1 ? piece : html.replace(token, piece);
+		}
+	}
+	if (!count || !first) {
+		return { html: '', count: 0, first: null };
+	}
+	if (!token) {
+		return {
+			html: await interpolate_report_template(template, first, user_name, now, opts),
+			count,
+			first,
+		};
+	}
+	return { html: html.replaceAll(token, ''), count, first };
+}
+
+export async function resolve_report_records(
+	store: ImperiumStore,
+	resource: string,
+	body: Record<string, unknown>,
+): Promise<ImperiumDoc[]> {
+	if (body.apply_to_all === true) {
+		throw new Error('apply_to_all must stream via iter_report_record_pages');
 	}
 	const out: ImperiumDoc[] = [];
-	for (const id of ids) {
-		const doc = await store.find_id(resource, id);
-		if (doc) {
-			const [populated] = await store.populate_docs(resource, [doc], { full: true });
-			out.push(populated ?? doc);
-		}
+	for await (const page of iter_report_record_pages(store, resource, body)) {
+		out.push(...page);
 	}
 	return out;
 }

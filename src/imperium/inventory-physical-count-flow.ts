@@ -90,13 +90,16 @@ async function find_product(store: ImperiumStore, raw: unknown): Promise<Imperiu
 
 async function quants_at_location(store: ImperiumStore, ubicacion_id: string) {
 	if (!store.has('inventory-stock-quant')) return [];
-	const { rows } = await store.find_many('inventory-stock-quant', {
+	const out: ImperiumDoc[] = [];
+	for await (const page of store.scan('inventory-stock-quant', {
 		where: { ubicacion: ubicacion_id },
-		take: 20000,
 		include_inactive: true,
-		populate: false,
-	});
-	return rows.filter((row) => ref_id(row.ubicacion ?? row.ubicacion_id) === ubicacion_id);
+	})) {
+		for (const row of page) {
+			if (ref_id(row.ubicacion ?? row.ubicacion_id) === ubicacion_id) out.push(row);
+		}
+	}
+	return out;
 }
 
 async function merge_extra_lines(
@@ -329,17 +332,16 @@ export async function physical_count_by_state(
 	store: ImperiumStore,
 	mongo_match?: Record<string, unknown> | null,
 ): Promise<Array<{ state: string | null; count: number }>> {
-	const { rows } = await store.find_many('inventory-physical-count', {
-		take: 20000,
-		include_inactive: true,
-		populate: false,
-		mongo_match,
-	});
 	const counts = new Map<string | null, number>();
-	for (const row of rows) {
-		const raw = text(row.estado ?? row.state);
-		const key = raw || null;
-		counts.set(key, (counts.get(key) ?? 0) + 1);
+	for await (const page of store.scan('inventory-physical-count', {
+		include_inactive: true,
+		mongo_match,
+	})) {
+		for (const row of page) {
+			const raw = text(row.estado ?? row.state);
+			const key = raw || null;
+			counts.set(key, (counts.get(key) ?? 0) + 1);
+		}
 	}
 	return [...counts.entries()]
 		.sort((a, b) => String(a[0] ?? '').localeCompare(String(b[0] ?? '')))

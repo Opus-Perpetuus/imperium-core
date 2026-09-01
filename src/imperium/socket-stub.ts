@@ -78,7 +78,14 @@ export function last_driver_location(route_id: string): DriverLocation | null {
 	return entry.payload;
 }
 
-const PING_MS = 25_000;
+/** Engine.IO long-poll hold / advertised pingInterval. */
+export const SOCKET_IO_PING_MS = 25_000;
+/**
+ * `Bun.serve` idleTimeout (seconds). Bun's default is 10s; a silent long-poll
+ * held for `SOCKET_IO_PING_MS` is then RST. Vite's `/api` proxy surfaces that
+ * as `http proxy error … socket hang up`.
+ */
+export const SOCKET_IO_IDLE_TIMEOUT_SECONDS = 120;
 const sessions = new Map<string, Session>();
 
 export function handle_socket_io(
@@ -115,7 +122,7 @@ export function handle_socket_io(
 		const open = `0${JSON.stringify({
 			sid: id,
 			upgrades: [],
-			pingInterval: PING_MS,
+			pingInterval: SOCKET_IO_PING_MS,
 			pingTimeout: 20_000,
 			maxPayload: 1_000_000,
 		})}`;
@@ -127,7 +134,7 @@ export function handle_socket_io(
 	}
 	session.expires = Date.now() + 120_000;
 	if (req.method === 'GET') {
-		return hold_poll(session, headers);
+		return hold_poll(session, headers, req.signal);
 	}
 	if (req.method === 'POST') {
 		return req.text().then((raw) => {
@@ -141,6 +148,7 @@ export function handle_socket_io(
 function hold_poll(
 	session: Session,
 	headers: Record<string, string>,
+	signal?: AbortSignal,
 ): Promise<Response> {
 	if (session.queue.length) {
 		const packet = session.queue.join('\x1e');
@@ -152,17 +160,26 @@ function hold_poll(
 			clearTimeout(session.waiting.timer);
 			session.waiting.resolve('2');
 		}
-		const timer = setTimeout(() => {
-			session.waiting = null;
-			resolve(new Response('2', { headers }));
-		}, PING_MS);
+		let settled = false;
+		const finish = (body: string, status = 200) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			signal?.removeEventListener('abort', on_abort);
+			if (session.waiting?.resolve === deliver) session.waiting = null;
+			resolve(new Response(body, { status, headers }));
+		};
+		const deliver = (packet: string) => finish(packet);
+		const timer = setTimeout(() => finish('2'), SOCKET_IO_PING_MS);
+		const on_abort = () => finish('', 499);
+		if (signal?.aborted) {
+			on_abort();
+			return;
+		}
+		signal?.addEventListener('abort', on_abort, { once: true });
 		session.waiting = {
 			timer,
-			resolve: (packet) => {
-				clearTimeout(timer);
-				session.waiting = null;
-				resolve(new Response(packet, { headers }));
-			},
+			resolve: deliver,
 		};
 	});
 }
@@ -253,6 +270,26 @@ export function emit_to_room(room: string, event: string, data: unknown): void {
 export function broadcast_event(event: string, data: unknown): void {
 	const packet = packet_event(event, data);
 	for (const session of sessions.values()) enqueue(session, packet);
+}
+
+export function emit_notifications_refresh(
+	user_ids: string[],
+	payload: {
+		reason: string;
+		notification_ids?: string[];
+	},
+): void {
+	for (const uid of [...new Set(user_ids)].filter(Boolean)) {
+		emit_to_room(`notifications:user:${uid}`, 'update', {
+			action: 'notifications_refresh',
+			data: [
+				{
+					recipient_id: uid,
+					...payload,
+				},
+			],
+		});
+	}
 }
 
 export function emit_messages_refresh(

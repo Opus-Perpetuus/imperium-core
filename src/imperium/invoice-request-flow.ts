@@ -115,17 +115,23 @@ async function sync_order_invoice_state(store: ImperiumStore, request: ImperiumD
 }
 
 async function find_existing_request(store: ImperiumStore, order_id: string) {
-	const { rows } = await store.find_many('invoice-request', {
+	let best: ImperiumDoc | null = null;
+	let best_ms = -1;
+	for await (const page of store.scan('invoice-request', {
 		where: { pedido: order_id },
-		take: 20000,
 		include_inactive: true,
-		populate: false,
-		sort: 'created_at:desc',
-	});
-	return (
-		rows.find((row) => row.is_active !== false && !IR_CANCELED_ALIASES.has(text(row.estado))) ??
-		null
-	);
+	})) {
+		for (const row of page) {
+			if (row.is_active === false || IR_CANCELED_ALIASES.has(text(row.estado))) continue;
+			const ms = new Date(String(row.createdAt ?? row.created_at ?? '')).getTime();
+			const stamp = Number.isFinite(ms) ? ms : 0;
+			if (!best || stamp >= best_ms) {
+				best = row;
+				best_ms = stamp;
+			}
+		}
+	}
+	return best;
 }
 
 async function load_order(store: ImperiumStore, order_id: string) {
@@ -519,25 +525,25 @@ export async function invoice_request_stats(
 	store: ImperiumStore,
 	mongo_match?: Record<string, unknown> | null,
 ): Promise<Record<string, unknown>> {
-	const { rows } = await store.find_many('invoice-request', {
-		take: 20000,
-		include_inactive: false,
-		populate: false,
-		mongo_match,
-	});
 	const grouped = new Map<string | null, { total: number; monto_total: number }>();
-	for (const row of rows) {
-		const raw = row.estado;
-		const key = raw == null || raw === '' ? null : String(raw);
-		const current = grouped.get(key) ?? { total: 0, monto_total: 0 };
-		current.total += 1;
-		current.monto_total += Number(row.monto_total ?? 0);
-		grouped.set(key, current);
+	let total_records = 0;
+	for await (const page of store.scan('invoice-request', {
+		include_inactive: false,
+		mongo_match,
+	})) {
+		for (const row of page) {
+			total_records += 1;
+			const raw = row.estado;
+			const key = raw == null || raw === '' ? null : String(raw);
+			const current = grouped.get(key) ?? { total: 0, monto_total: 0 };
+			current.total += 1;
+			current.monto_total += Number(row.monto_total ?? 0);
+			grouped.set(key, current);
+		}
 	}
 	const by_state = [...grouped.entries()]
 		.sort((a, b) => String(a[0] ?? '').localeCompare(String(b[0] ?? '')))
 		.map(([_id, value]) => ({ _id, total: value.total, monto_total: value.monto_total }));
-	const total_records = rows.length;
 	return {
 		total_records,
 		by_state,

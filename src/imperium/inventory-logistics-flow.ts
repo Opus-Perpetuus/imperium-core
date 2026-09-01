@@ -43,19 +43,22 @@ async function location_by_ref(store: ImperiumStore, ref: string) {
 async function get_order_reserved_quantities(store: ImperiumStore, pedido_id: string) {
 	const reserved = new Map<string, number>();
 	if (!store.has('inventory-movement')) return reserved;
-	const { rows } = await store.find_many('inventory-movement', {
-		where: { documento_tipo: 'pedido', documento_id: pedido_id },
-		take: 20000,
+	for await (const page of store.scan('inventory-movement', {
+		where: {
+			documento_tipo: 'pedido',
+			documento_id: pedido_id,
+			tipo_movimiento: { in: [RESERVATION, RELEASE] },
+		},
 		include_inactive: true,
-		populate: false,
-	});
-	for (const row of rows) {
-		const tipo = text(row.tipo_movimiento);
-		if (tipo !== RESERVATION && tipo !== RELEASE) continue;
-		const product_id = ref_id(row.producto) || text(row.producto_id);
-		if (!product_id) continue;
-		const signed = tipo === RESERVATION ? Number(row.cantidad ?? 0) : -Number(row.cantidad ?? 0);
-		reserved.set(product_id, round_qty((reserved.get(product_id) ?? 0) + signed));
+	})) {
+		for (const row of page) {
+			const tipo = text(row.tipo_movimiento);
+			if (tipo !== RESERVATION && tipo !== RELEASE) continue;
+			const product_id = ref_id(row.producto) || text(row.producto_id);
+			if (!product_id) continue;
+			const signed = tipo === RESERVATION ? Number(row.cantidad ?? 0) : -Number(row.cantidad ?? 0);
+			reserved.set(product_id, round_qty((reserved.get(product_id) ?? 0) + signed));
+		}
 	}
 	return reserved;
 }
@@ -101,21 +104,20 @@ export async function sync_order_logistics_reservation(
 	if (!normalized_order_id || !is_id(normalized_order_id)) return;
 	if (!store.has('delivery-package') || !store.has('products')) return;
 
-	const { rows } = await store.find_many('delivery-package', {
-		where: { pedido: normalized_order_id },
-		take: 20000,
-		include_inactive: false,
-		populate: false,
-	});
 	const desired = new Map<string, number>();
-	for (const pack of rows) {
-		if (pack.is_active === false || text(pack.estado) === 'entregado') continue;
-		for (const raw of as_array(pack.contenido)) {
-			const item = as_object(raw);
-			const product_id = ref_id(item.product) || text(item.product);
-			const quantity = round_qty(Number(item.quantity ?? 0));
-			if (!product_id || !is_id(product_id) || quantity <= 0) continue;
-			desired.set(product_id, round_qty((desired.get(product_id) ?? 0) + quantity));
+	for await (const page of store.scan('delivery-package', {
+		where: { pedido: normalized_order_id },
+		include_inactive: false,
+	})) {
+		for (const pack of page) {
+			if (pack.is_active === false || text(pack.estado) === 'entregado') continue;
+			for (const raw of as_array(pack.contenido)) {
+				const item = as_object(raw);
+				const product_id = ref_id(item.product) || text(item.product);
+				const quantity = round_qty(Number(item.quantity ?? 0));
+				if (!product_id || !is_id(product_id) || quantity <= 0) continue;
+				desired.set(product_id, round_qty((desired.get(product_id) ?? 0) + quantity));
+			}
 		}
 	}
 
@@ -301,18 +303,17 @@ export async function stock_quant_stats_extras(
 	store: ImperiumStore,
 	mongo_match?: Record<string, unknown> | null,
 ): Promise<{ total_cantidad: number; ubicaciones_con_existencia: number }> {
-	const { rows } = await store.find_many('inventory-stock-quant', {
-		take: 20000,
-		include_inactive: true,
-		populate: false,
-		mongo_match,
-	});
 	let total_cantidad = 0;
 	let ubicaciones_con_existencia = 0;
-	for (const row of rows) {
-		const qty = round_qty(row.cantidad);
-		total_cantidad += qty;
-		if (qty > 0) ubicaciones_con_existencia += 1;
+	for await (const page of store.scan('inventory-stock-quant', {
+		include_inactive: true,
+		mongo_match,
+	})) {
+		for (const row of page) {
+			const qty = round_qty(row.cantidad);
+			total_cantidad += qty;
+			if (qty > 0) ubicaciones_con_existencia += 1;
+		}
 	}
 	return {
 		total_cantidad: round_qty(total_cantidad),
@@ -328,23 +329,22 @@ export async function inventory_movement_stats_extras(
 	total_quantity: number;
 	by_type: Array<{ type: string | null; count: number; total_quantity: number }>;
 }> {
-	const { rows } = await store.find_many('inventory-movement', {
-		take: 20000,
-		include_inactive: true,
-		populate: false,
-		mongo_match,
-	});
 	const grouped = new Map<string | null, { count: number; total_quantity: number }>();
 	let total_quantity = 0;
-	for (const row of rows) {
-		const raw = row.tipo_movimiento;
-		const key = raw == null || raw === '' ? null : String(raw);
-		const qty = round_qty(row.cantidad);
-		total_quantity += qty;
-		const current = grouped.get(key) ?? { count: 0, total_quantity: 0 };
-		current.count += 1;
-		current.total_quantity += qty;
-		grouped.set(key, current);
+	for await (const page of store.scan('inventory-movement', {
+		include_inactive: true,
+		mongo_match,
+	})) {
+		for (const row of page) {
+			const raw = row.tipo_movimiento;
+			const key = raw == null || raw === '' ? null : String(raw);
+			const qty = round_qty(row.cantidad);
+			total_quantity += qty;
+			const current = grouped.get(key) ?? { count: 0, total_quantity: 0 };
+			current.count += 1;
+			current.total_quantity += qty;
+			grouped.set(key, current);
+		}
 	}
 	return {
 		total_quantity: round_qty(total_quantity),
@@ -416,59 +416,34 @@ export async function cost_entry_stats(
 	const first_day = new Date(now.getFullYear(), now.getMonth(), 1);
 	const date_from = parse_stats_date(url?.searchParams.get('date_from'), first_day);
 	const date_to = parse_stats_date(url?.searchParams.get('date_to'), now);
-	const { rows: entries } = await store.find_many('inventory-cost-entry', {
-		take: 20000,
-		include_inactive: true,
-		populate: false,
-		mongo_match,
-	});
 	let total_quantity = 0;
 	let total_cost = 0;
-	for (const entry of entries) {
-		total_quantity += Number(entry.cantidad ?? 0);
-		total_cost += Number(entry.costo_total ?? 0);
-	}
-	const purchase_entries = entries
-		.filter((entry) => {
-			const stamp = new Date(String(entry.fecha_entrada ?? entry.createdAt ?? '')).getTime();
-			return Number.isFinite(stamp) && stamp <= date_to.getTime();
-		})
-		.sort((a, b) => {
-			const a_time = new Date(String(a.fecha_entrada ?? a.createdAt ?? '')).getTime();
-			const b_time = new Date(String(b.fecha_entrada ?? b.createdAt ?? '')).getTime();
-			if (a_time !== b_time) return a_time - b_time;
-			return String(a.createdAt ?? '').localeCompare(String(b.createdAt ?? ''));
-		});
+	let total_records = 0;
 	const fifo_queues = new Map<string, Array<{ remaining: number; unit_cost: number }>>();
-	for (const entry of purchase_entries) {
-		const product_id = product_id_of(entry) || String(entry.producto ?? '').trim();
-		const quantity = round_qty(entry.cantidad);
-		if (!product_id || quantity <= 0) continue;
-		const queue = fifo_queues.get(product_id) ?? [];
-		queue.push({ remaining: quantity, unit_cost: Number(entry.costo_unitario ?? 0) });
-		fifo_queues.set(product_id, queue);
-	}
-	const { rows: pedidos } = await store.find_many('pedidos', {
-		take: 20000,
-		include_inactive: false,
-		populate: false,
-	});
-	const sales = pedidos.filter(
-		(row) => row.is_active !== false && String(row.estado ?? '') !== 'cancelado',
-	);
-	const from_ms = date_from.getTime();
-	const to_ms = date_to.getTime();
-	for (const sale of sales) {
-		const stamp = sale_time(sale);
-		if (!Number.isFinite(stamp) || stamp >= from_ms) continue;
-		for (const raw of as_array(sale.articulos)) {
-			const item = as_object(raw);
-			const product_id = product_id_of(item);
-			const quantity = round_qty(item.cantidad);
+	for await (const page of store.scan('inventory-cost-entry', {
+		include_inactive: true,
+		mongo_match,
+		order: 'fecha_entrada',
+	})) {
+		for (const entry of page) {
+			total_records += 1;
+			total_quantity += Number(entry.cantidad ?? 0);
+			total_cost += Number(entry.costo_total ?? 0);
+			const stamp = new Date(String(entry.fecha_entrada ?? entry.createdAt ?? '')).getTime();
+			if (!Number.isFinite(stamp) || stamp > date_to.getTime()) continue;
+			const product_id = product_id_of(entry) || String(entry.producto ?? '').trim();
+			const quantity = round_qty(entry.cantidad);
 			if (!product_id || quantity <= 0) continue;
-			consume_fifo(fifo_queues, product_id, quantity);
+			const queue = fifo_queues.get(product_id) ?? [];
+			queue.push({
+				remaining: quantity,
+				unit_cost: Number(entry.costo_unitario ?? 0),
+			});
+			fifo_queues.set(product_id, queue);
 		}
 	}
+	const from_ms = date_from.getTime();
+	const to_ms = date_to.getTime();
 	let period_sales_total = 0;
 	let period_sales_quantity = 0;
 	let period_fifo_cost = 0;
@@ -476,31 +451,39 @@ export async function cost_entry_stats(
 		string,
 		{ quantity: number; sale_amount: number; fifo_cost: number }
 	>();
-	for (const sale of sales) {
-		const stamp = sale_time(sale);
-		if (!Number.isFinite(stamp) || stamp < from_ms || stamp > to_ms) continue;
-		for (const raw of as_array(sale.articulos)) {
-			const item = as_object(raw);
-			const product_id = product_id_of(item);
-			const quantity = round_qty(item.cantidad);
-			const sale_amount = round_cost(item.importe ?? 0);
-			if (!product_id || quantity <= 0) continue;
-			const fifo_cost = consume_fifo(fifo_queues, product_id, quantity);
-			period_sales_total += sale_amount;
-			period_sales_quantity += quantity;
-			period_fifo_cost += fifo_cost;
-			const current = sales_by_product.get(product_id) ?? {
-				quantity: 0,
-				sale_amount: 0,
-				fifo_cost: 0,
-			};
-			current.quantity = round_qty(current.quantity + quantity);
-			current.sale_amount = round_cost(current.sale_amount + sale_amount);
-			current.fifo_cost = round_cost(current.fifo_cost + fifo_cost);
-			sales_by_product.set(product_id, current);
+	for await (const page of store.scan('pedidos', {
+		include_inactive: false,
+		order: 'created_at',
+		where: { created_at: { lte: date_to.toISOString() } },
+	})) {
+		for (const sale of page) {
+			if (sale.is_active === false || String(sale.estado ?? '') === 'cancelado') continue;
+			const stamp = sale_time(sale);
+			if (!Number.isFinite(stamp) || stamp > to_ms) continue;
+			const in_period = stamp >= from_ms;
+			for (const raw of as_array(sale.articulos)) {
+				const item = as_object(raw);
+				const product_id = product_id_of(item);
+				const quantity = round_qty(item.cantidad);
+				if (!product_id || quantity <= 0) continue;
+				const fifo_cost = consume_fifo(fifo_queues, product_id, quantity);
+				if (!in_period) continue;
+				const sale_amount = round_cost(item.importe ?? 0);
+				period_sales_total += sale_amount;
+				period_sales_quantity += quantity;
+				period_fifo_cost += fifo_cost;
+				const current = sales_by_product.get(product_id) ?? {
+					quantity: 0,
+					sale_amount: 0,
+					fifo_cost: 0,
+				};
+				current.quantity = round_qty(current.quantity + quantity);
+				current.sale_amount = round_cost(current.sale_amount + sale_amount);
+				current.fifo_cost = round_cost(current.fifo_cost + fifo_cost);
+				sales_by_product.set(product_id, current);
+			}
 		}
 	}
-	const total_records = entries.length;
 	return {
 		total_records,
 		total_quantity: round_qty(total_quantity),

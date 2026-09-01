@@ -119,6 +119,46 @@ describe("define_crud e2e (memory)", () => {
     server.stop();
   });
 
+  test("field-values uses distinct and mass-query batches ids", async () => {
+    const def = build_notes_kirlet();
+    const server = create_kirlet_test_context(def, { auth_disabled: true });
+
+    const alpha = await server.fetch(
+      new Request("http://t/notes", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ title: "Alpha", body: "a" }),
+      }),
+    );
+    const beta = await server.fetch(
+      new Request("http://t/notes", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ title: "Beta", body: "b" }),
+      }),
+    );
+    const a = (await alpha.json()) as { data: { id: string } };
+    const b = (await beta.json()) as { data: { id: string } };
+
+    const values = await server.fetch(new Request("http://t/notes/field-values/title"));
+    expect(values.status).toBe(200);
+    const listed = (await values.json()) as { data: Array<{ value: string }> };
+    expect(listed.data.map((row) => row.value).sort()).toEqual(["Alpha", "Beta"]);
+
+    const mass = await server.fetch(
+      new Request("http://t/notes/mass-query", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ids: [a.data.id, b.data.id] }),
+      }),
+    );
+    expect(mass.status).toBe(200);
+    const queried = (await mass.json()) as { data: Array<{ id: string }> };
+    expect(queried.data.map((row) => row.id).sort()).toEqual([a.data.id, b.data.id].sort());
+
+    server.stop();
+  });
+
   test("unknown field → 400; method mismatch → 405", async () => {
     const def = build_notes_kirlet();
     const server = create_kirlet_test_context(def);

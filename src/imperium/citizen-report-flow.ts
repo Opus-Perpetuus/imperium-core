@@ -20,8 +20,40 @@ const REF_FIELDS = [
 
 function ref_id(value: unknown): string {
 	if (value == null || value === '') return '';
-	if (typeof value === 'object') return String((value as { _id?: unknown })._id ?? '').trim();
+	if (typeof value === 'object') {
+		const rec = value as { _id?: unknown; id?: unknown };
+		return ref_id(rec._id ?? rec.id);
+	}
 	return String(value).trim();
+}
+
+const OBJECT_ID_HEX = /^[a-fA-F0-9]{24}$/;
+
+function evidence_id(item: unknown): string | null {
+	if (item == null || item === '') return null;
+	if (typeof item === 'string') {
+		const id = item.trim();
+		return OBJECT_ID_HEX.test(id) ? id : null;
+	}
+	if (typeof item === 'object') {
+		const nested =
+			(item as { _id?: unknown; id?: unknown })._id ??
+			(item as { id?: unknown }).id;
+		if (nested == null || nested === '') return null;
+		const id = String(nested).trim();
+		return OBJECT_ID_HEX.test(id) ? id : null;
+	}
+	return null;
+}
+
+export function sanitize_citizen_report_evidence(raw: unknown): string[] {
+	if (!Array.isArray(raw)) return [];
+	const out: string[] = [];
+	for (const item of raw) {
+		const id = evidence_id(item);
+		if (id) out.push(id);
+	}
+	return out;
 }
 
 function parse_coord(value: unknown, min: number, max: number): number | null {
@@ -46,6 +78,19 @@ export async function prepare_citizen_report_write(
 		delete doc.name;
 	}
 	delete doc.images;
+	for (const field of ['evidence_before_images', 'evidence_after_images'] as const) {
+		if (!Object.hasOwn(doc, field)) continue;
+		doc[field] = sanitize_citizen_report_evidence(doc[field]);
+	}
+	if (Object.hasOwn(doc, 'evidences')) {
+		const leftover = doc.evidences;
+		delete doc.evidences;
+		const before = doc.evidence_before_images;
+		const before_empty = !Array.isArray(before) || before.length === 0;
+		if (before_empty && Array.isArray(leftover) && leftover.length > 0) {
+			doc.evidence_before_images = sanitize_citizen_report_evidence(leftover);
+		}
+	}
 	for (const field of REF_FIELDS) {
 		if (!Object.hasOwn(doc, field)) continue;
 		const id = ref_id(doc[field]);

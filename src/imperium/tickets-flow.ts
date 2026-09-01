@@ -127,6 +127,48 @@ function created_ms(doc: ImperiumDoc): number {
 	return Number.isFinite(t) ? t : 0;
 }
 
+function consider_latest(rows: ImperiumDoc[], row: ImperiumDoc, limit: number) {
+	if (rows.length < limit) {
+		rows.push(row);
+		rows.sort((a, b) => created_ms(b) - created_ms(a));
+		return;
+	}
+	if (created_ms(row) <= created_ms(rows[rows.length - 1]!)) return;
+	rows[rows.length - 1] = row;
+	rows.sort((a, b) => created_ms(b) - created_ms(a));
+}
+
+function ticket_search_match(termino: string) {
+	return {
+		$or: [
+			{ name: { $regex: termino, $options: 'i' } },
+			{ title: { $regex: termino, $options: 'i' } },
+			{ description: { $regex: termino, $options: 'i' } },
+			{ status: { $regex: termino, $options: 'i' } },
+			{ sourceType: { $regex: termino, $options: 'i' } },
+		],
+	};
+}
+
+function ticket_matches_term(row: ImperiumDoc, termino: string) {
+	if (!termino) return true;
+	const reporter = as_object(row.reporter);
+	const hay = [
+		row.title,
+		row.name,
+		row.description,
+		row.sourceType,
+		row.source_type,
+		row.status,
+		row.estado,
+		reporter.name,
+		reporter.email,
+	]
+		.map((value) => String(value ?? '').toLowerCase())
+		.join(' ');
+	return hay.includes(termino);
+}
+
 function actor_id(actor: ImperiumDoc | null): string {
 	return text(actor?._id ?? actor?.id);
 }
@@ -467,44 +509,16 @@ export async function tickets_admin_list(ctx: TicketCtx) {
 	const termino = text(ctx.url.searchParams.get('termino')).toLowerCase();
 	const desde = Math.max(0, Number(ctx.url.searchParams.get('desde') ?? 0) || 0);
 	const limite = Math.min(500, Math.max(1, Number(ctx.url.searchParams.get('limite') ?? 50) || 50));
-	const { rows } = await ctx.store.find_many('tickets', {
-		mongo_match: termino
-			? {
-					$or: [
-						{ name: { $regex: termino, $options: 'i' } },
-						{ title: { $regex: termino, $options: 'i' } },
-						{ description: { $regex: termino, $options: 'i' } },
-						{ status: { $regex: termino, $options: 'i' } },
-						{ sourceType: { $regex: termino, $options: 'i' } },
-					],
-				}
-			: undefined,
-		take: 20000,
+	const { rows, total } = await ctx.store.find_many('tickets', {
+		mongo_match: termino ? ticket_search_match(termino) : undefined,
+		take: limite,
+		skip: desde,
+		sort: 'created_at:desc',
 		include_inactive: true,
+		populate: false,
 	});
-	const matched = rows
-		.filter((row) => {
-			if (!termino) return true;
-			const reporter = as_object(row.reporter);
-			const hay = [
-				row.title,
-				row.name,
-				row.description,
-				row.sourceType,
-				row.source_type,
-				row.status,
-				row.estado,
-				reporter.name,
-				reporter.email,
-			]
-				.map((value) => String(value ?? '').toLowerCase())
-				.join(' ');
-			return hay.includes(termino);
-		})
-		.sort((a, b) => created_ms(b) - created_ms(a));
-	const page = matched.slice(desde, desde + limite);
 	return {
-		...ok(page, 'Tickets cargados correctamente.', matched.length),
+		...ok(rows, 'Tickets cargados correctamente.', total),
 		tipo_de_instancia: ADMIN_INSTANCE_TYPE,
 		schema_validation: await ticket_schema_validation(ctx.store),
 	};
@@ -807,27 +821,46 @@ export async function read_received_interinstance_tickets(ctx: TicketCtx) {
 	const ticket_id = text(ctx.url.searchParams.get('ticket_id'));
 	const desde = Math.max(0, Number(ctx.url.searchParams.get('desde') ?? 0) || 0);
 	const limite = Math.min(500, Math.max(1, Number(ctx.url.searchParams.get('limite') ?? 50) || 50));
-	const { rows } = await ctx.store.find_many('tickets', {
+	if (ticket_id) {
+		const row = await ctx.store.find_id('tickets', ticket_id);
+		const meta = as_object(row?.interinstance);
+		const hit =
+			row &&
+			String(row.sourceType ?? row.source_type ?? '') === 'interinstance' &&
+			String(meta.receivedFromKeyId ?? '') === String(matched._id) &&
+			ticket_matches_term(row, termino)
+				? [row]
+				: [];
+		return ok(hit, 'Tickets interinstancia recibidos cargados correctamente.', hit.length);
+	}
+	const refs: Array<{ id: string; ms: number }> = [];
+	for await (const page of ctx.store.scan('tickets', {
 		mongo_match: { sourceType: 'interinstance' },
-		take: 20000,
 		include_inactive: true,
-	});
-	const filtered = rows
-		.filter((row) => {
-			if (String(row.sourceType ?? row.source_type ?? '') !== 'interinstance') return false;
+	})) {
+		for (const row of page) {
+			if (String(row.sourceType ?? row.source_type ?? '') !== 'interinstance') continue;
 			const meta = as_object(row.interinstance);
-			if (String(meta.receivedFromKeyId ?? '') !== String(matched._id)) return false;
-			if (ticket_id && String(row._id) !== ticket_id) return false;
-			if (!termino) return true;
-			const reporter = as_object(row.reporter);
-			return [row.title, row.description, reporter.name, reporter.email]
-				.map((value) => String(value ?? '').toLowerCase())
-				.join(' ')
-				.includes(termino);
-		})
-		.sort((a, b) => created_ms(b) - created_ms(a));
-	const page = filtered.slice(desde, desde + limite);
-	return ok(page, 'Tickets interinstancia recibidos cargados correctamente.', filtered.length);
+			if (String(meta.receivedFromKeyId ?? '') !== String(matched._id)) continue;
+			if (!ticket_matches_term(row, termino)) continue;
+			refs.push({ id: String(row._id), ms: created_ms(row) });
+		}
+	}
+	refs.sort((a, b) => b.ms - a.ms);
+	const slice = refs.slice(desde, desde + limite);
+	if (!slice.length) {
+		return ok([], 'Tickets interinstancia recibidos cargados correctamente.', refs.length);
+	}
+	const { rows } = await ctx.store.find_many('tickets', {
+		ids: slice.map((item) => item.id),
+		take: slice.length,
+		include_inactive: true,
+		populate: false,
+		skip_total: true,
+	});
+	const by_id = new Map(rows.map((row) => [String(row._id), row]));
+	const page = slice.map((item) => by_id.get(item.id)).filter((row): row is ImperiumDoc => Boolean(row));
+	return ok(page, 'Tickets interinstancia recibidos cargados correctamente.', refs.length);
 }
 
 export async function update_ticket(ctx: TicketCtx) {
@@ -905,7 +938,8 @@ export async function update_ticket(ctx: TicketCtx) {
 export async function read_my_tickets(ctx: TicketCtx) {
 	const uid = actor_id(ctx.actor);
 	if (!uid) throw new Error('No hay una sesión válida para consultar tickets.');
-	const { rows } = await ctx.store.find_many('tickets', {
+	const mine: ImperiumDoc[] = [];
+	for await (const page of ctx.store.scan('tickets', {
 		mongo_match: {
 			$or: [
 				{ assignedUserId: uid },
@@ -915,18 +949,16 @@ export async function read_my_tickets(ctx: TicketCtx) {
 				{ assigned_personal_task_ids: { $regex: uid } },
 			],
 		},
-		take: 20000,
 		include_inactive: true,
-	});
-	const mine = rows
-		.filter((row) => {
+	})) {
+		for (const row of page) {
 			const reporter = as_object(row.reporter);
 			const reporter_id = text(reporter.userId ?? reporter.user_id);
 			const assigned = text(row.assignedUserId ?? row.assigned_user_id);
 			const tasks = id_list(row.assignedPersonalTaskIds ?? row.assigned_personal_task_ids);
-			return reporter_id === uid || assigned === uid || tasks.includes(uid);
-		})
-		.sort((a, b) => created_ms(b) - created_ms(a))
-		.slice(0, 200);
+			if (reporter_id !== uid && assigned !== uid && !tasks.includes(uid)) continue;
+			consider_latest(mine, row, 200);
+		}
+	}
 	return ok(mine, 'Tickets del usuario cargados correctamente.');
 }

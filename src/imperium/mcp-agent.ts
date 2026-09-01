@@ -13,6 +13,7 @@ import {
 	record_rule_lookup_keys,
 	record_rule_scope_from_access,
 } from './record-rules.ts';
+import { history_find_many_opts, history_page_limits } from './history.ts';
 
 const MODEL_ID = 'McpAgent';
 const TOKEN_PREFIX = 'isic_';
@@ -295,17 +296,18 @@ function extract_token(req: Request): string {
 
 async function active_tokens(store: ImperiumStore, user_id: string) {
 	if (!store.has('mcp-user-token')) return [];
-	const { rows } = await store.find_many('mcp-user-token', {
+	const rows: ImperiumDoc[] = [];
+	for await (const page of store.scan('mcp-user-token', {
 		mongo_match: { user_id },
-		take: 20000,
 		include_inactive: true,
-	});
-	return rows.filter(
-		(row) =>
-			String(row.user_id ?? '') === user_id &&
-			row.is_active !== false &&
-			!row.revoked_at,
-	);
+	})) {
+		for (const row of page) {
+			if (String(row.user_id ?? '') !== user_id) continue;
+			if (row.is_active === false || row.revoked_at) continue;
+			rows.push(row);
+		}
+	}
+	return rows;
 }
 
 async function token_status(store: ImperiumStore, user: ImperiumDoc) {
@@ -397,19 +399,8 @@ async function authenticate_token(
 		);
 	}
 	const token_hash = hash_token(plaintext);
-	const by_hash = store.has('mcp-user-token')
-		? await store.find_where('mcp-user-token', { token_hash })
-		: null;
-	const { rows } = by_hash
-		? { rows: [by_hash] }
-		: store.has('mcp-user-token')
-			? await store.find_many('mcp-user-token', {
-					mongo_match: { token_hash },
-					take: 20000,
-					include_inactive: true,
-				})
-			: { rows: [] as ImperiumDoc[] };
-	const token_doc = rows.find((row) => {
+	let token_doc: ImperiumDoc | undefined;
+	const consider = (row: ImperiumDoc) => {
 		const stored = String(row.token_hash ?? '');
 		if (!stored || !safe_equal_hex(stored, token_hash)) return false;
 		if (row.is_active === false || row.revoked_at) return false;
@@ -418,7 +409,20 @@ async function authenticate_token(
 			if (Number.isFinite(exp) && exp < Date.now()) return false;
 		}
 		return true;
-	});
+	};
+	const by_hash = store.has('mcp-user-token')
+		? await store.find_where('mcp-user-token', { token_hash })
+		: null;
+	if (by_hash && consider(by_hash)) token_doc = by_hash;
+	if (!token_doc && store.has('mcp-user-token')) {
+		for await (const page of store.scan('mcp-user-token', {
+			mongo_match: { token_hash },
+			include_inactive: true,
+		})) {
+			token_doc = page.find(consider);
+			if (token_doc) break;
+		}
+	}
 	if (!token_doc) {
 		return mcp_error(
 			401,
@@ -499,15 +503,15 @@ function sanitize(payload: Record<string, unknown>) {
 }
 
 async function capabilities(store: ImperiumStore, access: Access) {
-	const modules = store.has('module-management')
-		? (
-				await store.find_many('module-management', {
-					where: { is_enable: true },
-					take: 20000,
-					include_inactive: false,
-				})
-			).rows
-		: [];
+	const modules: ImperiumDoc[] = [];
+	if (store.has('module-management')) {
+		for await (const page of store.scan('module-management', {
+			where: { is_enable: true },
+			include_inactive: false,
+		})) {
+			modules.push(...page);
+		}
+	}
 	const enabled = modules.filter(
 		(mod) => mod.is_enable === true || mod.is_enable === undefined,
 	);
@@ -832,29 +836,20 @@ async function get_history(
 ) {
 	await get_record(store, access, user, model_id, id);
 	const resource = resolve_resource(store, model_id);
-	const { rows } = await store.find_many('document-change-history', {
-		mongo_match: {
-			$or: [
-				{ documentId: id },
-				{ document_id: id },
-				{ record_id: id },
-			],
-		},
-		take: 20000,
-		include_inactive: true,
-	});
-	const matched = rows
-		.filter(
-			(row) =>
-				String(row.documentId ?? row.document_id ?? row.record_id ?? '') === id &&
-				(!row.modelName ||
-					String(row.modelName) === model_id ||
-					String(row.modelName) === resource),
-		)
-		.slice(0, limit);
+	const { limite } = history_page_limits({ limite: limit });
+	const { rows } = await store.find_many(
+		'document-change-history',
+		history_find_many_opts({
+			document_id: id,
+			canonical: resource,
+			model_name: model_id,
+			desde: 0,
+			limite,
+		}),
+	);
 	return ok(
-		matched,
-		matched.length
+		rows,
+		rows.length
 			? 'Historial obtenido correctamente'
 			: 'No se encontraron cambios para este registro',
 	);

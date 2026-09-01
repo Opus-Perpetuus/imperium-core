@@ -94,18 +94,17 @@ async function max_priority_of_turn(store: ImperiumStore, turn: ImperiumDoc): Pr
 
 async function next_consecutive(store: ImperiumStore, letter: string): Promise<number> {
 	if (!store.has('ticketing-system-consecutive')) {
-		const { rows } = await store.find_many('ticketing-system-turn', {
-			take: 5000,
-			include_inactive: true,
-			populate: false,
-		});
 		const prefix = letter.toUpperCase();
 		let max = -1;
-		for (const row of rows) {
-			const name = text(row.name).toUpperCase();
-			if (!name.startsWith(prefix)) continue;
-			const n = Number(name.slice(prefix.length));
-			if (Number.isFinite(n)) max = Math.max(max, n);
+		for await (const page of store.scan('ticketing-system-turn', {
+			include_inactive: true,
+		})) {
+			for (const row of page) {
+				const name = text(row.name).toUpperCase();
+				if (!name.startsWith(prefix)) continue;
+				const n = Number(name.slice(prefix.length));
+				if (Number.isFinite(n)) max = Math.max(max, n);
+			}
 		}
 		return max + 1;
 	}
@@ -127,42 +126,30 @@ async function next_consecutive(store: ImperiumStore, letter: string): Promise<n
 	return current;
 }
 
+async function collect_turns(
+	store: ImperiumStore,
+	where: Record<string, unknown>,
+	keep: (row: ImperiumDoc) => boolean,
+): Promise<ImperiumDoc[]> {
+	const out: ImperiumDoc[] = [];
+	for await (const page of store.scan('ticketing-system-turn', { where })) {
+		for (const row of page) {
+			if (keep(row)) out.push(row);
+		}
+	}
+	return out;
+}
+
 async function pending_turns(store: ImperiumStore): Promise<ImperiumDoc[]> {
-	const by_status = (
-		await store.find_many('ticketing-system-turn', {
-			where: { status: 'pendiente' },
-			take: 20000,
-			populate: false,
-		})
-	).rows;
-	const by_estado = by_status.length
-		? []
-		: (
-				await store.find_many('ticketing-system-turn', {
-					where: { estado: 'pendiente' },
-					take: 20000,
-					populate: false,
-				})
-			).rows;
-	return [...by_status, ...by_estado].filter(is_pending);
+	const by_status = await collect_turns(store, { status: 'pendiente' }, is_pending);
+	if (by_status.length) return by_status;
+	return collect_turns(store, { estado: 'pendiente' }, is_pending);
 }
 
 async function attending_turns(store: ImperiumStore): Promise<ImperiumDoc[]> {
-	const { rows } = await store.find_many('ticketing-system-turn', {
-		where: { status: 'en_atencion' },
-		take: 20000,
-		populate: false,
-	});
-	const extra = rows.length
-		? []
-		: (
-				await store.find_many('ticketing-system-turn', {
-					where: { estado: 'en_atencion' },
-					take: 20000,
-					populate: false,
-				})
-			).rows;
-	return [...rows, ...extra].filter(is_attending);
+	const rows = await collect_turns(store, { status: 'en_atencion' }, is_attending);
+	if (rows.length) return rows;
+	return collect_turns(store, { estado: 'en_atencion' }, is_attending);
 }
 
 /** El tablero lee `assigned_box.name`; el original hace `.populate('assigned_box')`. */
@@ -233,11 +220,11 @@ export async function notify_ticketing_rooms(store: ImperiumStore) {
 		data: await populate_turns(store, await attending_turns(store)),
 	});
 	if (!store.has('ticketing-system-box-config')) return;
-	const { rows } = await store.find_many('ticketing-system-box-config', {
-		take: 20000,
-		populate: false,
-	});
-	for (const box of rows.filter((row) => row.is_active !== false)) {
+	const boxes: ImperiumDoc[] = [];
+	for await (const page of store.scan('ticketing-system-box-config')) {
+		boxes.push(...page);
+	}
+	for (const box of boxes.filter((row) => row.is_active !== false)) {
 		emit_to_room(ROOM, 'update', {
 			action: 'box_turns_summary',
 			data: await box_turns_summary(store, box),

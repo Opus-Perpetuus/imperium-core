@@ -210,19 +210,23 @@ async function assert_widget_module_enabled(
 		populate: false,
 	});
 	if (exact.rows[0] && access_flag(exact.rows[0].is_enable)) return;
-	const { rows } = await store.find_many('module-management', {
-		where: { is_enable: true },
-		take: 20000,
-		include_inactive: false,
-		populate: false,
-	});
-	if (!rows.length) return;
 	const tokens = record_rule_lookup_keys(resource, model_id);
-	const hit = rows.find((row) => {
-		const mid = String(row.model_id ?? '');
-		const name = String(row.module_name ?? row.name ?? '');
-		return tokens.some((token) => same_model_token(mid, token) || same_model_token(name, token));
-	});
+	let hit: ImperiumDoc | undefined;
+	let saw_enabled = false;
+	for await (const page of store.scan('module-management', {
+		where: { is_enable: true },
+		include_inactive: false,
+	})) {
+		if (!page.length) continue;
+		saw_enabled = true;
+		hit = page.find((row) => {
+			const mid = String(row.model_id ?? '');
+			const name = String(row.module_name ?? row.name ?? '');
+			return tokens.some((token) => same_model_token(mid, token) || same_model_token(name, token));
+		});
+		if (hit) break;
+	}
+	if (!saw_enabled) return;
 	const enabled = hit && access_flag(hit.is_enable) && hit.is_active !== false;
 	if (!enabled) {
 		throw new Error(`El módulo del modelo '${model_id}' está deshabilitado.`);
@@ -589,16 +593,15 @@ export async function resolve_dashboard_catalog(
 	const access = actor
 		? await build_access(store, actor)
 		: { has_full_access: false, permissions_by_model: {}, user_group_names: [] as string[] };
-	const modules = store.has('module-management')
-		? (
-				await store.find_many('module-management', {
-					where: { is_enable: true },
-					take: 20000,
-					include_inactive: false,
-					populate: false,
-				})
-			).rows
-		: [];
+	const modules: ImperiumDoc[] = [];
+	if (store.has('module-management')) {
+		for await (const page of store.scan('module-management', {
+			where: { is_enable: true },
+			include_inactive: false,
+		})) {
+			modules.push(...page);
+		}
+	}
 	const enabled = modules.filter(
 		(row) => access_flag(row.is_enable) && row.is_active !== false,
 	);

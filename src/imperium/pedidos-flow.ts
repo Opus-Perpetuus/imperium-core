@@ -408,71 +408,77 @@ export async function pedidos_sales_stats(
 	today_start.setHours(0, 0, 0, 0);
 	const today_end = new Date();
 	today_end.setHours(23, 59, 59, 999);
-	const { rows } = await store.find_many('pedidos', {
-		take: 20000,
-		include_inactive: true,
-		populate: false,
-		mongo_match,
-	});
-	const in_period = rows.filter((row) => {
-		const created = created_ms(row);
-		if (!Number.isFinite(created) || created < from_ms || created > to_ms) return false;
-		return wanted_states.includes(String(row.estado ?? ''));
-	});
-	const in_today = rows.filter((row) => {
-		const created = created_ms(row);
-		if (!Number.isFinite(created) || created < today_start.getTime() || created > today_end.getTime()) {
-			return false;
-		}
-		return wanted_states.includes(String(row.estado ?? ''));
-	});
-	const seller_ids = in_period.map((row) => ref_id(row.usuario));
-	const contact_ids = in_period.map((row) => ref_id(row.contacto) || ref_id(row.contacto_id));
-	const product_ids: string[] = [];
-	for (const row of in_period) {
-		for (const raw of as_array(row.articulos)) {
-			const line = as_object(raw);
-			const id = ref_id(line.product);
-			if (id) product_ids.push(id);
-		}
-	}
-	const [users, contacts, products] = await Promise.all([
-		load_name_map(store, 'user', [...seller_ids, ...in_today.map((row) => ref_id(row.usuario))]),
-		load_name_map(store, 'contacto', contact_ids),
-		load_name_map(store, 'products', product_ids),
-	]);
+	const scan_from = new Date(Math.min(from_ms, today_start.getTime()));
+	const scan_to = new Date(Math.max(to_ms, today_end.getTime()));
 	const seller_sales = new Map<string, { total_vendido: number; pedidos_count: number }>();
 	const client_sales = new Map<string, { total_comprado: number; pedidos_count: number }>();
 	const trend = new Map<string, number>();
 	const by_state = new Map<string, number>();
 	const product_sales = new Map<string, { cantidad: number; importe: number }>();
+	const today_by_seller = new Map<string, number>();
 	let total_sales = 0;
-	for (const row of in_period) {
-		const importe = money_of(row.importe);
-		total_sales += importe;
-		const seller = ref_id(row.usuario) || 'sin-vendedor';
-		const seller_row = seller_sales.get(seller) ?? { total_vendido: 0, pedidos_count: 0 };
-		seller_row.total_vendido += importe;
-		seller_row.pedidos_count += 1;
-		seller_sales.set(seller, seller_row);
-		const client = ref_id(row.contacto) || ref_id(row.contacto_id) || 'sin-cliente';
-		const client_row = client_sales.get(client) ?? { total_comprado: 0, pedidos_count: 0 };
-		client_row.total_comprado += importe;
-		client_row.pedidos_count += 1;
-		client_sales.set(client, client_row);
-		const day = new Date(created_ms(row)).toISOString().slice(0, 10);
-		trend.set(day, (trend.get(day) ?? 0) + importe);
-		const estado = String(row.estado ?? 'sin-estado');
-		by_state.set(estado, (by_state.get(estado) ?? 0) + importe);
-		for (const raw of as_array(row.articulos)) {
-			const line = as_object(raw);
-			const pid = ref_id(line.product) || 'producto';
-			const current = product_sales.get(pid) ?? { cantidad: 0, importe: 0 };
-			current.cantidad += money_of(line.cantidad);
-			current.importe += money_of(line.importe);
-			product_sales.set(pid, current);
+	let total_orders = 0;
+	for await (const page of store.scan('pedidos', {
+		where: {
+			created_at: { gte: scan_from.toISOString(), lte: scan_to.toISOString() },
+			estado: { in: wanted_states },
+		},
+		include_inactive: true,
+		mongo_match,
+	})) {
+		for (const row of page) {
+			const created = created_ms(row);
+			if (!Number.isFinite(created)) continue;
+			const in_period = created >= from_ms && created <= to_ms;
+			const in_today = created >= today_start.getTime() && created <= today_end.getTime();
+			if (!in_period && !in_today) continue;
+			const seller = ref_id(row.usuario) || 'sin-vendedor';
+			if (in_today) {
+				today_by_seller.set(seller, (today_by_seller.get(seller) ?? 0) + money_of(row.importe));
+			}
+			if (!in_period) continue;
+			const importe = money_of(row.importe);
+			total_sales += importe;
+			total_orders += 1;
+			const seller_row = seller_sales.get(seller) ?? { total_vendido: 0, pedidos_count: 0 };
+			seller_row.total_vendido += importe;
+			seller_row.pedidos_count += 1;
+			seller_sales.set(seller, seller_row);
+			const client = ref_id(row.contacto) || ref_id(row.contacto_id) || 'sin-cliente';
+			const client_row = client_sales.get(client) ?? { total_comprado: 0, pedidos_count: 0 };
+			client_row.total_comprado += importe;
+			client_row.pedidos_count += 1;
+			client_sales.set(client, client_row);
+			const day = new Date(created).toISOString().slice(0, 10);
+			trend.set(day, (trend.get(day) ?? 0) + importe);
+			const estado = String(row.estado ?? 'sin-estado');
+			by_state.set(estado, (by_state.get(estado) ?? 0) + importe);
+			for (const raw of as_array(row.articulos)) {
+				const line = as_object(raw);
+				const pid = ref_id(line.product) || 'producto';
+				const current = product_sales.get(pid) ?? { cantidad: 0, importe: 0 };
+				current.cantidad += money_of(line.cantidad);
+				current.importe += money_of(line.importe);
+				product_sales.set(pid, current);
+			}
 		}
 	}
+	const top_seller_ids = [...seller_sales.entries()]
+		.sort((a, b) => b[1].total_vendido - a[1].total_vendido)
+		.slice(0, 10)
+		.map(([id]) => id);
+	const best_client_id = [...client_sales.entries()].sort(
+		(a, b) => b[1].total_comprado - a[1].total_comprado,
+	)[0]?.[0];
+	const top_product_ids = [...product_sales.entries()]
+		.sort((a, b) => b[1].cantidad - a[1].cantidad)
+		.slice(0, 10)
+		.map(([id]) => id);
+	const [users, contacts, products] = await Promise.all([
+		load_name_map(store, 'user', [...top_seller_ids, ...today_by_seller.keys()]),
+		load_name_map(store, 'contacto', best_client_id ? [best_client_id] : []),
+		load_name_map(store, 'products', top_product_ids),
+	]);
 	const top_sellers = [...seller_sales.entries()]
 		.sort((a, b) => b[1].total_vendido - a[1].total_vendido)
 		.slice(0, 10)
@@ -506,16 +512,10 @@ export async function pedidos_sales_stats(
 	const most_sold_product = top
 		? { name: top.name, cantidad: top.cantidad, importe: top.importe }
 		: null;
-	const today_by_seller = new Map<string, number>();
-	for (const row of in_today) {
-		const id = ref_id(row.usuario) || 'sin-vendedor';
-		today_by_seller.set(id, (today_by_seller.get(id) ?? 0) + money_of(row.importe));
-	}
 	const sales_today = [...today_by_seller.entries()].map(([id, value]) => ({
 		name: users.get(id) || 'Sin Vendedor Asignado',
 		value,
 	}));
-	const total_orders = in_period.length;
 	return {
 		date_range: { from: date_from, to: date_to },
 		filters: { estados: wanted_states },

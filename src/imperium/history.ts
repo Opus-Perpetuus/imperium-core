@@ -88,6 +88,39 @@ export function resolve_history_model(
 	return raw;
 }
 
+export function history_page_limits(input: {
+	limite?: string | number | null;
+	size?: string | number | null;
+	desde?: string | number | null;
+}): { desde: number; limite: number } {
+	const legacy_size = Number(input.size ?? 0);
+	const limite = Math.min(
+		50,
+		Math.max(1, Number(input.limite ?? 0) || legacy_size || 15),
+	);
+	const desde = Math.max(0, Number(input.desde ?? 0) || 0);
+	return { desde, limite };
+}
+
+export function history_find_many_opts(input: {
+	document_id: string;
+	canonical: string;
+	collection_name?: string;
+	model_name?: string;
+	desde: number;
+	limite: number;
+}) {
+	return {
+		/** Un solo `payload ->> 'documentId'` sargable: el btree / compuesto lo cubre. */
+		where: { documentId: input.document_id },
+		skip: input.desde,
+		take: input.limite,
+		include_inactive: true,
+		sort: 'created_at:desc' as const,
+		populate: false,
+	};
+}
+
 export function history_row_matches(
 	store: HistoryCapableStore,
 	row: ImperiumDoc,
@@ -130,7 +163,108 @@ function display_label(path: string): string {
 	return LABELS[path] ?? path.replace(/[_-]+/g, ' ');
 }
 
-function diff_docs(before: ImperiumDoc | null, after: ImperiumDoc | null) {
+const OPERATION_TEMPLATES: Record<string, string> = {
+	crear: 'Se agregó {{etiqueta}} con {{valorNuevo}} (i{class:fas fa-plus})',
+	eliminar: 'Se eliminó {{etiqueta}} que tenía {{valorAnterior}} (i{class:fas fa-trash})',
+	editar: 'Se cambió {{etiqueta}} de {{valorAnterior}} (i{class:fas fa-arrow-right}) {{valorNuevo}}',
+	reordenar:
+		'Se reordenó {{etiqueta}} de la posición {{indiceAnterior}} (i{class:fas fa-arrow-right}) {{indiceNuevo}}',
+};
+
+const MAX_DISPLAY_VALUE_LENGTH = 180;
+
+export function format_history_value(value: unknown): string {
+	if (value === undefined) return 'sin valor';
+	if (value === null) return 'nulo';
+	if (typeof value === 'boolean') return value ? 'sí' : 'no';
+	if (typeof value === 'number') return String(value);
+	if (typeof value === 'string') {
+		const clipped =
+			value.length > MAX_DISPLAY_VALUE_LENGTH
+				? `${value.slice(0, MAX_DISPLAY_VALUE_LENGTH)}…`
+				: value;
+		return `"${clipped}"`;
+	}
+	try {
+		const text = JSON.stringify(value);
+		return text.length > MAX_DISPLAY_VALUE_LENGTH
+			? `${text.slice(0, MAX_DISPLAY_VALUE_LENGTH)}…`
+			: text;
+	} catch {
+		return String(value);
+	}
+}
+
+export function enrich_history_change(
+	change: Record<string, unknown>,
+): Record<string, unknown> {
+	const movement = String(change.tipoMovimiento ?? 'editar');
+	const label = String(change.displayLabel ?? change.normalizedPath ?? 'Campo');
+	const existing =
+		change.displayPathValues && typeof change.displayPathValues === 'object'
+			? (change.displayPathValues as Record<string, unknown>)
+			: {};
+	const displayPathValues = {
+		etiqueta: existing.etiqueta ?? label,
+		valorAnterior: existing.valorAnterior ?? format_history_value(change.before),
+		valorNuevo: existing.valorNuevo ?? format_history_value(change.after),
+		...existing,
+	};
+	const current_path = String(change.displayPath ?? '');
+	const displayPath = current_path.includes('{{')
+		? current_path
+		: (OPERATION_TEMPLATES[movement] ?? OPERATION_TEMPLATES.editar);
+	return { ...change, displayPath, displayPathValues };
+}
+
+export function interpolate_plain_history_template(
+	template: string,
+	values: Record<string, unknown> = {},
+): string {
+	return template
+		.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_match, key: string) =>
+			String(values[key] ?? ''),
+		)
+		.replace(/\(\s*i\{class:[^}]*fa-arrow-right[^}]*\}\s*\)/gi, '→')
+		.replace(/\(\s*[a-zA-Z][\w-]*\{[^{}]+\}\s*\)/g, '')
+		.replace(/\s{2,}/g, ' ')
+		.trim();
+}
+
+export function build_history_action_description(
+	changes: Array<Record<string, unknown>>,
+): string {
+	return changes
+		.slice(0, 3)
+		.map((change) => {
+			const enriched = enrich_history_change(change);
+			return interpolate_plain_history_template(
+				String(enriched.displayPath ?? ''),
+				(enriched.displayPathValues ?? {}) as Record<string, unknown>,
+			);
+		})
+		.filter(Boolean)
+		.join(', ');
+}
+
+export function enrich_history_row(row: ImperiumDoc): ImperiumDoc {
+	const changes = Array.isArray(row.changes) ? row.changes : [];
+	const enriched_changes = changes
+		.filter((change): change is Record<string, unknown> => Boolean(change) && typeof change === 'object')
+		.map((change) => enrich_history_change(change));
+	const stored_description = String(row.actionDescription ?? '');
+	const actionDescription =
+		stored_description.includes('{{') || /\(\s*i\{/.test(stored_description)
+			? build_history_action_description(enriched_changes)
+			: stored_description;
+	return {
+		...row,
+		changes: enriched_changes,
+		...(actionDescription ? { actionDescription } : {}),
+	};
+}
+
+export function diff_docs(before: ImperiumDoc | null, after: ImperiumDoc | null) {
 	const prev = as_object(before);
 	const next = as_object(after);
 	const keys = new Set([...Object.keys(prev), ...Object.keys(next)]);
@@ -142,17 +276,28 @@ function diff_docs(before: ImperiumDoc | null, after: ImperiumDoc | null) {
 		if (same_leaf(left, right)) continue;
 		const creating = left === undefined;
 		const removing = right === undefined;
-		changes.push({
-			op: creating ? 'add' : removing ? 'remove' : 'replace',
-			tipoMovimiento: creating ? 'crear' : removing ? 'eliminar' : 'editar',
-			jsonPointer: `/${key}`,
-			dotPath: key,
-			normalizedPath: key,
-			displayLabel: display_label(key),
-			displayPath: display_label(key),
-			before: creating ? undefined : leaf_value(left),
-			after: removing ? undefined : leaf_value(right),
-		});
+		const movement = creating ? 'crear' : removing ? 'eliminar' : 'editar';
+		const label = display_label(key);
+		const before_value = creating ? undefined : leaf_value(left);
+		const after_value = removing ? undefined : leaf_value(right);
+		changes.push(
+			enrich_history_change({
+				op: creating ? 'add' : removing ? 'remove' : 'replace',
+				tipoMovimiento: movement,
+				jsonPointer: `/${key}`,
+				dotPath: key,
+				normalizedPath: key,
+				displayLabel: label,
+				displayPath: OPERATION_TEMPLATES[movement],
+				before: before_value,
+				after: after_value,
+				displayPathValues: {
+					etiqueta: label,
+					valorAnterior: format_history_value(before_value),
+					valorNuevo: format_history_value(after_value),
+				},
+			}),
+		);
 	}
 	return changes;
 }
@@ -192,10 +337,7 @@ export async function record_document_history(
 		record_id: document_id,
 		operationType: operation,
 		actionName: action_name(loc?.name ?? canonical, before, after),
-		actionDescription: changes
-			.slice(0, 3)
-			.map((change) => String(change.displayPath ?? change.dotPath))
-			.join(', '),
+		actionDescription: build_history_action_description(changes),
 		changeCount: changes.length,
 		changes,
 		actor: {

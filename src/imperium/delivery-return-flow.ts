@@ -232,13 +232,12 @@ export async function recompute_product_existencia(store: ImperiumStore, product
 	if (!store.has('products')) return;
 	let total = 0;
 	if (store.has('inventory-stock-quant')) {
-		const { rows } = await store.find_many('inventory-stock-quant', {
+		for await (const page of store.scan('inventory-stock-quant', {
 			where: { producto: product_id },
-			take: 20000,
 			include_inactive: true,
-			populate: false,
-		});
-		for (const row of rows) total += Number(row.cantidad ?? 0);
+		})) {
+			for (const row of page) total += Number(row.cantidad ?? 0);
+		}
 	}
 	await store.update('products', product_id, { existencia: round_qty(total) });
 }
@@ -390,17 +389,16 @@ export async function delivery_return_by_state(
 	store: ImperiumStore,
 	mongo_match?: Record<string, unknown> | null,
 ): Promise<Array<{ state: string | null; count: number }>> {
-	const { rows } = await store.find_many('delivery-return', {
-		take: 20000,
-		include_inactive: true,
-		populate: false,
-		mongo_match,
-	});
 	const counts = new Map<string | null, number>();
-	for (const row of rows) {
-		const raw = text(row.estado ?? row.state);
-		const key = raw || null;
-		counts.set(key, (counts.get(key) ?? 0) + 1);
+	for await (const page of store.scan('delivery-return', {
+		include_inactive: true,
+		mongo_match,
+	})) {
+		for (const row of page) {
+			const raw = text(row.estado ?? row.state);
+			const key = raw || null;
+			counts.set(key, (counts.get(key) ?? 0) + 1);
+		}
 	}
 	return [...counts.entries()]
 		.sort((a, b) => String(a[0] ?? '').localeCompare(String(b[0] ?? '')))

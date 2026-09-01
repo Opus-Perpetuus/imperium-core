@@ -59,17 +59,16 @@ export async function products_inventory_cost(
 	store: ImperiumStore,
 	mongo_match?: Record<string, unknown> | null,
 ): Promise<number> {
-	const { rows } = await store.find_many('products', {
-		take: 20000,
-		include_inactive: true,
-		populate: false,
-		mongo_match,
-	});
 	let total = 0;
-	for (const row of rows) {
-		const existencia = num(row.existencia);
-		if (existencia < 0) continue;
-		total += existencia * num(row.costoVenta);
+	for await (const page of store.scan('products', {
+		include_inactive: true,
+		mongo_match,
+	})) {
+		for (const row of page) {
+			const existencia = num(row.existencia);
+			if (existencia < 0) continue;
+			total += existencia * num(row.costoVenta);
+		}
 	}
 	return total;
 }

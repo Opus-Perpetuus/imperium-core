@@ -157,11 +157,13 @@ function configuration_ref(module_name: string) {
 
 async function list_status_configurations(store: ImperiumStore) {
 	if (!store.has('configuration')) return [] as ImperiumDoc[];
-	const { rows } = await store.find_many('configuration', {
+	const rows: ImperiumDoc[] = [];
+	for await (const page of store.scan('configuration', {
 		where: { type: STATUS_OPTION_CONFIGURATION_TYPE },
-		take: 20000,
 		include_inactive: true,
-	});
+	})) {
+		rows.push(...page);
+	}
 	return rows;
 }
 
@@ -385,40 +387,41 @@ export async function normalize_state_values(ctx: StatusCtx) {
 			updated_documents: 0,
 			updated_fields: 0,
 		};
-		const { rows } = await ctx.store.find_many(resource, { take: 5000, include_inactive: true });
-		for (const document of rows) {
-			summary.scanned_documents += 1;
-			const update: Record<string, string> = {};
-			const descriptions: string[] = [];
-			let executable = false;
-			for (const field of fields) {
-				const current = document[field];
-				const resolved = resolve_value(options, field, current);
-				if (!resolved || typeof current !== 'string') continue;
-				executable = true;
-				if (resolved === current) continue;
-				update[field] = resolved;
-				descriptions.push(`${field}: ${current} -> ${resolved}`);
+		for await (const page of ctx.store.scan(resource, { include_inactive: true })) {
+			for (const document of page) {
+				summary.scanned_documents += 1;
+				const update: Record<string, string> = {};
+				const descriptions: string[] = [];
+				let executable = false;
+				for (const field of fields) {
+					const current = document[field];
+					const resolved = resolve_value(options, field, current);
+					if (!resolved || typeof current !== 'string') continue;
+					executable = true;
+					if (resolved === current) continue;
+					update[field] = resolved;
+					descriptions.push(`${field}: ${current} -> ${resolved}`);
+				}
+				if (!executable) continue;
+				summary.executed_documents += 1;
+				const changed = Object.keys(update);
+				if (!changed.length) continue;
+				await ctx.store.update(resource, String(document._id), update);
+				if (ctx.store.has('document-change-history')) {
+					await ctx.store.insert('document-change-history', {
+						name: 'Valores de estatus normalizados',
+						actionName: 'Valores de estatus normalizados',
+						actionDescription: descriptions.join(' · '),
+						operationType: 'normalize-state-values',
+						collectionName: resource,
+						modelName: model_id,
+						documentId: String(document._id),
+						created_by: String(ctx.actor?._id ?? ''),
+					});
+				}
+				summary.updated_documents += 1;
+				summary.updated_fields += changed.length;
 			}
-			if (!executable) continue;
-			summary.executed_documents += 1;
-			const changed = Object.keys(update);
-			if (!changed.length) continue;
-			await ctx.store.update(resource, String(document._id), update);
-			if (ctx.store.has('document-change-history')) {
-				await ctx.store.insert('document-change-history', {
-					name: 'Valores de estatus normalizados',
-					actionName: 'Valores de estatus normalizados',
-					actionDescription: descriptions.join(' · '),
-					operationType: 'normalize-state-values',
-					collectionName: resource,
-					modelName: model_id,
-					documentId: String(document._id),
-					created_by: String(ctx.actor?._id ?? ''),
-				});
-			}
-			summary.updated_documents += 1;
-			summary.updated_fields += changed.length;
 		}
 		summaries.push(summary);
 	}
@@ -480,18 +483,18 @@ export async function resolve_spurious_options(ctx: StatusCtx) {
 			const replacement = text(resolution.replacement_value);
 			let updated_documents = 0;
 			if (resource && ctx.store.has(resource)) {
-				const { rows } = await ctx.store.find_many(resource, {
+				for await (const page of ctx.store.scan(resource, {
 					where: { [field]: current },
-					take: 5000,
 					include_inactive: true,
-				});
-				for (const document of rows) {
-					await ctx.store.update(
-						resource,
-						String(document._id),
-						replacement ? { [field]: replacement } : { [field]: null },
-					);
-					updated_documents += 1;
+				})) {
+					for (const document of page) {
+						await ctx.store.update(
+							resource,
+							String(document._id),
+							replacement ? { [field]: replacement } : { [field]: null },
+						);
+						updated_documents += 1;
+					}
 				}
 				if (replacement) summary.updated_documents += updated_documents;
 				else summary.cleared_documents += updated_documents;
@@ -579,10 +582,10 @@ export async function list_status_option_control(ctx: StatusCtx) {
 	if (!ctx.store.has('module-management')) {
 		return ok([], 'Opciones de estado por módulo cargadas correctamente.');
 	}
-	const { rows: modules } = await ctx.store.find_many('module-management', {
-		take: 20000,
-		include_inactive: true,
-	});
+	const modules: ImperiumDoc[] = [];
+	for await (const page of ctx.store.scan('module-management', { include_inactive: true })) {
+		modules.push(...page);
+	}
 	const configs = await list_status_configurations(ctx.store);
 	const by_module = new Map<string, ImperiumDoc>();
 	for (const row of configs) {

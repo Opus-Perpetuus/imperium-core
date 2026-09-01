@@ -51,10 +51,13 @@ async function find_by_uuid(store: ImperiumStore, uuid: string): Promise<Imperiu
 	if (by_where && normalize_cfdi_uuid(by_where.uuid) === uuid && by_where.is_active !== false) {
 		return by_where;
 	}
-	const { rows } = await store.find_many('cfdi-document', { take: 2000, include_inactive: false });
-	return (
-		rows.find((row) => normalize_cfdi_uuid(row.uuid) === uuid && row.is_active !== false) ?? null
-	);
+	for await (const page of store.scan('cfdi-document', { include_inactive: false })) {
+		const hit = page.find(
+			(row) => normalize_cfdi_uuid(row.uuid) === uuid && row.is_active !== false,
+		);
+		if (hit) return hit;
+	}
+	return null;
 }
 
 export async function link_or_create_from_purchase_order(

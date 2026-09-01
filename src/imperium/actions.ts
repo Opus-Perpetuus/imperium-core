@@ -26,6 +26,7 @@ import {
 } from './custom-pattern-render.ts';
 import { normalize_all_counters } from './increment-normalize.ts';
 import { model_tracker_field_values } from './model-tracker-field-values.ts';
+import { debug_read_logs, debug_read_related, debug_statistics } from './debug-log-flow.ts';
 import { AguaMssqlService } from './agua-mssql.ts';
 import { calcular_importe } from './agua-importe.ts';
 import { looks_like_canonical, serialize_cfdi_to_xml, type CfdiCanonical } from './cfdi-xml.ts';
@@ -74,7 +75,12 @@ import {
 	resolve_comment_mentioned_users,
 } from './notifications.ts';
 import { assert_target_model_read, build_access } from './auth.ts';
-import { history_row_matches, resolve_history_model } from './history.ts';
+import {
+	enrich_history_row,
+	history_find_many_opts,
+	history_page_limits,
+	resolve_history_model,
+} from './history.ts';
 import {
 	list_status_option_control,
 	normalize_state_values,
@@ -96,10 +102,12 @@ import { emit_messages_refresh, last_driver_location } from './socket-stub.ts';
 import {
 	assert_report_template_write,
 	hydrate_loose_product_references,
+	hydrate_loose_product_references_many,
 	interpolate_report_records,
 	interpolate_report_template,
+	iter_report_record_pages,
+	render_report_from_pages,
 	report_validation_ok,
-	resolve_report_records,
 } from './reports-flow.ts';
 import {
 	GROUP_REF_ALMACEN,
@@ -203,6 +211,26 @@ type Ctx = {
 	body: Record<string, unknown>;
 };
 
+async function collect_scan(
+	store: ImperiumStore,
+	resource: string,
+	opts: {
+		where?: Record<string, unknown>;
+		mongo_match?: Record<string, unknown> | null;
+		include_inactive?: boolean;
+		page_size?: number;
+		q?: string;
+		/** Payload recortado. El set se devuelve entero. */
+		fields?: string[];
+		/** Set entero salvo estas claves pesadas. */
+		omit?: string[];
+	} = {},
+): Promise<ImperiumDoc[]> {
+	const out: ImperiumDoc[] = [];
+	for await (const page of store.scan(resource, opts)) out.push(...page);
+	return out;
+}
+
 export async function handle_action(
 	store: ImperiumStore,
 	sql: Bun.SQL,
@@ -286,11 +314,11 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'lista-asistencia:mark_attendance':
 			return mark_attendance(ctx);
 		case 'debug-log:read_logs':
-			return debug_read_logs(ctx);
+			return debug_read_logs(ctx.store, ctx.url);
 		case 'debug-log:get_statistics':
-			return debug_statistics(ctx);
+			return debug_statistics(ctx.store, ctx.url);
 		case 'debug-log:read_related_request_log':
-			return debug_read_related(ctx);
+			return debug_read_related(ctx.store, ctx.url);
 		case 'debug-log:read_log_by_id':
 			return debug_read_one(ctx);
 		case 'delivery-package:read_offline_catalog':
@@ -770,10 +798,8 @@ async function pattern_parts_by_counter(ctx: Ctx) {
 	if (!ctx.store.has('custom-pattern-increment-sequence-parts')) {
 		return ok([], 'Partes del patrón cargadas correctamente.', 0);
 	}
-	const { rows } = await ctx.store.find_many('custom-pattern-increment-sequence-parts', {
+	const rows = await collect_scan(ctx.store, 'custom-pattern-increment-sequence-parts', {
 		where: { counter_config_id },
-		take: 20000,
-		sort: 'order:asc',
 	});
 	const ordered = [...rows].sort((a, b) => Number(a.order ?? 0) - Number(b.order ?? 0));
 	return ok(ordered, 'Partes del patrón cargadas correctamente.', ordered.length);
@@ -858,12 +884,10 @@ async function catalog_seed_samples(ctx: Ctx) {
 	const dir = cfdi_samples_dir();
 	if (!dir) return ok([], 'No hay paquetes de catálogo SAT en el núcleo');
 	const files = readdirSync(dir).filter((f) => f.startsWith('c_') && f.endsWith('.json'));
-	const present = await ctx.store.find_many('cfdi-catalog', {
-		take: 20000,
-		include_inactive: true,
-		populate: false,
-	});
-	const have = new Set(present.rows.map((r) => String(r._ref ?? r.ref ?? '')));
+	const have = new Set<string>();
+	for await (const page of ctx.store.scan('cfdi-catalog', { include_inactive: true })) {
+		for (const row of page) have.add(String(row._ref ?? row.ref ?? ''));
+	}
 	let seeded = 0;
 	let skipped = 0;
 	for (const file of files) {
@@ -910,21 +934,14 @@ async function catalog_search(ctx: Ctx) {
 	const limit = Math.min(Math.max(Number(ctx.url.searchParams.get('limit') ?? 20) || 20, 1), 100);
 	const { rows } = await ctx.store.find_many('cfdi-catalog', {
 		where: { catalog },
-		take: term ? 20000 : limit,
+		q: term || undefined,
+		take: limit,
 		sort: 'code:asc',
 		populate: false,
+		skip_total: true,
+		list_project: true,
 	});
-	const needle = term.toLowerCase();
-	const filtered = needle
-		? rows.filter((row) => {
-				const code = String(row.code ?? '').toLowerCase();
-				const name = String(row.name ?? '').toLowerCase();
-				const search_field = String(row.search_field ?? '').toLowerCase();
-				return code.includes(needle) || name.includes(needle) || search_field.includes(needle);
-			})
-		: rows;
-	const page = filtered.slice(0, limit);
-	return ok(page, 'Búsqueda de catálogo', page.length);
+	return ok(rows, 'Búsqueda de catálogo', rows.length);
 }
 
 async function cfdi_validate(ctx: Ctx) {
@@ -1247,50 +1264,69 @@ async function purchase_order_parse_document(ctx: Ctx) {
 	);
 }
 
+/** Lista UI: columnas del mapa. Sin `search_field` (n-gramas enormes). */
+const INCREMENT_LIST_FIELDS = [
+	'name',
+	'model_name',
+	'collection',
+	'increment_field',
+	'index_name',
+	'type',
+	'custom_pattern',
+	'current_sequence',
+	'current_real_value',
+	'ref_value',
+	'is_active',
+];
+
+/** Consolida duplicados. Sin `search_field` (n-gramas). */
+const INCREMENT_CONSOLIDATE_FIELDS = [
+	'_unique_string_reference',
+	'current_sequence',
+	'current',
+	'valor',
+	'current_real_value',
+];
+
 async function list_auto_increment_controls(ctx: Ctx) {
 	const q = query_list(ctx.url);
-	const { rows } = await ctx.store.find_many('auto-increment-control', {
-		take: 20000,
+	const take = Math.min(q.take, 200);
+	const { rows, total } = await ctx.store.find_many('auto-increment-control', {
 		include_inactive: true,
+		take,
+		skip: q.skip,
+		q: q.q || undefined,
+		sort: q.sort || 'name:asc',
+		populate: false,
+		scan_fields: INCREMENT_LIST_FIELDS,
 	});
-	const mapped = rows
-		.map((row) => {
-			const ref_value = row.ref_value;
-			const is_global =
-				ref_value == null || ref_value === undefined || String(ref_value).trim() === '';
-			return {
-				_id: row._id,
-				name: row.name || `${row.model_name}.${row.increment_field}`,
-				model_name: row.model_name,
-				collection: row.collection,
-				increment_field: row.increment_field,
-				index_name: row.index_name,
-				type: row.type,
-				custom_pattern: row.custom_pattern || undefined,
-				current_sequence: row.current_sequence,
-				current_real_value: row.current_real_value,
-				ref_value: row.ref_value,
-				segment: is_global ? '(global)' : String(ref_value),
-				is_active: row.is_active !== false,
-			};
-		})
-		.filter((row) => {
-			if (!q.q) return true;
-			const hay = `${row.name} ${row.model_name} ${row.increment_field} ${row.segment}`.toLowerCase();
-			return hay.includes(q.q.toLowerCase());
-		})
-		.sort((a, b) => String(a.name).localeCompare(String(b.name), 'es'));
-	return ok(
-		mapped.slice(q.skip, q.skip + q.take),
-		'Controles de auto-incremento cargados correctamente.',
-		mapped.length,
-	);
+	const mapped = rows.map((row) => {
+		const ref_value = row.ref_value;
+		const is_global =
+			ref_value == null || ref_value === undefined || String(ref_value).trim() === '';
+		return {
+			_id: row._id,
+			name: row.name || `${row.model_name}.${row.increment_field}`,
+			model_name: row.model_name,
+			collection: row.collection,
+			increment_field: row.increment_field,
+			index_name: row.index_name,
+			type: row.type,
+			custom_pattern: row.custom_pattern || undefined,
+			current_sequence: row.current_sequence,
+			current_real_value: row.current_real_value,
+			ref_value: row.ref_value,
+			segment: is_global ? '(global)' : String(ref_value),
+			is_active: row.is_active !== false,
+		};
+	});
+	return ok(mapped, 'Controles de auto-incremento cargados correctamente.', total);
 }
 
 async function increment_consolidate(ctx: Ctx) {
-	const { rows } = await ctx.store.find_many('auto-increment-control', {
-		take: 20000,
+	const rows = await collect_scan(ctx.store, 'auto-increment-control', {
 		include_inactive: true,
+		fields: INCREMENT_CONSOLIDATE_FIELDS,
 	});
 	const groups = new Map<string, ImperiumDoc[]>();
 	for (const row of rows) {
@@ -1459,9 +1495,8 @@ async function close_empaque(ctx: Ctx) {
 			`El pedido debe estar en «surtido» para cerrar empaque (ahora: ${estado || 'sin estado'})`,
 		);
 	}
-	const { rows } = await ctx.store.find_many('delivery-package', {
+	const rows = await collect_scan(ctx.store, 'delivery-package', {
 		where: { pedido: String(pedido._id) },
-		take: 20000,
 		include_inactive: true,
 	});
 	const active = rows.filter(
@@ -1552,7 +1587,12 @@ async function read_chofer_queue(ctx: Ctx) {
 		);
 	}
 	const vehicles = (
-		await ctx.store.find_many('vehicle', { where: { chofer: employee }, take: 20000 })
+		await ctx.store.find_many('vehicle', {
+			where: { chofer: employee },
+			take: 50,
+			populate: false,
+			skip_total: true,
+		})
 	).rows;
 	const vehicle_ids = new Set(vehicles.map((v) => String(v._id)));
 	if (!vehicle_ids.size) {
@@ -1564,13 +1604,14 @@ async function read_chofer_queue(ctx: Ctx) {
 			vehicle: { in: [...vehicle_ids] },
 			estado: { in: estados },
 		},
-		take: 20000,
+		take: 200,
+		populate: false,
+		skip_total: true,
 	});
-	const hit = rows.filter((p) => p.is_active !== false);
 	return ok(
-		hit,
+		rows,
 		mode === 'delivery' ? 'Cola de entrega del chofer' : 'Cola de carga del chofer',
-		hit.length,
+		rows.length,
 	);
 }
 
@@ -1584,9 +1625,11 @@ async function read_load_manifest(ctx: Ctx) {
 	if (estado) where.estado = estado;
 	const { rows } = await ctx.store.find_many('delivery-package', {
 		where,
-		take: 20000,
+		take: 200,
+		populate: false,
+		skip_total: true,
 	});
-	const records = rows.filter((row) => row.is_active !== false);
+	const records = rows;
 	const groups = new Map<
 		string,
 		{
@@ -1640,11 +1683,16 @@ async function read_load_manifest(ctx: Ctx) {
 	return ok(data, 'Manifiesto de carga generado correctamente', data.length);
 }
 
+/** Columna física: no hidratar bultos sin ruta. $ne solo no basta (NULL IS DISTINCT FROM ''). */
+const HAS_DELIVERY_ROUTE = {
+	$and: [{ delivery_route: { $exists: true } }, { delivery_route: { $ne: '' } }],
+};
+
 async function delivery_offline_catalog(ctx: Ctx) {
 	const route_id = String(ctx.url.searchParams.get('route_id') ?? '').trim();
-	const { rows } = await ctx.store.find_many('delivery-package', {
-		where: route_id ? { delivery_route: route_id } : {},
-		take: 20000,
+	const rows = await collect_scan(ctx.store, 'delivery-package', {
+		where: route_id ? { delivery_route: route_id } : undefined,
+		mongo_match: route_id ? null : HAS_DELIVERY_ROUTE,
 	});
 	const records = rows
 		.filter((row) => {
@@ -1666,11 +1714,29 @@ async function delivery_offline_catalog(ctx: Ctx) {
 	return ok(records, 'Catálogo logístico offline cargado correctamente');
 }
 
+/**
+ * El mapa lee `delivery_address_coordinates` (TEXT JSON), no las
+ * columnas latitude/longitude (el write path no las llena).
+ * `$exists` en lat/lon cubre filas legacy. No filtrar “tiene ruta”:
+ * el grupo `sin-ruta` es parte del contrato.
+ */
+const HAS_MAP_COORDINATES = {
+	$or: [
+		{
+			$and: [
+				{ delivery_address_coordinates: { $exists: true } },
+				{ delivery_address_coordinates: { $ne: '' } },
+			],
+		},
+		{ $and: [{ latitude: { $exists: true } }, { longitude: { $exists: true } }] },
+	],
+};
+
 async function delivery_route_map(ctx: Ctx) {
 	const route_id = String(ctx.url.searchParams.get('route_id') ?? '').trim();
-	const { rows } = await ctx.store.find_many('delivery-package', {
-		where: route_id ? { delivery_route: route_id } : {},
-		take: 20000,
+	const rows = await collect_scan(ctx.store, 'delivery-package', {
+		where: route_id ? { delivery_route: route_id } : undefined,
+		mongo_match: HAS_MAP_COORDINATES,
 	});
 	const packages = rows.filter((row) => {
 		const coords = as_object(row.delivery_address_coordinates);
@@ -1725,21 +1791,17 @@ async function delivery_chofer_routes(ctx: Ctx) {
 		return ok([], 'El usuario no tiene un empleado vinculado para identificar al chofer.');
 	}
 	const vehicles = ctx.store.has('vehicle')
-		? (
-				await ctx.store.find_many('vehicle', {
-					where: { chofer: employee_id },
-					take: 20000,
-					include_inactive: false,
-				})
-			).rows
+		? await collect_scan(ctx.store, 'vehicle', {
+				where: { chofer: employee_id },
+				include_inactive: false,
+			})
 		: [];
 	if (!vehicles.length) {
 		return ok([], 'El chofer no tiene vehículos asignados.');
 	}
 	const vehicle_ids = vehicles.map((v) => String(v._id));
-	const { rows } = await ctx.store.find_many('delivery-route', {
+	const rows = await collect_scan(ctx.store, 'delivery-route', {
 		where: { vehicle: { in: vehicle_ids } },
-		take: 20000,
 		include_inactive: false,
 	});
 	const routes = sort_by_name(rows);
@@ -1890,12 +1952,11 @@ async function optimize_route(ctx: Ctx) {
 		}
 		origin = warehouse;
 	}
-	const { rows: packages } = ctx.store.has('delivery-package')
-		? await ctx.store.find_many('delivery-package', {
+	const packages = ctx.store.has('delivery-package')
+		? await collect_scan(ctx.store, 'delivery-package', {
 				where: { delivery_route: route_id },
-				take: 20000,
 			})
-		: { rows: [] };
+		: [];
 	const grouped = new Map<
 		string,
 		{ id: string; location: GeoPoint; label: string; demand_kg: number; pedido?: string; package_ids: string[] }
@@ -2054,32 +2115,27 @@ async function read_history(ctx: Ctx) {
 		throw new Error('No se pudo resolver el modelo del historial solicitado.');
 	}
 	await assert_target_model_read(ctx.store, ctx.actor, canonical);
-	const legacy_size = Number(ctx.url.searchParams.get('size') ?? 0);
-	const limite = Math.min(
-		50,
-		Math.max(1, Number(ctx.url.searchParams.get('limite') ?? 0) || legacy_size || 15),
-	);
-	const desde = Math.max(0, Number(ctx.url.searchParams.get('desde') ?? 0) || 0);
-	const { rows } = await ctx.store.find_many('document-change-history', {
-		mongo_match: {
-			$or: [
-				{ documentId: document_id },
-				{ document_id: document_id },
-				{ record_id: document_id },
-			],
-		},
-		take: 20000,
-		include_inactive: true,
-		sort: 'created_at:desc',
+	const { desde, limite } = history_page_limits({
+		limite: ctx.url.searchParams.get('limite'),
+		size: ctx.url.searchParams.get('size'),
+		desde: ctx.url.searchParams.get('desde'),
 	});
-	const matched = rows
-		.filter((row) => history_row_matches(ctx.store, row, document_id, canonical))
-		.sort((a, b) => created_ms(b) - created_ms(a));
-	const page = matched.slice(desde, desde + limite);
+	const { rows, total } = await ctx.store.find_many(
+		'document-change-history',
+		history_find_many_opts({
+			document_id,
+			canonical,
+			collection_name,
+			model_name,
+			desde,
+			limite,
+		}),
+	);
+	const page = rows.map((row) => enrich_history_row(row));
 	return ok(
 		page,
 		page.length ? 'Historial obtenido correctamente' : 'No se encontraron cambios para este registro',
-		matched.length,
+		total,
 	);
 }
 
@@ -2104,11 +2160,7 @@ async function read_history_by_id(ctx: Ctx) {
 		throw new Error('No se pudo resolver el modelo del historial solicitado.');
 	}
 	await assert_target_model_read(ctx.store, ctx.actor, canonical);
-	return ok([record], 'Registro de historial obtenido correctamente');
-}
-
-function documentation_section(doc: ImperiumDoc) {
-	return String(doc.section ?? '');
+	return ok([enrich_history_row(record)], 'Registro de historial obtenido correctamente');
 }
 
 function documentation_order(doc: ImperiumDoc) {
@@ -2133,41 +2185,36 @@ async function documentation_adjacent(ctx: Ctx) {
 	const slug = String(ctx.params.slug ?? '').trim();
 	const folder = String(ctx.url.searchParams.get('folder') ?? '').trim();
 	const section = String(ctx.url.searchParams.get('section') ?? '').trim();
-	const { rows } = await ctx.store.find_many('documentation-page', {
-		take: 20000,
-		include_inactive: false,
-	});
-	const active = rows.filter((row) => row.is_active !== false);
-	const current = active.find((row) => {
-		if (String(row.slug ?? '') !== slug) return false;
-		if (folder && String(row.folder_path ?? '') !== folder) return false;
-		if (section && documentation_section(row) !== section) return false;
-		return true;
-	});
-	if (!current) {
+	const found = await ctx.store.documentation_adjacent({ slug, folder, section });
+	if (!found.current) {
 		return ok([{ previous: null, next: null }], 'Documento no encontrado.', 0);
 	}
-	const sorted = [...active].sort((left, right) => {
-		const by_section = documentation_section(left).localeCompare(documentation_section(right));
-		if (by_section) return by_section;
-		const by_order = documentation_order(left) - documentation_order(right);
-		if (by_order) return by_order;
-		return String(left._id ?? '').localeCompare(String(right._id ?? ''));
-	});
-	const index = sorted.findIndex((row) => String(row._id) === String(current._id));
 	return ok(
 		[
 			{
-				previous: documentation_adjacent_card(index > 0 ? sorted[index - 1] : null),
-				next: documentation_adjacent_card(
-					index >= 0 && index < sorted.length - 1 ? sorted[index + 1] : null,
-				),
+				previous: documentation_adjacent_card(found.previous),
+				next: documentation_adjacent_card(found.next),
 			},
 		],
 		'Documentos adyacentes obtenidos.',
 		1,
 	);
 }
+
+/** Cards del árbol / read_all. Sin `content` (markdown). */
+const DOCUMENTATION_CARD_FIELDS = [
+	'title',
+	'name',
+	'slug',
+	'section',
+	'folder_path',
+	'metadata',
+	'order',
+	'is_root_page',
+	'parent_hierarchy',
+	'headings',
+	'description',
+];
 
 function documentation_page_card(doc: ImperiumDoc) {
 	const meta = as_object(doc.metadata);
@@ -2195,9 +2242,9 @@ function documentation_children(children: Map<string, { key: string; title: stri
 }
 
 async function documentation_read_all(ctx: Ctx) {
-	const { rows } = await ctx.store.find_many('documentation-page', {
-		take: 20000,
+	const rows = await collect_scan(ctx.store, 'documentation-page', {
 		include_inactive: false,
+		fields: DOCUMENTATION_CARD_FIELDS,
 	});
 	const docs = rows
 		.filter((doc) => doc.is_active !== false)
@@ -2244,263 +2291,16 @@ async function documentation_read_one(
 	return ok([doc], 'Documento obtenido correctamente.');
 }
 
-async function collect_debug_logs(ctx: Ctx): Promise<ImperiumDoc[]> {
-	const levels = String(ctx.url.searchParams.get('level') ?? '')
-		.split(',')
-		.map((s) => s.trim())
-		.filter(Boolean);
-	const search = String(ctx.url.searchParams.get('search') ?? '').trim().toLowerCase();
-	const user = String(ctx.url.searchParams.get('user') ?? '').trim().toLowerCase();
-	const origin_file = String(ctx.url.searchParams.get('origin_file') ?? '').trim().toLowerCase();
-	const request_results = String(ctx.url.searchParams.get('request_result') ?? '')
-		.split(',')
-		.map((s) => s.trim().toLowerCase())
-		.filter(Boolean);
-	const date_from = Date.parse(String(ctx.url.searchParams.get('date_from') ?? ''));
-	const date_to = Date.parse(String(ctx.url.searchParams.get('date_to') ?? ''));
-	const { rows } = await ctx.store.find_many('debug-log', {
-		take: 20000,
-		include_inactive: true,
-	});
-	return rows.filter((row) => {
-		if (levels.length && !levels.includes(String(row.level ?? ''))) return false;
-		if (search) {
-			const hay = [row.message, row.name, row.search_field, row.origin]
-				.map((v) => JSON.stringify(v ?? '').toLowerCase())
-				.join(' ');
-			if (!hay.includes(search)) return false;
-		}
-		if (user) {
-			const hay = [
-				row.user,
-				row.created_by,
-				as_object(row.request_context).user,
-				as_object(as_object(row.request_context).user).email,
-				as_object(as_object(row.request_context).user).name,
-			]
-				.map((v) => String(v ?? '').toLowerCase())
-				.join(' ');
-			if (!hay.includes(user)) return false;
-		}
-		if (origin_file) {
-			const origin = as_object(row.origin);
-			const file = String(origin.file ?? row.origin_file ?? '').toLowerCase();
-			if (!file.includes(origin_file)) return false;
-		}
-		if (request_results.length && !debug_matches_request_result(row, request_results)) {
-			return false;
-		}
-		if (Number.isFinite(date_from) || Number.isFinite(date_to)) {
-			const ms = created_ms(row);
-			const from = Number.isFinite(date_from) ? date_from : -Infinity;
-			const to = Number.isFinite(date_to) ? date_to : Infinity;
-			const lo = Math.min(from, to);
-			const hi = Math.max(from, to);
-			if (ms < lo || ms > hi) return false;
-		}
-		return true;
-	});
-}
-
-async function debug_read_logs(ctx: Ctx) {
-	const page = Math.max(1, Number(ctx.url.searchParams.get('page') ?? 1) || 1);
-	const size = Math.min(200, Math.max(1, Number(ctx.url.searchParams.get('size') ?? 50) || 50));
-	const sort_field = ctx.url.searchParams.get('sort') || 'createdAt';
-	const sort_dir = ctx.url.searchParams.get('dir') === 'asc' ? 1 : -1;
-	const filtered = await collect_debug_logs(ctx);
-	const allowed = new Set([
-		'createdAt',
-		'level',
-		'message',
-		'origin.file',
-		'request_context.response.status_code',
-		'request_context.response.duration_ms',
-	]);
-	const field = allowed.has(sort_field) ? sort_field : 'createdAt';
-	filtered.sort((a, b) => {
-		const av = debug_sort_value(a, field);
-		const bv = debug_sort_value(b, field);
-		if (av < bv) return -1 * sort_dir;
-		if (av > bv) return 1 * sort_dir;
-		return 0;
-	});
-	const total = filtered.length;
-	const slice = filtered.slice((page - 1) * size, page * size);
-	return {
-		...ok(slice, 'Logs obtenidos', total),
-		page,
-		size,
-		total_pages: Math.ceil(total / size) || 0,
-	};
-}
-
-async function debug_statistics(ctx: Ctx) {
-	const rows = await collect_debug_logs(ctx);
-	const total = rows.length;
-	const by_level_map = new Map<string, number>();
-	const by_origin_map = new Map<string, { file: string; display: string; count: number }>();
-	const timeline_map = new Map<string, { level: string; hour: string; count: number }>();
-	for (const row of rows) {
-		const level = String(row.level ?? 'log');
-		by_level_map.set(level, (by_level_map.get(level) ?? 0) + 1);
-		const origin = as_object(row.origin);
-		const file = String(origin.file ?? 'unknown');
-		const current = by_origin_map.get(file) ?? {
-			file,
-			display: String(origin.display ?? file),
-			count: 0,
-		};
-		current.count += 1;
-		by_origin_map.set(file, current);
-		const hour = debug_hour_mexico(row);
-		const key = `${level}|${hour}`;
-		const slot = timeline_map.get(key) ?? { level, hour, count: 0 };
-		slot.count += 1;
-		timeline_map.set(key, slot);
-	}
-	const by_level = [...by_level_map.entries()]
-		.map(([level, count]) => ({
-			level,
-			count,
-			percentage: total ? parseFloat(((count / total) * 100).toFixed(2)) : 0,
-		}))
-		.sort((a, b) => b.count - a.count);
-	const by_origin = [...by_origin_map.values()]
-		.map((item) => ({
-			...item,
-			percentage: total ? parseFloat(((item.count / total) * 100).toFixed(2)) : 0,
-		}))
-		.sort((a, b) => b.count - a.count)
-		.slice(0, 50);
-	const timeline = [...timeline_map.values()].sort((a, b) => a.hour.localeCompare(b.hour));
-	return {
-		data: { total, by_level, by_origin, timeline },
-		message: 'Estadísticas de logs',
-	};
-}
-
-function debug_hour_mexico(row: ImperiumDoc): string {
-	const ms = created_ms(row);
-	const stamp = Number.isFinite(ms) ? new Date(ms) : new Date();
-	const local = stamp.toLocaleString('sv-SE', { timeZone: 'America/Mexico_City' });
-	return `${local.slice(0, 13)}:00`;
-}
-
-function debug_sort_value(row: ImperiumDoc, field: string): string | number {
-	if (field === 'createdAt') return created_ms(row);
-	if (field === 'origin.file') return String(as_object(row.origin).file ?? '');
-	if (field === 'request_context.response.status_code') {
-		return Number(as_object(as_object(row.request_context).response).status_code ?? 0);
-	}
-	if (field === 'request_context.response.duration_ms') {
-		return Number(as_object(as_object(row.request_context).response).duration_ms ?? 0);
-	}
-	return String(row[field] ?? '');
-}
-
-function debug_matches_request_result(row: ImperiumDoc, wanted: string[]): boolean {
-	const response = as_object(as_object(row.request_context).response);
-	const status = Number(response.status_code);
-	const result = String(response.result ?? '').toLowerCase();
-	return wanted.some((value) => {
-		if (value === 'success') {
-			if (Number.isFinite(status) && status >= 200 && status <= 299) return true;
-			return ['success', 'ok'].includes(result);
-		}
-		if (value === 'warning') {
-			if (Number.isFinite(status) && status >= 300 && status <= 399) return true;
-			return ['warning', 'notice', 'redirect', 'redirection'].includes(result);
-		}
-		if (value === 'error') {
-			if (Number.isFinite(status) && status >= 400 && status <= 599) return true;
-			return ['error', 'danger'].includes(result);
-		}
-		return result === value;
-	});
-}
-
 async function debug_read_one(ctx: Ctx) {
 	const doc = await ctx.store.find_id('debug-log', ctx.params.id);
 	if (!doc) return ok([], 'Log no encontrado');
 	return ok([doc], 'Log encontrado');
 }
 
-function debug_normalize_related_route(value: string): string {
-	const normalized = value.trim();
-	if (!normalized) return '';
-	if (normalized.startsWith('/')) return normalized.slice(0, 1024);
-	try {
-		const parsed = new URL(normalized);
-		return `${parsed.pathname}${parsed.search}`.slice(0, 1024);
-	} catch {
-		return '';
-	}
-}
-
-function debug_route_key(value: string): string {
-	const route = debug_normalize_related_route(value);
-	if (route === '/api') return '/';
-	if (route.startsWith('/api/')) return route.slice(4) || '/';
-	return route;
-}
-
-function debug_parse_query_date(value: string): number | null {
-	const parsed = Date.parse(value.trim());
-	return Number.isFinite(parsed) ? parsed : null;
-}
-
-function debug_pick_related_request_log(docs: ImperiumDoc[]): ImperiumDoc | null {
-	if (!docs.length) return null;
-	return docs.find((doc) => String(doc.level ?? '') === 'error') ?? docs[0] ?? null;
-}
-
-async function debug_read_related(ctx: Ctx) {
-	const route = debug_normalize_related_route(
-		String(ctx.url.searchParams.get('route') ?? ctx.url.searchParams.get('url') ?? ''),
-	);
-	const method = String(ctx.url.searchParams.get('method') ?? '').trim().toUpperCase().slice(0, 10);
-	if (!route || !method) {
-		return ok([], 'Debes indicar `route` y `method` para localizar el log.');
-	}
-	const status_raw = Number(ctx.url.searchParams.get('status') ?? '');
-	const status_code =
-		Number.isFinite(status_raw) && status_raw >= 100 && status_raw <= 599
-			? Math.trunc(status_raw)
-			: undefined;
-	const created_after = debug_parse_query_date(String(ctx.url.searchParams.get('created_after') ?? ''));
-	const created_before = debug_parse_query_date(String(ctx.url.searchParams.get('created_before') ?? ''));
-	const wanted_route = debug_route_key(route);
-	const { rows } = await ctx.store.find_many('debug-log', {
-		take: 20000,
-		include_inactive: true,
-	});
-	const hits = rows
-		.filter((row) => {
-			const ctx_req = as_object(row.request_context);
-			if (debug_route_key(String(ctx_req.route ?? '')) !== wanted_route) return false;
-			if (String(ctx_req.method ?? '').toUpperCase() !== method) return false;
-			const level = String(row.level ?? '');
-			if (!['error', 'request'].includes(level)) return false;
-			if (status_code !== undefined) {
-				const code = Number(as_object(ctx_req.response).status_code);
-				if (code !== status_code) return false;
-			}
-			if (created_after != null || created_before != null) {
-				const ms = created_ms(row);
-				if (created_after != null && ms < created_after) return false;
-				if (created_before != null && ms > created_before) return false;
-			}
-			return true;
-		})
-		.sort((a, b) => created_ms(b) - created_ms(a))
-		.slice(0, 10);
-	const related_log = debug_pick_related_request_log(hits);
-	if (!related_log) return ok([], 'No se encontró un log relacionado.');
-	return ok([related_log], 'Log relacionado encontrado');
-}
-
 async function documentation_structure(ctx: Ctx) {
-	const { rows } = await ctx.store.find_many('documentation-page', { take: 20000 });
+	const rows = await collect_scan(ctx.store, 'documentation-page', {
+		fields: DOCUMENTATION_CARD_FIELDS,
+	});
 	const root_pages: ReturnType<typeof documentation_page_card>[] = [];
 	const sections = new Map<
 		string,
@@ -2620,12 +2420,12 @@ async function documentation_sync(ctx: Ctx) {
 	if (!documents.length) {
 		return ok([], 'No se proporcionaron documentos para sincronizar.');
 	}
-	const { rows } = await ctx.store.find_many('documentation-page', {
-		take: 5000,
+	for await (const page of ctx.store.scan('documentation-page', {
 		include_inactive: true,
-	});
-	for (const row of rows) {
-		await ctx.store.remove('documentation-page', String(row._id));
+	})) {
+		for (const row of page) {
+			await ctx.store.remove('documentation-page', String(row._id));
+		}
 	}
 	const created: ImperiumDoc[] = [];
 	for (const raw of documents) {
@@ -3291,46 +3091,35 @@ async function stock_consistency(ctx: Ctx) {
 	// Original: ProductsModel.find + aggregate de quants sin filtrar is_active.
 	// Sin inactivos, un producto borrado (sonda o real) con quants vivos
 	// aparece como inconsistente con nombre vacío y existencia 0.
-	const products = (
-		await ctx.store.find_many('products', {
-			take: 20000,
-			populate: false,
-			include_inactive: true,
-		})
-	).rows;
-	const quants = ctx.store.has('inventory-stock-quant')
-		? (
-				await ctx.store.find_many('inventory-stock-quant', {
-					take: 20000,
-					populate: false,
-					include_inactive: true,
-				})
-			).rows
-		: [];
 	const by_prod = new Map<string, { suma: number; ubicaciones: number }>();
-	for (const q of quants) {
-		const id = ref_id(q.producto);
-		if (!id) continue;
-		const cur = by_prod.get(id) ?? { suma: 0, ubicaciones: 0 };
-		cur.suma += Number(q.cantidad ?? 0);
-		cur.ubicaciones += 1;
-		by_prod.set(id, cur);
+	if (ctx.store.has('inventory-stock-quant')) {
+		for await (const page of ctx.store.scan('inventory-stock-quant', {
+			include_inactive: true,
+		})) {
+			for (const q of page) {
+				const id = ref_id(q.producto);
+				if (!id) continue;
+				const cur = by_prod.get(id) ?? { suma: 0, ubicaciones: 0 };
+				cur.suma += Number(q.cantidad ?? 0);
+				cur.ubicaciones += 1;
+				by_prod.set(id, cur);
+			}
+		}
 	}
-	const ids = new Set([
-		...products.filter((p) => Number(p.existencia ?? 0) !== 0).map((p) => String(p._id)),
-		...by_prod.keys(),
-	]);
-	const by_id = new Map(products.map((p) => [String(p._id), p]));
+	const seen = new Set<string>();
 	const filas: ImperiumDoc[] = [];
 	let inconsistentes = 0;
-	for (const id of ids) {
-		const product = by_id.get(id);
-		const quant = by_prod.get(id);
+	let revisados = 0;
+	const push_fila = (
+		id: string,
+		product: ImperiumDoc | undefined,
+		quant: { suma: number; ubicaciones: number } | undefined,
+	) => {
 		const suma_quants = Number((quant?.suma ?? 0).toFixed(4));
 		const existencia = Number(Number(product?.existencia ?? 0).toFixed(4));
 		const delta = Number((existencia - suma_quants).toFixed(4));
 		const consistente = delta === 0;
-		if (solo_inconsistentes && consistente) continue;
+		if (solo_inconsistentes && consistente) return;
 		if (!consistente) inconsistentes += 1;
 		filas.push({
 			producto_id: id,
@@ -3342,6 +3131,21 @@ async function stock_consistency(ctx: Ctx) {
 			ubicaciones: quant?.ubicaciones ?? 0,
 			consistente,
 		});
+	};
+	for await (const page of ctx.store.scan('products', { include_inactive: true })) {
+		for (const product of page) {
+			const id = String(product._id ?? '');
+			if (!id) continue;
+			seen.add(id);
+			if (!by_prod.has(id) && Number(product.existencia ?? 0) === 0) continue;
+			revisados += 1;
+			push_fila(id, product, by_prod.get(id));
+		}
+	}
+	for (const id of by_prod.keys()) {
+		if (seen.has(id)) continue;
+		revisados += 1;
+		push_fila(id, undefined, by_prod.get(id));
 	}
 	let reparados = 0;
 	if (reparar) {
@@ -3356,7 +3160,7 @@ async function stock_consistency(ctx: Ctx) {
 	return ok(
 		[
 			{
-				total_productos_revisados: ids.size,
+				total_productos_revisados: revisados,
 				inconsistentes,
 				reparados,
 				filas,
@@ -3364,7 +3168,7 @@ async function stock_consistency(ctx: Ctx) {
 		],
 		reparar
 			? `Consistencia: ${inconsistentes} inconsistente(s), ${reparados} reparado(s)`
-			: `Consistencia: ${inconsistentes} inconsistente(s) de ${ids.size} producto(s)`,
+			: `Consistencia: ${inconsistentes} inconsistente(s) de ${revisados} producto(s)`,
 	);
 }
 
@@ -3524,59 +3328,82 @@ function message_is_unread_for(doc: ImperiumDoc, uid: string): boolean {
 	return recipients.includes(uid) && !read.includes(uid);
 }
 
-async function find_user_messages(store: ImperiumStore, uid: string, take = 20000) {
-	return store.find_many('messages', {
-		mongo_match: {
-			$or: [
-				{ senderUserId: uid },
-				{ sender_user_id: uid },
-				{ created_by: uid },
-				{ recipientUserIds: { $regex: uid } },
-				{ participantUserIds: { $regex: uid } },
-				{ participants: { $regex: uid } },
-			],
-		},
-		take,
-		include_inactive: true,
-	});
+function user_messages_match(uid: string) {
+	return {
+		$or: [
+			{ senderUserId: uid },
+			{ sender_user_id: uid },
+			{ created_by: uid },
+			{ recipientUserIds: { $regex: uid } },
+			{ participantUserIds: { $regex: uid } },
+			{ participants: { $regex: uid } },
+		],
+	};
+}
+
+function consider_latest(rows: ImperiumDoc[], row: ImperiumDoc, limit: number) {
+	if (rows.length < limit) {
+		rows.push(row);
+		rows.sort((a, b) => created_ms(b) - created_ms(a));
+		return;
+	}
+	if (created_ms(row) <= created_ms(rows[rows.length - 1]!)) return;
+	rows[rows.length - 1] = row;
+	rows.sort((a, b) => created_ms(b) - created_ms(a));
 }
 
 async function my_conversations(ctx: Ctx) {
 	const uid = actor_id(ctx);
-	const { rows } = await find_user_messages(ctx.store, uid);
-	const chats = rows.filter((m) => {
-		if (message_source_type(m) !== 'chat') return false;
-		if (!message_conversation_key(m)) return false;
-		return id_list(
-			m.participantUserIds ?? m.participant_user_ids ?? m.participants,
-		).includes(uid);
-	});
-	const groups = new Map<string, ImperiumDoc[]>();
-	for (const m of chats) {
-		const key = message_conversation_key(m);
-		const list = groups.get(key) ?? [];
-		list.push(m);
-		groups.set(key, list);
+	const groups = new Map<
+		string,
+		{ latest: ImperiumDoc; unread_count: number; participant_user_ids: string[] }
+	>();
+	if (uid && ctx.store.has('messages')) {
+		for await (const page of ctx.store.scan('messages', {
+			mongo_match: user_messages_match(uid),
+			include_inactive: true,
+		})) {
+			for (const m of page) {
+				if (message_source_type(m) !== 'chat') continue;
+				const key = message_conversation_key(m);
+				if (!key) continue;
+				const participant_user_ids = id_list(
+					m.participantUserIds ?? m.participant_user_ids ?? m.participants,
+				);
+				if (!participant_user_ids.includes(uid)) continue;
+				const cur = groups.get(key);
+				if (!cur) {
+					groups.set(key, {
+						latest: m,
+						unread_count: message_is_unread_for(m, uid) ? 1 : 0,
+						participant_user_ids,
+					});
+					continue;
+				}
+				if (created_ms(m) > created_ms(cur.latest)) {
+					cur.latest = m;
+					cur.participant_user_ids = participant_user_ids;
+				}
+				if (message_is_unread_for(m, uid)) cur.unread_count += 1;
+			}
+		}
 	}
 	const summaries = [...groups.entries()]
-		.map(([conversation_key, msgs]) => {
-			const latest = [...msgs].sort((a, b) => created_ms(b) - created_ms(a))[0]!;
-			const participant_user_ids = id_list(
-				latest.participantUserIds ??
-					latest.participant_user_ids ??
-					latest.participants,
-			);
+		.map(([conversation_key, group]) => {
 			const other_id =
-				participant_user_ids.find((p) => p !== uid) ?? participant_user_ids[0];
-			const unread_count = msgs.filter((m) => message_is_unread_for(m, uid)).length;
+				group.participant_user_ids.find((p) => p !== uid) ??
+				group.participant_user_ids[0];
 			return {
 				conversation_key,
-				participant_user_ids,
+				participant_user_ids: group.participant_user_ids,
 				other_participant: other_id
-					? { _id: other_id, name: String(latest.name ?? latest.title ?? other_id) }
+					? {
+							_id: other_id,
+							name: String(group.latest.name ?? group.latest.title ?? other_id),
+						}
 					: undefined,
-				latest_message: latest,
-				unread_count,
+				latest_message: group.latest,
+				unread_count: group.unread_count,
 			};
 		})
 		.sort((a, b) => created_ms(b.latest_message) - created_ms(a.latest_message))
@@ -3600,48 +3427,53 @@ async function search_chat_messages(ctx: Ctx) {
 	const needle = raw_term.toLowerCase();
 	const limit = Math.min(100, Math.max(1, Number(ctx.url.searchParams.get('limit') ?? 25) || 25));
 	const expected_key = participant_id ? conversation_key_for([uid, participant_id]) : '';
-	const { rows } = await find_user_messages(ctx.store, uid, 20000);
-	const hits = rows
-		.filter((row) => {
-			if (message_source_type(row) !== 'chat') return false;
-			if (
-				uid &&
-				!id_list(
-					row.participantUserIds ?? row.participant_user_ids ?? row.participants,
-				).includes(uid)
-			) {
-				return false;
+	const matched: ImperiumDoc[] = [];
+	if (uid && ctx.store.has('messages')) {
+		for await (const page of ctx.store.scan('messages', {
+			mongo_match: user_messages_match(uid),
+			include_inactive: true,
+		})) {
+			for (const row of page) {
+				if (message_source_type(row) !== 'chat') continue;
+				if (
+					!id_list(
+						row.participantUserIds ?? row.participant_user_ids ?? row.participants,
+					).includes(uid)
+				) {
+					continue;
+				}
+				if (participant_id && expected_key && message_conversation_key(row) !== expected_key) {
+					continue;
+				}
+				const snapshots = as_array(row.participantSnapshot ?? row.participant_snapshot);
+				const attachments = as_array(row.attachments);
+				const reply = as_object(row.replyPreview ?? row.reply_preview);
+				const hay = [
+					row.search_field,
+					row.message,
+					row.name,
+					row.senderName,
+					row.senderEmail,
+					row.sender_name,
+					row.sender_email,
+					...snapshots.flatMap((item) => {
+						const rec = as_object(item);
+						return [rec.name, rec.email];
+					}),
+					...attachments.flatMap((item) => {
+						const rec = as_object(item);
+						return [rec.name, rec.fileExt, rec.mimetype];
+					}),
+					reply.textPreview,
+				]
+					.map((v) => String(v ?? '').toLowerCase())
+					.join(' ');
+				if (!hay.includes(needle)) continue;
+				consider_latest(matched, row, limit);
 			}
-			if (participant_id && expected_key && message_conversation_key(row) !== expected_key) {
-				return false;
-			}
-			const snapshots = as_array(row.participantSnapshot ?? row.participant_snapshot);
-			const attachments = as_array(row.attachments);
-			const reply = as_object(row.replyPreview ?? row.reply_preview);
-			const hay = [
-				row.search_field,
-				row.message,
-				row.name,
-				row.senderName,
-				row.senderEmail,
-				row.sender_name,
-				row.sender_email,
-				...snapshots.flatMap((item) => {
-					const rec = as_object(item);
-					return [rec.name, rec.email];
-				}),
-				...attachments.flatMap((item) => {
-					const rec = as_object(item);
-					return [rec.name, rec.fileExt, rec.mimetype];
-				}),
-				reply.textPreview,
-			]
-				.map((v) => String(v ?? '').toLowerCase())
-				.join(' ');
-			return hay.includes(needle);
-		})
-		.sort((a, b) => created_ms(b) - created_ms(a))
-		.slice(0, limit)
+		}
+	}
+	const hits = matched
 		.map((row) => {
 			const parts = message_participants(row, uid);
 			const other = parts.find((p) => p !== uid) ?? '';
@@ -3675,15 +3507,20 @@ async function search_chat_messages(ctx: Ctx) {
 
 async function my_messages(ctx: Ctx) {
 	const uid = actor_id(ctx);
-	const { rows } = await find_user_messages(ctx.store, uid);
-	const mine = rows
-		.filter((m) => {
-			const source = String(m.sourceType ?? m.source_type ?? '');
-			if (source === 'chat') return false;
-			return message_participants(m, uid).includes(uid);
-		})
-		.sort((a, b) => created_ms(b) - created_ms(a))
-		.slice(0, 200);
+	const mine: ImperiumDoc[] = [];
+	if (uid && ctx.store.has('messages')) {
+		for await (const page of ctx.store.scan('messages', {
+			mongo_match: user_messages_match(uid),
+			include_inactive: true,
+		})) {
+			for (const m of page) {
+				const source = String(m.sourceType ?? m.source_type ?? '');
+				if (source === 'chat') continue;
+				if (!message_participants(m, uid).includes(uid)) continue;
+				consider_latest(mine, m, 200);
+			}
+		}
+	}
 	return ok(mine, 'Mensajes', mine.length);
 }
 
@@ -3693,24 +3530,24 @@ async function mark_conversation_as_read(
 	conversation_key: string,
 ) {
 	if (!uid || !conversation_key || !store.has('messages')) return;
-	const { rows } = await store.find_many('messages', {
+	for await (const page of store.scan('messages', {
 		mongo_match: {
 			$or: [
 				{ conversationKey: conversation_key },
 				{ conversation_key: conversation_key },
 			],
 		},
-		take: 20000,
 		include_inactive: true,
-	});
-	for (const row of rows) {
-		if (message_source_type(row) !== 'chat') continue;
-		if (message_conversation_key(row) !== conversation_key) continue;
-		if (!message_is_unread_for(row, uid)) continue;
-		const read = id_list(row.readByUserIds ?? row.read_by_user_ids);
-		await store.update('messages', String(row._id), {
-			readByUserIds: [...read, uid],
-		});
+	})) {
+		for (const row of page) {
+			if (message_source_type(row) !== 'chat') continue;
+			if (message_conversation_key(row) !== conversation_key) continue;
+			if (!message_is_unread_for(row, uid)) continue;
+			const read = id_list(row.readByUserIds ?? row.read_by_user_ids);
+			await store.update('messages', String(row._id), {
+				readByUserIds: [...read, uid],
+			});
+		}
 	}
 }
 
@@ -3734,8 +3571,11 @@ async function conversation(ctx: Ctx) {
 				{ conversation_key: expected_key },
 			],
 		},
-		take: 20000,
+		take: size,
+		sort: 'created_at:asc',
 		include_inactive: true,
+		populate: false,
+		skip_total: true,
 	});
 	const mine = rows
 		.filter(
@@ -4213,9 +4053,8 @@ async function pedidos_sync_offline(ctx: Ctx) {
  * `{ listasDePrecios }` con name, iva y product[] (sin popular).
  */
 async function lista_de_precios_sync_offline(ctx: Ctx) {
-	const { rows } = await ctx.store.find_many('lista-de-precios', {
-		take: 20000,
-		populate: false,
+	const rows = await collect_scan(ctx.store, 'lista-de-precios', {
+		fields: ['name', 'iva', 'product', 'productos'],
 	});
 	const listasDePrecios = rows.map((row) => {
 		let product = row.product ?? row.productos ?? [];
@@ -4250,9 +4089,9 @@ const SKU_OFFLINE_OMIT = new Set([
  */
 async function sku_sync_offline(ctx: Ctx) {
 	if (!ctx.store.has('sku')) return Response.json({ skus: [] });
-	const { rows } = await ctx.store.find_many('sku', {
-		take: 20000,
-		populate: false,
+	const rows = await collect_scan(ctx.store, 'sku', {
+		where: { puedoVenderlo: true },
+		omit: [...SKU_OFFLINE_OMIT],
 	});
 	const skus = rows
 		.filter((row) => row.is_active !== false && row.puedoVenderlo === true)
@@ -4760,17 +4599,21 @@ async function build_report_field_metadata(ctx: Ctx, resource: string) {
 	/* El original valida contra el schema Mongoose (todas las paths), no contra
 	 * un sample name ASC. Campos de payload como `observaciones` viven en filas
 	 * leftover y no en columnas SQL. */
-	const { rows } = await ctx.store.find_many(resource, {
-		take: 20000,
-		populate: false,
-	});
-	const sample =
-		rows.find((row) => Array.isArray(row.articulos) && as_array(row.articulos).length) ??
-		rows[0] ??
-		{};
 	const payload_keys = new Set<string>();
-	for (const row of rows) {
-		for (const key of Object.keys(row)) payload_keys.add(key);
+	let sample: ImperiumDoc = {};
+	for await (const page of ctx.store.scan(resource, { include_inactive: true })) {
+		for (const row of page) {
+			for (const key of Object.keys(row)) payload_keys.add(key);
+			if (
+				Array.isArray(row.articulos) &&
+				as_array(row.articulos).length &&
+				!Array.isArray(sample.articulos)
+			) {
+				sample = row;
+			} else if (!Object.keys(sample).length) {
+				sample = row;
+			}
+		}
 	}
 	const fields: Array<{
 		field_name: string;
@@ -5006,10 +4849,10 @@ async function report_preview(ctx: Ctx) {
 	if (!raw_list.length) {
 		throw new Error('No se pudo obtener el registro para la vista previa');
 	}
-	const hydrated: Record<string, unknown>[] = [];
-	for (const row of raw_list) {
-		hydrated.push(await hydrate_loose_product_references(ctx.store, as_object(row)));
-	}
+	const hydrated = await hydrate_loose_product_references_many(
+		ctx.store,
+		raw_list.map((row) => as_object(row)),
+	);
 	return {
 		html: await interpolate_report_records(
 			html,
@@ -5030,23 +4873,25 @@ async function report_full_pdf(ctx: Ctx) {
 	const html_content = String(report?.html_content ?? '').trim();
 	if (!report || !html_content) throw new Error('Report o HTML inválido');
 	const resource = await resolve_report_target(ctx, model_name);
-	const records = await resolve_report_records(ctx.store, resource, ctx.body);
-	if (!records.length) {
-		throw new Error('No se encontraron registros para generar el reporte');
-	}
 	const user_name = actor_name(ctx) || 'USER';
 	const now = new Date();
-	const hydrated: Record<string, unknown>[] = [];
-	for (const row of records) {
-		hydrated.push(await hydrate_loose_product_references(ctx.store, row));
-	}
 	const opts = { store: ctx.store, model_name };
-	const rendered = await interpolate_report_records(html_content, hydrated, user_name, now, opts);
+	const rendered = await render_report_from_pages(
+		ctx.store,
+		html_content,
+		iter_report_record_pages(ctx.store, resource, ctx.body),
+		user_name,
+		now,
+		opts,
+	);
+	if (!rendered.count || !rendered.first) {
+		throw new Error('No se encontraron registros para generar el reporte');
+	}
 	const gen_name = String(report.generated_report_name || '{{name}}_{{timestamp_actual}}');
-	const filename = `${(await interpolate_report_template(gen_name, hydrated[0]!, user_name, now, opts)) || 'REPORTE_GENERADO'}${
-		records.length > 1 ? `_LOTE_${records.length}` : ''
+	const filename = `${(await interpolate_report_template(gen_name, rendered.first, user_name, now, opts)) || 'REPORTE_GENERADO'}${
+		rendered.count > 1 ? `_LOTE_${rendered.count}` : ''
 	}.pdf`;
-	return html_to_pdf_response(rendered, filename);
+	return html_to_pdf_response(rendered.html, filename);
 }
 
 async function html_to_pdf_response(html: string, filename?: string) {
@@ -5513,10 +5358,7 @@ async function interactive_manual_board(ctx: Ctx) {
 	if (!user_id && !access.has_full_access) {
 		return ok([], 'Sin guías');
 	}
-	const { rows } = await ctx.store.find_many('interactive-manual', {
-		take: 20000,
-		include_inactive: false,
-	});
+	const rows = await ctx.store.interactive_manual_cards();
 	const readable = new Set(access.models.map(String));
 	const group_ids = access.user_group_ids;
 	const filtered = access.has_full_access
@@ -5539,8 +5381,7 @@ async function view_available(ctx: Ctx) {
 	/* Original: find({ $or: [created_by, scope global, is_template,
 	 * assigned_user_ids: user_id, assigned_user_group_ids: { $in: groups }] }).
 	 * $regex sobre el jsonb del array matchea subcadena (AAA…ffff), no membresía. */
-	const { rows } = await ctx.store.find_many('view-config-preset', {
-		take: 20000,
+	const rows = await collect_scan(ctx.store, 'view-config-preset', {
 		include_inactive: false,
 	});
 	const filtered = rows.filter((doc) => {
@@ -5553,23 +5394,39 @@ async function view_available(ctx: Ctx) {
 	return ok(sort_by_updated_desc(filtered), 'Configuraciones disponibles');
 }
 
+/** Lookup de 1: cards de asignación, sin table_configs del catálogo. */
+const VIEW_BASELINE_FIELDS = [
+	'created_by',
+	'scope',
+	'is_template',
+	'assigned_user_ids',
+	'assigned_user_group_ids',
+	'updated_at',
+];
+
 async function view_baseline(ctx: Ctx) {
 	const user_id = actor_id(ctx);
 	if (!user_id) throw new Error('No estás autenticado');
-	const { rows } = await ctx.store.find_many('view-config-preset', {
-		take: 20000,
-		sort: 'updated_at:desc',
+	const rows = await collect_scan(ctx.store, 'view-config-preset', {
 		include_inactive: false,
+		fields: VIEW_BASELINE_FIELDS,
 	});
-	const direct = rows.find((doc) => has_id(doc.assigned_user_ids, user_id));
-	if (direct) return ok([direct], 'Configuración base asignada');
-	const access = await actor_access(ctx);
-	const by_group = rows.find((doc) =>
-		intersects_ids(doc.assigned_user_group_ids, access.user_group_ids),
+	rows.sort((a, b) =>
+		String(b.updatedAt ?? b.updated_at ?? '').localeCompare(
+			String(a.updatedAt ?? a.updated_at ?? ''),
+		),
 	);
-	return by_group
-		? ok([by_group], 'Configuración base asignada')
-		: ok([], 'Sin configuración base asignada');
+	const direct = rows.find((doc) => has_id(doc.assigned_user_ids, user_id));
+	const access = direct ? null : await actor_access(ctx);
+	const picked =
+		direct ??
+		rows.find((doc) => intersects_ids(doc.assigned_user_group_ids, access!.user_group_ids)) ??
+		null;
+	if (!picked) return ok([], 'Sin configuración base asignada');
+	const full = picked._id
+		? await ctx.store.find_id('view-config-preset', String(picked._id))
+		: null;
+	return ok([full ?? picked], 'Configuración base asignada');
 }
 
 async function view_assign(ctx: Ctx) {
@@ -5834,15 +5691,18 @@ async function need(
 	return doc;
 }
 
+/** Login/menú: solo ids. Sin path, dependencias ni payload. */
+const DISABLED_MODULE_FIELDS = ['model_id', 'name', 'is_enable'];
+
 async function disabled_model_ids(ctx: Ctx) {
 	const disabled = new Set<string>();
 	if (!ctx.store.has('module-management')) return disabled;
-	const { rows } = await ctx.store.find_many('module-management', {
+	const rows = await collect_scan(ctx.store, 'module-management', {
 		mongo_match: {
 			$or: [{ is_enable: false }, { is_active: false }],
 		},
-		take: 20000,
 		include_inactive: true,
+		fields: DISABLED_MODULE_FIELDS,
 	});
 	for (const row of rows) {
 		if (row.is_enable === false || row.is_active === false) {
@@ -6151,14 +6011,7 @@ function is_sync_simapa(doc: ImperiumDoc) {
 	);
 }
 
-async function agua_all(ctx: Ctx, resource: string) {
-	if (!ctx.store.has(resource)) return { rows: [] as ImperiumDoc[], total: 0 };
-	return ctx.store.find_many(resource, { take: 20_000 });
-}
-
 async function agua_build_metricas(ctx: Ctx) {
-	const contratos = await agua_all(ctx, 'contrato');
-	const lecturas = await agua_all(ctx, 'lectura');
 	const parametros = ctx.store.has('agua')
 		? (
 				await ctx.store.find_many('agua', {
@@ -6167,20 +6020,34 @@ async function agua_build_metricas(ctx: Ctx) {
 				})
 			).rows[0]
 		: null;
-	const contratos_tomados = contratos.rows.filter(is_tomada).length;
-	const total_contratos = contratos.total || contratos.rows.length;
-	const contratos_pendientes = Math.max(total_contratos - contratos_tomados, 0);
-	const importe_total = lecturas.rows.reduce((s, l) => s + Number(l.importe ?? 0), 0);
-	const promedio_by_contrato = new Map(
-		contratos.rows.map((c) => [String(c.contrato ?? ''), Number(c.promedio ?? 0)]),
-	);
-	let lecturas_anormales = 0;
-	for (const lectura of lecturas.rows) {
-		const promedio = promedio_by_contrato.get(String(lectura.contrato ?? '')) ?? 0;
-		if (promedio <= 0) continue;
-		const consumo = Number(lectura.consumo_mts3 ?? 0);
-		if (consumo > promedio * 1.5 || consumo < promedio * 0.5) lecturas_anormales += 1;
+	let total_contratos = 0;
+	let contratos_tomados = 0;
+	const promedio_by_contrato = new Map<string, number>();
+	if (ctx.store.has('contrato')) {
+		for await (const page of ctx.store.scan('contrato')) {
+			for (const contrato of page) {
+				total_contratos += 1;
+				if (is_tomada(contrato)) contratos_tomados += 1;
+				promedio_by_contrato.set(String(contrato.contrato ?? ''), Number(contrato.promedio ?? 0));
+			}
+		}
 	}
+	let total_lecturas = 0;
+	let importe_total = 0;
+	let lecturas_anormales = 0;
+	if (ctx.store.has('lectura')) {
+		for await (const page of ctx.store.scan('lectura')) {
+			for (const lectura of page) {
+				total_lecturas += 1;
+				importe_total += Number(lectura.importe ?? 0);
+				const promedio = promedio_by_contrato.get(String(lectura.contrato ?? '')) ?? 0;
+				if (promedio <= 0) continue;
+				const consumo = Number(lectura.consumo_mts3 ?? 0);
+				if (consumo > promedio * 1.5 || consumo < promedio * 0.5) lecturas_anormales += 1;
+			}
+		}
+	}
+	const contratos_pendientes = Math.max(total_contratos - contratos_tomados, 0);
 	return {
 		total_contratos,
 		contratos_tomados,
@@ -6188,7 +6055,7 @@ async function agua_build_metricas(ctx: Ctx) {
 		avance_porcentaje: total_contratos
 			? Math.round((contratos_tomados / total_contratos) * 100)
 			: 0,
-		total_lecturas: lecturas.total || lecturas.rows.length,
+		total_lecturas,
 		importe_total,
 		importe_periodo: importe_total,
 		lecturas_anormales,
@@ -6300,16 +6167,21 @@ async function agua_push_lecturas_lote(ctx: Ctx) {
 async function agua_campo_contratos(ctx: Ctx) {
 	const estado = String(ctx.url.searchParams.get('estado') ?? 'pendientes');
 	const id_ruta = String(ctx.url.searchParams.get('id_ruta') ?? '').trim();
-	const { rows } = await ctx.store.find_many('contrato', {
-		where: id_ruta ? { id_ruta } : undefined,
-		take: 20_000,
-		sort: 'consecutivo_ruta:asc',
-	});
-	const filtered = rows.filter((c) => {
-		if (estado === 'tomadas') return is_tomada(c);
-		if (estado === 'por_sincronizar') return is_tomada(c) && !is_sync_simapa(c);
-		return !is_tomada(c);
-	});
+	const filtered: ImperiumDoc[] = [];
+	if (ctx.store.has('contrato')) {
+		for await (const page of ctx.store.scan('contrato', {
+			where: id_ruta ? { id_ruta } : undefined,
+		})) {
+			for (const contrato of page) {
+				if (estado === 'tomadas' && !is_tomada(contrato)) continue;
+				if (estado === 'por_sincronizar' && !(is_tomada(contrato) && !is_sync_simapa(contrato))) {
+					continue;
+				}
+				if (estado !== 'tomadas' && estado !== 'por_sincronizar' && is_tomada(contrato)) continue;
+				filtered.push(contrato);
+			}
+		}
+	}
 	filtered.sort(
 		(a, b) =>
 			Number(a.consecutivo_ruta ?? 0) - Number(b.consecutivo_ruta ?? 0) ||
@@ -6349,11 +6221,16 @@ async function agua_archivar_periodo(ctx: Ctx) {
 			{ status: 400 },
 		);
 	}
-	const { rows: contratos } = await agua_all(ctx, 'contrato');
 	let contratos_reiniciados = 0;
-	for (const contrato of contratos) {
-		await ctx.store.update('contrato', String(contrato._id), { ...CONTRATO_FLAGS_ON_ARCHIVE });
-		contratos_reiniciados += 1;
+	if (ctx.store.has('contrato')) {
+		for await (const page of ctx.store.scan('contrato')) {
+			for (const contrato of page) {
+				await ctx.store.update('contrato', String(contrato._id), {
+					...CONTRATO_FLAGS_ON_ARCHIVE,
+				});
+				contratos_reiniciados += 1;
+			}
+		}
 	}
 	const parametros = ctx.store.has('agua')
 		? (await ctx.store.find_many('agua', { take: 1, sort: 'created_at:asc' })).rows[0]
@@ -6383,10 +6260,15 @@ async function agua_reportes(ctx: Ctx) {
 	const tipo = String(ctx.params.tipo ?? '');
 	const metricas_data = await agua_build_metricas(ctx);
 	if (tipo === 'pendientes') {
-		const { rows } = await agua_all(ctx, 'contrato');
-		const data = rows
-			.filter((c) => !is_tomada(c))
-			.map((c) => agua_pick(c, ['contrato', 'contribuyente', 'id_ruta', 'colonia']));
+		const data: ImperiumDoc[] = [];
+		if (ctx.store.has('contrato')) {
+			for await (const page of ctx.store.scan('contrato')) {
+				for (const contrato of page) {
+					if (is_tomada(contrato)) continue;
+					data.push(agua_pick(contrato, ['contrato', 'contribuyente', 'id_ruta', 'colonia']));
+				}
+			}
+		}
 		return ok(data, 'Contratos pendientes de lectura');
 	}
 	if (tipo === 'anormales') {
@@ -6489,11 +6371,10 @@ async function physical_device_report(ctx: Ctx) {
 }
 
 async function model_tracker_all_models(ctx: Ctx) {
-	const { rows, total } = await ctx.store.find_many('model-tracker', {
-		take: 20000,
+	const rows = await collect_scan(ctx.store, 'model-tracker', {
 		include_inactive: true,
 	});
-	return ok(rows, 'Todos los modelos registrados fueron obtenidos.', total);
+	return ok(rows, 'Todos los modelos registrados fueron obtenidos.', rows.length);
 }
 
 async function model_tracker_search_status() {
@@ -6509,45 +6390,41 @@ async function model_tracker_search_status() {
 async function model_tracker_reindex(ctx: Ctx) {
 	const only_model = String(ctx.params.model_name ?? '').trim();
 	const force = ctx.url.searchParams.get('force') === 'true';
-	const { rows } = await ctx.store.find_many('module-management', {
-		take: 2000,
+	for await (const modules of ctx.store.scan('module-management', {
 		include_inactive: true,
-	});
-	for (const module_record of rows) {
-		const model_id = String(module_record.model_id ?? '');
-		if (
-			only_model &&
-			model_id !== only_model &&
-			model_id.toLowerCase() !== only_model.toLowerCase()
-		) {
-			continue;
-		}
-		const resource = ctx.store.resource_for_model(model_id);
-		if (!resource || !ctx.store.has(resource)) continue;
-		const docs = await ctx.store.find_many(resource, {
-			take: 5000,
-			include_inactive: true,
-		});
-		const collection = ctx.store.loc(resource).collection;
-		const meili = await SearchEngine.ensure_available();
-		if (meili) {
-			await SearchEngine.clear_index(collection);
-			const search_docs = docs.rows
-				.filter((doc) => doc.is_active !== false)
-				.map((doc) => ({
-					id: String(doc._id),
-					search_text: search_text_from_doc(doc),
-				}))
-				.filter((doc) => doc.search_text);
-			for (let i = 0; i < search_docs.length; i += 200) {
-				await SearchEngine.index_documents(collection, search_docs.slice(i, i + 200));
+	})) {
+		for (const module_record of modules) {
+			const model_id = String(module_record.model_id ?? '');
+			if (
+				only_model &&
+				model_id !== only_model &&
+				model_id.toLowerCase() !== only_model.toLowerCase()
+			) {
+				continue;
 			}
-		}
-		if (!meili || force) {
-			for (const doc of docs.rows) {
-				const search = search_text_from_doc(doc);
-				if (search && (force || String(doc.search_field ?? '') !== search)) {
-					await ctx.store.update(resource, String(doc._id), { search_field: search });
+			const resource = ctx.store.resource_for_model(model_id);
+			if (!resource || !ctx.store.has(resource)) continue;
+			const collection = ctx.store.loc(resource).collection;
+			const meili = await SearchEngine.ensure_available();
+			if (meili) await SearchEngine.clear_index(collection);
+			for await (const page of ctx.store.scan(resource, { include_inactive: true })) {
+				if (meili) {
+					const search_docs = page
+						.filter((doc) => doc.is_active !== false)
+						.map((doc) => ({
+							id: String(doc._id),
+							search_text: search_text_from_doc(doc),
+						}))
+						.filter((doc) => doc.search_text);
+					if (search_docs.length) await SearchEngine.index_documents(collection, search_docs);
+				}
+				if (!meili || force) {
+					for (const doc of page) {
+						const search = search_text_from_doc(doc);
+						if (search && (force || String(doc.search_field ?? '') !== search)) {
+							await ctx.store.update(resource, String(doc._id), { search_field: search });
+						}
+					}
 				}
 			}
 		}

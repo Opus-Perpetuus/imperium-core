@@ -38,6 +38,7 @@ type DataRequest =
       where?: WhereClause;
       search?: { fields: string[]; q: string };
     }
+  | { op: "distinct"; table: string; field: string; q?: string }
   | { op: "batch"; ops: DataRequest[] };
 
 /**
@@ -138,6 +139,10 @@ export class HttpKirletDataClient extends KirletDataClient {
     search?: { fields: string[]; q: string },
   ): Promise<number> {
     return this.call({ op: "count", table, where, search });
+  }
+
+  override distinct(table: string, field: string, q?: string): Promise<unknown[]> {
+    return this.call({ op: "distinct", table, field, q });
   }
 
   override async batch(ops: Array<Record<string, unknown>>): Promise<unknown[]> {

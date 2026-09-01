@@ -5,12 +5,14 @@
   "type": "module",
   "scripts": {
     "start": "bun run src/server.ts",
+    "test": "bun test src/imperium/front-contract.spec.ts src/imperium/subjects-admin.spec.ts src/imperium/history.spec.ts src/imperium/store-indexes.spec.ts src/imperium/scale-contracts.spec.ts src/imperium/background-job.spec.ts src/imperium/subject-runtime.spec.ts src/imperium/subject-menus.spec.ts src/imperium/debug-request-log.spec.ts src/imperium/socket-stub.spec.ts src/imperium/portal.spec.ts src/imperium/auth-surface.spec.ts src/imperium/postgres-unique-violation.spec.ts src/imperium/postgres-missing-relation.spec.ts src/imperium/public-auth-get.spec.ts",
     "dev": "bun --watch run src/server.ts",
-    "docker:build": "docker build --build-context kit=../kit -t ghcr.io/opus-perpetuus/imperium-core:0.1.0 ."
+    "docker:build": "docker build --build-context kit=./vendor/kit -t ghcr.io/opus-perpetuus/imperium-core:0.1.0 ."
   },
   "dependencies": {
     "@opus-perpetuus/imperium-core-kit": "file:./vendor/kit",
     "argon2": "^0.45.1",
+    "isomorphic-dompurify": "^3.20.0",
     "mssql": "^12.5.5",
     "nodemailer": "^9.0.5",
     "qrcode": "^1.5.4",

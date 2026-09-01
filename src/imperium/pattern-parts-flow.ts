@@ -88,12 +88,13 @@ async function active_parts(
 	counter_config_id: string,
 ): Promise<ImperiumDoc[]> {
 	if (!store.has('custom-pattern-increment-sequence-parts')) return [];
-	const { rows } = await store.find_many('custom-pattern-increment-sequence-parts', {
+	const rows: ImperiumDoc[] = [];
+	for await (const page of store.scan('custom-pattern-increment-sequence-parts', {
 		where: { counter_config_id },
-		take: 20000,
-		sort: 'order:asc',
-	});
-	return [...rows].sort((a, b) => Number(a.order ?? 0) - Number(b.order ?? 0));
+	})) {
+		rows.push(...page);
+	}
+	return rows.sort((a, b) => Number(a.order ?? 0) - Number(b.order ?? 0));
 }
 
 export async function rebuild_custom_pattern(

@@ -120,19 +120,18 @@ export async function location_stats_extras(
 	system_records: number;
 	by_type: Array<{ type: string | null; count: number }>;
 }> {
-	const { rows } = await store.find_many('inventory-internal-location', {
-		take: 20000,
-		include_inactive: true,
-		populate: false,
-		mongo_match,
-	});
 	let system_records = 0;
 	const counts = new Map<string | null, number>();
-	for (const row of rows) {
-		if (row.is_system) system_records += 1;
-		const raw = text(row.tipo);
-		const key = raw || null;
-		counts.set(key, (counts.get(key) ?? 0) + 1);
+	for await (const page of store.scan('inventory-internal-location', {
+		include_inactive: true,
+		mongo_match,
+	})) {
+		for (const row of page) {
+			if (row.is_system) system_records += 1;
+			const raw = text(row.tipo);
+			const key = raw || null;
+			counts.set(key, (counts.get(key) ?? 0) + 1);
+		}
 	}
 	return {
 		system_records,

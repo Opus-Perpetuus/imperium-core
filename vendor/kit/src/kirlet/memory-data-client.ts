@@ -175,6 +175,23 @@ export class MemoryKirletDataClient extends KirletDataClient {
     ).length;
   }
 
+  override async distinct(table: string, field: string, q = ""): Promise<unknown[]> {
+    const needle = q.trim().toLowerCase();
+    const seen = new Set<string>();
+    const out: unknown[] = [];
+    for (const row of this.ensure_table(table)) {
+      const value = row[field];
+      if (value == null || value === "") continue;
+      const key = String(value);
+      if (needle && !key.toLowerCase().includes(needle)) continue;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(value);
+      if (out.length >= 200) break;
+    }
+    return out;
+  }
+
   override async batch(ops: Array<Record<string, unknown>>): Promise<unknown[]> {
     return this.transaction(async (tx) => {
       const results: unknown[] = [];

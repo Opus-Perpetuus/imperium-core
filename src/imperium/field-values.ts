@@ -183,6 +183,26 @@ function extract_state_values(value: unknown, configured: StateField | null): Fi
 		: extract_filter_values(value);
 }
 
+export function field_values_from_distinct(
+	values: unknown[],
+	field_path: string,
+	configured: StateField | null,
+): FieldValueOption[] {
+	const records = values.map((value) => {
+		const doc: ImperiumDoc = {};
+		let cursor: Record<string, unknown> = doc;
+		const parts = field_path.split('.');
+		for (let i = 0; i < parts.length - 1; i++) {
+			const next: Record<string, unknown> = {};
+			cursor[parts[i] ?? ''] = next;
+			cursor = next;
+		}
+		cursor[parts[parts.length - 1] ?? field_path] = value;
+		return doc;
+	});
+	return build_field_values(records, field_path, configured);
+}
+
 export function build_field_values(
 	records: ImperiumDoc[],
 	field_path: string,

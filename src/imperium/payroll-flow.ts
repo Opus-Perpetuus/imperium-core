@@ -110,43 +110,53 @@ export async function generate_payroll_drafts(store: ImperiumStore, period_id: s
 	const period_start = to_date(period.fecha_inicial) ?? new Date();
 	const period_end = to_date(period.fecha_final) ?? period_start;
 	const branch = ref_id(period.branch_office);
-	const employees = store.has('employee')
-		? (
-				await store.find_many('employee', {
-					mongo_match: { salario_diario: { $gt: '0' } },
-					take: 20000,
-					populate: false,
-				})
-			).rows.filter((row) => {
-				if (!employee_eligible(row, period_start, period_end)) return false;
-				if (branch) {
-					const emp_branch = ref_id(row.branch_office) || text(row.branch_office);
-					if (emp_branch !== branch) return false;
-				}
-				return true;
-			})
-		: [];
-	const existing = store.has('payroll-receipt')
-		? (
-				await store.find_many('payroll-receipt', {
-					where: { payroll_period: id },
-					take: 20000,
-					populate: false,
-					include_inactive: true,
-				})
-			).rows
-		: [];
 	const by_emp = new Map<string, ImperiumDoc>();
-	for (const rec of existing) {
-		const emp_id = ref_id(rec.employee) || text(rec.employee);
-		if (emp_id) by_emp.set(emp_id, rec);
+	if (store.has('payroll-receipt')) {
+		for await (const page of store.scan('payroll-receipt', {
+			where: { payroll_period: id },
+			include_inactive: true,
+		})) {
+			for (const rec of page) {
+				const emp_id = ref_id(rec.employee) || text(rec.employee);
+				if (emp_id) by_emp.set(emp_id, rec);
+			}
+		}
+	}
+	const incidents_by_emp = new Map<string, ImperiumDoc[]>();
+	if (store.has('labor-incident')) {
+		for await (const page of store.scan('labor-incident', { include_inactive: false })) {
+			for (const row of page) {
+				if (row.is_active === false) continue;
+				const start = to_date(row.fecha_inicio);
+				const end = to_date(row.fecha_fin);
+				if (!start || !end) continue;
+				if (start.getTime() > period_end.getTime() || end.getTime() < period_start.getTime()) {
+					continue;
+				}
+				const emp_id = ref_id(row.employee) || text(row.employee);
+				if (!emp_id) continue;
+				const list = incidents_by_emp.get(emp_id) ?? [];
+				list.push(row);
+				incidents_by_emp.set(emp_id, list);
+			}
+		}
 	}
 	let created = 0;
 	let updated = 0;
 	const errors: Array<{ employee_id?: string; message: string }> = [];
-	for (const employee of employees) {
+	if (store.has('employee')) {
+	for await (const page of store.scan('employee', {
+		mongo_match: { salario_diario: { $gt: '0' } },
+		include_inactive: false,
+	})) {
+	for (const employee of page) {
 		const emp_id = String(employee._id ?? '');
 		if (!emp_id) continue;
+		if (!employee_eligible(employee, period_start, period_end)) continue;
+		if (branch) {
+			const emp_branch = ref_id(employee.branch_office) || text(employee.branch_office);
+			if (emp_branch !== branch) continue;
+		}
 		const schedule = store.has('labor-schedule')
 			? (
 					await store.find_many('labor-schedule', {
@@ -156,21 +166,7 @@ export async function generate_payroll_drafts(store: ImperiumStore, period_id: s
 					})
 				).rows[0]
 			: null;
-		const incidents = store.has('labor-incident')
-			? (
-					await store.find_many('labor-incident', {
-						where: { employee: emp_id },
-						take: 20000,
-						populate: false,
-					})
-				).rows.filter((row) => {
-					if (row.is_active === false) return false;
-					const start = to_date(row.fecha_inicio);
-					const end = to_date(row.fecha_fin);
-					if (!start || !end) return false;
-					return start.getTime() <= period_end.getTime() && end.getTime() >= period_start.getTime();
-				})
-			: [];
+		const incidents = incidents_by_emp.get(emp_id) ?? [];
 		try {
 			const calc = calculate_payroll_receipt({
 				employee: map_employee_to_calc(employee),
@@ -217,22 +213,27 @@ export async function generate_payroll_drafts(store: ImperiumStore, period_id: s
 			});
 		}
 	}
-	const after = store.has('payroll-receipt')
-		? (
-				await store.find_many('payroll-receipt', {
-					where: { payroll_period: id },
-					take: 20000,
-					populate: false,
-				})
-			).rows
-		: [];
-	const calculated_count = after.filter((row) =>
-		['calculated', 'ready_to_stamp'].includes(text(row.estado)),
-	).length;
-	const stamped_count = after.filter((row) => text(row.estado) === 'stamped').length;
+	}
+	}
+	let receipts_count = 0;
+	let calculated_count = 0;
+	let stamped_count = 0;
+	if (store.has('payroll-receipt')) {
+		for await (const page of store.scan('payroll-receipt', {
+			where: { payroll_period: id },
+			include_inactive: false,
+		})) {
+			for (const row of page) {
+				receipts_count += 1;
+				const estado = text(row.estado);
+				if (['calculated', 'ready_to_stamp'].includes(estado)) calculated_count += 1;
+				if (estado === 'stamped') stamped_count += 1;
+			}
+		}
+	}
 	await store.update('payroll-period', id, {
 		estado: 'open',
-		receipts_count: after.length,
+		receipts_count,
 		calculated_count,
 		stamped_count,
 	});
@@ -240,7 +241,7 @@ export async function generate_payroll_drafts(store: ImperiumStore, period_id: s
 		created,
 		updated,
 		errors,
-		receipts_count: after.length,
+		receipts_count,
 		calculated_count,
 	};
 }

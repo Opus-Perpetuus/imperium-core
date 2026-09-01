@@ -450,6 +450,30 @@ function property_for_descriptor(
 	return { type: json_schema_type(type) };
 }
 
+function catalog_column_properties(store: ImperiumStore, resource: string) {
+	if (!store.has(resource)) return {};
+	const properties: Record<string, Record<string, unknown>> = {};
+	for (const col of store.loc(resource).columns) {
+		const name = col.name;
+		if (!name) continue;
+		const comp = String(col.component ?? '');
+		const pg = String(col.pg ?? '');
+		const crud = String(col.crud ?? '');
+		if (comp === 'input-checkbox' || pg === 'boolean' || crud === 'boolean') {
+			properties[name] = { type: 'boolean', 'x-component': 'input-checkbox' };
+		} else if (comp === 'input-number' || pg === 'numeric' || crud === 'number') {
+			properties[name] = { type: 'number', 'x-component': 'input-number' };
+		} else if (comp === 'input-json' || pg === 'json') {
+			properties[name] = { type: 'object', 'x-component': 'input-json' };
+		} else if (comp.includes('select') || crud === 'enum') {
+			properties[name] = { type: 'string', 'x-component': 'input-select' };
+		} else {
+			properties[name] = { type: 'string', 'x-component': comp || 'input-text' };
+		}
+	}
+	return properties;
+}
+
 function build_schema_properties(
 	store: ImperiumStore,
 	resource: string,
@@ -593,6 +617,11 @@ export async function schema_validation_for(store: ImperiumStore, resource: stri
 		load_custom_field_definitions(store, model_id),
 	]);
 	const properties = build_schema_properties(store, canonical, tracker);
+	for (const [name, spec] of Object.entries(
+		catalog_column_properties(store, canonical),
+	)) {
+		properties[name] = { ...(properties[name] ?? {}), ...spec };
+	}
 	return merge_custom_fields_into_schema(
 		{
 			type: 'object',

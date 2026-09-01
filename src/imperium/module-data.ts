@@ -66,12 +66,16 @@ function is_mock(doc: ImperiumDoc) {
 }
 
 async function list_mocks(store: ImperiumStore, resource: string) {
-	const { rows } = await store.find_many(resource, {
+	const rows: ImperiumDoc[] = [];
+	for await (const page of store.scan(resource, {
 		where: { __mock: true },
-		take: 20000,
 		include_inactive: true,
-	});
-	return rows.filter(is_mock);
+	})) {
+		for (const row of page) {
+			if (is_mock(row)) rows.push(row);
+		}
+	}
+	return rows;
 }
 
 export async function generate_mock_data(ctx: ModuleCtx) {
@@ -604,11 +608,13 @@ async function install_module_comprehensive(
 		await install_seeds_for_record(store, fresh, options, pending);
 		installed.push(model_id);
 	}
-	const { rows: children } = await store.find_many('module-management', {
+	const children: ImperiumDoc[] = [];
+	for await (const page of store.scan('module-management', {
 		where: { parent_module: String(fresh.module_name ?? '') },
-		take: 20000,
 		include_inactive: true,
-	});
+	})) {
+		children.push(...page);
+	}
 	for (const child of children) {
 		if (!child.model_id) continue;
 		installed.push(
@@ -721,51 +727,51 @@ export async function activate_module(ctx: ModuleCtx) {
 }
 
 export async function migrate_legacy_modules(ctx: ModuleCtx) {
-	const { rows } = await ctx.store.find_many('module-management', {
-		take: 2000,
-		include_inactive: true,
-	});
 	let migratedCount = 0;
 	const errors: string[] = [];
-	for (const module_record of rows) {
-		const path = String(module_record.path ?? '').trim();
-		if (!path) continue;
-		if (module_record.module_location && module_record.module_name) continue;
-		try {
-			const parts = path.split('/').filter((part) => part && part !== '..');
-			if (parts.length < 2) {
-				errors.push(`Cannot parse path for module ${module_record.name}: ${path}`);
-				continue;
+	for await (const modules of ctx.store.scan('module-management', {
+		include_inactive: true,
+	})) {
+		for (const module_record of modules) {
+			const path = String(module_record.path ?? '').trim();
+			if (!path) continue;
+			if (module_record.module_location && module_record.module_name) continue;
+			try {
+				const parts = path.split('/').filter((part) => part && part !== '..');
+				if (parts.length < 2) {
+					errors.push(`Cannot parse path for module ${module_record.name}: ${path}`);
+					continue;
+				}
+				const module_location = parts[0]!;
+				const remaining = parts.slice(1);
+				if (!remaining.length || remaining[remaining.length - 1] !== 'module.data') {
+					errors.push(`Invalid path format for module ${module_record.name}: ${path}`);
+					continue;
+				}
+				remaining.pop();
+				let module_name: string;
+				let parent_module: string | undefined;
+				if (remaining.length === 1) {
+					module_name = remaining[0]!;
+				} else if (remaining.length === 2) {
+					parent_module = remaining[0];
+					module_name = remaining[1]!;
+				} else if (remaining.length === 3) {
+					parent_module = `${remaining[0]}/${remaining[1]}`;
+					module_name = remaining[2]!;
+				} else {
+					errors.push(`Cannot parse complex path for module ${module_record.name}: ${path}`);
+					continue;
+				}
+				await ctx.store.update('module-management', String(module_record._id), {
+					module_location,
+					module_name,
+					parent_module,
+				});
+				migratedCount += 1;
+			} catch (error) {
+				errors.push(`Error migrating module ${module_record.name}: ${error}`);
 			}
-			const module_location = parts[0]!;
-			const remaining = parts.slice(1);
-			if (!remaining.length || remaining[remaining.length - 1] !== 'module.data') {
-				errors.push(`Invalid path format for module ${module_record.name}: ${path}`);
-				continue;
-			}
-			remaining.pop();
-			let module_name: string;
-			let parent_module: string | undefined;
-			if (remaining.length === 1) {
-				module_name = remaining[0]!;
-			} else if (remaining.length === 2) {
-				parent_module = remaining[0];
-				module_name = remaining[1]!;
-			} else if (remaining.length === 3) {
-				parent_module = `${remaining[0]}/${remaining[1]}`;
-				module_name = remaining[2]!;
-			} else {
-				errors.push(`Cannot parse complex path for module ${module_record.name}: ${path}`);
-				continue;
-			}
-			await ctx.store.update('module-management', String(module_record._id), {
-				module_location,
-				module_name,
-				parent_module,
-			});
-			migratedCount += 1;
-		} catch (error) {
-			errors.push(`Error migrating module ${module_record.name}: ${error}`);
 		}
 	}
 	return ok(
@@ -778,25 +784,28 @@ export async function migrate_legacy_modules(ctx: ModuleCtx) {
 }
 
 export async function recreate_indexes(ctx: ModuleCtx) {
-	const { rows } = await ctx.store.find_many('module-management', {
-		take: 2000,
+	let saw_module = false;
+	for await (const modules of ctx.store.scan('module-management', {
 		include_inactive: true,
-	});
-	if (!rows.length) throw new Error('No hay módulos para recrear índices.');
-	for (const module_record of rows) {
-		const model_id = String(module_record.model_id ?? '');
-		const resource = ctx.store.resource_for_model(model_id);
-		if (!resource || !ctx.store.has(resource)) continue;
-		const docs = await ctx.store.find_many(resource, { take: 2000, include_inactive: true });
-		for (const doc of docs.rows) {
-			const search = [doc.name, doc.description, doc._ref]
-				.map((part) => String(part ?? '').trim())
-				.filter(Boolean)
-				.join(' ');
-			if (search && String(doc.search_field ?? '') !== search) {
-				await ctx.store.update(resource, String(doc._id), { search_field: search });
+	})) {
+		for (const module_record of modules) {
+			saw_module = true;
+			const model_id = String(module_record.model_id ?? '');
+			const resource = ctx.store.resource_for_model(model_id);
+			if (!resource || !ctx.store.has(resource)) continue;
+			for await (const page of ctx.store.scan(resource, { include_inactive: true })) {
+				for (const doc of page) {
+					const search = [doc.name, doc.description, doc._ref]
+						.map((part) => String(part ?? '').trim())
+						.filter(Boolean)
+						.join(' ');
+					if (search && String(doc.search_field ?? '') !== search) {
+						await ctx.store.update(resource, String(doc._id), { search_field: search });
+					}
+				}
 			}
 		}
 	}
+	if (!saw_module) throw new Error('No hay módulos para recrear índices.');
 	return ok([], 'Índices de búsqueda recreados exitosamente para todos los modelos.');
 }

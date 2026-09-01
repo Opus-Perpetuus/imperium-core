@@ -8,6 +8,58 @@ function trim_text(value: unknown): string {
 	return String(value ?? '').trim();
 }
 
+const TIPOS_INTERACCION = [
+	'llamada',
+	'correo',
+	'carta',
+	'persona',
+	'registro',
+] as const;
+
+function parse_interaccion_fecha(value: unknown): Date | undefined {
+	if (value == null || value === '') return undefined;
+	if (value instanceof Date) {
+		return Number.isNaN(value.getTime()) ? undefined : value;
+	}
+	const text = String(value).trim();
+	if (!text) return undefined;
+	const ymd = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:$|[T\s])/);
+	if (ymd) {
+		const date = new Date(
+			Number(ymd[1]),
+			Number(ymd[2]) - 1,
+			Number(ymd[3]),
+			0,
+			0,
+			0,
+			0,
+		);
+		return Number.isNaN(date.getTime()) ? undefined : date;
+	}
+	const parsed = new Date(text);
+	return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+}
+
+function normalize_tipo_interaccion(value: unknown): string {
+	if (value && typeof value === 'object' && 'value' in value) {
+		value = (value as { value: unknown }).value;
+	}
+	const text = String(value ?? '').trim();
+	return (TIPOS_INTERACCION as readonly string[]).includes(text)
+		? text
+		: 'llamada';
+}
+
+function same_calendar_day(left?: Date, right?: Date): boolean {
+	if (!left && !right) return true;
+	if (!left || !right) return false;
+	return (
+		left.getFullYear() === right.getFullYear() &&
+		left.getMonth() === right.getMonth() &&
+		left.getDate() === right.getDate()
+	);
+}
+
 function extract_interaccion(body: ImperiumDoc): ImperiumDoc | null {
 	const tipo_raw = body.tipo_interaccion;
 	const fecha_raw = body.fecha_interaccion;
@@ -15,15 +67,40 @@ function extract_interaccion(body: ImperiumDoc): ImperiumDoc | null {
 	delete body.tipo_interaccion;
 	delete body.fecha_interaccion;
 	delete body.notas_interaccion;
-	if (!notas && (fecha_raw == null || fecha_raw === '')) return null;
-	const tipo =
-		tipo_raw == null || String(tipo_raw).trim() === ''
-			? 'llamada'
-			: String(tipo_raw);
-	const parsed = fecha_raw ? new Date(String(fecha_raw)) : null;
-	const fecha =
-		parsed && !Number.isNaN(parsed.getTime()) ? parsed.toISOString() : undefined;
+	const parsed = parse_interaccion_fecha(fecha_raw);
+	if (!notas && !parsed) return null;
+	const tipo = normalize_tipo_interaccion(tipo_raw);
+	const fecha = parsed ? parsed.toISOString() : undefined;
 	return { tipo, ...(fecha ? { fecha } : {}), notas };
+}
+
+function merge_interaccion(
+	previas: unknown,
+	nueva: ImperiumDoc | null,
+): ImperiumDoc[] {
+	const list = as_array(previas).map((item) => {
+		const row = item && typeof item === 'object' ? (item as ImperiumDoc) : {};
+		return {
+			tipo: normalize_tipo_interaccion(row.tipo),
+			...(row.fecha != null && row.fecha !== '' ? { fecha: row.fecha } : {}),
+			notas: trim_text(row.notas),
+		};
+	});
+	if (!nueva) return list;
+	if (list.length === 0) return [nueva];
+	const last = list[list.length - 1];
+	const same_tipo = last.tipo === nueva.tipo;
+	const same_notas = trim_text(last.notas) === trim_text(nueva.notas);
+	const same_day = same_calendar_day(
+		parse_interaccion_fecha(last.fecha),
+		parse_interaccion_fecha(nueva.fecha),
+	);
+	if (same_tipo && same_notas && same_day) return list;
+	if (same_tipo && same_notas) {
+		list[list.length - 1] = { ...last, ...nueva };
+		return list;
+	}
+	return [...list, nueva];
 }
 
 export function is_asociacion_resource(resource: string) {
@@ -49,10 +126,9 @@ export function prepare_asociacion_write(
 		if (Object.hasOwn(doc, field)) doc[field] = trim_text(doc[field]);
 	}
 	if (is_create) {
-		doc.interacciones = interaccion ? [interaccion] : [];
+		doc.interacciones = merge_interaccion([], interaccion);
 	} else {
-		const previas = as_array(previous?.interacciones);
-		doc.interacciones = interaccion ? [...previas, interaccion] : previas;
+		doc.interacciones = merge_interaccion(previous?.interacciones, interaccion);
 	}
 	return doc;
 }

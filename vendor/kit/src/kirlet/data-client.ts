@@ -60,6 +60,11 @@ export abstract class KirletDataClient {
   ): Promise<number>;
 
   /**
+   * Distinct values of one column. LIMIT 200 in SQL — do not hydrate rows.
+   */
+  abstract distinct(table: string, field: string, q?: string): Promise<unknown[]>;
+
+  /**
    * Run multiple mutations atomically when the backend supports it.
    * Memory client applies sequentially; HTTP client uses a single request.
    */
@@ -141,6 +146,10 @@ export class KirletRepository<T extends DomainRow = DomainRow> {
     search?: { fields: string[]; q: string },
   ): Promise<number> {
     return this.client.count(this.table, where, search);
+  }
+
+  distinct(field: string, q?: string): Promise<unknown[]> {
+    return this.client.distinct(this.table, field, q);
   }
 
   upsert(row: T): Promise<T> {

@@ -333,7 +333,7 @@
 			(async () => {
 				const res = await j('/api/subjects');
 				catalog = res.data || res;
-				$('status').textContent = catalog.length + ' súbditos';
+				$('status').textContent = catalog.length + ' apps';
 				renderNav();
 				window.addEventListener('hashchange', route);
 				route();

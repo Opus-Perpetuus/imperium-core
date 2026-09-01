@@ -1,15 +1,25 @@
 /**
  * Auth Imperium: login/sesión/menús contra `user` + `access-rights` + `menu-management`.
  */
+import {
+	GENERIC_CREDENTIALS_MESSAGE,
+	authenticate_for_surface,
+	can_enter_internal,
+	type AuthSurface,
+} from '@opus-perpetuus/imperium-core-kit';
 import { as_array, as_object, ok, type ImperiumDoc } from './envelope.ts';
 import { read_imperium_body } from './body.ts';
 import { PREFER_OWNER, type ImperiumStore } from './store.ts';
+import { disabled_subject_slugs } from './subjects-admin.ts';
 import {
 	email_is_configured,
 	resolve_email_settings,
 	send_password_reset_email,
 } from './email.ts';
-import { find_user_by_reset_token, generate_password_reset } from './password-reset.ts';
+import {
+	find_user_by_reset_token,
+	generate_password_reset,
+} from './password-reset.ts';
 import {
 	consume_login_limits,
 	consume_password_reset_ip_limit,
@@ -27,6 +37,10 @@ import {
 } from './record-rules.ts';
 import { debug_error, debug_info } from './debug-request-log.ts';
 import { report_archived_login_attempt } from './archived-login-alert.ts';
+import {
+	access_has_full_admin_scope,
+	collect_group_menu_ids,
+} from './group-access.ts';
 
 const COOKIE = 'connect.sid';
 const SECRET = process.env.SESSION_SECRET ?? 'imperium-modular-dev-session';
@@ -63,6 +77,45 @@ export async function ensure_session_table(sql: Bun.SQL): Promise<void> {
 	await ensure_auth_rate_limit_table(sql);
 }
 
+function auth_pathname(req: Request): string {
+	const url = new URL(req.url);
+	let path = url.pathname;
+	if (path === '/api') return '/';
+	if (path.startsWith('/api/')) return path.slice(4) || '/';
+	return path;
+}
+
+export function is_public_login_post(req: Request): boolean {
+	const path = auth_pathname(req);
+	return (
+		req.method.toUpperCase() === 'POST' &&
+		(path === '/auth/public/login' || path === '/auth/public/login/')
+	);
+}
+
+export function is_auth_login_post(req: Request): boolean {
+	const path = auth_pathname(req);
+	if (req.method.toUpperCase() !== 'POST') return false;
+	return (
+		path === '/auth/login' ||
+		path === '/auth/login/' ||
+		path === '/auth/public/login' ||
+		path === '/auth/public/login/'
+	);
+}
+
+/** GET públicos de sesión/marca: no deben esperar ensure_defaults del catálogo. */
+export function is_public_auth_get(req: Request): boolean {
+	const method = req.method.toUpperCase();
+	if (method !== 'GET' && method !== 'HEAD') return false;
+	const path = auth_pathname(req);
+	return (
+		path === '/auth' ||
+		path === '/auth/' ||
+		path.startsWith('/auth/branding')
+	);
+}
+
 export async function handle_auth(
 	store: ImperiumStore,
 	sql: Bun.SQL,
@@ -75,48 +128,21 @@ export async function handle_auth(
 	const rest = path.slice('/auth'.length) || '/';
 
 	if (method === 'POST' && (rest === '/login' || rest === '/login/')) {
-		const body = await read_imperium_body(req);
-		const email = normalize_auth_rate_limit_email(body.email);
-		const password = String(body.password ?? '');
-		const limited = await consume_login_limits(sql, email, request_ip(req));
-		if (limited) {
-			return Response.json(limited, { status: 429 });
-		}
-		if (!email || !password) {
-			return Response.json(
-				{ message: 'Usuario o contraseña no válido', error: 'Usuario o contraseña no válido' },
-				{ status: 400 },
-			);
-		}
-		const user = await store.find_where('user', { email });
-		const hash = String(user?.password ?? '');
-		const ok_pw = user && user.is_active !== false && hash
-			? await verify_password(password, hash)
-			: await dummy_verify();
-		if (!ok_pw || !user || user.is_active === false) {
-			if (user && user.is_active === false) {
-				debug_error('Usuario no encontrado o inactivo');
-				await report_archived_login_attempt(store, user);
-			}
-			return Response.json(
-				{ message: 'Usuario o contraseña incorrectos', error: 'Usuario o contraseña incorrectos' },
-				{ status: 401 },
-			);
-		}
-		const safe = public_user(user);
-		const session = await create_session(sql, safe);
-		debug_info('Sesión guardada correctamente');
-		const access_rights = await build_access(store, safe);
-		const menus = await build_menus(store, access_rights);
-		return with_cookie(
-			Response.json({ user: safe, menus, access_rights }),
-			session.id,
-		);
+		return login_on_surface(store, sql, req, 'staff');
+	}
+	if (
+		method === 'POST' &&
+		(rest === '/public/login' || rest === '/public/login/')
+	) {
+		return login_on_surface(store, sql, req, 'public');
 	}
 
 	if (
 		method === 'POST' &&
-		(rest === '/logout' || rest === '/logout/' || rest === '/' || rest === '')
+		(rest === '/logout' ||
+			rest === '/logout/' ||
+			rest === '/' ||
+			rest === '')
 	) {
 		const sid = read_sid(req);
 		if (sid) await destroy_session(sql, sid);
@@ -131,7 +157,11 @@ export async function handle_auth(
 	if (method === 'POST' && rest.startsWith('/password-reset/request')) {
 		const body = await read_imperium_body(req);
 		const email = normalize_auth_rate_limit_email(body.email);
-		const limited = await consume_password_reset_request_limits(sql, email, request_ip(req));
+		const limited = await consume_password_reset_request_limits(
+			sql,
+			email,
+			request_ip(req),
+		);
 		if (limited) {
 			return Response.json(limited, { status: 429 });
 		}
@@ -139,7 +169,13 @@ export async function handle_auth(
 		if (user && user.is_active !== false) {
 			const settings = await resolve_email_settings(store);
 			const origin = req.headers.get('origin') ?? '';
-			const generated = await generate_password_reset(store, user, 'recovery', settings, origin);
+			const generated = await generate_password_reset(
+				store,
+				user,
+				'recovery',
+				settings,
+				origin,
+			);
 			if (email_is_configured(settings)) {
 				try {
 					await send_password_reset_email({
@@ -160,7 +196,10 @@ export async function handle_auth(
 		});
 	}
 	if (method === 'GET' && rest.startsWith('/password-reset/validate')) {
-		const limited = await consume_password_reset_ip_limit(sql, request_ip(req));
+		const limited = await consume_password_reset_ip_limit(
+			sql,
+			request_ip(req),
+		);
 		if (limited) {
 			return Response.json(limited, { status: 429 });
 		}
@@ -179,7 +218,10 @@ export async function handle_auth(
 	}
 
 	if (method === 'POST' && rest.startsWith('/password-reset/login')) {
-		const limited = await consume_password_reset_ip_limit(sql, request_ip(req));
+		const limited = await consume_password_reset_ip_limit(
+			sql,
+			request_ip(req),
+		);
 		if (limited) {
 			return Response.json(limited, { status: 429 });
 		}
@@ -205,7 +247,7 @@ export async function handle_auth(
 		const safe = public_user(user);
 		const session = await create_session(sql, safe);
 		const access_rights = await build_access(store, safe);
-		const menus = await build_menus(store, access_rights);
+		const menus = await build_menus(store, sql, access_rights);
 		return with_cookie(
 			Response.json({ user: safe, menus, access_rights }),
 			session.id,
@@ -214,7 +256,10 @@ export async function handle_auth(
 
 	const session = await load_session(sql, req);
 	if (!session) {
-		return Response.json({ error: 'No estás autenticado', message: 'No estás autenticado' }, { status: 401 });
+		return Response.json(
+			{ error: 'No estás autenticado', message: 'No estás autenticado' },
+			{ status: 401 },
+		);
 	}
 
 	if (method === 'GET' && (rest === '/' || rest === '')) {
@@ -222,7 +267,7 @@ export async function handle_auth(
 	}
 	if (method === 'GET' && rest.startsWith('/menus')) {
 		const access_rights = await build_access(store, session.user);
-		const menus = await build_menus(store, access_rights);
+		const menus = await build_menus(store, sql, access_rights);
 		return Response.json({ menus, access_rights });
 	}
 	return Response.json(session.user);
@@ -265,7 +310,10 @@ async function verify_password(plain: string, hash: string): Promise<boolean> {
 
 async function dummy_verify(): Promise<boolean> {
 	try {
-		const dummy = await Bun.password.hash('imperium-dummy-login', 'argon2id');
+		const dummy = await Bun.password.hash(
+			'imperium-dummy-login',
+			'argon2id',
+		);
 		await Bun.password.verify('x', dummy);
 	} catch {
 		/* ignore */
@@ -273,7 +321,81 @@ async function dummy_verify(): Promise<boolean> {
 	return false;
 }
 
-async function create_session(sql: Bun.SQL, user: ImperiumDoc): Promise<Session> {
+async function login_on_surface(
+	store: ImperiumStore,
+	sql: Bun.SQL,
+	req: Request,
+	surface: AuthSurface,
+): Promise<Response> {
+	const body = await read_imperium_body(req);
+	const email = normalize_auth_rate_limit_email(body.email);
+	const password = String(body.password ?? '');
+	const limited = await consume_login_limits(sql, email, request_ip(req));
+	if (limited) {
+		return Response.json(limited, { status: 429 });
+	}
+	if (!email || !password) {
+		return Response.json(
+			{
+				message: 'Usuario o contraseña no válido',
+				error: 'Usuario o contraseña no válido',
+			},
+			{ status: 400 },
+		);
+	}
+	const user = await store.find_where('user', { email });
+	const hash = String(user?.password ?? '');
+	const ok_pw =
+		user && user.is_active !== false && hash
+			? await verify_password(password, hash)
+			: await dummy_verify();
+	const gate = authenticate_for_surface(surface, user, Boolean(ok_pw));
+	if (!gate.ok) {
+		if (user && user.is_active === false) {
+			debug_error('Usuario no encontrado o inactivo');
+			await report_archived_login_attempt(store, user);
+		}
+		return Response.json(
+			{
+				message: GENERIC_CREDENTIALS_MESSAGE,
+				error: GENERIC_CREDENTIALS_MESSAGE,
+			},
+			{ status: 401 },
+		);
+	}
+	const safe = public_user(user as ImperiumDoc);
+	if (gate.kind === 'external') {
+		safe.type = 'external';
+		safe.is_admin = false;
+	}
+	const session = await create_session(sql, safe);
+	debug_info('Sesión guardada correctamente');
+	if (surface === 'public') {
+		return with_cookie(
+			Response.json({
+				user: safe,
+				destination: gate.destination,
+			}),
+			session.id,
+		);
+	}
+	const access_rights = await build_access(store, safe);
+	const menus = await build_menus(store, sql, access_rights);
+	return with_cookie(
+		Response.json({
+			user: safe,
+			menus,
+			access_rights,
+			destination: gate.destination,
+		}),
+		session.id,
+	);
+}
+
+async function create_session(
+	sql: Bun.SQL,
+	user: ImperiumDoc,
+): Promise<Session> {
 	const id = crypto.randomUUID();
 	const expires = Date.now() + 7 * 24 * 3600 * 1000;
 	const session: Session = { id, user, expires };
@@ -289,10 +411,15 @@ async function create_session(sql: Bun.SQL, user: ImperiumDoc): Promise<Session>
 
 async function destroy_session(sql: Bun.SQL, id: string): Promise<void> {
 	memory.delete(id);
-	await sql.unsafe(`DELETE FROM public.imperium_sessions WHERE id = $1`, [id]);
+	await sql.unsafe(`DELETE FROM public.imperium_sessions WHERE id = $1`, [
+		id,
+	]);
 }
 
-async function load_session(sql: Bun.SQL, req: Request): Promise<Session | null> {
+async function load_session(
+	sql: Bun.SQL,
+	req: Request,
+): Promise<Session | null> {
 	const id = read_sid(req);
 	if (!id) return null;
 	const mem = memory.get(id);
@@ -318,7 +445,10 @@ function read_sid(req: Request): string {
 function with_cookie(res: Response, sid: string, clear = false): Response {
 	const headers = new Headers(res.headers);
 	if (clear || !sid) {
-		headers.append('set-cookie', `${COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+		headers.append(
+			'set-cookie',
+			`${COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`,
+		);
 	} else {
 		headers.append(
 			'set-cookie',
@@ -331,7 +461,15 @@ function with_cookie(res: Response, sid: string, clear = false): Response {
 export async function build_access(store: ImperiumStore, user: ImperiumDoc) {
 	const is_admin = user._ref === SEED_ADMIN_REF;
 	if (is_admin) {
-		const models = [...new Set([...store.all_locs.map((l) => l.resource), 'McpAgent'])];
+		// El front (`is_model_available('Pedidos')`) compara contra
+		// mongoose.models, no contra slugs kebab del catálogo.
+		const models = [
+			...new Set([
+				...store.available_mongoose_models().map((m) => m.model_name),
+				'Auth',
+				'McpAgent',
+			]),
+		];
 		return {
 			access_granted: true,
 			has_full_access: true,
@@ -349,44 +487,56 @@ export async function build_access(store: ImperiumStore, user: ImperiumDoc) {
 			method: 'Leer',
 		};
 	}
-	const groups = store.has('user-group')
-		? (
-				await store.find_many('user-group', {
-					mongo_match: { user_ids: { $regex: String(user._id) } },
-					take: 20000,
-					include_inactive: false,
-				})
-			).rows.filter((g) => id_list(g.user_ids).includes(String(user._id)))
-		: [];
+	const uid = String(user._id ?? '');
+	const groups: ImperiumDoc[] = [];
+	const access_right_ids_assigned_to_any_group = new Set<string>();
+	const record_rule_ids_assigned_to_any_group = new Set<string>();
+	if (store.has('user-group')) {
+		for await (const page of store.scan('user-group', { include_inactive: false })) {
+			for (const group of page) {
+				for (const id of id_list(group.access_rights_ids)) {
+					access_right_ids_assigned_to_any_group.add(id);
+				}
+				for (const id of id_list(group.record_rules_ids)) {
+					record_rule_ids_assigned_to_any_group.add(id);
+				}
+				if (uid && id_list(group.user_ids).includes(uid)) groups.push(group);
+			}
+		}
+	}
 	const user_group_reference_ids = new Set(
-		groups.flatMap((g) => [String(g._id ?? ''), String(g._ref ?? '')].filter(Boolean)),
+		groups.flatMap((g) =>
+			[String(g._id ?? ''), String(g._ref ?? '')].filter(Boolean),
+		),
 	);
 	const user_group_access_right_ids = new Set<string>();
 	for (const g of groups) {
-		for (const id of id_list(g.access_rights_ids)) user_group_access_right_ids.add(id);
+		for (const id of id_list(g.access_rights_ids))
+			user_group_access_right_ids.add(id);
 	}
-	const all_groups = store.has('user-group')
-		? (await store.find_many('user-group', { take: 20000, include_inactive: false })).rows
-		: [];
-	const access_right_ids_assigned_to_any_group = new Set<string>();
-	for (const g of all_groups) {
-		for (const id of id_list(g.access_rights_ids)) {
-			access_right_ids_assigned_to_any_group.add(id);
+	const mine: ImperiumDoc[] = [];
+	if (store.has('access-rights')) {
+		for await (const page of store.scan('access-rights', { include_inactive: false })) {
+			for (const right of page) {
+				const rid = String(right._id ?? '');
+				const gid = String(right.group_id ?? '').trim();
+				const belongs =
+					user_group_access_right_ids.has(rid) ||
+					(Boolean(gid) && user_group_reference_ids.has(gid));
+				const keep = groups.length
+					? belongs
+					: !gid && !access_right_ids_assigned_to_any_group.has(rid);
+				if (keep) mine.push(right);
+			}
 		}
 	}
-	const rights = store.has('access-rights')
-		? (await store.find_many('access-rights', { take: 20000, include_inactive: false })).rows
-		: [];
-	const mine = rights.filter((r) => {
-		const rid = String(r._id ?? '');
-		const gid = String(r.group_id ?? '').trim();
-		const belongs =
-			user_group_access_right_ids.has(rid) ||
-			(Boolean(gid) && user_group_reference_ids.has(gid));
-		if (groups.length) return belongs;
-		return !gid && !access_right_ids_assigned_to_any_group.has(rid);
-	});
-	const models = [...new Set(mine.filter((r) => access_flag(r.allow_read)).map((r) => String(r.model_id)))];
+	const models = [
+		...new Set(
+			mine
+				.filter((r) => access_flag(r.allow_read))
+				.map((r) => String(r.model_id)),
+		),
+	];
 	const permissions_by_model: Record<string, Record<string, boolean>> = {};
 	for (const r of mine) {
 		const mid = String(r.model_id ?? '');
@@ -408,11 +558,17 @@ export async function build_access(store: ImperiumStore, user: ImperiumDoc) {
 		has_full_access: false,
 		has_user_groups: groups.length > 0,
 		models,
-		menu_ids: [] as string[],
+		menu_ids: collect_group_menu_ids(groups),
 		user_group_ids: groups.map((g) => String(g._id)),
-		user_group_refs: groups.map((g) => String(g._ref ?? '')).filter(Boolean),
+		user_group_refs: groups
+			.map((g) => String(g._ref ?? ''))
+			.filter(Boolean),
 		permissions_by_model,
-		record_rules_by_model: await load_record_rules_by_model(store, groups),
+		record_rules_by_model: await load_record_rules_by_model(
+			store,
+			groups,
+			record_rule_ids_assigned_to_any_group,
+		),
 		user_group_names: groups.map((g) => String(g.name ?? '')),
 		allowed_groups: [] as string[],
 		message: 'Permisos del usuario calculados correctamente',
@@ -605,7 +761,11 @@ const SESSION_SCOPED_EXTRAS = new Set([
 ]);
 
 function is_session_scoped_extra(resource?: string, action?: string) {
-	return Boolean(resource && action && SESSION_SCOPED_EXTRAS.has(`${resource}:${action}`));
+	return Boolean(
+		resource &&
+		action &&
+		SESSION_SCOPED_EXTRAS.has(`${resource}:${action}`),
+	);
 }
 
 const READ_EXTRA_ACTIONS = new Set([
@@ -652,7 +812,8 @@ function crud_flag(method: string): RecordRuleOperationFlag {
 
 function extra_flag(method: string, action: string): RecordRuleOperationFlag {
 	const m = method.toUpperCase();
-	if (m === 'GET' || m === 'HEAD' || READ_EXTRA_ACTIONS.has(action)) return 'allow_read';
+	if (m === 'GET' || m === 'HEAD' || READ_EXTRA_ACTIONS.has(action))
+		return 'allow_read';
 	if (m === 'DELETE') return 'allow_delete';
 	if (
 		action.startsWith('create_') ||
@@ -683,7 +844,9 @@ function permissions_for_resource(
 		if (hit) return { perms: hit, model: key };
 	}
 	const collapsed = resource.replace(/-/g, '').toLowerCase();
-	for (const [model, perms] of Object.entries(access.permissions_by_model ?? {})) {
+	for (const [model, perms] of Object.entries(
+		access.permissions_by_model ?? {},
+	)) {
 		if (model.replace(/[^A-Za-z0-9]/g, '').toLowerCase() === collapsed) {
 			return { perms, model };
 		}
@@ -715,7 +878,11 @@ export async function assert_target_model_read(
 
 const REPORTS_PDF_SETTING_ID = /^[a-f0-9]{24}$/i;
 
-function reports_pdf_setting_public_read(resource: string, method: string, rest = '') {
+function reports_pdf_setting_public_read(
+	resource: string,
+	method: string,
+	rest = '',
+) {
 	if (resource !== 'reports-pdf-setting' || method !== 'GET') return false;
 	const id = rest.replace(/^\/+|\/+$/g, '').split('/')[0] ?? '';
 	return REPORTS_PDF_SETTING_ID.test(id);
@@ -738,11 +905,19 @@ export async function assert_http_access(
 		}
 		throw new HttpAuthRequiredError();
 	}
+	if (!can_enter_internal(actor)) {
+		throw new HttpAccessDeniedError('Solo usuarios internos');
+	}
 	if (opts.extra && is_session_scoped_extra(resource, opts.action)) return;
 	const access = await build_access(store, actor);
 	if (access.has_full_access) return;
-	const canonical = store.has(resource) ? store.loc(resource).resource : resource;
-	const flag = opts.extra && opts.action ? extra_flag(method, opts.action) : crud_flag(method);
+	const canonical = store.has(resource)
+		? store.loc(resource).resource
+		: resource;
+	const flag =
+		opts.extra && opts.action
+			? extra_flag(method, opts.action)
+			: crud_flag(method);
 	const { perms, model } = permissions_for_resource(access, canonical);
 	if (perms?.[flag]) return;
 	throw new HttpAccessDeniedError(
@@ -754,14 +929,21 @@ export async function assert_http_access(
 	);
 }
 
-async function build_menus(store: ImperiumStore, access: Awaited<ReturnType<typeof build_access>>) {
+async function build_menus(
+	store: ImperiumStore,
+	sql: Bun.SQL,
+	access: Awaited<ReturnType<typeof build_access>>,
+) {
 	if (!store.has('menu-management')) return [];
-	const { rows } = await store.find_many('menu-management', {
-		take: 20000,
-		include_inactive: false,
-		populate: false,
-	});
-	if (access.has_full_access) return reshape_subject_menus(store, rows).sort(by_order);
+	const rows: ImperiumDoc[] = [];
+	for await (const page of store.scan('menu-management', { include_inactive: false })) {
+		rows.push(...page);
+	}
+	const disabled_subjects = await disabled_subject_slugs(store, sql);
+	if (access_has_full_admin_scope(access))
+		return reshape_subject_menus(store, rows, disabled_subjects).sort(
+			by_order,
+		);
 	const models = new Set(access.models.map(String));
 	const assigned = new Set(access.menu_ids.map(String));
 	let filtered = rows.filter((m) => {
@@ -781,28 +963,48 @@ async function build_menus(store: ImperiumStore, access: Awaited<ReturnType<type
 	}
 	filtered = [...keep.values()];
 	if (store.has('module-management')) {
-		const mods = (
-			await store.find_many('module-management', {
-				mongo_match: {
-					$or: [{ is_enable: false }, { is_active: false }],
-				},
-				take: 20000,
-				include_inactive: true,
-			})
-		).rows;
+		const mods: ImperiumDoc[] = [];
+		for await (const page of store.scan('module-management', {
+			mongo_match: {
+				$or: [{ is_enable: false }, { is_active: false }],
+			},
+			include_inactive: true,
+		})) {
+			mods.push(...page);
+		}
 		const disabled = new Set(
-			mods.filter((m) => m.is_enable === false || m.is_enable === 'false').map((m) => String(m.model_id ?? m._id)),
+			mods
+				.filter((m) => m.is_enable === false || m.is_enable === 'false')
+				.map((m) => String(m.model_id ?? m._id)),
 		);
 		filtered = filtered.filter((m) => {
 			const model = String(m.model ?? '');
 			return !model || !disabled.has(model);
 		});
 	}
-	return reshape_subject_menus(store, filtered).sort(by_order);
+	return reshape_subject_menus(store, filtered, disabled_subjects).sort(
+		by_order,
+	);
 }
 
 function by_order(a: ImperiumDoc, b: ImperiumDoc) {
 	return Number(a.order ?? 100) - Number(b.order ?? 100);
+}
+
+/** Superficie de producto Mongo; el catálogo SQL sigue sirviendo extras de schema. */
+function is_mongo_modelos_menu(row: {
+	path?: unknown;
+	_ref?: unknown;
+	resource?: unknown;
+}): boolean {
+	const path = String(row.path ?? '').replace(/\/+$/, '');
+	const ref = String(row._ref ?? '');
+	const resource = String(row.resource ?? '');
+	return (
+		path === '/model-tracker' ||
+		ref === 'model-tracker-menu-management-0' ||
+		resource === 'model-tracker'
+	);
 }
 
 const SUBJECT_ICONS: Record<string, string> = {
@@ -827,16 +1029,47 @@ const SUBJECT_ICONS: Record<string, string> = {
 	'configuraciones-de-vista': 'fa-table-columns',
 };
 
-function reshape_subject_menus(store: ImperiumStore, rows: ImperiumDoc[]): ImperiumDoc[] {
+/**
+ * True si el menú cuelga (directa o indirectamente) de la raíz de la app.
+ * Evita aplanar carpetas intermedias (Agua, Infracciones, …) al reparentar.
+ */
+export function menu_is_under_root(
+	menu: ImperiumDoc,
+	root_id: string,
+	by_id: Map<string, ImperiumDoc>,
+): boolean {
+	let cursor: ImperiumDoc | undefined = menu;
+	const seen = new Set<string>();
+	while (cursor) {
+		const id = String(cursor._id ?? '');
+		if (!id || seen.has(id)) return false;
+		if (id === root_id) return true;
+		seen.add(id);
+		const pid = cursor.parent_id ? String(cursor.parent_id) : '';
+		if (!pid) return false;
+		if (pid === root_id) return true;
+		cursor = by_id.get(pid);
+	}
+	return false;
+}
+
+export function reshape_subject_menus(
+	store: Pick<ImperiumStore, 'subjects'>,
+	rows: ImperiumDoc[],
+	disabled_subjects: Set<string> = new Set(),
+): ImperiumDoc[] {
 	const menus = rows.map((r) => ({ ...r }));
 	const by_ref = new Map(menus.map((m) => [String(m._ref ?? ''), m]));
 	const root_ids = new Set<string>();
 	const norm = (p: unknown) => String(p ?? '').replace(/\/+$/, '');
 
 	store.subjects.forEach((sub, i) => {
+		if (disabled_subjects.has(sub.slug)) return;
 		let root = by_ref.get(sub.menu_ref);
 		if (!root) {
-			root = menus.find((m) => !m.parent_id && String(m.name) === sub.name);
+			root = menus.find(
+				(m) => !m.parent_id && String(m.name) === sub.name,
+			);
 		}
 		if (!root) {
 			const id = `subject-root-${sub.slug}`;
@@ -859,11 +1092,16 @@ function reshape_subject_menus(store: ImperiumStore, rows: ImperiumDoc[]): Imper
 			root.name = sub.name;
 			if (!root.icon) root.icon = SUBJECT_ICONS[sub.slug] ?? 'fa-cube';
 			const order = Number(root.order);
-			if (!Number.isFinite(order) || order === 0) root.order = (i + 1) * 10;
+			if (!Number.isFinite(order) || order === 0)
+				root.order = (i + 1) * 10;
 		}
+		root.subject_slug = sub.slug;
+		root.icon = `subject:${sub.slug}`;
 		root_ids.add(String(root._id));
+		const by_id = new Map(menus.map((m) => [String(m._id), m]));
 
 		for (const mod of sub.modules) {
+			if (is_mongo_modelos_menu(mod)) continue;
 			const prefer = PREFER_OWNER[mod.resource];
 			if (prefer && prefer !== sub.slug) continue;
 			let found = false;
@@ -873,12 +1111,14 @@ function reshape_subject_menus(store: ImperiumStore, rows: ImperiumDoc[]): Imper
 					(mod.menu_ref && String(m._ref ?? '') === mod.menu_ref) ||
 					(mod.path && norm(m.path) === norm(mod.path));
 				if (!hit) continue;
-				m.parent_id = root._id;
+				if (!menu_is_under_root(m, String(root._id), by_id)) {
+					m.parent_id = root._id;
+				}
 				found = true;
 			}
 			if (!found && mod.path && norm(mod.path) !== norm(root.path)) {
 				const id = `subject-mod-${sub.slug}-${mod.resource}`;
-				menus.push({
+				const created = {
 					_id: id,
 					id,
 					name: mod.name,
@@ -889,13 +1129,44 @@ function reshape_subject_menus(store: ImperiumStore, rows: ImperiumDoc[]): Imper
 					order: 10,
 					is_active: true,
 					model: '',
-				});
+				};
+				menus.push(created);
+				by_id.set(id, created);
 			}
 		}
 	});
 
 	const sibling = new Set<string>();
+	const disabled_paths = new Set<string>();
+	const disabled_ids = new Set<string>();
+	for (const sub of store.subjects) {
+		if (!disabled_subjects.has(sub.slug)) continue;
+		if (sub.path) disabled_paths.add(norm(sub.path));
+		for (const mod of sub.modules) {
+			if (mod.path) disabled_paths.add(norm(mod.path));
+		}
+		const root =
+			by_ref.get(sub.menu_ref) ??
+			menus.find((m) => !m.parent_id && String(m.name) === sub.name);
+		if (root) disabled_ids.add(String(root._id));
+	}
+	let grew = true;
+	while (grew) {
+		grew = false;
+		for (const m of menus) {
+			const id = String(m._id ?? '');
+			if (!id || disabled_ids.has(id)) continue;
+			const pid = m.parent_id ? String(m.parent_id) : '';
+			if (pid && disabled_ids.has(pid)) {
+				disabled_ids.add(id);
+				grew = true;
+			}
+		}
+	}
 	return menus.filter((m) => {
+		if (is_mongo_modelos_menu(m)) return false;
+		if (disabled_ids.has(String(m._id))) return false;
+		if (menu_path_is_disabled(norm(m.path), disabled_paths)) return false;
 		if (!m.parent_id) return root_ids.has(String(m._id));
 		const path = norm(m.path);
 		if (!path) return true;
@@ -904,6 +1175,19 @@ function reshape_subject_menus(store: ImperiumStore, rows: ImperiumDoc[]): Imper
 		sibling.add(key);
 		return true;
 	});
+}
+
+/** True si el path es el de una app desinstalada o un hijo suyo. */
+export function menu_path_is_disabled(
+	path: string,
+	disabled_paths: Set<string>,
+): boolean {
+	const p = String(path ?? '').replace(/\/+$/, '');
+	if (!p) return false;
+	for (const d of disabled_paths) {
+		if (p === d || (d && p.startsWith(`${d}/`))) return true;
+	}
+	return false;
 }
 
 const BRANDING_REFS = [
@@ -928,13 +1212,28 @@ async function branding_json(store: ImperiumStore): Promise<Response> {
 	}
 	const logo = docs.get('configuration-company-logo');
 	const payload = {
-		branding_mode: unwrap_config(docs.get('configuration-branding-mode')?.value) ?? 'imperium',
+		branding_mode:
+			unwrap_config(docs.get('configuration-branding-mode')?.value) ??
+			'imperium',
 		company_logo: unwrap_config(logo?.value) ?? null,
 		company_logo_type: unwrap_config(logo?.type) ?? 'image',
-		logo_width: unwrap_config(docs.get('configuration-branding-logo-width')?.value) ?? null,
-		logo_height: unwrap_config(docs.get('configuration-branding-logo-height')?.value) ?? null,
-		logo_text_position: unwrap_config(docs.get('configuration-branding-logo-text-position')?.value) ?? null,
-		default_theme: String(unwrap_config(docs.get('configuration-default-theme')?.value) ?? 'default').trim() || 'default',
+		logo_width:
+			unwrap_config(
+				docs.get('configuration-branding-logo-width')?.value,
+			) ?? null,
+		logo_height:
+			unwrap_config(
+				docs.get('configuration-branding-logo-height')?.value,
+			) ?? null,
+		logo_text_position:
+			unwrap_config(
+				docs.get('configuration-branding-logo-text-position')?.value,
+			) ?? null,
+		default_theme:
+			String(
+				unwrap_config(docs.get('configuration-default-theme')?.value) ??
+					'default',
+			).trim() || 'default',
 	};
 	return Response.json({
 		data: [payload],
@@ -964,7 +1263,10 @@ async function branding_logo(store: ImperiumStore): Promise<Response> {
 	if (!store.has('attachment-management')) {
 		return new Response('Logo no encontrado', { status: 404 });
 	}
-	const attachment = await store.find_id('attachment-management', String(reference));
+	const attachment = await store.find_id(
+		'attachment-management',
+		String(reference),
+	);
 	if (!attachment) {
 		return new Response('Logo no encontrado', { status: 404 });
 	}

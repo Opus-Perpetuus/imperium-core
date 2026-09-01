@@ -23,6 +23,24 @@ export function is_seed_admin(actor: ImperiumDoc | null): boolean {
 	return String(actor?._ref ?? actor?.ref ?? '') === SEED_ADMIN_REF;
 }
 
+export function collect_group_menu_ids(
+	groups: Array<{ menus_ids?: unknown }>,
+): string[] {
+	const ids = new Set<string>();
+	for (const group of groups) {
+		for (const id of id_list(group.menus_ids)) {
+			ids.add(id);
+		}
+	}
+	return [...ids];
+}
+
+export function access_has_full_admin_scope(
+	access: { has_full_access?: boolean } | null | undefined,
+): boolean {
+	return access?.has_full_access === true;
+}
+
 function id_list(value: unknown): string[] {
 	return as_array(value)
 		.map((item) => {
@@ -42,15 +60,18 @@ export async function actor_group_refs(
 	if (!store.has('user-group')) return [];
 	const uid = String(actor?._id ?? '');
 	if (!uid) return [];
-	const { rows } = await store.find_many('user-group', {
+	const refs: string[] = [];
+	for await (const page of store.scan('user-group', {
 		mongo_match: { user_ids: { $regex: uid } },
-		take: 20000,
 		include_inactive: false,
-	});
-	return rows
-		.filter((group) => id_list(group.user_ids).includes(uid))
-		.map((group) => String(group._ref ?? group.ref ?? ''))
-		.filter(Boolean);
+	})) {
+		for (const group of page) {
+			if (!id_list(group.user_ids).includes(uid)) continue;
+			const ref = String(group._ref ?? group.ref ?? '');
+			if (ref) refs.push(ref);
+		}
+	}
+	return refs;
 }
 
 export async function assert_state_transition_allowed(

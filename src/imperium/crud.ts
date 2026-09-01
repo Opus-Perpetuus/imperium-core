@@ -1,6 +1,7 @@
 /**
  * CRUD Imperium: mismas rutas que `crud_routes()` del backend Express.
  */
+import { apply_public_user_create } from '@opus-perpetuus/imperium-core-kit';
 import { as_array, as_object, fail, ok, type ImperiumDoc } from './envelope.ts';
 import { run_batch_import } from './batch-import.ts';
 import { query_list, read_imperium_body } from './body.ts';
@@ -132,8 +133,7 @@ import { prepare_increment_create } from './increment-normalize.ts';
 import { build_access } from './auth.ts';
 import { is_seed_admin } from './group-access.ts';
 import {
-	build_field_values,
-	field_values_limit,
+	field_values_from_distinct,
 	field_values_message,
 	field_values_missing_field_error,
 	filter_pedido_estado_options,
@@ -305,72 +305,40 @@ export async function handle_crud(
 	if (method === 'GET' && segs[0] === 'field-values' && segs[1]) {
 		const field_path = decodeURIComponent(segs[1] ?? '').trim();
 		if (!field_path) throw new Error(field_values_missing_field_error());
-		const list_url = new URL(url);
-		list_url.searchParams.set('limite', String(field_values_limit(url.searchParams.get('limite'))));
-		if (!list_url.searchParams.get('desde')) list_url.searchParams.set('desde', '0');
-		const { rows } = await read_list_docs(store, resource, list_url, actor);
+		const termino = String(url.searchParams.get('termino') ?? '').trim();
+		const values = await store.distinct(resource, field_path, termino);
 		const metadata = await load_state_fields_metadata(store, resource);
 		const options = await filter_pedido_estado_options(
 			store,
 			actor,
 			resource,
 			field_path,
-			build_field_values(rows, field_path, state_field_for(metadata, field_path)),
+			field_values_from_distinct(values, field_path, state_field_for(metadata, field_path)),
 		);
 		return json(resource, ok(options, field_values_message(field_path), options.length));
 	}
 	if (method === 'GET' && segs[0] === 'export.csv' && segs.length === 1) {
 		const { q, include_inactive, where, ids } = query_list(url);
 		const scope = await record_rule_scope(store, actor, resource, method);
-		const page_size = 1000;
-		const max_rows = Number(process.env.EXPORT_STREAM_MAX_ROWS ?? 1_000_000);
-		const collected: ImperiumDoc[] = [];
-		let skip = 0;
-		while (collected.length < max_rows) {
-			const take = Math.min(page_size, max_rows - collected.length);
-			const { rows } = await store.find_many(resource, {
-				q,
-				take,
-				skip,
-				include_inactive,
-				where: Object.keys(where).length ? where : undefined,
-				ids,
-				mongo_match: scope.match,
-			});
-			if (!rows.length) break;
-			collected.push(...rows);
-			skip += rows.length;
-			if (rows.length < take) break;
-		}
-		const decorated = await finalize_rows(store, resource, collected, 'list');
-		const keys = new Set<string>();
-		for (const r of decorated) for (const k of Object.keys(r)) keys.add(k);
-		const cols = [...keys]
-			.filter((k) => k !== 'payload' && !USER_SECRET_KEYS.has(k))
-			.slice(0, 40);
-		const lines = [
-			cols.join(','),
-			...decorated.map((r) =>
-				cols
-					.map((c) => csv(r[c]))
-					.join(','),
-			),
-		];
-		return new Response(lines.join('\n'), {
-			headers: {
-				'content-type': 'text/csv; charset=utf-8',
-				'content-disposition': `attachment; filename="${resource}.csv"`,
-			},
+		return stream_export_csv(store, resource, {
+			q,
+			include_inactive,
+			where,
+			ids,
+			mongo_match: scope.match,
 		});
 	}
 	if (method === 'POST' && segs[0] === 'mass-query' && segs.length === 1) {
 		const b = await body();
-		const ids = Array.isArray(b.ids) ? b.ids.map(String) : [];
+		const ids = (Array.isArray(b.ids) ? b.ids.map(String) : []).filter(Boolean);
+		const capped = ids.slice(0, MASS_QUERY_MAX_IDS);
 		const { rows, total } = await store.find_many(resource, {
-			ids,
-			take: Number(b.limite ?? 10000),
-			skip: Number(b.desde ?? 0),
+			ids: capped,
+			take: capped.length || 1,
+			skip: 0,
 			include_inactive: true,
+			populate: false,
+			skip_total: true,
 		});
 		return json(
 			resource,
@@ -1180,11 +1148,13 @@ async function read_list_docs(
 	}
 	const where = strip_root_parent_where(q.where);
 	const scope = await record_rule_scope(store, actor, resource, 'GET');
+	const excel = is_excel_export(url);
 	const found = await store.find_many(resource, {
 		...q,
 		where: Object.keys(where).length ? where : undefined,
 		mongo_match: scope.match,
 		take: q.where.parent_task === '__root__' || q.where.parent_task_id === '__root__' ? 2000 : q.take,
+		list_project: !excel,
 	});
 	let filtered = apply_root_parent_filter(resource, q.where, found.rows);
 	if (is_lista_asistencia_resource(resource) && !url.searchParams.get('campoSort')) {
@@ -1198,7 +1168,6 @@ async function read_list_docs(
 		});
 	}
 	const total = filtered.length === found.rows.length ? found.total : filtered.length;
-	const excel = is_excel_export(url);
 	let decorated = await finalize_rows(store, resource, filtered, excel ? 'excel' : 'list');
 	if (is_dashboard_resource(resource)) {
 		const access = await dashboard_access(store, actor);
@@ -1467,7 +1436,7 @@ async function prepare_user_write(
 	require_password: boolean,
 ): Promise<ImperiumDoc> {
 	if (!is_user_resource(resource)) return doc;
-	const out: ImperiumDoc = { ...doc };
+	const out: ImperiumDoc = apply_public_user_create({ ...doc });
 	if (typeof out.email === 'string') out.email = out.email.trim().toLowerCase();
 	if (out.password === undefined) {
 		if (require_password) throw new Error(PASSWORD_TOO_SHORT_MESSAGE);
@@ -1547,6 +1516,76 @@ function normalize_sort_value(value: unknown): number | string | boolean {
 
 function json(resource: string, body: unknown, status = 200): Response {
 	return Response.json(sanitize_payload(resource, body), { status });
+}
+
+export const MASS_QUERY_MAX_IDS = 500;
+export const EXPORT_PAGE_SIZE = 1000;
+
+function stream_export_csv(
+	store: ImperiumStore,
+	resource: string,
+	input: {
+		q?: string;
+		include_inactive?: boolean;
+		where: Record<string, unknown>;
+		ids?: string[];
+		mongo_match?: Record<string, unknown> | null;
+	},
+): Response {
+	const max_rows = Number(process.env.EXPORT_STREAM_MAX_ROWS ?? 1_000_000);
+	const encoder = new TextEncoder();
+	const base_where = Object.keys(input.where).length ? { ...input.where } : {};
+	let after_id = '';
+	let cols: string[] | null = null;
+	let emitted = 0;
+	const stream = new ReadableStream<Uint8Array>({
+		async pull(controller) {
+			if (emitted >= max_rows) {
+				controller.close();
+				return;
+			}
+			const take = Math.min(EXPORT_PAGE_SIZE, max_rows - emitted);
+			const where = { ...base_where };
+			if (after_id) where.id = { gt: after_id };
+			const { rows } = await store.find_many(resource, {
+				q: input.q,
+				take,
+				include_inactive: input.include_inactive,
+				where: Object.keys(where).length ? where : undefined,
+				ids: input.ids,
+				mongo_match: input.mongo_match,
+				populate: false,
+				skip_total: true,
+				sort: 'id:asc',
+			});
+			if (!rows.length) {
+				if (!cols) controller.enqueue(encoder.encode(''));
+				controller.close();
+				return;
+			}
+			const decorated = await finalize_rows(store, resource, rows, 'list');
+			if (!cols) {
+				const keys = new Set<string>();
+				for (const row of decorated) for (const key of Object.keys(row)) keys.add(key);
+				cols = [...keys]
+					.filter((key) => key !== 'payload' && !USER_SECRET_KEYS.has(key))
+					.slice(0, 40);
+				controller.enqueue(encoder.encode(`${cols.join(',')}\n`));
+			}
+			controller.enqueue(
+				encoder.encode(`${decorated.map((row) => cols!.map((col) => csv(row[col])).join(',')).join('\n')}\n`),
+			);
+			emitted += rows.length;
+			after_id = String(rows[rows.length - 1]?._id ?? rows[rows.length - 1]?.id ?? '');
+			if (rows.length < take) controller.close();
+		},
+	});
+	return new Response(stream, {
+		headers: {
+			'content-type': 'text/csv; charset=utf-8',
+			'content-disposition': `attachment; filename="${resource}.csv"`,
+		},
+	});
 }
 
 function csv(v: unknown): string {

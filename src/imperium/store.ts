@@ -1,5 +1,5 @@
 /**
- * Almacén de documentos Imperium sobre los schemas SQL de los súbditos.
+ * Almacén de documentos Imperium sobre los schemas SQL de las apps.
  * Un recurso canónico (products, pedidos) aunque el menú lo repita.
  */
 import { existsSync, readFileSync } from 'node:fs';
@@ -43,6 +43,7 @@ import {
 	FieldValidationError,
 	required_fields_for,
 } from './required-fields.ts';
+import { list_projection_keys } from './list-projection.ts';
 
 export type ExtraCol = {
 	name: string;
@@ -68,6 +69,8 @@ export type SubjectInfo = {
 	name: string;
 	path: string;
 	menu_ref: string;
+	technical_id: string;
+	image: string;
 	modules: Array<{ resource: string; path: string; menu_ref: string; name: string }>;
 };
 
@@ -197,6 +200,230 @@ function unique_composites_active_for(resource: string): string[][] {
 		UNIQUE_COMPOSITES_ACTIVE[RESOURCE_ALIASES[resource] ?? ''] ??
 		[]
 	);
+}
+
+function index_name(table_key: string, suffix: string): string {
+	const raw = `uq_${table_key}_${suffix}`.replace(/[^a-z0-9_]/gi, '_').slice(0, 63);
+	return raw.replace(/_+$/, '') || 'uq_idx';
+}
+
+/**
+ * Unique de negocio en Postgres (Mongoose lo imponía; aquí no había INDEX).
+ * Columna física si existe; si no, expresión sobre `payload`.
+ */
+export function unique_index_sqls(input: {
+	quoted_table: string;
+	table_key: string;
+	fields: readonly string[];
+	composites?: readonly string[][];
+	columns: ReadonlySet<string>;
+}): string[] {
+	const out: string[] = [];
+	for (const field of input.fields) {
+		const idx = qident(index_name(input.table_key, field));
+		if (input.columns.has(field)) {
+			const col = qident(field);
+			out.push(
+				`CREATE UNIQUE INDEX IF NOT EXISTS ${idx} ON ${input.quoted_table} (${col}) WHERE ${col} IS NOT NULL AND btrim(${col}::text) <> ''`,
+			);
+		} else {
+			const expr = `payload ->> '${field.replace(/'/g, "''")}'`;
+			out.push(
+				`CREATE UNIQUE INDEX IF NOT EXISTS ${idx} ON ${input.quoted_table} ((${expr})) WHERE ${expr} IS NOT NULL AND btrim(${expr}) <> ''`,
+			);
+		}
+	}
+	for (const fields of input.composites ?? []) {
+		if (!fields.length) continue;
+		const idx = qident(index_name(input.table_key, fields.join('_')));
+		const cols = fields.map((field) =>
+			input.columns.has(field)
+				? qident(field)
+				: `(payload ->> '${field.replace(/'/g, "''")}')`,
+		);
+		out.push(
+			`CREATE UNIQUE INDEX IF NOT EXISTS ${idx} ON ${input.quoted_table} (${cols.join(', ')})`,
+		);
+	}
+	return out;
+}
+
+/** Lookup no-único: el UNIQUE puede fallar si ya hay duplicados; el btree igual acelera el login. */
+export function lookup_index_sqls(input: {
+	quoted_table: string;
+	table_key: string;
+	fields: readonly string[];
+	columns: ReadonlySet<string>;
+}): string[] {
+	const out: string[] = [];
+	for (const field of input.fields) {
+		if (!input.columns.has(field)) continue;
+		const idx = qident(index_name(input.table_key, field).replace(/^uq_/, 'ix_'));
+		const col = qident(field);
+		out.push(`CREATE INDEX IF NOT EXISTS ${idx} ON ${input.quoted_table} (${col})`);
+	}
+	return out;
+}
+
+const LOOKUP_PAYLOAD_FIELDS: Record<string, string[]> = {
+	'document-change-history': ['documentId', 'modelName'],
+};
+
+function lookup_payload_fields_for(resource: string): string[] {
+	return (
+		LOOKUP_PAYLOAD_FIELDS[resource] ??
+		LOOKUP_PAYLOAD_FIELDS[RESOURCE_ALIASES[resource] ?? ''] ??
+		[]
+	);
+}
+
+export function payload_lookup_index_sqls(input: {
+	quoted_table: string;
+	table_key: string;
+	fields: readonly string[];
+}): string[] {
+	const out: string[] = [];
+	for (const field of input.fields) {
+		const idx = qident(index_name(input.table_key, field).replace(/^uq_/, 'ix_'));
+		const expr = `(payload ->> '${field.replace(/'/g, "''")}')`;
+		out.push(`CREATE INDEX IF NOT EXISTS ${idx} ON ${input.quoted_table} (${expr})`);
+	}
+	return out;
+}
+
+/** Página de historial: WHERE documentId + ORDER BY created_at DESC LIMIT n. */
+export function history_page_index_sqls(input: {
+	quoted_table: string;
+	table_key: string;
+}): string[] {
+	const idx = qident(index_name(input.table_key, 'doc_created').replace(/^uq_/, 'ix_'));
+	return [
+		`CREATE INDEX IF NOT EXISTS ${idx} ON ${input.quoted_table} ((payload ->> 'documentId'), created_at DESC)`,
+	];
+}
+
+/**
+ * Keyset temporal: `(created_at, id) > ($at, $id)`.
+ * `created_at` es TEXT ISO; el predicado no casteá — coincide con
+ * `ORDER BY created_at ASC, id ASC` (lex = cronológico en ISO-8601).
+ */
+export function created_at_keyset_sql(at_param: string, id_param: string): string {
+	return `(created_at, id) > (${at_param}, ${id_param})`;
+}
+
+/**
+ * Keyset FIFO de lotes: `(fecha_entrada, created_at, id) > (...)`.
+ * TEXT ISO; el predicado no casteá. Empate = created_at, luego id.
+ */
+export function fecha_entrada_keyset_sql(
+	fecha_param: string,
+	created_param: string,
+	id_param: string,
+): string {
+	return `(fecha_entrada, created_at, id) > (${fecha_param}, ${created_param}, ${id_param})`;
+}
+
+/** Un `MAX` numérico: dígitos enteros o cola numérica (`SES-12` → 12). */
+export function max_numeric_expr(field_sql: string): string {
+	return `MAX(CASE
+		WHEN ${field_sql}::text ~ '^[0-9]+(\\.[0-9]+)?$' THEN ${field_sql}::numeric
+		WHEN ${field_sql}::text ~ '[0-9]+$' THEN (regexp_match(${field_sql}::text, '([0-9]+)$'))[1]::numeric
+		ELSE NULL
+	END)`;
+}
+
+/**
+ * `GROUP BY` de un campo escalar (columna o `payload ->>`). Una fila por
+ * valor distinto + COUNT. No hidrata docs. Refs/objetos no van por aquí:
+ * `payload ->>` de `{_id, name}` no es el id de `serialize_field_value`.
+ */
+export function value_counts_sql(
+	quoted_table: string,
+	expr: string,
+	include_inactive: boolean,
+): string {
+	const active = include_inactive ? '' : 'is_active IS DISTINCT FROM false AND ';
+	return `SELECT ${expr} AS v, COUNT(*)::int AS n
+		FROM ${quoted_table}
+		WHERE ${active}${expr} IS NOT NULL
+		  AND btrim(${expr}::text) <> ''
+		  AND ${expr}::text NOT IN ('-', 'ERR!')
+		GROUP BY 1`;
+}
+
+/**
+ * Lote que convierte JSONB string-wrapped (`"{\"a\":1}"`) en objeto.
+ * Así `payload ->>` y los btrees de expresión vuelven a ver las claves.
+ */
+export function unwrap_jsonb_string_sql(quoted_table: string, column: string): string {
+	const col = qident(column);
+	return `UPDATE ${quoted_table} AS t
+		SET ${col} = (t.${col} #>> '{}')::jsonb
+		FROM (
+			SELECT id FROM ${quoted_table}
+			WHERE jsonb_typeof(${col}) = 'string'
+			  AND (${col} #>> '{}') ~ '^[[:space:]]*[\\{\\[]'
+			LIMIT 1000
+		) s
+		WHERE t.id = s.id
+		RETURNING t.id`;
+}
+
+export function string_jsonb_ids_sql(quoted_table: string, column: string): string {
+	const col = qident(column);
+	return `SELECT id FROM ${quoted_table}
+		WHERE jsonb_typeof(${col}) = 'string'
+		  AND (${col} #>> '{}') ~ '^[[:space:]]*[\\{\\[]'
+		LIMIT 1000`;
+}
+
+export function unwrap_jsonb_string_one_sql(quoted_table: string, column: string): string {
+	const col = qident(column);
+	return `UPDATE ${quoted_table}
+		SET ${col} = (${col} #>> '{}')::jsonb
+		WHERE id = $1
+		  AND jsonb_typeof(${col}) = 'string'
+		RETURNING id`;
+}
+
+/**
+ * Bun.SQL pone el SQLSTATE en `errno` y `ERR_POSTGRES_SERVER_ERROR` en `code`.
+ * Usar solo `code` deja pasar 42P01 y tumba el boot de toda la API.
+ */
+export function is_missing_relation(err: unknown): boolean {
+	if (err === null || err === undefined || typeof err !== 'object') {
+		return /relation ".+" does not exist/i.test(String(err ?? ''));
+	}
+	const rec = err as { code?: string; errno?: string; message?: string };
+	const code = String(rec.code ?? '');
+	const errno = String(rec.errno ?? '');
+	if (code === '42P01' || errno === '42P01' || code === '42703' || errno === '42703') {
+		return true;
+	}
+	return /relation ".+" does not exist/i.test(String(rec.message ?? ''));
+}
+
+/**
+ * Bun.SQL pone el SQLSTATE en `errno` (`23505`) y `ERR_POSTGRES_SERVER_ERROR` en `code`.
+ * El unwrap de jsonb string-wrapped choca unique si ya existe la fila objeto.
+ */
+export function is_unique_violation(err: unknown): boolean {
+	if (err === null || err === undefined || typeof err !== 'object') {
+		return /duplicate key value violates unique constraint/i.test(String(err ?? ''));
+	}
+	const rec = err as { code?: string; errno?: string; message?: string };
+	const code = String(rec.code ?? '');
+	const errno = String(rec.errno ?? '');
+	if (code === '23505' || errno === '23505') return true;
+	return /duplicate key value violates unique constraint/i.test(String(rec.message ?? ''));
+}
+
+export function json_unwrap_error_action(
+	err: unknown,
+): 'skip-table' | 'lenient' | 'throw' {
+	if (is_missing_relation(err)) return 'skip-table';
+	if (is_unique_violation(err)) return 'lenient';
+	return 'throw';
 }
 
 type RefBook = {
@@ -341,6 +568,522 @@ export function qident(name: string): string {
 	return `"${name.replace(/"/g, '""')}"`;
 }
 
+const LIST_SQL_ALWAYS_PHYSICAL = [
+	'id',
+	'name',
+	'description',
+	'is_active',
+	'state',
+	'ref',
+	'search_field',
+	'created_by',
+	'custom_data',
+	'created_at',
+	'updated_at',
+] as const;
+
+const LIST_SQL_ALWAYS_PAYLOAD = [
+	'parent_task',
+	'parent_task_id',
+	'is_global',
+	'assigned_user_ids',
+	'assigned_user_group_ids',
+	'tags',
+	'etiquetas',
+] as const;
+
+/** Claves que `finalize_rows` lee antes de `project_list_docs`. */
+const LIST_SQL_DECORATE_PAYLOAD: Record<string, readonly string[]> = {
+	'inventory-reception': ['articulos', 'purchase_order', 'orden_compra'],
+	'inventory-physical-count': ['lineas'],
+	'inventory-stock-quant': ['producto', 'ubicacion'],
+	'custom-field-control': ['fields'],
+};
+
+function physical_list_name(key: string): string {
+	if (key === '_id' || key === 'id') return 'id';
+	if (key === '_ref' || key === 'ref') return 'ref';
+	if (key === 'createdAt') return 'created_at';
+	if (key === 'updatedAt') return 'updated_at';
+	return key;
+}
+
+function payload_list_expr(): string {
+	return `CASE
+		WHEN jsonb_typeof(payload) = 'object' THEN payload
+		WHEN jsonb_typeof(payload) = 'string' THEN COALESCE((payload #>> '{}')::jsonb, '{}'::jsonb)
+		ELSE '{}'::jsonb
+	END`;
+}
+
+/**
+ * Extrae texto de payload objeto o string-wrapped. No es sargable
+ * (CASE); usar solo en caminos que aún no desenvuelven el JSONB.
+ */
+export function payload_text_expr(field: string): string {
+	if (!/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(field)) {
+		throw new Error(`bad ident ${field}`);
+	}
+	const root = `(${payload_list_expr()})`;
+	if (!field.includes('.')) return `${root} ->> ${literal(field)}`;
+	return `${root} #>> '{${field.split('.').join(',')}}'`;
+}
+
+/**
+ * Longitud de un arreglo en payload (objeto o string-wrapped).
+ * CASE unwrap: solo proyección, no predicado sargable.
+ */
+export function json_array_length_sql(field: string): string {
+	if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(field)) throw new Error(`bad ident ${field}`);
+	const arr = `(${payload_list_expr()}) -> ${literal(field)}`;
+	return `CASE WHEN jsonb_typeof(${arr}) = 'array' THEN jsonb_array_length(${arr}) ELSE 0 END`;
+}
+
+/**
+ * Stats de turnos: caja / servicio / duración. Sin `search_field`.
+ * `created_at` entra por el SELECT de `scan_select_sql`.
+ */
+export const TURN_STATS_FIELDS = [
+	'status',
+	'state',
+	'assigned_box',
+	'services',
+	'customer_type',
+	'time_box',
+	'time',
+];
+
+/**
+ * Stats de quejas: KPIs / series. Sin `search_field` ni evidencia.
+ * `created_at` entra por el SELECT de `scan_select_sql`.
+ * `citizen_name` alimenta la etiqueta de reincidencia (la identidad sigue
+ * siendo el teléfono). `name` / `assinged_to` van al Excel de registros.
+ * Las refs se resuelven por página con populate lite.
+ */
+export const CITIZEN_REPORT_STATS_FIELDS = [
+	'name',
+	'status',
+	'priority',
+	'employee_taken_the_report',
+	'assinged_to',
+	'department',
+	'reporting_medium',
+	'citizen_report_problem',
+	'borough',
+	'report_coordinates',
+	'latitude',
+	'longitude',
+	'citizen_phone',
+	'citizen_name',
+	'updated_at',
+];
+
+/** Cards del tablero de guías. Sin `steps` (el blob). */
+export const INTERACTIVE_MANUAL_CARD_FIELDS = [
+	'name',
+	'description',
+	'icon',
+	'module_model_id',
+	'is_default_for_module',
+	'assigned_user_ids',
+	'assigned_group_ids',
+];
+
+/** `order` de documentation-page (payload). Numérico, no texto. */
+export function documentation_page_order_sql(): string {
+	const expr = `(${payload_text_expr('order')})`;
+	return `CASE WHEN ${expr} ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN ${expr}::numeric ELSE 0 END`;
+}
+
+export function documentation_page_current_sql(params: unknown[], lookup: {
+	slug: string;
+	folder: string;
+	section: string;
+}): string {
+	params.push(lookup.slug);
+	const clauses = [
+		'is_active IS DISTINCT FROM false',
+		`${payload_text_expr('slug')} = $${params.length}`,
+	];
+	if (lookup.folder) {
+		params.push(lookup.folder);
+		clauses.push(`${payload_text_expr('folder_path')} = $${params.length}`);
+	}
+	if (lookup.section) {
+		params.push(lookup.section);
+		clauses.push(`${payload_text_expr('section')} = $${params.length}`);
+	}
+	return ` WHERE ${clauses.join(' AND ')}`;
+}
+
+export function documentation_page_neighbor_sql(
+	dir: 'prev' | 'next',
+	params: unknown[],
+	cursor: { section: string; order: number; id: string },
+): string {
+	const section_expr = payload_text_expr('section');
+	const order_expr = documentation_page_order_sql();
+	params.push(cursor.section, cursor.order, cursor.id);
+	const sec = `$${params.length - 2}`;
+	const ord = `$${params.length - 1}`;
+	const id = `$${params.length}`;
+	const cmp = dir === 'prev'
+		? `(${section_expr} < ${sec}
+			OR (${section_expr} = ${sec} AND ${order_expr} < ${ord})
+			OR (${section_expr} = ${sec} AND ${order_expr} = ${ord} AND id < ${id}))`
+		: `(${section_expr} > ${sec}
+			OR (${section_expr} = ${sec} AND ${order_expr} > ${ord})
+			OR (${section_expr} = ${sec} AND ${order_expr} = ${ord} AND id > ${id}))`;
+	const order = dir === 'prev'
+		? `${section_expr} DESC, ${order_expr} DESC, id DESC`
+		: `${section_expr} ASC, ${order_expr} ASC, id ASC`;
+	return ` WHERE is_active IS DISTINCT FROM false AND ${cmp} ORDER BY ${order} LIMIT 1`;
+}
+
+/**
+ * Extrae texto de payload objeto. Sargable (`payload ->>` / `#>>`).
+ * Solo debug-log, que `ensure_object_json_cells` desenvuelve al boot.
+ * No usar en `field_extract`: el CASE rompería el btree del historial.
+ */
+export function debug_payload_expr(field: string): string {
+	if (!/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(field)) {
+		throw new Error(`bad ident ${field}`);
+	}
+	if (!field.includes('.')) return `payload ->> ${literal(field)}`;
+	return `payload #>> '{${field.split('.').join(',')}}'`;
+}
+
+export type DebugLogFilter = {
+	levels: string[];
+	search: string;
+	user: string;
+	origin_file: string;
+	request_results: string[];
+	date_from: string;
+	date_to: string;
+};
+
+const DEBUG_LOG_SORTS: Record<string, string> = {
+	createdAt: 'created_at',
+	created_at: 'created_at',
+	level: 'level',
+	message: 'message',
+	'origin.file': 'origin.file',
+	'request_context.response.status_code': 'request_context.response.status_code',
+	'request_context.response.duration_ms': 'request_context.response.duration_ms',
+};
+
+function debug_log_sort_sql(field: string, dir: 'ASC' | 'DESC'): string {
+	const key = DEBUG_LOG_SORTS[field] ?? 'created_at';
+	if (key === 'created_at') return `created_at ${dir} NULLS LAST, id ${dir}`;
+	if (key === 'request_context.response.status_code' || key === 'request_context.response.duration_ms') {
+		const expr = debug_payload_expr(key);
+		return `CASE WHEN ${expr} ~ '^[0-9]+(\\.[0-9]+)?$' THEN ${expr}::numeric END ${dir} NULLS LAST, id ${dir}`;
+	}
+	return `${debug_payload_expr(key)} ${dir} NULLS LAST, id ${dir}`;
+}
+
+/**
+ * Página de consola: escalares + mensaje recortado. Sin call_stack,
+ * metadata ni user_agent. El detalle hace find_id.
+ */
+export function debug_log_list_select_sql(): string {
+	const root = `(${payload_list_expr()})`;
+	const ctx = `${root} -> 'request_context'`;
+	const resp = `(${ctx}) -> 'response'`;
+	const slim_response = `CASE
+		WHEN jsonb_typeof(${resp}) = 'object' THEN jsonb_strip_nulls(jsonb_build_object(
+			'result', ${resp} -> 'result',
+			'result_label', ${resp} -> 'result_label',
+			'status_code', ${resp} -> 'status_code',
+			'status_group', ${resp} -> 'status_group',
+			'status_text', ${resp} -> 'status_text',
+			'response_message', to_jsonb(left(${resp} ->> 'response_message', 240)),
+			'duration_ms', ${resp} -> 'duration_ms'
+		))
+		ELSE NULL
+	END`;
+	const slim_ctx = `CASE
+		WHEN jsonb_typeof(${ctx}) = 'object' THEN jsonb_strip_nulls(jsonb_build_object(
+			'method', ${ctx} -> 'method',
+			'label', ${ctx} -> 'label',
+			'url', ${ctx} -> 'url',
+			'route', ${ctx} -> 'route',
+			'origin', ${ctx} -> 'origin',
+			'ip', ${ctx} -> 'ip',
+			'user', ${ctx} -> 'user',
+			'response', ${slim_response}
+		))
+		ELSE NULL
+	END`;
+	return `"id", "name", "created_at", "is_active",
+		jsonb_strip_nulls(jsonb_build_object(
+			'level', ${root} -> 'level',
+			'label', ${root} -> 'label',
+			'request_label', ${root} -> 'request_label',
+			'origin', ${root} -> 'origin',
+			'process', ${root} -> 'process',
+			'message', to_jsonb(left(${root} ->> 'message', 2000)),
+			'formatted_message', to_jsonb(left(${root} ->> 'formatted_message', 2000)),
+			'formatted_message_ansi', to_jsonb(left(${root} ->> 'formatted_message_ansi', 2000)),
+			'request_context', ${slim_ctx}
+		)) AS payload`;
+}
+
+function debug_log_status_sql(lo: number, hi: number): string {
+	const expr = debug_payload_expr('request_context.response.status_code');
+	return `(CASE WHEN ${expr} ~ '^[0-9]+$' THEN ${expr}::int END BETWEEN ${lo} AND ${hi})`;
+}
+
+export function debug_log_filter_sql(filter: DebugLogFilter, params: unknown[]): string {
+	const clauses: string[] = [];
+	if (filter.levels.length) {
+		const marks = filter.levels.map((level) => {
+			params.push(level);
+			return `$${params.length}`;
+		});
+		clauses.push(`${debug_payload_expr('level')} IN (${marks.join(', ')})`);
+	}
+	if (filter.date_from) {
+		params.push(filter.date_from);
+		clauses.push(`created_at >= $${params.length}`);
+	}
+	if (filter.date_to) {
+		params.push(filter.date_to);
+		clauses.push(`created_at <= $${params.length}`);
+	}
+	if (filter.search) {
+		params.push(`%${filter.search}%`);
+		const n = `$${params.length}`;
+		clauses.push(`(
+			name ILIKE ${n}
+			OR search_field ILIKE ${n}
+			OR ${debug_payload_expr('message')} ILIKE ${n}
+			OR (payload -> 'origin')::text ILIKE ${n}
+		)`);
+	}
+	if (filter.user) {
+		params.push(`%${filter.user}%`);
+		const n = `$${params.length}`;
+		clauses.push(`(
+			created_by ILIKE ${n}
+			OR ${debug_payload_expr('user')} ILIKE ${n}
+			OR ${debug_payload_expr('request_context.user.name')} ILIKE ${n}
+			OR ${debug_payload_expr('request_context.user.email')} ILIKE ${n}
+		)`);
+	}
+	if (filter.origin_file) {
+		params.push(`%${filter.origin_file}%`);
+		const n = `$${params.length}`;
+		clauses.push(`(
+			${debug_payload_expr('origin.file')} ILIKE ${n}
+			OR ${debug_payload_expr('origin_file')} ILIKE ${n}
+		)`);
+	}
+	if (filter.request_results.length) {
+		const result_expr = `lower(${debug_payload_expr('request_context.response.result')})`;
+		const branches = filter.request_results.map((value) => {
+			if (value === 'success') {
+				return `(${debug_log_status_sql(200, 299)} OR ${result_expr} IN ('success', 'ok'))`;
+			}
+			if (value === 'warning') {
+				return `(${debug_log_status_sql(300, 399)} OR ${result_expr} IN ('warning', 'notice', 'redirect', 'redirection'))`;
+			}
+			if (value === 'error') {
+				return `(${debug_log_status_sql(400, 599)} OR ${result_expr} IN ('error', 'danger'))`;
+			}
+			params.push(value);
+			return `${result_expr} = $${params.length}`;
+		});
+		clauses.push(`(${branches.join(' OR ')})`);
+	}
+	return clauses.length ? ` WHERE ${clauses.join(' AND ')}` : '';
+}
+
+export type DebugLogRelatedLookup = {
+	routes: string[];
+	method: string;
+	status_code?: number;
+	created_after?: string;
+	created_before?: string;
+};
+
+/**
+ * Lookup de un request log. Ruta/método/status/ventana en SQL.
+ * El caller hidrata ≤ 10 filas; no el universo.
+ */
+export function debug_log_related_sql(lookup: DebugLogRelatedLookup, params: unknown[]): string {
+	const clauses: string[] = [];
+	params.push('error', 'request');
+	clauses.push(`${debug_payload_expr('level')} IN ($${params.length - 1}, $${params.length})`);
+	if (lookup.created_after) {
+		params.push(lookup.created_after);
+		clauses.push(`created_at >= $${params.length}`);
+	}
+	if (lookup.created_before) {
+		params.push(lookup.created_before);
+		clauses.push(`created_at <= $${params.length}`);
+	}
+	const routes = lookup.routes.filter((route) => route.length > 0).slice(0, 8);
+	if (routes.length) {
+		const marks = routes.map((route) => {
+			params.push(route);
+			return `$${params.length}`;
+		});
+		clauses.push(`${debug_payload_expr('request_context.route')} IN (${marks.join(', ')})`);
+	}
+	if (lookup.method) {
+		params.push(lookup.method);
+		clauses.push(`upper(${debug_payload_expr('request_context.method')}) = $${params.length}`);
+	}
+	if (lookup.status_code != null) {
+		params.push(String(lookup.status_code));
+		clauses.push(`${debug_payload_expr('request_context.response.status_code')} = $${params.length}`);
+	}
+	return clauses.length ? ` WHERE ${clauses.join(' AND ')}` : '';
+}
+
+/**
+ * SELECT de lista UI: columnas físicas de la proyección + payload recortado.
+ * Sin spec (recurso desconocido) → null, el caller usa `*`.
+ */
+export function list_select_sql(resource: string, cols: Set<string>): string | null {
+	const keys = list_projection_keys(resource);
+	if (!keys.length) return null;
+	const wanted = new Set<string>(keys);
+	for (const key of LIST_SQL_ALWAYS_PAYLOAD) wanted.add(key);
+	const canonical = RESOURCE_ALIASES[resource] ?? resource;
+	for (const key of LIST_SQL_DECORATE_PAYLOAD[resource] ?? LIST_SQL_DECORATE_PAYLOAD[canonical] ?? []) {
+		wanted.add(key);
+	}
+	for (const field of Object.keys(field_map_for(resource) ?? {})) {
+		wanted.add(field);
+		wanted.add(`${field}_id`);
+	}
+	const physical: string[] = [];
+	const seen = new Set<string>();
+	for (const col of LIST_SQL_ALWAYS_PHYSICAL) {
+		if (!cols.has(col)) continue;
+		physical.push(qident(col));
+		seen.add(col);
+	}
+	const payload_keys: string[] = [];
+	const seen_payload = new Set<string>();
+	const consider = (key: string) => {
+		const physical_name = physical_list_name(key);
+		if (physical_name === 'payload' || physical_name === 'custom_data') return;
+		if (cols.has(physical_name)) {
+			if (seen.has(physical_name)) return;
+			physical.push(qident(physical_name));
+			seen.add(physical_name);
+			return;
+		}
+		if (seen_payload.has(physical_name)) return;
+		seen_payload.add(physical_name);
+		payload_keys.push(physical_name);
+	};
+	for (const key of wanted) consider(key);
+	if (cols.has('payload')) {
+		const literals = payload_keys
+			.filter((key) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(key))
+			.map((key) => `'${key}'`)
+			.join(', ');
+		physical.push(
+			literals
+				? `(SELECT COALESCE(jsonb_object_agg(e.key, e.value), '{}'::jsonb)
+					FROM jsonb_each(${payload_list_expr()}) e
+					WHERE e.key IN (${literals})) AS payload`
+				: `'{}'::jsonb AS payload`,
+		);
+	}
+	return physical.length ? physical.join(', ') : null;
+}
+
+const POPULATE_LITE_PHYSICAL = ['id', 'name', 'description', 'is_active', 'ref'] as const;
+
+/**
+ * SELECT de refs para lista: id + name. flatten_list_docs tira el resto.
+ */
+export function populate_lite_select_sql(cols: Set<string>): string {
+	const physical = POPULATE_LITE_PHYSICAL.filter((col) => cols.has(col)).map(qident);
+	if (cols.has('payload')) {
+		physical.push(`(SELECT COALESCE(jsonb_object_agg(e.key, e.value), '{}'::jsonb)
+			FROM jsonb_each(${payload_list_expr()}) e
+			WHERE e.key IN ('name')) AS payload`);
+	}
+	return physical.length ? physical.join(', ') : '*';
+}
+
+/**
+ * SELECT de un barrido que solo necesita unas claves: id + keyset + payload recortado.
+ */
+export function scan_select_sql(cols: Set<string>, keys: string[]): string {
+	const physical: string[] = [];
+	const seen = new Set<string>();
+	for (const col of ['id', 'created_at', 'fecha_entrada', 'is_active'] as const) {
+		if (!cols.has(col)) continue;
+		physical.push(qident(col));
+		seen.add(col);
+	}
+	const payload_keys: string[] = [];
+	const seen_payload = new Set<string>();
+	for (const key of keys) {
+		const root = key.split('.')[0] ?? key;
+		if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(root)) continue;
+		const physical_name = physical_list_name(root);
+		if (cols.has(physical_name)) {
+			if (seen.has(physical_name)) continue;
+			physical.push(qident(physical_name));
+			seen.add(physical_name);
+			continue;
+		}
+		if (seen_payload.has(physical_name)) continue;
+		seen_payload.add(physical_name);
+		payload_keys.push(physical_name);
+	}
+	if (cols.has('payload')) {
+		const literals = payload_keys.map((key) => `'${key}'`).join(', ');
+		physical.push(
+			literals
+				? `(SELECT COALESCE(jsonb_object_agg(e.key, e.value), '{}'::jsonb)
+					FROM jsonb_each(${payload_list_expr()}) e
+					WHERE e.key IN (${literals})) AS payload`
+				: `'{}'::jsonb AS payload`,
+		);
+	}
+	return physical.length ? physical.join(', ') : '*';
+}
+
+/**
+ * SELECT de un barrido que debe devolver el set salvo unas claves
+ * pesadas (lotes, markdown, …). Columnas físicas + payload sin esas keys.
+ */
+export function scan_omit_sql(cols: Set<string>, omit: string[]): string {
+	const banned = new Set<string>();
+	for (const key of omit) {
+		const root = key.split('.')[0] ?? key;
+		if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(root)) continue;
+		banned.add(physical_list_name(root));
+	}
+	const physical: string[] = [];
+	for (const col of cols) {
+		if (col === 'payload') continue;
+		if (banned.has(col)) continue;
+		physical.push(qident(col));
+	}
+	if (cols.has('payload')) {
+		const literals = [...banned].map((key) => `'${key}'`).join(', ');
+		physical.push(
+			literals
+				? `(SELECT COALESCE(jsonb_object_agg(e.key, e.value), '{}'::jsonb)
+					FROM jsonb_each(${payload_list_expr()}) e
+					WHERE e.key NOT IN (${literals})) AS payload`
+				: 'payload',
+		);
+	}
+	return physical.length ? physical.join(', ') : '*';
+}
+
 export class ImperiumStore {
 	readonly locs = new Map<string, ModuleLoc>();
 	readonly all_locs: ModuleLoc[] = [];
@@ -357,6 +1100,7 @@ export class ImperiumStore {
 				path?: string;
 				menu_ref?: string;
 				technical_id: string;
+				image?: string;
 				modules?: Array<{
 					resource: string;
 					table: string;
@@ -374,6 +1118,8 @@ export class ImperiumStore {
 				name: s.name ?? s.slug,
 				path: s.path ?? '',
 				menu_ref: s.menu_ref ?? `${s.slug}-menu-root`,
+				technical_id: s.technical_id ?? `subject-${s.slug}`,
+				image: s.image ?? '',
 				modules: (s.modules ?? []).map((m) => ({
 					resource: m.resource,
 					path: m.path ?? `/${m.resource}`,
@@ -462,8 +1208,127 @@ export class ImperiumStore {
 		}
 	}
 
+	async ensure_search_indexes(): Promise<void> {
+		try {
+			await this.sql.unsafe('CREATE EXTENSION IF NOT EXISTS pg_trgm');
+		} catch {
+			return;
+		}
+		for (const loc of this.locs.values()) {
+			const idx = `trgm_${loc.table}_search`.slice(0, 63);
+			try {
+				await this.sql.unsafe(
+					`CREATE INDEX IF NOT EXISTS ${qident(idx)} ON ${this.qt(loc.resource)} USING gin (${qident('search_field')} gin_trgm_ops)`,
+				);
+			} catch {
+				/* table may not exist yet for some locs */
+			}
+		}
+	}
+
+	async ensure_unique_indexes(): Promise<void> {
+		const seen = new Set<string>();
+		for (const loc of this.locs.values()) {
+			if (seen.has(loc.resource)) continue;
+			seen.add(loc.resource);
+			const sqls = [
+				...unique_index_sqls({
+					quoted_table: this.qt(loc.resource),
+					table_key: loc.table,
+					fields: unique_fields_for(loc.resource),
+					composites: unique_composites_for(loc.resource),
+					columns: this.column_names(loc.resource),
+				}),
+				...lookup_index_sqls({
+					quoted_table: this.qt(loc.resource),
+					table_key: loc.table,
+					fields: unique_fields_for(loc.resource),
+					columns: this.column_names(loc.resource),
+				}),
+				...payload_lookup_index_sqls({
+					quoted_table: this.qt(loc.resource),
+					table_key: loc.table,
+					fields: lookup_payload_fields_for(loc.resource),
+				}),
+				...(loc.resource === 'document-change-history'
+					? history_page_index_sqls({
+							quoted_table: this.qt(loc.resource),
+							table_key: loc.table,
+						})
+					: []),
+			];
+			for (const sql of sqls) {
+				try {
+					await this.sql.unsafe(sql);
+				} catch {
+					/* tabla o columna aún no existen */
+				}
+			}
+		}
+	}
+
+	async ensure_object_json_cells(): Promise<void> {
+		const seen = new Set<string>();
+		for (const loc of this.locs.values()) {
+			if (seen.has(loc.resource)) continue;
+			seen.add(loc.resource);
+			const cols = this.column_names(loc.resource);
+			for (const col of this.json_cols(loc.resource)) {
+				if (!cols.has(col)) continue;
+				try {
+					for (;;) {
+						const rows = await this.sql.unsafe(
+							unwrap_jsonb_string_sql(this.qt(loc.resource), col),
+						);
+						if (!rows.length) break;
+					}
+				} catch (err) {
+					const action = json_unwrap_error_action(err);
+					if (action === 'skip-table') continue;
+					if (action === 'lenient') {
+						await this.unwrap_json_cells_lenient(loc.resource, col);
+						continue;
+					}
+					throw err;
+				}
+			}
+		}
+	}
+
+	async unwrap_json_cells_lenient(resource: string, col: string): Promise<void> {
+		const qt = this.qt(resource);
+		for (;;) {
+			let ids: Array<{ id: string }>;
+			try {
+				ids = (await this.sql.unsafe(string_jsonb_ids_sql(qt, col))) as Array<{
+					id: string;
+				}>;
+			} catch (err) {
+				if (json_unwrap_error_action(err) === 'skip-table') return;
+				throw err;
+			}
+			if (!ids.length) break;
+			for (const row of ids) {
+				try {
+					await this.sql.unsafe(unwrap_jsonb_string_one_sql(qt, col), [row.id]);
+				} catch (err) {
+					const action = json_unwrap_error_action(err);
+					if (action === 'skip-table') return;
+					if (action === 'lenient') {
+						await this.sql.unsafe(`DELETE FROM ${qt} WHERE id = $1`, [row.id]);
+						continue;
+					}
+					throw err;
+				}
+			}
+		}
+	}
+
 	async ensure_defaults(): Promise<void> {
 		await this.ensure_orphan_tables();
+		await this.ensure_object_json_cells();
+		await this.ensure_search_indexes();
+		await this.ensure_unique_indexes();
 		await this.seed_font_awesome_catalog();
 		if (this.has('branchoffice')) {
 			const { total } = await this.find_many('branchoffice', { take: 1, include_inactive: true });
@@ -528,15 +1393,10 @@ export class ImperiumStore {
 			if (seen.has(loc.collection)) continue;
 			seen.add(loc.collection);
 			if (!(await SearchEngine.index_is_empty(loc.collection))) continue;
-			let skip = 0;
-			for (;;) {
-				const { rows, total } = await this.find_many(loc.resource, {
-					take: 200,
-					skip,
-					include_inactive: false,
-					populate: false,
-				});
-				if (!rows.length) break;
+			for await (const rows of this.scan(loc.resource, {
+				include_inactive: false,
+				page_size: 200,
+			})) {
 				await SearchEngine.index_documents(
 					loc.collection,
 					rows
@@ -547,8 +1407,6 @@ export class ImperiumStore {
 						.filter((doc) => doc.search_text),
 				);
 				processed += rows.length;
-				skip += rows.length;
-				if (skip >= total) break;
 			}
 		}
 		if (processed) {
@@ -603,13 +1461,13 @@ export class ImperiumStore {
 					true,
 					entry.slug,
 					search_field,
-					JSON.stringify({
+					{
 						icon: entry.icon,
 						slug: entry.slug,
 						prefix: entry.prefix,
 						style: entry.style,
 						search_terms: entry.search_terms ?? [],
-					}),
+					},
 					now,
 					now,
 				);
@@ -623,20 +1481,20 @@ export class ImperiumStore {
 			);
 		}
 		if (await SearchEngine.ensure_available()) {
-			const { rows } = await this.find_many('font-awesome-icon-catalog', {
-				take: 5000,
-				include_inactive: true,
-				populate: false,
-			});
 			await SearchEngine.clear_index('__font_awesome_icon_catalog');
-			for (let i = 0; i < rows.length; i += 200) {
-				await SearchEngine.index_documents(
-					'__font_awesome_icon_catalog',
-					rows.slice(i, i + 200).map((doc) => ({
+			for await (const page of this.scan('font-awesome-icon-catalog', {
+				include_inactive: true,
+				page_size: 200,
+			})) {
+				const docs = page
+					.map((doc) => ({
 						id: String(doc._id),
 						search_text: search_text_from_doc(doc),
-					})),
-				);
+					}))
+					.filter((doc) => doc.search_text);
+				if (docs.length) {
+					await SearchEngine.index_documents('__font_awesome_icon_catalog', docs);
+				}
 			}
 		}
 		console.log(`[icons] Catálogo Font Awesome sembrado: ${catalog.length} íconos`);
@@ -795,21 +1653,8 @@ export class ImperiumStore {
 			: null;
 		let floor = 0;
 		const resource = opts.resource;
-		if (
-			!reset_key &&
-			resource &&
-			this.has(resource) &&
-			this.column_names(resource).has(increment_field)
-		) {
-			const col = qident(increment_field);
-			const rows = await this.sql.unsafe(
-				`SELECT MAX(CASE
-					WHEN ${col}::text ~ '^[0-9]+(\\.[0-9]+)?$' THEN ${col}::numeric
-					WHEN ${col}::text ~ '[0-9]+$' THEN (regexp_match(${col}::text, '([0-9]+)$'))[1]::numeric
-					ELSE NULL
-				END) AS m FROM ${this.qt(resource)}`,
-			);
-			floor = Number(rows[0]?.m ?? 0) || 0;
+		if (!reset_key && resource && this.has(resource)) {
+			floor = await this.max_numeric(resource, increment_field);
 		}
 		if (!this.has('auto-increment-control')) return floor + 1;
 		const target = config
@@ -844,6 +1689,17 @@ export class ImperiumStore {
 		return next;
 	}
 
+	/** `MAX` de un campo numérico (columna o `payload ->>`). Una fila, no N docs. */
+	async max_numeric(resource: string, field: string): Promise<number> {
+		if (!this.has(resource) || !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(field)) return 0;
+		const cols = this.column_names(resource);
+		const expr = cols.has(field) ? qident(field) : `payload ->> ${literal(field)}`;
+		const rows = await this.sql.unsafe(
+			`SELECT ${max_numeric_expr(expr)} AS m FROM ${this.qt(resource)}`,
+		);
+		return Number(rows[0]?.m ?? 0) || 0;
+	}
+
 	flatten(row: Record<string, unknown> | null, resource?: string): ImperiumDoc | null {
 		if (!row) return null;
 		const parsed = { ...row };
@@ -859,6 +1715,7 @@ export class ImperiumStore {
 		if (resource) {
 			for (const col of this.loc(resource).columns) {
 				if (jsons.has(col.name)) continue;
+				if (!(col.name in parsed)) continue;
 				parsed[col.name] = parse_json_cell(parsed[col.name]);
 			}
 		}
@@ -877,6 +1734,20 @@ export class ImperiumStore {
 			ids?: string[];
 			populate?: boolean;
 			mongo_match?: Record<string, unknown> | null;
+			/** Login/menús: no hace falta paginar; evita un COUNT(*) extra. */
+			skip_total?: boolean;
+			/** Lista UI: columnas de LIST_PROJECTIONS + payload recortado. */
+			list_project?: boolean;
+			/** Lookup de populate de lista: id + name, sin COUNT(*). */
+			populate_lite?: boolean;
+			/** Keyset `(created_at, id)` para scan ordenado por tiempo. */
+			after_created?: { at: string; id: string };
+			/** Keyset FIFO `(fecha_entrada, created_at, id)`. */
+			after_entrada?: { fecha: string; created: string; id: string };
+			/** Barrido: solo estas claves + id/keyset, no SELECT *. */
+			scan_fields?: string[];
+			/** Barrido: todas las claves salvo estas. */
+			scan_omit?: string[];
 		} = {},
 	): Promise<{ rows: ImperiumDoc[]; total: number }> {
 		const loc = this.loc(resource);
@@ -914,7 +1785,7 @@ export class ImperiumStore {
 					continue;
 				}
 				if (is_range_filter(v)) {
-					const range = v as { gte?: unknown; lte?: unknown };
+					const range = v as { gte?: unknown; lte?: unknown; gt?: unknown; lt?: unknown };
 					if (range.gte !== undefined && range.gte !== '') {
 						params.push(range_bound(String(range.gte), 'gte'));
 						clauses.push(range_compare_sql(cols, k, '>=', params.length));
@@ -922,6 +1793,14 @@ export class ImperiumStore {
 					if (range.lte !== undefined && range.lte !== '') {
 						params.push(range_bound(String(range.lte), 'lte'));
 						clauses.push(range_compare_sql(cols, k, '<=', params.length));
+					}
+					if (range.gt !== undefined && range.gt !== '') {
+						params.push(range_bound(String(range.gt), 'gte'));
+						clauses.push(range_compare_sql(cols, k, '>', params.length));
+					}
+					if (range.lt !== undefined && range.lt !== '') {
+						params.push(range_bound(String(range.lt), 'lte'));
+						clauses.push(range_compare_sql(cols, k, '<', params.length));
 					}
 					continue;
 				}
@@ -936,25 +1815,56 @@ export class ImperiumStore {
 		}
 		if (opts.q) {
 			const like = `%${opts.q}%`;
-			const search_cols = ['name', 'description', 'ref', 'search_field'].filter((c) =>
+			const search_cols = ['name', 'description', 'ref', 'search_field', 'code'].filter((c) =>
 				cols.has(c),
 			);
 			const parts = search_cols.map((c) => {
 				params.push(like);
 				return `${qident(c)} ILIKE $${params.length}`;
 			});
-			params.push(like);
-			parts.push(`payload::text ILIKE $${params.length}`);
-			clauses.push(`(${parts.join(' OR ')})`);
+			if (parts.length) clauses.push(`(${parts.join(' OR ')})`);
+		}
+		if (opts.after_created?.at && opts.after_created.id && cols.has('created_at')) {
+			params.push(opts.after_created.at, opts.after_created.id);
+			clauses.push(
+				created_at_keyset_sql(`$${params.length - 1}`, `$${params.length}`),
+			);
+		}
+		if (
+			opts.after_entrada?.fecha &&
+			opts.after_entrada.created &&
+			opts.after_entrada.id &&
+			cols.has('fecha_entrada') &&
+			cols.has('created_at')
+		) {
+			params.push(opts.after_entrada.fecha, opts.after_entrada.created, opts.after_entrada.id);
+			clauses.push(
+				fecha_entrada_keyset_sql(
+					`$${params.length - 2}`,
+					`$${params.length - 1}`,
+					`$${params.length}`,
+				),
+			);
 		}
 		const where = clauses.length ? ` WHERE ${clauses.join(' AND ')}` : '';
-		const count_rows = await this.sql.unsafe(
-			`SELECT count(*)::int AS n FROM ${qt}${where}`,
-			params,
-		);
-		const total = Number(count_rows[0]?.n ?? 0);
+		let total = 0;
+		if (!opts.skip_total) {
+			const count_rows = await this.sql.unsafe(
+				`SELECT count(*)::int AS n FROM ${qt}${where}`,
+				params,
+			);
+			total = Number(count_rows[0]?.n ?? 0);
+		}
 		let order = ' ORDER BY name ASC NULLS LAST, id ASC';
-		if (opts.sort) {
+		if (
+			opts.after_entrada?.fecha &&
+			cols.has('fecha_entrada') &&
+			cols.has('created_at')
+		) {
+			order = ' ORDER BY fecha_entrada ASC NULLS LAST, created_at ASC, id ASC';
+		} else if (opts.after_created?.at && cols.has('created_at')) {
+			order = ' ORDER BY created_at ASC NULLS LAST, id ASC';
+		} else if (opts.sort) {
 			const m = opts.sort.match(/^([a-zA-Z_][a-zA-Z0-9_]*)(?::(asc|desc))?$/i);
 			const raw_campo = (m?.[1] ?? '').replace(/^_/, '');
 			const aliases: Record<string, string> = {
@@ -967,21 +1877,176 @@ export class ImperiumStore {
 			if (campo && cols.has(campo === 'ref' ? 'ref' : campo)) {
 				const col = campo === '_ref' ? 'ref' : campo;
 				order = ` ORDER BY ${qident(col)} ${dir} NULLS LAST`;
+				if (col === 'fecha_entrada' && cols.has('created_at')) {
+					order += `, created_at ${dir}, id ${dir}`;
+				} else if (col === 'created_at') {
+					order += `, id ${dir}`;
+				}
 			}
 		}
 		const take = opts.take ?? 100;
 		const skip = opts.skip ?? 0;
+		const select = opts.list_project
+			? list_select_sql(resource, cols) ?? '*'
+			: opts.populate_lite
+				? populate_lite_select_sql(cols)
+				: opts.scan_fields?.length
+					? scan_select_sql(cols, opts.scan_fields)
+					: opts.scan_omit?.length
+						? scan_omit_sql(cols, opts.scan_omit)
+						: '*';
 		const rows = await this.sql.unsafe(
-			`SELECT * FROM ${qt}${where}${order} LIMIT ${take} OFFSET ${skip}`,
+			`SELECT ${select} FROM ${qt}${where}${order} LIMIT ${take} OFFSET ${skip}`,
 			params,
 		);
 		const flattened = rows.map((r) => this.flatten(r as Record<string, unknown>, resource)!);
 		const populated =
-			opts.populate === false ? flattened : await this.populate_docs(resource, flattened);
+			opts.populate === false
+				? flattened
+				: await this.populate_docs(resource, flattened, {
+						lite: Boolean(opts.list_project) && !LIST_KEEP_POPULATED_REFS.has(resource),
+					});
+		if (opts.skip_total) total = populated.length;
 		return {
 			rows: populated,
 			total,
 		};
+	}
+
+	/**
+	 * Barrido interno por keyset (`id > last`, o `(created_at, id)`
+	 * si `order: 'created_at'`). Una página en vuelo; no hidrata la
+	 * tabla ni hace COUNT(*).
+	 */
+	async *scan(
+		resource: string,
+		opts: {
+			where?: Record<string, unknown>;
+			mongo_match?: Record<string, unknown> | null;
+			include_inactive?: boolean;
+			page_size?: number;
+			q?: string;
+			/** FIFO / stats: una página en orden temporal, no O(N) en RAM. */
+			order?: 'id' | 'created_at' | 'fecha_entrada';
+			/** Solo estas claves + id/keyset. */
+			fields?: string[];
+			/** Todas las claves salvo estas (set completo, blobs fuera). */
+			omit?: string[];
+			/** Catálogo de refs: id + name. */
+			populate_lite?: boolean;
+		} = {},
+	): AsyncGenerator<ImperiumDoc[], void, void> {
+		const page_size = Math.min(Math.max(opts.page_size ?? 500, 1), 1000);
+		const by_lot = opts.order === 'fecha_entrada';
+		const by_time = opts.order === 'created_at';
+		let after_id = '';
+		let after_at = '';
+		let after_fecha = '';
+		for (;;) {
+			const where: Record<string, unknown> = { ...(opts.where ?? {}) };
+			if (!by_time && !by_lot && after_id) where.id = { gt: after_id };
+			const { rows } = await this.find_many(resource, {
+				take: page_size,
+				sort: by_lot ? 'fecha_entrada:asc' : by_time ? 'created_at:asc' : 'id:asc',
+				populate: false,
+				skip_total: true,
+				include_inactive: opts.include_inactive,
+				where: Object.keys(where).length ? where : undefined,
+				mongo_match: opts.mongo_match,
+				q: opts.q,
+				after_created: by_time && after_at ? { at: after_at, id: after_id } : undefined,
+				after_entrada:
+					by_lot && after_fecha && after_at
+						? { fecha: after_fecha, created: after_at, id: after_id }
+						: undefined,
+				scan_fields: opts.fields,
+				scan_omit: opts.omit,
+				populate_lite: opts.populate_lite,
+			});
+			if (!rows.length) return;
+			yield rows;
+			const last = rows[rows.length - 1];
+			after_id = String(last?._id ?? '');
+			if (by_time || by_lot) {
+				const raw = last?.createdAt ?? last?.created_at;
+				after_at =
+					raw instanceof Date ? raw.toISOString() : String(raw ?? '').trim();
+				if (!after_at) return;
+			}
+			if (by_lot) {
+				const raw = last?.fecha_entrada ?? last?.fechaEntrada;
+				after_fecha =
+					raw instanceof Date ? raw.toISOString() : String(raw ?? '').trim();
+				if (!after_fecha) return;
+			}
+			if (!after_id || rows.length < page_size) return;
+		}
+	}
+
+	/**
+	 * Conteos por día (`LEFT(created_at, 10)`). `created_at` es TEXT ISO.
+	 * Una fila agregada por día, 0 docs hidratados.
+	 */
+	async count_by_created_day(
+		resource: string,
+		opts: {
+			from_iso: string;
+			to_iso?: string;
+			mongo_match?: Record<string, unknown> | null;
+			include_inactive?: boolean;
+		},
+	): Promise<Map<string, number>> {
+		if (!this.has(resource)) return new Map();
+		const cols = this.column_names(resource);
+		if (!cols.has('created_at')) return new Map();
+		const qt = this.qt(resource);
+		const params: unknown[] = [opts.from_iso];
+		const clauses = ['created_at >= $1'];
+		if (opts.to_iso) {
+			params.push(opts.to_iso);
+			clauses.push(`created_at <= $${params.length}`);
+		}
+		if (!opts.include_inactive) clauses.push('is_active IS DISTINCT FROM false');
+		if (opts.mongo_match) {
+			const extra = mongo_match_to_sql(opts.mongo_match, cols, params);
+			if (extra) clauses.push(extra);
+		}
+		const rows = await this.sql.unsafe(
+			`SELECT LEFT(created_at, 10) AS day, COUNT(*)::int AS n
+			FROM ${qt}
+			WHERE ${clauses.join(' AND ')}
+			GROUP BY 1`,
+			params,
+		);
+		const out = new Map<string, number>();
+		for (const row of rows) {
+			const day = String((row as { day?: unknown }).day ?? '').slice(0, 10);
+			const n = Number((row as { n?: unknown }).n ?? 0);
+			if (!day || !Number.isFinite(n) || n <= 0) continue;
+			out.set(day, n);
+		}
+		return out;
+	}
+
+	/** COUNT(*) del predicado, sin hidratar filas. */
+	async count(
+		resource: string,
+		opts: {
+			where?: Record<string, unknown>;
+			mongo_match?: Record<string, unknown> | null;
+			include_inactive?: boolean;
+			q?: string;
+		} = {},
+	): Promise<number> {
+		const { total } = await this.find_many(resource, {
+			where: opts.where,
+			mongo_match: opts.mongo_match,
+			include_inactive: opts.include_inactive,
+			q: opts.q,
+			take: 1,
+			populate: false,
+		});
+		return total;
 	}
 
 	async find_id(resource: string, id: string): Promise<ImperiumDoc | null> {
@@ -1005,6 +2070,7 @@ export class ImperiumStore {
 			sort: 'id:asc',
 			include_inactive: true,
 			populate: false,
+			skip_total: true,
 		});
 		return rows[0] ?? null;
 	}
@@ -1214,11 +2280,12 @@ export class ImperiumStore {
 	async populate_docs(
 		resource: string,
 		docs: ImperiumDoc[],
-		opts?: { full?: boolean },
+		opts?: { full?: boolean; lite?: boolean },
 	): Promise<ImperiumDoc[]> {
 		const field_map = field_map_for(resource);
 		if (!field_map || !docs.length) return docs;
 		const full = Boolean(opts?.full);
+		const lite = Boolean(opts?.lite) && !full;
 		const needed = new Map<string, Set<string>>();
 		for (const [field, model] of Object.entries(field_map)) {
 			const target = this.resource_for_model(model);
@@ -1237,6 +2304,8 @@ export class ImperiumStore {
 				take: ids.size,
 				include_inactive: true,
 				populate: false,
+				skip_total: true,
+				populate_lite: lite,
 			});
 			loaded.set(
 				target,
@@ -1303,30 +2372,245 @@ export class ImperiumStore {
 	async distinct(resource: string, field: string, q = ''): Promise<unknown[]> {
 		const cols = this.column_names(resource);
 		const qt = this.qt(resource);
-		if (cols.has(field)) {
-			const params: unknown[] = [];
-			let extra = '';
-			if (q) {
-				params.push(`%${q}%`);
-				extra = ` WHERE ${qident(field)}::text ILIKE $1`;
-			}
-			const rows = await this.sql.unsafe(
-				`SELECT DISTINCT ${qident(field)} AS v FROM ${qt}${extra} LIMIT 200`,
-				params,
-			);
-			return rows.map((r) => (r as { v: unknown }).v).filter((v) => v != null);
-		}
+		const expr = cols.has(field) ? qident(field) : payload_distinct_expr(field);
 		const params: unknown[] = [];
 		let extra = '';
 		if (q) {
 			params.push(`%${q}%`);
-			extra = ` WHERE payload ->> ${literal(field)} ILIKE $1`;
+			extra = ` WHERE ${expr}::text ILIKE $1`;
 		}
 		const rows = await this.sql.unsafe(
-			`SELECT DISTINCT payload ->> ${literal(field)} AS v FROM ${qt}${extra} LIMIT 200`,
+			`SELECT DISTINCT ${expr} AS v FROM ${qt}${extra} LIMIT 200`,
 			params,
 		);
 		return rows.map((r) => (r as { v: unknown }).v).filter((v) => v != null && v !== '');
+	}
+
+	/**
+	 * Conteos por valor distinto. Una fila agregada por valor, no N docs.
+	 * Solo escalares; el caller no lo usa en refs/arrays/paths con punto.
+	 */
+	async value_counts(
+		resource: string,
+		field: string,
+		opts: { include_inactive?: boolean } = {},
+	): Promise<Array<{ value: string; count: number }>> {
+		if (!this.has(resource)) return [];
+		if (!/^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*$/.test(field)) return [];
+		const cols = this.column_names(resource);
+		const expr = cols.has(field) ? qident(field) : payload_distinct_expr(field);
+		const rows = await this.sql.unsafe(
+			value_counts_sql(this.qt(resource), expr, opts.include_inactive === true),
+		);
+		const out: Array<{ value: string; count: number }> = [];
+		for (const row of rows) {
+			const rec = row as { v: unknown; n: unknown };
+			const value = String(rec.v ?? '').trim();
+			const count = Number(rec.n ?? 0);
+			if (!value || !Number.isFinite(count) || count <= 0) continue;
+			out.push({ value, count });
+		}
+		return out;
+	}
+
+	/**
+	 * Página de debug-log. Filtros sargables (`payload ->>`).
+	 * No hidrata la tabla. Contrato: `data` + `total_elementos`.
+	 */
+	async debug_log_page(
+		filter: DebugLogFilter,
+		opts: { skip: number; take: number; sort: string; dir: 'asc' | 'desc' },
+	): Promise<{ rows: ImperiumDoc[]; total: number }> {
+		if (!this.has('debug-log')) return { rows: [], total: 0 };
+		const qt = this.qt('debug-log');
+		const params: unknown[] = [];
+		const where = debug_log_filter_sql(filter, params);
+		const count_rows = await this.sql.unsafe(
+			`SELECT count(*)::int AS n FROM ${qt}${where}`,
+			params,
+		);
+		const total = Number(count_rows[0]?.n ?? 0);
+		const dir = opts.dir === 'asc' ? 'ASC' : 'DESC';
+		const order = debug_log_sort_sql(opts.sort, dir);
+		const take = Math.min(Math.max(opts.take, 1), 200);
+		const skip = Math.max(opts.skip, 0);
+		const rows = await this.sql.unsafe(
+			`SELECT ${debug_log_list_select_sql()} FROM ${qt}${where} ORDER BY ${order} LIMIT ${take} OFFSET ${skip}`,
+			params,
+		);
+		return {
+			rows: rows.map((row) => this.flatten(row as Record<string, unknown>, 'debug-log')!),
+			total,
+		};
+	}
+
+	/** Agregados de debug-log. Una pasada SQL, 0 docs hidratados. */
+	async debug_log_stats(filter: DebugLogFilter): Promise<{
+		total: number;
+		by_level: Array<{ level: string; count: number; percentage: number }>;
+		by_origin: Array<{ file: string; display: string; count: number; percentage: number }>;
+		timeline: Array<{ level: string; hour: string; count: number }>;
+	}> {
+		const empty = { total: 0, by_level: [], by_origin: [], timeline: [] };
+		if (!this.has('debug-log')) return empty;
+		const qt = this.qt('debug-log');
+		const params: unknown[] = [];
+		const where = debug_log_filter_sql(filter, params);
+		const level_expr = debug_payload_expr('level');
+		const file_expr = debug_payload_expr('origin.file');
+		const display_expr = debug_payload_expr('origin.display');
+		const hour_expr = `to_char((created_at::timestamptz AT TIME ZONE 'America/Mexico_City'), 'YYYY-MM-DD HH24":00"')`;
+		const [totals, origins, hours] = await Promise.all([
+			this.sql.unsafe(
+				`SELECT ${level_expr} AS level, count(*)::int AS n FROM ${qt}${where} GROUP BY 1`,
+				params,
+			),
+			this.sql.unsafe(
+				`SELECT COALESCE(${file_expr}, 'unknown') AS file,
+					COALESCE(NULLIF(${display_expr}, ''), ${file_expr}, 'unknown') AS display,
+					count(*)::int AS n
+				FROM ${qt}${where}
+				GROUP BY 1, 2
+				ORDER BY n DESC
+				LIMIT 50`,
+				params,
+			),
+			this.sql.unsafe(
+				`SELECT COALESCE(${level_expr}, 'log') AS level, ${hour_expr} AS hour, count(*)::int AS n
+				FROM ${qt}${where}
+				GROUP BY 1, 2
+				ORDER BY 2`,
+				params,
+			),
+		]);
+		const by_level_raw = totals.map((row) => {
+			const rec = row as { level?: string; n?: number };
+			return { level: String(rec.level ?? 'log'), count: Number(rec.n ?? 0) };
+		});
+		const total = by_level_raw.reduce((sum, row) => sum + row.count, 0);
+		const pct = (count: number) =>
+			total ? parseFloat(((count / total) * 100).toFixed(2)) : 0;
+		return {
+			total,
+			by_level: by_level_raw
+				.map((row) => ({ ...row, percentage: pct(row.count) }))
+				.sort((a, b) => b.count - a.count),
+			by_origin: origins.map((row) => {
+				const rec = row as { file?: string; display?: string; n?: number };
+				const count = Number(rec.n ?? 0);
+				return {
+					file: String(rec.file ?? 'unknown'),
+					display: String(rec.display ?? rec.file ?? 'unknown'),
+					count,
+					percentage: pct(count),
+				};
+			}),
+			timeline: hours.map((row) => {
+				const rec = row as { level?: string; hour?: string; n?: number };
+				return {
+					level: String(rec.level ?? 'log'),
+					hour: String(rec.hour ?? ''),
+					count: Number(rec.n ?? 0),
+				};
+			}),
+		};
+	}
+
+	/**
+	 * Hasta 10 request logs que matchean ruta+método. No hidrata la tabla.
+	 * El caller elige error-preferente entre esas 10.
+	 */
+	async debug_log_related(lookup: DebugLogRelatedLookup): Promise<ImperiumDoc[]> {
+		if (!this.has('debug-log')) return [];
+		if (!lookup.routes.length || !lookup.method) return [];
+		const params: unknown[] = [];
+		const where = debug_log_related_sql(lookup, params);
+		const rows = await this.sql.unsafe(
+			`SELECT * FROM ${this.qt('debug-log')}${where}
+			ORDER BY created_at DESC NULLS LAST, id DESC
+			LIMIT 10`,
+			params,
+		);
+		return rows.map((row) => this.flatten(row as Record<string, unknown>, 'debug-log')!);
+	}
+
+	/**
+	 * Página actual + vecinos de documentation-page. 3 lecturas LIMIT,
+	 * no el catálogo. payload_text_expr: la tabla huérfana aún puede
+	 * venir string-wrapped.
+	 */
+	async documentation_adjacent(lookup: {
+		slug: string;
+		folder?: string;
+		section?: string;
+	}): Promise<{ current: ImperiumDoc | null; previous: ImperiumDoc | null; next: ImperiumDoc | null }> {
+		const empty = { current: null, previous: null, next: null };
+		if (!this.has('documentation-page') || !lookup.slug) return empty;
+		const qt = this.qt('documentation-page');
+		const current_params: unknown[] = [];
+		const current_where = documentation_page_current_sql(current_params, {
+			slug: lookup.slug,
+			folder: lookup.folder ?? '',
+			section: lookup.section ?? '',
+		});
+		const current_rows = await this.sql.unsafe(
+			`SELECT * FROM ${qt}${current_where} ORDER BY id ASC LIMIT 5`,
+			current_params,
+		);
+		const current = this.flatten(
+			(current_rows[0] as Record<string, unknown>) ?? null,
+			'documentation-page',
+		);
+		if (!current) return empty;
+		const cursor = {
+			section: String(current.section ?? ''),
+			order: Number(current.order ?? 0) || 0,
+			id: String(current._id ?? ''),
+		};
+		const prev_params: unknown[] = [];
+		const next_params: unknown[] = [];
+		const [prev_rows, next_rows] = await Promise.all([
+			this.sql.unsafe(
+				`SELECT * FROM ${qt}${documentation_page_neighbor_sql('prev', prev_params, cursor)}`,
+				prev_params,
+			),
+			this.sql.unsafe(
+				`SELECT * FROM ${qt}${documentation_page_neighbor_sql('next', next_params, cursor)}`,
+				next_params,
+			),
+		]);
+		return {
+			current,
+			previous: this.flatten(
+				(prev_rows[0] as Record<string, unknown>) ?? null,
+				'documentation-page',
+			),
+			next: this.flatten(
+				(next_rows[0] as Record<string, unknown>) ?? null,
+				'documentation-page',
+			),
+		};
+	}
+
+	/**
+	 * Tablero de guías: cards + `step_count`, sin hidratar `steps`.
+	 * Play/export hacen `find_id` del elegido.
+	 */
+	async interactive_manual_cards(): Promise<ImperiumDoc[]> {
+		if (!this.has('interactive-manual')) return [];
+		const qt = this.qt('interactive-manual');
+		const cols = this.column_names('interactive-manual');
+		const select = `${scan_select_sql(cols, INTERACTIVE_MANUAL_CARD_FIELDS)}, ${json_array_length_sql('steps')} AS step_count`;
+		const rows = await this.sql.unsafe(
+			`SELECT ${select} FROM ${qt} WHERE is_active IS DISTINCT FROM false`,
+		);
+		return rows
+			.map((row) => this.flatten(row as Record<string, unknown>, 'interactive-manual'))
+			.filter((row): row is ImperiumDoc => Boolean(row))
+			.map((row) => {
+				row.step_count = Number(row.step_count ?? 0) || 0;
+				return row;
+			});
 	}
 
 	async stats(
@@ -1462,38 +2746,65 @@ export class ImperiumStore {
 	}
 
 	async turn_stats(mongo_match?: Record<string, unknown> | null): Promise<Record<string, unknown>> {
-		const { rows } = await this.find_many('ticketing-system-turn', {
-			take: 20000,
-			include_inactive: true,
-			mongo_match,
-		});
-		const completed = rows.filter(
-			(r) => String(r.status ?? r.state ?? '') === 'completado',
-		);
+		const from = new Date();
+		from.setUTCDate(from.getUTCDate() - 30);
+		const completed_match = {
+			$or: [{ status: 'completado' }, { state: 'completado' }],
+		};
+		const match = mongo_match
+			? { $and: [mongo_match, completed_match] }
+			: completed_match;
 		const day_of = (r: ImperiumDoc) => {
 			const d = new Date(String(r.createdAt ?? r.created_at ?? ''));
 			return Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
 		};
-		const by_day = new Map<string, ImperiumDoc[]>();
-		for (const r of completed) {
-			const k = day_of(r);
-			if (!k) continue;
-			const list = by_day.get(k) ?? [];
-			list.push(r);
-			by_day.set(k, list);
-		}
+		const is_completed = (r: ImperiumDoc) =>
+			String(r.status ?? r.state ?? '') === 'completado';
+		const day_counts = await this.count_by_created_day('ticketing-system-turn', {
+			from_iso: from.toISOString(),
+			mongo_match: match,
+			include_inactive: true,
+		});
 		const today_key = new Date().toISOString().slice(0, 10);
 		let ref_key = today_key;
-		if (!(by_day.get(today_key)?.length)) {
+		if (!(day_counts.get(today_key))) {
 			let best = '';
 			let n = 0;
-			for (const [k, list] of by_day) {
-				if (list.length > n) {
-					n = list.length;
+			for (const [k, count] of day_counts) {
+				if (count > n) {
+					n = count;
 					best = k;
 				}
 			}
 			if (best) ref_key = best;
+		}
+		const ref_date = new Date(`${ref_key}T00:00:00.000Z`);
+		const seven_keys: string[] = [];
+		for (let i = 6; i >= 0; i--) {
+			const d = new Date(ref_date);
+			d.setUTCDate(d.getUTCDate() - i);
+			seven_keys.push(d.toISOString().slice(0, 10));
+		}
+		const by_day = new Map<string, ImperiumDoc[]>();
+		for await (const page of this.scan('ticketing-system-turn', {
+			where: {
+				created_at: {
+					gte: `${seven_keys[0]}T00:00:00.000Z`,
+					lte: `${ref_key}T23:59:59.999Z`,
+				},
+			},
+			mongo_match: match,
+			include_inactive: true,
+			fields: TURN_STATS_FIELDS,
+		})) {
+			for (const r of page) {
+				if (!is_completed(r)) continue;
+				const k = day_of(r);
+				if (!k || !seven_keys.includes(k)) continue;
+				const list = by_day.get(k) ?? [];
+				list.push(r);
+				by_day.set(k, list);
+			}
 		}
 		const today_rows = by_day.get(ref_key) ?? [];
 		const box_label = (r: ImperiumDoc) => {
@@ -1519,13 +2830,6 @@ export class ImperiumStore {
 			daily_map.set(id, cur);
 		}
 		const daily_stats = [...daily_map.values()];
-		const ref_date = new Date(`${ref_key}T00:00:00.000Z`);
-		const seven_keys: string[] = [];
-		for (let i = 6; i >= 0; i--) {
-			const d = new Date(ref_date);
-			d.setUTCDate(d.getUTCDate() - i);
-			seven_keys.push(d.toISOString().slice(0, 10));
-		}
 		const box_ids = new Set<string>();
 		for (const k of seven_keys) {
 			for (const r of by_day.get(k) ?? []) box_ids.add(ref_id(r.assigned_box) || 'none');
@@ -1626,9 +2930,10 @@ export class ImperiumStore {
 			this.has(resource)
 				? (
 						await this.find_many(resource, {
-							take: 20000,
+							take: 200,
 							include_inactive: false,
 							populate: false,
+							skip_total: true,
 						})
 					).rows
 				: [];
@@ -1746,11 +3051,6 @@ export class ImperiumStore {
 		url?: URL,
 		mongo_match?: Record<string, unknown> | null,
 	): Promise<Record<string, unknown>> {
-		const { rows } = await this.find_many('citizen-report', {
-			take: 20000,
-			include_inactive: false,
-			mongo_match,
-		});
 		const date_from = url?.searchParams.get('date_from');
 		const date_to = url?.searchParams.get('date_to');
 		const priorities = [
@@ -1761,93 +3061,36 @@ export class ImperiumStore {
 			...(url?.searchParams.getAll('statuses[]') ?? []),
 			...(url?.searchParams.getAll('statuses') ?? []),
 		].filter(Boolean);
-		const from_ms = date_from ? new Date(date_from).getTime() : NaN;
-		const to_ms = date_to ? new Date(date_to).getTime() : Date.now();
-		const filtered = rows.filter((r) => {
-			if (Number.isFinite(from_ms)) {
-				const created = new Date(String(r.createdAt ?? r.created_at ?? '')).getTime();
-				if (!Number.isFinite(created) || created < from_ms || created > to_ms) {
-					return false;
-				}
-			}
-			if (priorities.length && !priorities.includes(String(r.priority ?? ''))) {
-				return false;
-			}
-			if (statuses.length && !statuses.includes(String(r.status ?? ''))) {
-				return false;
-			}
-			return true;
-		});
+		const where: Record<string, unknown> = {};
+		if (date_from || date_to) {
+			where.created_at = {
+				...(date_from ? { gte: date_from } : {}),
+				...(date_to ? { lte: date_to } : {}),
+			};
+		}
+		if (priorities.length) where.priority = { in: priorities };
+		if (statuses.length) where.status = { in: statuses };
 		const status_of = (r: ImperiumDoc) => String(r.status ?? '').toLowerCase();
 		const priority_of = (r: ImperiumDoc) => String(r.priority ?? '').toUpperCase();
-		const pending = filtered.filter((r) => {
-			const st = status_of(r);
-			if (st === 'pendiente' || st === 'en_proceso') return true;
-			if (!st && ['MEDIA', 'ALTA', 'URGENTE', 'CRITICA'].includes(priority_of(r))) {
-				return true;
-			}
-			return false;
-		});
-		const urgent = filtered.filter((r) =>
-			['URGENTE', 'CRITICA'].includes(priority_of(r)),
-		);
-		const resolved = filtered.filter((r) => {
-			const st = status_of(r);
-			if (st === 'terminado') return true;
-			if (!st && priority_of(r) === 'BAJA') return true;
-			return false;
-		});
-		const group = (key: (r: ImperiumDoc) => string) => {
-			const map = new Map<string, number>();
-			for (const r of filtered) {
-				const name = key(r) || 'Sin valor';
-				map.set(name, (map.get(name) ?? 0) + 1);
-			}
-			return [...map.entries()]
-				.map(([name, value]) => ({ name, value }))
-				.sort((a, b) => b.value - a.value);
-		};
 		const ref_name = (v: unknown, fallback: string) => {
 			const o = as_object(v);
-			return String(o.name ?? (typeof v === 'string' && v ? v : fallback));
+			const label = String(o.name ?? o.nombreCompleto ?? '').trim();
+			if (label) return label;
+			if (typeof v === 'string') {
+				const s = v.trim();
+				if (s && !OBJECT_ID_HEX.test(s)) return s;
+			}
+			return fallback;
+		};
+		const slim_ref = (v: unknown) => {
+			const label = ref_name(v, '');
+			if (!label) return null;
+			return { _id: ref_id(v), name: label };
 		};
 		const day_of = (r: ImperiumDoc) => {
 			const d = new Date(String(r.createdAt ?? r.created_at ?? ''));
 			return Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
 		};
-		const month_of = (r: ImperiumDoc) => day_of(r).slice(0, 7);
-		const recent_cut = Date.now() - 7 * 24 * 60 * 60 * 1000;
-		const recent = filtered.filter((r) => {
-			const t = new Date(String(r.createdAt ?? r.created_at ?? '')).getTime();
-			return Number.isFinite(t) && t >= recent_cut;
-		});
-		const closed = filtered.filter((r) => status_of(r) === 'terminado');
-		const resolution = new Map<string, { sum: number; n: number }>();
-		for (const r of closed) {
-			const a = new Date(String(r.createdAt ?? r.created_at ?? '')).getTime();
-			const b = new Date(String(r.updatedAt ?? r.updated_at ?? '')).getTime();
-			if (!Number.isFinite(a) || !Number.isFinite(b) || b < a) continue;
-			const days = (b - a) / (1000 * 60 * 60 * 24);
-			const p = priority_of(r) || 'SIN_PRIORIDAD';
-			const cur = resolution.get(p) ?? { sum: 0, n: 0 };
-			cur.sum += days;
-			cur.n += 1;
-			resolution.set(p, cur);
-		}
-		const avg_resolution_time = [...resolution.entries()]
-			.map(([name, v]) => ({ name, value: Number((v.sum / v.n).toFixed(1)) }))
-			.sort((a, b) => a.name.localeCompare(b.name));
-		const phones = new Map<string, number>();
-		for (const r of filtered) {
-			const phone = String(r.citizen_phone ?? '').trim();
-			if (!phone) continue;
-			phones.set(phone, (phones.get(phone) ?? 0) + 1);
-		}
-		const citizen_recurrence = [...phones.entries()]
-			.filter(([, n]) => n > 1)
-			.map(([name, value]) => ({ name, value }))
-			.sort((a, b) => b.value - a.value)
-			.slice(0, 10);
 		const coord = (r: ImperiumDoc) => {
 			const c = as_object(r.report_coordinates);
 			const lat = Number(c.latitude ?? c.lat);
@@ -1855,47 +3098,137 @@ export class ImperiumStore {
 			if (!Number.isFinite(lat) || !Number.isFinite(lon)) return '';
 			return `${lat.toFixed(2)},${lon.toFixed(2)}`;
 		};
+		const inc = (map: Map<string, number>, name: string) => {
+			map.set(name, (map.get(name) ?? 0) + 1);
+		};
+		const series = (map: Map<string, number>) =>
+			[...map.entries()]
+				.map(([name, value]) => ({ name, value }))
+				.sort((a, b) => b.value - a.value);
+		let total_complaints = 0;
+		let pending_complaints = 0;
+		let urgent_complaints = 0;
+		let resolved_complaints = 0;
+		const priority_map = new Map<string, number>();
+		const status_map = new Map<string, number>();
+		const employee_map = new Map<string, number>();
+		const department_map = new Map<string, number>();
+		const recent_map = new Map<string, number>();
+		const medium_map = new Map<string, number>();
+		const problem_map = new Map<string, number>();
+		const month_map = new Map<string, number>();
+		const geo_map = new Map<string, number>();
+		const phones = new Map<string, { count: number; name: string }>();
+		const resolution = new Map<string, { sum: number; n: number }>();
+		const export_records: Record<string, unknown>[] = [];
+		const recent_cut = Date.now() - 7 * 24 * 60 * 60 * 1000;
+		for await (const page of this.scan('citizen-report', {
+			where: Object.keys(where).length ? where : undefined,
+			mongo_match,
+			include_inactive: false,
+			fields: CITIZEN_REPORT_STATS_FIELDS,
+		})) {
+			const rows = await this.populate_docs('citizen-report', page, { lite: true });
+			for (const r of rows) {
+				total_complaints += 1;
+				const st = status_of(r);
+				const pr = priority_of(r);
+				if (
+					st === 'pendiente' ||
+					st === 'en_proceso' ||
+					(!st && ['MEDIA', 'ALTA', 'URGENTE', 'CRITICA'].includes(pr))
+				) {
+					pending_complaints += 1;
+				}
+				if (['URGENTE', 'CRITICA'].includes(pr)) urgent_complaints += 1;
+				if (st === 'terminado' || (!st && pr === 'BAJA')) resolved_complaints += 1;
+				inc(priority_map, String(r.priority ?? 'SIN_PRIORIDAD'));
+				inc(status_map, String(r.status ?? 'SIN_ESTATUS'));
+				inc(employee_map, ref_name(r.employee_taken_the_report, 'Sin asignar'));
+				inc(department_map, ref_name(r.department, 'Sin departamento'));
+				inc(medium_map, ref_name(r.reporting_medium, 'Sin medio'));
+				inc(problem_map, ref_name(r.citizen_report_problem, 'Sin problema'));
+				const day = day_of(r);
+				if (day) {
+					inc(month_map, day.slice(0, 7));
+					const t = new Date(String(r.createdAt ?? r.created_at ?? '')).getTime();
+					if (Number.isFinite(t) && t >= recent_cut) inc(recent_map, day);
+				}
+				inc(geo_map, ref_name(r.borough, coord(r) || 'Sin ubicación'));
+				export_records.push({
+					name: r.name ?? '',
+					citizen_name: r.citizen_name ?? '',
+					citizen_phone: r.citizen_phone ?? '',
+					priority: r.priority ?? '',
+					status: r.status ?? '',
+					employee_taken_the_report: slim_ref(r.employee_taken_the_report),
+					assinged_to: slim_ref(r.assinged_to),
+					department: slim_ref(r.department),
+					reporting_medium: slim_ref(r.reporting_medium),
+					citizen_report_problem: slim_ref(r.citizen_report_problem),
+					createdAt: r.createdAt ?? r.created_at ?? '',
+				});
+				const phone = String(r.citizen_phone ?? '').trim();
+				if (phone) {
+					const citizen_name = String(r.citizen_name ?? '').trim();
+					const cur = phones.get(phone);
+					if (cur) {
+						cur.count += 1;
+						if (!cur.name && citizen_name) cur.name = citizen_name;
+					} else {
+						phones.set(phone, { count: 1, name: citizen_name });
+					}
+				}
+				if (st !== 'terminado') continue;
+				const a = new Date(String(r.createdAt ?? r.created_at ?? '')).getTime();
+				const b = new Date(String(r.updatedAt ?? r.updated_at ?? '')).getTime();
+				if (!Number.isFinite(a) || !Number.isFinite(b) || b < a) continue;
+				const p = pr || 'SIN_PRIORIDAD';
+				const cur = resolution.get(p) ?? { sum: 0, n: 0 };
+				cur.sum += (b - a) / (1000 * 60 * 60 * 24);
+				cur.n += 1;
+				resolution.set(p, cur);
+			}
+		}
+		const avg_resolution_time = [...resolution.entries()]
+			.map(([name, v]) => ({ name, value: Number((v.sum / v.n).toFixed(1)) }))
+			.sort((a, b) => a.name.localeCompare(b.name));
+		const citizen_recurrence = [...phones.entries()]
+			.filter(([, v]) => v.count > 1)
+			.map(([phone, v]) => ({ name: v.name || phone, value: v.count }))
+			.sort((a, b) => b.value - a.value)
+			.slice(0, 10);
 		const export_sheet = (
 			title: string,
 			chart_type: string,
 			lookups: Record<string, string> = {},
 		) => ({
-			records: filtered,
+			records: export_records,
 			metadata: {
 				title,
 				unit: 'Quejas',
-				total_records: filtered.length,
+				total_records: export_records.length,
 				chart_type,
 			},
 			lookups,
 		});
 		return {
 			kpis: {
-				total_complaints: filtered.length,
-				pending_complaints: pending.length,
-				urgent_complaints: urgent.length,
-				resolved_complaints: resolved.length,
+				total_complaints,
+				pending_complaints,
+				urgent_complaints,
+				resolved_complaints,
 			},
 			charts: {
-				priority_distribution: { data: group((r) => String(r.priority ?? 'SIN_PRIORIDAD')) },
-				status_distribution: { data: group((r) => String(r.status ?? 'SIN_ESTATUS')) },
-				employee_workload: {
-					data: group((r) => ref_name(r.employee_taken_the_report, 'Sin asignar')),
-				},
-				department_distribution: {
-					data: group((r) => ref_name(r.department, 'Sin departamento')),
-				},
-				recent_activity: { data: group(day_of).filter((x) => x.name && recent.some((r) => day_of(r) === x.name)) },
-				reporting_medium_distribution: {
-					data: group((r) => ref_name(r.reporting_medium, 'Sin medio')),
-				},
-				problem_distribution: {
-					data: group((r) => ref_name(r.citizen_report_problem, 'Sin problema')),
-				},
-				monthly_trend: { data: group(month_of).filter((x) => x.name) },
-				geographic_distribution: {
-					data: group((r) => ref_name(r.borough, coord(r) || 'Sin ubicación')),
-				},
+				priority_distribution: { data: series(priority_map) },
+				status_distribution: { data: series(status_map) },
+				employee_workload: { data: series(employee_map) },
+				department_distribution: { data: series(department_map) },
+				recent_activity: { data: series(recent_map).filter((x) => x.name) },
+				reporting_medium_distribution: { data: series(medium_map) },
+				problem_distribution: { data: series(problem_map) },
+				monthly_trend: { data: series(month_map).filter((x) => x.name) },
+				geographic_distribution: { data: series(geo_map) },
 				avg_resolution_time: { data: avg_resolution_time },
 				citizen_recurrence: { data: citizen_recurrence },
 			},
@@ -2095,10 +3428,15 @@ function physical_filter_field(cols: Set<string>, field: string) {
 	return mapped;
 }
 
-function is_range_filter(value: unknown): value is { gte?: unknown; lte?: unknown } {
+function is_range_filter(value: unknown): value is {
+	gte?: unknown;
+	lte?: unknown;
+	gt?: unknown;
+	lt?: unknown;
+} {
 	if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
 	const rec = value as Record<string, unknown>;
-	return ('gte' in rec || 'lte' in rec) && !('in' in rec);
+	return ('gte' in rec || 'lte' in rec || 'gt' in rec || 'lt' in rec) && !('in' in rec);
 }
 
 function range_bound(raw: string, op: 'gte' | 'lte') {
@@ -2155,34 +3493,57 @@ function tz_offset_ms(date: Date, tz: string) {
 	);
 }
 
-function range_compare_sql(cols: Set<string>, field: string, op: '>=' | '<=', index: number) {
+function range_compare_sql(
+	cols: Set<string>,
+	field: string,
+	op: '>=' | '<=' | '>' | '<',
+	index: number,
+) {
 	if (cols.has(field)) return `${qident(field)} ${op} $${index}`;
 	return payload_field_range_sql(field, op, `$${index}`);
 }
 
-function payload_field_range_sql(field: string, op: '>=' | '<=', param: string): string {
+export function payload_field_range_sql(
+	field: string,
+	op: '>=' | '<=' | '>' | '<',
+	param: string,
+): string {
 	const key = literal(field);
-	return `(payload ->> ${key} ${op} ${param}::text OR (jsonb_typeof(payload) = 'string' AND ((payload #>> '{}')::jsonb) ->> ${key} ${op} ${param}::text))`;
+	return `payload ->> ${key} ${op} ${param}::text`;
 }
 
-/** Campo en payload, incluso si la celda jsonb quedó como string (doble encode). */
-function payload_field_eq_sql(field: string, param: string): string {
+/** Predicado sargable: el btree `(payload ->> campo)` lo cubre. */
+export function payload_field_eq_sql(field: string, param: string): string {
 	const key = literal(field);
-	return `(payload ->> ${key} = ${param}::text OR (jsonb_typeof(payload) = 'string' AND ((payload #>> '{}')::jsonb) ->> ${key} = ${param}::text))`;
+	return `payload ->> ${key} = ${param}::text`;
 }
 
-function payload_field_in_sql(field: string, marks: string[]): string {
+export function payload_field_in_sql(field: string, marks: string[]): string {
 	const key = literal(field);
-	const list = marks.join(', ');
-	return `(payload ->> ${key} IN (${list}) OR (jsonb_typeof(payload) = 'string' AND ((payload #>> '{}')::jsonb) ->> ${key} IN (${list})))`;
+	return `payload ->> ${key} IN (${marks.join(', ')})`;
+}
+
+function payload_distinct_expr(field: string): string {
+	if (!field.includes('.')) return `payload ->> ${literal(field)}`;
+	const parts = field.split('.').filter((part) => /^[a-z_][a-z0-9_]*$/i.test(part));
+	if (!parts.length) throw new Error(`bad ident ${field}`);
+	return `payload #>> '{${parts.join(',')}}'`;
+}
+
+/**
+ * Bind JSONB: objeto/arreglo, no string. Bun.SQL + `::jsonb` re-encoda un string.
+ * Entero/boolean van como texto JSON (`123`, `true`): PG no castea integer→jsonb
+ * (`cannot cast type integer to jsonb` en counters como current_real_value).
+ */
+export function json_bind_value(v: unknown): unknown {
+	if (v == null) return null;
+	if (typeof v === 'number' || typeof v === 'boolean') return JSON.stringify(v);
+	return typeof v === 'string' ? parse_json_cell(v) : v;
 }
 
 function cell(v: unknown, json: boolean): unknown {
 	if (v == null) return null;
-	if (json) {
-		const parsed = typeof v === 'string' ? parse_json_cell(v) : v;
-		return typeof parsed === 'string' ? parsed : JSON.stringify(parsed);
-	}
+	if (json) return json_bind_value(v);
 	if (Array.isArray(v) || (typeof v === 'object' && !(v instanceof Date))) {
 		return JSON.stringify(v);
 	}

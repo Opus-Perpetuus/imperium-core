@@ -118,16 +118,15 @@ export async function vehicle_by_status(
 	store: ImperiumStore,
 	mongo_match?: Record<string, unknown> | null,
 ): Promise<Array<{ _id: string; count: number }>> {
-	const { rows } = await store.find_many('vehicle', {
-		take: 20000,
-		include_inactive: true,
-		populate: false,
-		mongo_match,
-	});
 	const counts = new Map<string, number>();
-	for (const row of rows) {
-		const key = text(row.estado_operativo) || 'disponible';
-		counts.set(key, (counts.get(key) ?? 0) + 1);
+	for await (const page of store.scan('vehicle', {
+		include_inactive: true,
+		mongo_match,
+	})) {
+		for (const row of page) {
+			const key = text(row.estado_operativo) || 'disponible';
+			counts.set(key, (counts.get(key) ?? 0) + 1);
+		}
 	}
 	return [...counts.entries()].map(([_id, count]) => ({ _id, count }));
 }

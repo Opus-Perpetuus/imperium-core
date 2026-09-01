@@ -1,7 +1,7 @@
 /**
  * Service plane del núcleo — mismos paths que Kirel NOX
  * (`/api/kirlets/svc/:tid/...`) para que HttpNoxServices del kit no cambie.
- * Los súbditos no abren Postgres: history/counters/params viven aquí.
+ * Las apps no abren Postgres: history/counters/params viven aquí.
  */
 export function service_plane_match(path: string): {
   tid: string;

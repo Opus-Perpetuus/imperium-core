@@ -101,8 +101,11 @@ function resolve_ref_model(
 	return store.field_refs(resource)[field_path] || null;
 }
 
-function parent_counts(rows: ImperiumDoc[], field_path: string) {
-	const counts = new Map<string, number>();
+function increment_parent_counts(
+	counts: Map<string, number>,
+	rows: ImperiumDoc[],
+	field_path: string,
+) {
 	for (const row of rows) {
 		for (const raw of values_at_path(row, field_path)) {
 			const value = serialize_field_value(raw);
@@ -110,7 +113,6 @@ function parent_counts(rows: ImperiumDoc[], field_path: string) {
 			counts.set(value, (counts.get(value) ?? 0) + 1);
 		}
 	}
-	return counts;
 }
 
 async function load_tracker(store: ImperiumStore, model_tracker_id: string) {
@@ -153,30 +155,46 @@ export async function model_tracker_field_values(ctx: TrackerCtx) {
 	const ref_resource = ref_model ? ctx.store.resource_for_model(ref_model) : null;
 	const is_reference = Boolean(ref_resource && ctx.store.has(ref_resource));
 
-	const { rows } = await ctx.store.find_many(resource, {
-		take: 20000,
-		include_inactive: true,
-	});
-	const counts = parent_counts(rows, field_path);
+	const dotted = field_path.includes('.');
+	const as_array_field = descriptor?.is_array === true;
+	/* Escalares: GROUP BY en SQL. Refs/objetos/arrays/paths con punto
+	 * siguen en scan: `payload ->>` no es el id de serialize_field_value. */
+	const use_sql_counts = !dotted && !as_array_field && !is_reference;
+
+	const counts = new Map<string, number>();
+	if (use_sql_counts) {
+		const counted = await ctx.store.value_counts(resource, field_path, {
+			include_inactive: true,
+		});
+		for (const { value, count } of counted) counts.set(value, count);
+	} else {
+		for await (const page of ctx.store.scan(resource, {
+			include_inactive: true,
+			fields: [field_path],
+		})) {
+			increment_parent_counts(counts, page, field_path);
+		}
+	}
 
 	let options: FieldValueOption[];
 	if (is_reference && ref_resource) {
-		const { rows: refs } = await ctx.store.find_many(ref_resource, {
-			take: 20000,
-			include_inactive: true,
-		});
 		const merged = new Map<string, FieldValueOption>();
-		for (const doc of refs) {
-			const value = String(doc._id ?? '');
-			if (!value) continue;
-			const label = reference_label(doc, value);
-			if (!usable_label(label)) continue;
-			merged.set(value, {
-				value,
-				label,
-				count: counts.get(value) ?? 0,
-				is_reference: true,
-			});
+		for await (const refs of ctx.store.scan(ref_resource, {
+			include_inactive: true,
+			populate_lite: true,
+		})) {
+			for (const doc of refs) {
+				const value = String(doc._id ?? '');
+				if (!value) continue;
+				const label = reference_label(doc, value);
+				if (!usable_label(label)) continue;
+				merged.set(value, {
+					value,
+					label,
+					count: counts.get(value) ?? 0,
+					is_reference: true,
+				});
+			}
 		}
 		for (const [value, count] of counts) {
 			if (merged.has(value)) continue;

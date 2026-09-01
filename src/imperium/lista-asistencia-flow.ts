@@ -120,19 +120,21 @@ export async function snapshot_attendance_entries(
 	if (!attendance_id || !grupo_id || !store.has('alumnos') || !store.has('lista-asistencia')) {
 		return created;
 	}
-	const { rows } = await store.find_many('alumnos', {
+	const collected: ImperiumDoc[] = [];
+	for await (const page of store.scan('alumnos', {
 		where: { grupo_id },
-		take: 20000,
 		include_inactive: false,
-		populate: false,
+	})) {
+		for (const row of page) {
+			if (row.is_active === false || ref_id(row.grupo_id) !== grupo_id) continue;
+			collected.push(row);
+		}
+	}
+	const students = collected.sort((a, b) => {
+		const na = Number(a.numero_lista ?? 0) - Number(b.numero_lista ?? 0);
+		if (na) return na;
+		return text(a.name).localeCompare(text(b.name), 'es');
 	});
-	const students = rows
-		.filter((row) => row.is_active !== false && ref_id(row.grupo_id) === grupo_id)
-		.sort((a, b) => {
-			const na = Number(a.numero_lista ?? 0) - Number(b.numero_lista ?? 0);
-			if (na) return na;
-			return text(a.name).localeCompare(text(b.name), 'es');
-		});
 	const attendance_name = text(created.name) || 'Asistencia';
 	for (const [index, student] of students.entries()) {
 		await store.insert('lista-asistencia', {
