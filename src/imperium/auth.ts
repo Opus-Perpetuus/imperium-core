@@ -42,7 +42,8 @@ import {
 	collect_group_menu_ids,
 } from './group-access.ts';
 
-const COOKIE = 'connect.sid';
+const COOKIE = 'imperium.sid';
+const LEGACY_COOKIE = 'connect.sid';
 const SECRET = process.env.SESSION_SECRET ?? 'imperium-modular-dev-session';
 const SEED_ADMIN_REF = 'user-menu-management-0';
 
@@ -442,19 +443,40 @@ function read_sid(req: Request): string {
 	return m ? decodeURIComponent(m[1]!) : '';
 }
 
+function cookie_secure_attr(): string {
+	if (process.env.COOKIE_SECURE === '0') return '';
+	if (
+		process.env.COOKIE_SECURE === '1' ||
+		process.env.NODE_ENV === 'production' ||
+		process.env.NODE_ENV !== 'test'
+	) {
+		return '; Secure';
+	}
+	return '';
+}
+
 function with_cookie(res: Response, sid: string, clear = false): Response {
 	const headers = new Headers(res.headers);
+	const secure = cookie_secure_attr();
 	if (clear || !sid) {
 		headers.append(
 			'set-cookie',
-			`${COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`,
+			`${COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`,
 		);
 	} else {
 		headers.append(
 			'set-cookie',
-			`${COOKIE}=${encodeURIComponent(sid)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${7 * 24 * 3600}`,
+			`${COOKIE}=${encodeURIComponent(sid)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${7 * 24 * 3600}${secure}`,
 		);
 	}
+	headers.append(
+		'set-cookie',
+		`${LEGACY_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`,
+	);
+	headers.append(
+		'set-cookie',
+		`${LEGACY_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=0`,
+	);
 	return new Response(res.body, { status: res.status, headers });
 }
 

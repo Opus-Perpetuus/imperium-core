@@ -73,9 +73,9 @@ async function wait_subject(
 }
 
 function sid_from(set_cookie: string | null): string {
-	const m = String(set_cookie ?? '').match(/connect\.sid=([^;]+)/);
+	const m = String(set_cookie ?? '').match(/imperium\.sid=([^;]+)/);
 	if (!m) throw new Error(`no session cookie: ${set_cookie}`);
-	return `connect.sid=${m[1]}`;
+	return `imperium.sid=${m[1]}`;
 }
 
 function secret_keys(obj: Record<string, unknown> | null): string[] {
@@ -138,7 +138,7 @@ describe('front-used Imperium contract via shipped create_imperium_layer', () =>
 			expect(installed_names.has(name)).toBe(true);
 		}
 		expect(r.json).toHaveProperty('access_rights');
-		expect(sid_from(r.set_cookie).startsWith('connect.sid=')).toBe(true);
+		expect(sid_from(r.set_cookie).startsWith('imperium.sid=')).toBe(true);
 		const models = ((r.json?.access_rights as Record<string, unknown>)
 			?.models ?? []) as string[];
 		// El dashboard (`is_model_available('Pedidos')`) usa nombres mongoose,
