@@ -86,7 +86,7 @@
         "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
       }
     },
-    "model-tracker": {
+    "postgres-table-tracker": {
       "__schema_fields.source": {
         "values": [
           "schema",

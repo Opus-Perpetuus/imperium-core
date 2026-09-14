@@ -39,7 +39,14 @@ async function call(
 		body: opts?.body === undefined ? undefined : JSON.stringify(opts.body),
 	});
 	const res = await layer.handle(req);
-	if (!res) throw new Error(`null response for ${method} ${api_path}`);
+	if (!res) {
+		return {
+			status: 404,
+			json: { error: 'not found' },
+			text: '{"error":"not found"}',
+			set_cookie: null,
+		};
+	}
 	const text = await res.text();
 	let json: Record<string, unknown> | null = null;
 	try {
@@ -73,9 +80,9 @@ async function wait_subject(
 }
 
 function sid_from(set_cookie: string | null): string {
-	const m = String(set_cookie ?? '').match(/imperium\.sid=([^;]+)/);
+	const m = String(set_cookie ?? '').match(/connect\.sid=([^;]+)/);
 	if (!m) throw new Error(`no session cookie: ${set_cookie}`);
-	return `imperium.sid=${m[1]}`;
+	return `connect.sid=${m[1]}`;
 }
 
 function secret_keys(obj: Record<string, unknown> | null): string[] {
@@ -138,7 +145,7 @@ describe('front-used Imperium contract via shipped create_imperium_layer', () =>
 			expect(installed_names.has(name)).toBe(true);
 		}
 		expect(r.json).toHaveProperty('access_rights');
-		expect(sid_from(r.set_cookie).startsWith('imperium.sid=')).toBe(true);
+		expect(sid_from(r.set_cookie).startsWith('connect.sid=')).toBe(true);
 		const models = ((r.json?.access_rights as Record<string, unknown>)
 			?.models ?? []) as string[];
 		// El dashboard (`is_model_available('Pedidos')`) usa nombres mongoose,
@@ -164,6 +171,36 @@ describe('front-used Imperium contract via shipped create_imperium_layer', () =>
 					String(m._ref ?? '') === 'model-tracker-menu-management-0',
 			),
 		).toBe(false);
+		expect(paths.includes('/postgres-table-tracker')).toBe(true);
+		expect(
+			(menus ?? []).some(
+				(m) =>
+					String(m._ref ?? '') ===
+						'postgres-table-tracker-menu-management-0' ||
+					String(m.path ?? '').replace(/\/+$/, '') ===
+						'/postgres-table-tracker',
+			),
+		).toBe(true);
+	});
+
+	test('GET /postgres-table-tracker/CitizenReport returns schema fields; model-tracker is gone', async () => {
+		const login = await call('POST', '/auth/login', {
+			body: { email: EMAIL, password: PASSWORD },
+		});
+		const cookie = sid_from(login.set_cookie);
+		const r = await call('GET', '/postgres-table-tracker/CitizenReport', {
+			cookie,
+		});
+		expect(r.status).toBe(200);
+		const row = (r.json?.data as Record<string, unknown>[] | undefined)?.[0];
+		expect(row).toBeTruthy();
+		expect(String(row?.__model_name ?? '')).toBe('CitizenReport');
+		expect(String(row?.__collection ?? '')).toBe('citizen-report');
+		const fields = (row?.__schema_fields as Array<{ path?: string }> | undefined) ?? [];
+		expect(fields.some((field) => field.path === 'sequence')).toBe(true);
+		expect(fields.some((field) => field.path === 'name')).toBe(true);
+		const gone = await call('GET', '/model-tracker/CitizenReport', { cookie });
+		expect(gone.status).toBe(404);
 	});
 
 	test('GET /auth (session) is the original public user, not hashes', async () => {
@@ -189,6 +226,31 @@ describe('front-used Imperium contract via shipped create_imperium_layer', () =>
 		const row = (r.json?.data as Record<string, unknown>[])[0];
 		expect(row).toBeTruthy();
 		expect(String(row?._id ?? '')).not.toBe('');
+	});
+
+	test('POST /configuration/sync-missing-seeds is missing-seed sync, not 404', async () => {
+		const login = await call('POST', '/auth/login', {
+			body: { email: EMAIL, password: PASSWORD },
+		});
+		const cookie = sid_from(login.set_cookie);
+		const r = await call('POST', '/configuration/sync-missing-seeds', {
+			cookie,
+			body: {},
+		});
+		expect(r.status).not.toBe(404);
+		expect(String(r.json?.message ?? r.json?.error ?? '').toLowerCase()).not.toBe(
+			'not found',
+		);
+		expect(String(r.json?.message ?? r.json?.error ?? '')).not.toContain(
+			'Acción no implementada',
+		);
+		const rows = (r.json?.data as Record<string, unknown>[] | undefined) ?? [];
+		const payload = rows[0] ?? {};
+		const created = payload.created;
+		const patched = payload.patched;
+		const has_arrays = Array.isArray(created) && Array.isArray(patched);
+		const no_faltaba = String(r.json?.message ?? '').includes('No faltaba');
+		expect(has_arrays || no_faltaba).toBe(true);
 	});
 
 	test('GET /notifications/my-notifications is the original session extra, not 404', async () => {

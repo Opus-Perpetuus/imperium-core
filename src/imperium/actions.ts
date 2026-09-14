@@ -6,6 +6,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { as_array, as_object, fail, ok, type ImperiumDoc } from './envelope.ts';
+import { apply_missing_configuration_seeds } from './configuration-seed-sync.ts';
 import { serve_attachment_bytes } from './media.ts';
 import { query_list, read_imperium_body } from './body.ts';
 import { qident, type ImperiumStore } from './store.ts';
@@ -21,11 +22,14 @@ import {
 } from './location-path.ts';
 import { compose_location_code } from './location-flow.ts';
 import {
-	format_increment_real_value,
-	resolve_increment_preview_target,
+	increment_control_record,
+	is_global_ref,
+	preview_increment_value,
+	unwrap_ref_value,
 } from './custom-pattern-render.ts';
 import { normalize_all_counters } from './increment-normalize.ts';
-import { model_tracker_field_values } from './model-tracker-field-values.ts';
+import { postgres_table_tracker_field_values } from './postgres-table-tracker-field-values.ts';
+import { TRACKER_RESOURCE } from './postgres-table-tracker.ts';
 import { debug_read_logs, debug_read_related, debug_statistics } from './debug-log-flow.ts';
 import { AguaMssqlService } from './agua-mssql.ts';
 import { calcular_importe } from './agua-importe.ts';
@@ -109,6 +113,7 @@ import {
 	render_report_from_pages,
 	report_validation_ok,
 } from './reports-flow.ts';
+import { html_to_pdf_response } from './reports-pdf.ts';
 import {
 	GROUP_REF_ALMACEN,
 	GROUP_REF_SURTIDORES,
@@ -295,6 +300,8 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return normalize_counters(ctx);
 		case 'configuration:ai_generate_text':
 			return ai_generate_text(ctx);
+		case 'configuration:sync_missing_seeds':
+			return sync_missing_configuration_seeds(ctx);
 		case 'custom-pattern-increment-sequence-parts:get_by_counter_config':
 			return pattern_parts_by_counter(ctx);
 		case 'interface-restriction:runtime_read':
@@ -676,14 +683,14 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return agua_print_mode(ctx);
 		case 'physical-device:report':
 			return physical_device_report(ctx);
-		case 'model-tracker:get_all_models':
-			return model_tracker_all_models(ctx);
-		case 'model-tracker:get_search_engine_status':
-			return model_tracker_search_status(ctx);
-		case 'model-tracker:read_field_values_globally':
-			return model_tracker_field_values(ctx);
-		case 'model-tracker:trigger_reindex':
-			return model_tracker_reindex(ctx);
+		case 'postgres-table-tracker:get_all_models':
+			return postgres_table_tracker_all_models(ctx);
+		case 'postgres-table-tracker:get_search_engine_status':
+			return postgres_table_tracker_search_status();
+		case 'postgres-table-tracker:read_field_values_globally':
+			return postgres_table_tracker_field_values(ctx);
+		case 'postgres-table-tracker:trigger_reindex':
+			return postgres_table_tracker_reindex(ctx);
 		default:
 			return generic_action(ctx);
 	}
@@ -1178,6 +1185,14 @@ async function cfdi_export(ctx: Ctx, kind: 'xml' | 'json') {
 	return ok([{ json: canonical, filename: `cfdi_${doc._id}.json` }], 'JSON CFDI generado correctamente');
 }
 
+async function sync_missing_configuration_seeds(ctx: Ctx) {
+	const result = await apply_missing_configuration_seeds(ctx.store);
+	return ok(
+		[{ created: result.created, patched: result.patched }],
+		result.message,
+	);
+}
+
 async function ai_generate_text(ctx: Ctx) {
 	const text = await generate_text(ctx.store, {
 		instruction: String(ctx.body.instruction ?? ctx.body.prompt ?? ''),
@@ -1282,11 +1297,28 @@ const INCREMENT_LIST_FIELDS = [
 /** Consolida duplicados. Sin `search_field` (n-gramas). */
 const INCREMENT_CONSOLIDATE_FIELDS = [
 	'_unique_string_reference',
+	'model_name',
+	'increment_field',
+	'campo',
+	'ref_value',
 	'current_sequence',
 	'current',
 	'valor',
 	'current_real_value',
 ];
+
+/**
+ * Identidad real de un tracker: modelo + campo + segmento desenvuelto. Dos
+ * filas con esta misma identidad cuentan el mismo folio aunque su
+ * `_unique_string_reference` difiera (ref envuelto vs plano, index renombrado).
+ */
+function increment_identity(row: ImperiumDoc): string {
+	const model_name = String(row.model_name ?? '').trim();
+	const field = String(row.increment_field ?? row.campo ?? '').trim();
+	if (!model_name || !field) return String(row._unique_string_reference ?? '').trim();
+	const ref = is_global_ref(row.ref_value) ? null : unwrap_ref_value(row.ref_value);
+	return `${model_name}::${field}::${JSON.stringify(ref)}`;
+}
 
 async function list_auto_increment_controls(ctx: Ctx) {
 	const q = query_list(ctx.url);
@@ -1302,8 +1334,7 @@ async function list_auto_increment_controls(ctx: Ctx) {
 	});
 	const mapped = rows.map((row) => {
 		const ref_value = row.ref_value;
-		const is_global =
-			ref_value == null || ref_value === undefined || String(ref_value).trim() === '';
+		const is_global = is_global_ref(ref_value);
 		return {
 			_id: row._id,
 			name: row.name || `${row.model_name}.${row.increment_field}`,
@@ -1316,7 +1347,7 @@ async function list_auto_increment_controls(ctx: Ctx) {
 			current_sequence: row.current_sequence,
 			current_real_value: row.current_real_value,
 			ref_value: row.ref_value,
-			segment: is_global ? '(global)' : String(ref_value),
+			segment: is_global ? '(global)' : unwrap_ref_value(ref_value),
 			is_active: row.is_active !== false,
 		};
 	});
@@ -1330,7 +1361,7 @@ async function increment_consolidate(ctx: Ctx) {
 	});
 	const groups = new Map<string, ImperiumDoc[]>();
 	for (const row of rows) {
-		const key = String(row._unique_string_reference ?? '').trim();
+		const key = increment_identity(row);
 		if (!key) continue;
 		const list = groups.get(key) ?? [];
 		list.push(row);
@@ -1378,6 +1409,27 @@ async function increment_consolidate(ctx: Ctx) {
 	);
 }
 
+function pattern_context_from_request(ctx: Ctx): Record<string, unknown> | undefined {
+	const raw =
+		ctx.body.pattern_context ??
+		ctx.body.context ??
+		ctx.url.searchParams.get('pattern_context') ??
+		ctx.url.searchParams.get('context');
+	if (raw == null || raw === '') return undefined;
+	if (typeof raw === 'object' && !Array.isArray(raw)) return as_object(raw);
+	if (typeof raw === 'string') {
+		try {
+			const parsed = JSON.parse(raw) as unknown;
+			if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+				return as_object(parsed);
+			}
+		} catch {
+			return undefined;
+		}
+	}
+	return undefined;
+}
+
 async function increment_counter(ctx: Ctx) {
 	const doc = await need(
 		ctx,
@@ -1387,36 +1439,17 @@ async function increment_counter(ctx: Ctx) {
 		'Se necesita un id para incrementar.',
 	);
 	const amount = Math.max(1, Number(ctx.body.amount ?? ctx.url.searchParams.get('amount') ?? 1));
-	const model_name = String(doc.model_name ?? '');
-	const increment_field = String(doc.increment_field ?? doc.campo ?? 'sequence');
-	let next = Number(doc.current_sequence ?? doc.current ?? doc.valor ?? 0);
-	if (model_name) {
-		for (let i = 0; i < amount; i++) {
-			next = await ctx.store.next_auto_increment(model_name, increment_field);
-		}
-		const { target } = await resolve_increment_preview_target(
-			ctx.store,
-			model_name,
-			increment_field,
-		);
-		const shown = target ?? (await ctx.store.find_id('auto-increment-control', String(doc._id)));
-		const real_value = shown?.current_real_value ?? next;
-		return ok(
-			[{ ...(shown ?? {}), real_value, sequence: next, next_sequence: next }],
-			`Secuencia incrementada a ${String(real_value)}.`,
-		);
-	}
-	next += amount;
-	const real_value = await format_increment_real_value(ctx.store, doc, next);
-	const updated = await ctx.store.update('auto-increment-control', String(doc._id), {
-		current_sequence: next,
-		current: next,
-		valor: next,
-		counter: next,
-		current_real_value: real_value,
-	});
+	const result = await increment_control_record(
+		ctx.store,
+		doc,
+		amount,
+		pattern_context_from_request(ctx),
+	);
+	const shown = result.target ?? doc;
+	const real_value = result.real_value;
+	const next = result.next;
 	return ok(
-		[{ ...(updated ?? {}), real_value, sequence: next, next_sequence: next }],
+		[{ ...shown, real_value, sequence: next, next_sequence: next }],
 		`Secuencia incrementada a ${String(real_value)}.`,
 	);
 }
@@ -1426,28 +1459,22 @@ async function preview_counter(ctx: Ctx) {
 	const increment_field = String(ctx.params.increment_field ?? '').trim() || 'sequence';
 	if (!model_name) throw new Error('Debes indicar el nombre del modelo.');
 	try {
-		const { config, target } = await resolve_increment_preview_target(
+		const preview = await preview_increment_value(
 			ctx.store,
 			model_name,
 			increment_field,
-		);
-		const next_sequence =
-			Number(target?.current_sequence ?? target?.current ?? target?.valor ?? 0) + 1;
-		const next_real_value = await format_increment_real_value(
-			ctx.store,
-			config ?? target,
-			next_sequence,
+			pattern_context_from_request(ctx),
 		);
 		return ok(
 			[
 				{
-					next_sequence,
-					next_consecutive: next_sequence,
-					next_real_value,
-					tracker: target ?? null,
+					next_sequence: preview.next_sequence,
+					next_consecutive: preview.next_sequence,
+					next_real_value: preview.next_real_value,
+					tracker: preview.tracker ?? null,
 				},
 			],
-			`Siguiente valor: ${String(next_real_value)}.`,
+			`Siguiente valor: ${String(preview.next_real_value)}.`,
 		);
 	} catch (error) {
 		return ok(
@@ -1463,6 +1490,14 @@ async function normalize_counters(ctx: Ctx) {
 	const unresolved_note = summary.unresolved_documents
 		? ` ${summary.unresolved_documents} no se pudieron interpretar y se dejaron intactos.`
 		: '';
+	const failed_note =
+		(summary.failed_documents
+			? ` ${summary.failed_documents} documento(s) no se pudieron escribir.`
+			: '') +
+		(summary.failed_indexes ? ` ${summary.failed_indexes} contador(es) no se pudieron normalizar.` : '');
+	const errors_note = summary.errors.length
+		? ` Detalle: ${summary.errors.slice(0, 3).join(' | ')}`
+		: '';
 	let message: string;
 	if (force) {
 		message = summary.updated_documents
@@ -1473,7 +1508,7 @@ async function normalize_counters(ctx: Ctx) {
 			? `Normalización completada: ${summary.updated_documents} folios actualizados de ${summary.scanned_documents} revisados en ${summary.normalized_indexes} contadores.${unresolved_note}`
 			: `La normalización se ejecutó sobre ${summary.scanned_documents} documentos, pero ninguno requirió cambios de formato.${unresolved_note}`;
 	}
-	return ok([summary], message, summary.results.length);
+	return ok([summary], `${message}${failed_note}${errors_note}`, summary.results.length);
 }
 
 
@@ -4891,81 +4926,48 @@ async function report_full_pdf(ctx: Ctx) {
 	const filename = `${(await interpolate_report_template(gen_name, rendered.first, user_name, now, opts)) || 'REPORTE_GENERADO'}${
 		rendered.count > 1 ? `_LOTE_${rendered.count}` : ''
 	}.pdf`;
-	return html_to_pdf_response(rendered.html, filename);
-}
-
-async function html_to_pdf_response(html: string, filename?: string) {
-	const headers: Record<string, string> = { 'content-type': 'application/pdf' };
-	if (filename) {
-		headers['content-disposition'] = `attachment; filename="${filename.replace(/"/g, '')}"`;
-	}
-	const chrome = [
-		process.env.PUPPETEER_EXECUTABLE_PATH,
-		process.env.CHROME_PATH,
-		`${process.env.HOME ?? ''}/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome`,
-		'/usr/bin/chromium',
-		'/usr/bin/google-chrome',
-	].find((p) => Boolean(p) && existsSync(p!));
-	if (chrome) {
-		try {
-			const stamp = crypto.randomUUID();
-			const html_path = `/tmp/imperium-pdf-${stamp}.html`;
-			const pdf_path = `/tmp/imperium-pdf-${stamp}.pdf`;
-			await Bun.write(html_path, html);
-			const proc = Bun.spawn(
-				[
-					chrome,
-					'--headless=new',
-					'--disable-gpu',
-					'--no-sandbox',
-					`--print-to-pdf=${pdf_path}`,
-					`file://${html_path}`,
-				],
-				{ stdout: 'ignore', stderr: 'pipe' },
-			);
-			const code = await proc.exited;
-			if (code === 0 && existsSync(pdf_path)) {
-				const pdf = await Bun.file(pdf_path).arrayBuffer();
-				return new Response(pdf, { headers });
-			}
-		} catch {
-			/* fallback */
-		}
-	}
-	try {
-		const puppeteer = await import('puppeteer').catch(() => null);
-		if (puppeteer) {
-			const browser = await puppeteer.default.launch({
-				headless: true,
-				executablePath: chrome,
-				args: ['--no-sandbox', '--disable-gpu'],
-			});
-			const page = await browser.newPage();
-			await page.setContent(html, { waitUntil: 'networkidle0' });
-			const pdf = await page.pdf({ format: 'A4', printBackground: true });
-			await browser.close();
-			return new Response(pdf, { headers });
-		}
-	} catch {
-		/* fallback html */
-	}
-	return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } });
+	const pdf_setting = as_object(ctx.body.pdf_setting);
+	return html_to_pdf_response(rendered.html, filename, {
+		pageSize: String(pdf_setting.pageSize ?? 'a4'),
+		orientation: String(pdf_setting.orientation ?? 'portrait'),
+		marginTopMm: Number(pdf_setting.marginTopMm ?? 10),
+		marginRightMm: Number(pdf_setting.marginRightMm ?? 10),
+		marginBottomMm: Number(pdf_setting.marginBottomMm ?? 10),
+		marginLeftMm: Number(pdf_setting.marginLeftMm ?? 10),
+	});
 }
 
 async function report_pdf(ctx: Ctx) {
-	const record = as_object(ctx.body.record ?? ctx.body.recordData ?? ctx.body.data ?? ctx.body);
-	const html = await interpolate_report_template(
-		String(ctx.body.htmlContent ?? ctx.body.html ?? ctx.body.template ?? '<html><body>{{name}}</body></html>'),
-		await hydrate_loose_product_references(ctx.store, record),
-		actor_name(ctx) || String(ctx.body.user_name ?? 'USER'),
-		new Date(),
-		{
-			store: ctx.store,
-			model_name: String(ctx.body.model_name ?? ctx.body.related_model ?? ''),
-		},
+	const html_raw = String(
+		ctx.body.htmlContent ?? ctx.body.html ?? ctx.body.template ?? '',
 	);
+	const explicit_record = ctx.body.record ?? ctx.body.recordData ?? ctx.body.data;
+	const record = as_object(
+		explicit_record && typeof explicit_record === 'object'
+			? explicit_record
+			: {},
+	);
+	const html = Object.keys(record).length
+		? await interpolate_report_template(
+				html_raw || '<html><body>{{name}}</body></html>',
+				await hydrate_loose_product_references(ctx.store, record),
+				actor_name(ctx) || String(ctx.body.user_name ?? 'USER'),
+				new Date(),
+				{
+					store: ctx.store,
+					model_name: String(ctx.body.model_name ?? ctx.body.related_model ?? ''),
+				},
+			)
+		: html_raw;
 	const filename = String(ctx.body.fileName ?? ctx.body.filename ?? 'report.pdf');
-	return html_to_pdf_response(html, filename);
+	return html_to_pdf_response(html, filename, {
+		pageSize: String(ctx.body.pageSize ?? 'a4'),
+		orientation: String(ctx.body.orientation ?? 'portrait'),
+		marginTopMm: Number(ctx.body.marginTopMm ?? 10),
+		marginRightMm: Number(ctx.body.marginRightMm ?? 10),
+		marginBottomMm: Number(ctx.body.marginBottomMm ?? 10),
+		marginLeftMm: Number(ctx.body.marginLeftMm ?? 10),
+	});
 }
 
 function resolve_model(ctx: Ctx, raw: string) {
@@ -5199,6 +5201,7 @@ function user_settings_defaults(uid: string, theme = 'default'): ImperiumDoc {
 			document_subscriptions: [],
 		},
 		dashboard_preferences: { default_dashboard_id: '' },
+		table_configs: {},
 		module_visibility_preferences: {
 			proyectos: { default_task_view: 'board' },
 			mis_tareas: { show_subtasks_panel: true },
@@ -6370,14 +6373,14 @@ async function physical_device_report(ctx: Ctx) {
 	return ok([saved ?? doc], 'Dispositivo registrado');
 }
 
-async function model_tracker_all_models(ctx: Ctx) {
-	const rows = await collect_scan(ctx.store, 'model-tracker', {
+async function postgres_table_tracker_all_models(ctx: Ctx) {
+	const rows = await collect_scan(ctx.store, TRACKER_RESOURCE, {
 		include_inactive: true,
 	});
 	return ok(rows, 'Todos los modelos registrados fueron obtenidos.', rows.length);
 }
 
-async function model_tracker_search_status() {
+async function postgres_table_tracker_search_status() {
 	const active = await SearchEngine.ensure_available(true);
 	return ok(
 		[{ active, configured: SearchEngine.is_enabled() }],
@@ -6387,7 +6390,7 @@ async function model_tracker_search_status() {
 	);
 }
 
-async function model_tracker_reindex(ctx: Ctx) {
+async function postgres_table_tracker_reindex(ctx: Ctx) {
 	const only_model = String(ctx.params.model_name ?? '').trim();
 	const force = ctx.url.searchParams.get('force') === 'true';
 	for await (const modules of ctx.store.scan('module-management', {

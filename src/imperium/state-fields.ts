@@ -272,6 +272,7 @@ const MODEL_ID: Record<string, string> = {
 	'inventory-physical-count': 'InventoryPhysicalCount',
 	'inventory-movement': 'InventoryMovement',
 	'inventory-internal-location': 'InventoryInternalLocation',
+	'postgres-table-tracker': 'PostGressTableTracker',
 };
 
 export function canonical_state_resource(resource: string) {
@@ -403,11 +404,11 @@ function merge_persisted(
 }
 
 async function load_tracker_doc(store: ImperiumStore, resource: string) {
-	if (!store.has('model-tracker')) return null;
+	if (!store.has('postgres-table-tracker')) return null;
 	const model_id = model_id_for_resource(resource);
 	return (
-		(await store.find_where('model-tracker', { __model_name: model_id })) ??
-		(await store.find_where('model-tracker', { name: model_id }))
+		(await store.find_where('postgres-table-tracker', { __model_name: model_id })) ??
+		(await store.find_where('postgres-table-tracker', { name: model_id }))
 	);
 }
 

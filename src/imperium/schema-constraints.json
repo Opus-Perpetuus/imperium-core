@@ -18,7 +18,7 @@
       "modelo",
       "return_value"
     ],
-    "__mongoose_model_tracker": [
+    "__postgres_table_tracker": [
       "name",
       "__model_name",
       "__collection"
@@ -353,7 +353,7 @@
     "mis-tareas": [
       "name"
     ],
-    "model-tracker": [
+    "postgres-table-tracker": [
       "name",
       "__model_name",
       "__collection"

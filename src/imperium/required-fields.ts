@@ -164,7 +164,7 @@ export function assert_required_fields(
 	for (const field of required_fields_for(resource)) {
 		if (field.includes('.')) continue;
 		if (scoped && !scoped.has(field)) continue;
-		if (!is_missing(doc[field])) continue;
+		if (!is_missing_required(resource, field, doc[field])) continue;
 		add(field, required_message(resource, field));
 	}
 	const canonical = RESOURCE_ALIASES[resource] ?? resource;
@@ -286,6 +286,25 @@ function is_missing(value: unknown) {
 	if (typeof value === 'string' && value.trim() === '') return true;
 	if (Array.isArray(value) && value.length === 0) return true;
 	return false;
+}
+
+/**
+ * `configuration.value` is Mixed: seed defaults use `""` as a stored value.
+ * Treating that as missing makes `store.insert` throw "Debes definir un valor"
+ * on Completar parámetros del sistema.
+ */
+function is_missing_required(
+	resource: string,
+	field: string,
+	value: unknown,
+): boolean {
+	if (
+		(resource === 'configuration' || resource === 'Configuration') &&
+		field === 'value'
+	) {
+		return value === undefined || value === null;
+	}
+	return is_missing(value);
 }
 
 function string_values(value: unknown): string[] {

@@ -229,19 +229,23 @@ export async function persist_request_log(
 	const status_code = res.status;
 	let response_message = '';
 	let response_code = '';
-	try {
-		const text = await res.text();
-		if (text) {
-			try {
-				const parsed = JSON.parse(text) as Record<string, unknown>;
-				response_message = String(parsed.message ?? parsed.error ?? '').trim();
-				response_code = String(parsed.code ?? '').trim();
-			} catch {
-				response_message = text.replace(/\s+/g, ' ').trim().slice(0, 240);
+	if (should_read_response_body(res.headers.get('content-type'))) {
+		try {
+			const text = await res.text();
+			if (text) {
+				try {
+					const parsed = JSON.parse(text) as Record<string, unknown>;
+					response_message = String(parsed.message ?? parsed.error ?? '').trim();
+					response_code = String(parsed.code ?? '').trim();
+				} catch {
+					response_message = text.replace(/\s+/g, ' ').trim().slice(0, 240);
+				}
 			}
+		} catch {
+			/* body already consumed / binary */
 		}
-	} catch {
-		/* body already consumed / binary */
+	} else {
+		response_message = res.headers.get('content-type') || 'binary';
 	}
 	const duration_ms = Math.max(0, Date.now() - started_ms);
 	const result = request_result(status_code, response_code);
@@ -319,6 +323,14 @@ function strip_api(pathname: string): string {
 	return pathname;
 }
 
+export function should_read_response_body(content_type: string | null): boolean {
+	const type = String(content_type ?? '').toLowerCase();
+	if (!type) return true;
+	if (type.includes('json')) return true;
+	if (type.startsWith('text/')) return true;
+	return false;
+}
+
 export function is_noisy_path(pathname: string): boolean {
 	const raw = pathname.split('?')[0] ?? pathname;
 	const path = raw.startsWith('/api/') ? raw.slice(4) || '/' : raw;
@@ -338,8 +350,15 @@ export function is_noisy_path(pathname: string): boolean {
 	);
 }
 
-function request_result(status_code: number, response_code: string): string {
+export function request_result(status_code: number, response_code: string): string {
 	if (status_code === 400 && response_code === 'user_pin_required') return 'warning';
+	if (
+		status_code === 404 &&
+		(response_code === 'attachment_bytes_missing' ||
+			response_code === 'attachment_not_found')
+	) {
+		return 'warning';
+	}
 	if (status_code >= 400) return 'error';
 	if (status_code >= 300) return 'warning';
 	if (status_code >= 200) return 'success';

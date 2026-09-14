@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
 import {
 	apply_landing_code,
 	default_home_document,
@@ -140,6 +141,16 @@ describe('portal persist', () => {
 });
 
 describe('portal public GET', () => {
+	test('anonymous settings GET does not wait for catalog boot', () => {
+		const src = readFileSync(new URL('./router.ts', import.meta.url), 'utf8');
+		const anon = src.indexOf('is_anonymous_portal_read(req)');
+		const boot = src.indexOf('await boot()');
+		expect(anon).toBeGreaterThan(-1);
+		expect(boot).toBeGreaterThan(anon);
+		expect(src).toContain('read_landing_enabled');
+		expect(src).toContain('PUBLIC_LANDING_ENABLED_REF');
+	});
+
 	test('the public API path is /api/p/portal/pages/home, not login', () => {
 		expect(portal_route_path('/api/p/portal/pages/home')).toBe(
 			'/p/portal/pages/home',
@@ -187,6 +198,40 @@ describe('portal public GET', () => {
 		const first = await once();
 		const second = await once();
 		expect(second['id']).toBe(first['id']);
+	});
+
+	test('GET /p/portal/settings is anonymous and defaults to landing hidden', async () => {
+		expect(portal_route_path('/api/p/portal/settings')).toBe(
+			'/p/portal/settings',
+		);
+		expect(
+			is_anonymous_portal_read(
+				new Request('http://imperium.test/api/p/portal/settings'),
+			),
+		).toBe(true);
+		const res = await handle_portal_request(
+			new Request('http://imperium.test/api/p/portal/settings'),
+			{ store: store(), sanitize, actor: null },
+		);
+		expect(res).not.toBeNull();
+		expect(res!.status).toBe(200);
+		const body = (await res!.json()) as { landing_enabled?: unknown };
+		expect(body.landing_enabled).toBe(false);
+	});
+
+	test('GET settings reflects the switch without an actor', async () => {
+		const res = await handle_portal_request(
+			new Request('http://imperium.test/api/p/portal/settings'),
+			{
+				store: store(),
+				sanitize,
+				actor: null,
+				read_landing_enabled: async () => false,
+			},
+		);
+		expect(res?.status).toBe(200);
+		const body = (await res!.json()) as { landing_enabled?: unknown };
+		expect(body.landing_enabled).toBe(false);
 	});
 
 	test('draft PUT without auth is rejected and does not publish', async () => {

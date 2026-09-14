@@ -20,7 +20,8 @@ import {
 	run_subject_docker,
 	type SubjectRuntimeResult,
 } from './subject-runtime.ts';
-import type { ImperiumDoc, ImperiumStore, SubjectInfo } from './store.ts';
+import type { ImperiumDoc } from './envelope.ts';
+import type { ImperiumStore, SubjectInfo } from './store.ts';
 
 type JobCtx = {
 	store: ImperiumStore;
@@ -244,8 +245,55 @@ async function install_records(sql: Bun.SQL): Promise<Map<string, InstallRec>> {
 	return out;
 }
 
+/**
+ * Estado visible del catálogo: `installing`/`uninstalling` solo es busy
+ * mientras hay un job en vuelo.
+ */
+export function visible_lifecycle_status(
+	status: string | undefined,
+	installed: boolean,
+	has_in_flight_job: boolean,
+): { status: string; busy: boolean } {
+	const raw = status || (installed ? 'installed' : 'not_installed');
+	const transitional = raw === 'installing' || raw === 'uninstalling';
+	if (transitional && has_in_flight_job) {
+		return { status: raw, busy: true };
+	}
+	if (transitional) {
+		return {
+			status: raw === 'uninstalling' ? 'uninstalled' : 'not_installed',
+			busy: false,
+		};
+	}
+	return { status: raw, busy: false };
+}
+
+/**
+ * Corrección a persistir si SQL sigue en installing/uninstalling
+ * y este proceso ya no tiene un job para esa app.
+ */
+export function stale_lifecycle_write(
+	rec:
+		| { technical_id: string; status: string; installed: boolean }
+		| undefined,
+	has_in_flight_job: boolean,
+): { technical_id: string; installed: boolean; status: string } | null {
+	if (!rec || has_in_flight_job) return null;
+	const view = visible_lifecycle_status(rec.status, rec.installed, false);
+	if (view.status === rec.status) return null;
+	return {
+		technical_id: rec.technical_id,
+		installed: view.status === 'installed',
+		status: view.status,
+	};
+}
+
 function catalog_row(sub: SubjectInfo, installed: boolean, rec?: InstallRec) {
-	const status = rec?.status || (installed ? 'installed' : 'not_installed');
+	const view = visible_lifecycle_status(
+		rec?.status,
+		installed,
+		in_flight.has(sub.technical_id),
+	);
 	return {
 		slug: sub.slug,
 		name: sub.name,
@@ -255,8 +303,8 @@ function catalog_row(sub: SubjectInfo, installed: boolean, rec?: InstallRec) {
 		image: sub.image,
 		icon: `subject:${sub.slug}`,
 		installed,
-		status,
-		busy: status === 'installing' || status === 'uninstalling',
+		status: view.status,
+		busy: view.busy,
 		base: is_base_subject_slug(sub.slug),
 		installed_at: rec?.installed_at ?? null,
 		modules: sub.modules.map((m) => ({
@@ -305,6 +353,22 @@ export async function list_catalog_subjects(
 ) {
 	await seed_missing_install_rows(store, sql);
 	const recs = await install_records(sql);
+	for (const rec of recs.values()) {
+		const write = stale_lifecycle_write(
+			rec,
+			in_flight.has(rec.technical_id),
+		);
+		if (!write) continue;
+		await write_install_row(
+			sql,
+			write.technical_id,
+			write.installed,
+			rec.version,
+			write.status,
+		);
+		rec.status = write.status;
+		rec.installed = write.installed;
+	}
 	const all_modules = await collect_resource(store, 'module-management');
 	const out = [];
 	for (const sub of store.subjects) {
@@ -866,13 +930,20 @@ export async function accept_subject_lifecycle(
 			'background_job_start',
 		);
 	}
-	const started = await begin_subject_lifecycle(
-		store,
-		sql,
-		sub,
-		installed,
-		job,
-	);
+	in_flight.set(technical_id, Promise.resolve());
+	let started: Awaited<ReturnType<typeof begin_subject_lifecycle>>;
+	try {
+		started = await begin_subject_lifecycle(
+			store,
+			sql,
+			sub,
+			installed,
+			job,
+		);
+	} catch (err) {
+		in_flight.delete(technical_id);
+		throw err;
+	}
 	const work = finish_subject_lifecycle(
 		store,
 		sql,
@@ -882,8 +953,15 @@ export async function accept_subject_lifecycle(
 		started.busy_status,
 		job,
 	)
-		.catch((err) => {
+		.catch(async (err) => {
 			if (err instanceof SubjectLifecycleError) return null;
+			await write_install_row(
+				sql,
+				technical_id,
+				false,
+				started.ver.version,
+				'error',
+			);
 			emit_subject_event(
 				{
 					technical_id: sub.technical_id,

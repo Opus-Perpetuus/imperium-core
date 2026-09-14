@@ -40,6 +40,44 @@ export async function ensure_svc_tables(sql: Bun.SQL): Promise<void> {
       PRIMARY KEY (technical_id, name)
     );
   `);
+  await unwrap_double_encoded_jsonb(sql);
+}
+
+/** Columnas jsonb del plano de servicios que llegaron a guardarse envueltas. */
+const DOUBLE_ENCODED_COLUMNS = [
+  ["public.subject_params", "value"],
+  ["public.subject_history", "payload"],
+] as const;
+
+/**
+ * Desenvuelve las filas que quedaron doble-codificadas mientras esta capa
+ * pasaba `JSON.stringify(...)` a un parámetro jsonb —Bun.SQL ya codifica—:
+ * el valor acabó siendo un jsonb de tipo `string` cuyo texto interior es a su
+ * vez JSON (`provider` guardado como `"provider"`, un payload como su propio
+ * texto). Se repite por columna porque cada guardado apilaba una capa más.
+ *
+ * Solo se toca si el texto interior empieza por `"`, `{` o `[` y es JSON
+ * válido: así un `"1500"` legítimo no se convierte en número y un string
+ * cualquiera que no parsee no tumba el arranque. El precio es que un valor que
+ * de verdad fuera el texto `"hola"` —con comillas— también se desenvuelve.
+ *
+ * Corre en cada arranque a propósito: durante un despliegue escalonado un
+ * núcleo viejo todavía puede escribir en el formato anterior.
+ */
+async function unwrap_double_encoded_jsonb(sql: Bun.SQL): Promise<void> {
+  for (const [table, column] of DOUBLE_ENCODED_COLUMNS) {
+    for (;;) {
+      const unwrapped = await sql.unsafe(
+        `UPDATE ${table}
+            SET ${column} = (${column} #>> '{}')::jsonb
+          WHERE jsonb_typeof(${column}) = 'string'
+            AND left(ltrim(${column} #>> '{}'), 1) IN ('"', '{', '[')
+            AND (${column} #>> '{}') IS JSON
+          RETURNING 1`,
+      );
+      if (unwrapped.length === 0) break;
+    }
+  }
 }
 
 function nid(prefix: string): string {
@@ -51,6 +89,17 @@ function strip_tags(html: string, max?: number): string {
   return max && t.length > max ? t.slice(0, max) : t;
 }
 
+export type ServicePlaneDeps = {
+  /** Sanitizador real del núcleo (Kirtexto). Sin él, se limpia a texto plano. */
+  sanitize_html?: (html: string) => string;
+  /** Envía el aviso por correo. Ausente ⇒ la app recibe `delivered: false`. */
+  send_email?: (input: {
+    to: string;
+    title: string;
+    body?: string;
+  }) => Promise<void>;
+};
+
 export async function handle_service_plane(
   sql: Bun.SQL,
   secret: string,
@@ -58,6 +107,7 @@ export async function handle_service_plane(
   tid: string,
   rest: string,
   url: URL,
+  deps: ServicePlaneDeps = {},
 ): Promise<Response> {
   const got =
     req.headers.get("x-core-subject-gateway-secret") ??
@@ -93,7 +143,11 @@ export async function handle_service_plane(
         body.record_id ?? body.entity_id ?? null,
         body.actor_id ?? null,
         body.actor_label ?? null,
-        JSON.stringify(body.payload ?? body),
+        // Bun.SQL ya codifica en JSON los parámetros de columnas jsonb: pasar
+        // `JSON.stringify(...)` guardaba el texto JSON COMO string jsonb
+        // (`jsonb_typeof` = string, no object) y cada relectura devolvía texto
+        // en vez del objeto.
+        body.payload ?? body,
         body.summary ?? null,
       ],
     );
@@ -153,20 +207,46 @@ export async function handle_service_plane(
       `INSERT INTO public.subject_params (technical_id, key, value)
        VALUES ($1,$2,$3::jsonb)
        ON CONFLICT (technical_id, key) DO UPDATE SET value = EXCLUDED.value`,
-      [tid, key, JSON.stringify(body.value ?? null)],
+      // Mismo motivo que en `/history`: Bun.SQL codifica el jsonb. Con el
+      // `JSON.stringify` extra, guardar `provider` dejaba `"provider"`, y el
+      // siguiente guardado `"\"provider\""` — una capa de comillas por vuelta.
+      [tid, key, body.value ?? null],
     );
     return Response.json({ data: { ok: true } });
   }
 
   if (path === "/notify" && method === "POST") {
-    return Response.json({ data: { id: nid("ntf") } });
+    const id = nid("ntf");
+    const to = String(body.email ?? "").trim();
+    const title = String(body.title ?? "").trim();
+    // Un aviso que no se puede entregar no tumba la operación que lo disparó:
+    // un pedido se paga aunque el SMTP esté caído. La app ve `delivered` y
+    // decide si reintenta.
+    if (!deps.send_email || !to || !title) {
+      return Response.json({ data: { id, delivered: false } });
+    }
+    try {
+      await deps.send_email({ to, title, body: String(body.body ?? "") });
+      return Response.json({ data: { id, delivered: true } });
+    } catch (err) {
+      return Response.json({
+        data: { id, delivered: false, error: String(err) },
+      });
+    }
   }
   if (path === "/logs" && method === "POST") {
     const n = Array.isArray(body.entries) ? body.entries.length : 0;
     return Response.json({ data: { ingested: n } });
   }
   if (path === "/html/sanitize" && method === "POST") {
-    return Response.json({ data: { html: String(body.html ?? "") } });
+    // El contrato del kit dice que Kirtexto limpia HTML ajeno (descripciones de
+    // mayoristas). Devolverlo tal cual convertía la promesa en un pasamanos:
+    // la app lo pinta con innerHTML.
+    const raw = String(body.html ?? "");
+    const html = deps.sanitize_html
+      ? deps.sanitize_html(raw)
+      : strip_tags(raw);
+    return Response.json({ data: { html } });
   }
   if (path === "/html/to-text" && method === "POST") {
     return Response.json({

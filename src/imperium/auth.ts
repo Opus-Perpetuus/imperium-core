@@ -3,13 +3,19 @@
  */
 import {
 	GENERIC_CREDENTIALS_MESSAGE,
+	PUBLIC_LOGIN_DESTINATION,
 	authenticate_for_surface,
 	can_enter_internal,
 	type AuthSurface,
 } from '@opus-perpetuus/imperium-core-kit';
 import { as_array, as_object, ok, type ImperiumDoc } from './envelope.ts';
 import { read_imperium_body } from './body.ts';
-import { PREFER_OWNER, type ImperiumStore } from './store.ts';
+import { prepare_user_write } from './crud.ts';
+import { PREFER_OWNER, type ImperiumStore, type SubjectInfo } from './store.ts';
+import {
+	ensure_super_admin_tracker_menu,
+	should_hide_tracker_menu,
+} from './postgres-table-tracker.ts';
 import { disabled_subject_slugs } from './subjects-admin.ts';
 import {
 	email_is_configured,
@@ -24,6 +30,7 @@ import {
 	consume_login_limits,
 	consume_password_reset_ip_limit,
 	consume_password_reset_request_limits,
+	consume_public_register_limits,
 	ensure_auth_rate_limit_table,
 	normalize_auth_rate_limit_email,
 	request_ip,
@@ -40,10 +47,11 @@ import { report_archived_login_attempt } from './archived-login-alert.ts';
 import {
 	access_has_full_admin_scope,
 	collect_group_menu_ids,
+	filter_menus_for_access,
+	keep_reshaped_menus_for_access,
 } from './group-access.ts';
 
-const COOKIE = 'imperium.sid';
-const LEGACY_COOKIE = 'connect.sid';
+const COOKIE = 'connect.sid';
 const SECRET = process.env.SESSION_SECRET ?? 'imperium-modular-dev-session';
 const SEED_ADMIN_REF = 'user-menu-management-0';
 
@@ -90,7 +98,10 @@ export function is_public_login_post(req: Request): boolean {
 	const path = auth_pathname(req);
 	return (
 		req.method.toUpperCase() === 'POST' &&
-		(path === '/auth/public/login' || path === '/auth/public/login/')
+		(path === '/auth/public/login' ||
+			path === '/auth/public/login/' ||
+			path === '/auth/public/register' ||
+			path === '/auth/public/register/')
 	);
 }
 
@@ -147,12 +158,12 @@ export async function handle_auth(
 	) {
 		const sid = read_sid(req);
 		if (sid) await destroy_session(sql, sid);
-		return with_cookie(Response.json({ ok: true }), '', true);
+		return with_cookie(Response.json({ ok: true }), '', true, req);
 	}
 	if (method === 'DELETE' && (rest === '/' || rest === '')) {
 		const sid = read_sid(req);
 		if (sid) await destroy_session(sql, sid);
-		return with_cookie(Response.json({ ok: true }), '', true);
+		return with_cookie(Response.json({ ok: true }), '', true, req);
 	}
 
 	if (method === 'POST' && rest.startsWith('/password-reset/request')) {
@@ -252,7 +263,16 @@ export async function handle_auth(
 		return with_cookie(
 			Response.json({ user: safe, menus, access_rights }),
 			session.id,
+			false,
+			req,
 		);
+	}
+
+	if (
+		method === 'POST' &&
+		(rest === '/public/register' || rest === '/public/register/')
+	) {
+		return register_public_user(store, sql, req);
 	}
 
 	const session = await load_session(sql, req);
@@ -322,6 +342,102 @@ async function dummy_verify(): Promise<boolean> {
 	return false;
 }
 
+/**
+ * Alta de un cliente del sitio publico.
+ *
+ * El goal del producto dice que puede haber usuarios publicos que no sean del
+ * personal, pero no habia forma de que existiera ninguno: ni registro, ni nada
+ * que creara un `type: external`. Esto es esa puerta, y solo esa.
+ *
+ * El documento se arma con lista blanca —nombre, correo y contraseña— y nunca
+ * con lo que venga en el cuerpo. Aceptar un spread dejaria colar `_ref`,
+ * `groups` o `access_rights`, y el administrador de verdad no se decide por
+ * `is_admin` sino por el `_ref` de la semilla y por los grupos: un registro
+ * publico que copiara el cuerpo seria una via de escalada.
+ *
+ * La contraseña la valida y la hashea `prepare_user_write`, el mismo camino que
+ * el alta interna (Argon2id, minimo de longitud), para que no haya dos reglas.
+ */
+async function register_public_user(
+	store: ImperiumStore,
+	sql: Bun.SQL,
+	req: Request,
+): Promise<Response> {
+	const body = await read_imperium_body(req);
+	const email = normalize_auth_rate_limit_email(body.email);
+	const password = String(body.password ?? '');
+	const name = String(body.name ?? '').trim();
+
+	// Cubo propio: darse de alta y recuperar la contraseña no deben gastarse el
+	// presupuesto la una a la otra.
+	const limited = await consume_public_register_limits(
+		sql,
+		email,
+		request_ip(req),
+	);
+	if (limited) return Response.json(limited, { status: 429 });
+
+	if (!email || !email.includes('@') || !password) {
+		return Response.json(
+			{
+				error: 'Faltan datos para crear la cuenta',
+				message: 'Escribe tu correo y una contraseña.',
+			},
+			{ status: 400 },
+		);
+	}
+
+	let doc: ImperiumDoc;
+	try {
+		doc = await prepare_user_write(
+			'user',
+			{
+				name: name || email,
+				email,
+				password,
+				type: 'external',
+			} as ImperiumDoc,
+			true,
+		);
+	} catch (err) {
+		// Longitud minima y demas reglas de contraseña: el mensaje del núcleo ya
+		// esta escrito para que lo lea una persona.
+		return Response.json(
+			{ error: String((err as Error).message), message: String((err as Error).message) },
+			{ status: 400 },
+		);
+	}
+
+	let created: ImperiumDoc;
+	try {
+		created = (await store.insert('user', doc)) as ImperiumDoc;
+	} catch (err) {
+		// El correo es unico en la base. Decir "ya existe" delataria que esa
+		// cuenta esta registrada, asi que se responde lo mismo que si el dato
+		// fuera invalido y se deja que la persona entre por "Iniciar sesion".
+		debug_error(`registro publico rechazado: ${String((err as Error).message)}`);
+		return Response.json(
+			{
+				error: 'No se pudo crear la cuenta',
+				message:
+					'No se pudo crear la cuenta con ese correo. Si ya tienes una, inicia sesión.',
+			},
+			{ status: 409 },
+		);
+	}
+
+	const safe = public_user(created);
+	safe.type = 'external';
+	safe.is_admin = false;
+	const session = await create_session(sql, safe);
+	return with_cookie(
+		Response.json({ user: safe, destination: PUBLIC_LOGIN_DESTINATION }),
+		session.id,
+		false,
+		req,
+	);
+}
+
 async function login_on_surface(
 	store: ImperiumStore,
 	sql: Bun.SQL,
@@ -378,6 +494,8 @@ async function login_on_surface(
 				destination: gate.destination,
 			}),
 			session.id,
+			false,
+			req,
 		);
 	}
 	const access_rights = await build_access(store, safe);
@@ -390,6 +508,8 @@ async function login_on_surface(
 			destination: gate.destination,
 		}),
 		session.id,
+		false,
+		req,
 	);
 }
 
@@ -443,39 +563,42 @@ function read_sid(req: Request): string {
 	return m ? decodeURIComponent(m[1]!) : '';
 }
 
-function cookie_secure_attr(): string {
-	if (process.env.COOKIE_SECURE === '0') return '';
-	if (
-		process.env.COOKIE_SECURE === '1' ||
-		process.env.NODE_ENV === 'production' ||
-		process.env.NODE_ENV !== 'test'
-	) {
-		return '; Secure';
+export function request_is_https(req: Request): boolean {
+	try {
+		if (new URL(req.url).protocol === 'https:') return true;
+	} catch {
+		/* ignore */
 	}
-	return '';
+	const forwarded = (req.headers.get('x-forwarded-proto') ?? '')
+		.split(',')[0]
+		?.trim();
+	return forwarded === 'https';
 }
 
-function with_cookie(res: Response, sid: string, clear = false): Response {
-	const headers = new Headers(res.headers);
-	const secure = cookie_secure_attr();
-	if (clear || !sid) {
-		headers.append(
-			'set-cookie',
-			`${COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`,
-		);
-	} else {
-		headers.append(
-			'set-cookie',
-			`${COOKIE}=${encodeURIComponent(sid)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${7 * 24 * 3600}${secure}`,
-		);
+export function session_set_cookie(
+	sid: string,
+	opts: { https: boolean; clear?: boolean },
+): string {
+	const secure = opts.https ? '; Secure' : '';
+	if (opts.clear || !sid) {
+		return `${COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`;
 	}
+	return `${COOKIE}=${encodeURIComponent(sid)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${7 * 24 * 3600}${secure}`;
+}
+
+function with_cookie(
+	res: Response,
+	sid: string,
+	clear = false,
+	req?: Request,
+): Response {
+	const headers = new Headers(res.headers);
 	headers.append(
 		'set-cookie',
-		`${LEGACY_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`,
-	);
-	headers.append(
-		'set-cookie',
-		`${LEGACY_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=0`,
+		session_set_cookie(sid, {
+			https: req ? request_is_https(req) : false,
+			clear,
+		}),
 	);
 	return new Response(res.body, { status: res.status, headers });
 }
@@ -768,9 +891,9 @@ const SESSION_SCOPED_EXTRAS = new Set([
 	'payroll-receipt:prepare_stamp',
 	'payroll-receipt:export_payload',
 	'configuration:ai_generate_text',
-	'model-tracker:get_all_models',
-	'model-tracker:get_search_engine_status',
-	'model-tracker:read_field_values_globally',
+	'postgres-table-tracker:get_all_models',
+	'postgres-table-tracker:get_search_engine_status',
+	'postgres-table-tracker:read_field_values_globally',
 	'auto-increment-control:preview',
 	'auto-increment-control:get_available_models',
 	'auto-increment-control:increment',
@@ -951,7 +1074,7 @@ export async function assert_http_access(
 	);
 }
 
-async function build_menus(
+export async function build_menus(
 	store: ImperiumStore,
 	sql: Bun.SQL,
 	access: Awaited<ReturnType<typeof build_access>>,
@@ -963,27 +1086,10 @@ async function build_menus(
 	}
 	const disabled_subjects = await disabled_subject_slugs(store, sql);
 	if (access_has_full_admin_scope(access))
-		return reshape_subject_menus(store, rows, disabled_subjects).sort(
+		return reshape_subject_menus(store, rows, disabled_subjects, true).sort(
 			by_order,
 		);
-	const models = new Set(access.models.map(String));
-	const assigned = new Set(access.menu_ids.map(String));
-	let filtered = rows.filter((m) => {
-		const mid = String(m._id ?? '');
-		const model = String(m.model ?? '');
-		return assigned.has(mid) || (model && models.has(model));
-	});
-	const by_id = new Map(rows.map((m) => [String(m._id), m]));
-	const keep = new Map(filtered.map((m) => [String(m._id), m]));
-	for (const m of [...keep.values()]) {
-		let pid = m.parent_id ? String(m.parent_id) : '';
-		while (pid && !keep.has(pid) && by_id.has(pid)) {
-			const parent = by_id.get(pid)!;
-			keep.set(pid, parent);
-			pid = parent.parent_id ? String(parent.parent_id) : '';
-		}
-	}
-	filtered = [...keep.values()];
+	let filtered = filter_menus_for_access(rows, access);
 	if (store.has('module-management')) {
 		const mods: ImperiumDoc[] = [];
 		for await (const page of store.scan('module-management', {
@@ -1004,30 +1110,22 @@ async function build_menus(
 			return !model || !disabled.has(model);
 		});
 	}
-	return reshape_subject_menus(store, filtered, disabled_subjects).sort(
-		by_order,
-	);
+	return keep_reshaped_menus_for_access(
+		filtered,
+		reshape_subject_menus(
+			store,
+			filtered,
+			disabled_subjects,
+			access.has_full_access === true,
+		),
+	).sort(by_order);
 }
 
 function by_order(a: ImperiumDoc, b: ImperiumDoc) {
 	return Number(a.order ?? 100) - Number(b.order ?? 100);
 }
 
-/** Superficie de producto Mongo; el catálogo SQL sigue sirviendo extras de schema. */
-function is_mongo_modelos_menu(row: {
-	path?: unknown;
-	_ref?: unknown;
-	resource?: unknown;
-}): boolean {
-	const path = String(row.path ?? '').replace(/\/+$/, '');
-	const ref = String(row._ref ?? '');
-	const resource = String(row.resource ?? '');
-	return (
-		path === '/model-tracker' ||
-		ref === 'model-tracker-menu-management-0' ||
-		resource === 'model-tracker'
-	);
-}
+
 
 const SUBJECT_ICONS: Record<string, string> = {
 	almacen: 'fa-warehouse',
@@ -1049,7 +1147,61 @@ const SUBJECT_ICONS: Record<string, string> = {
 	vehiculos: 'fa-truck',
 	'dispositivos-fisicos': 'fa-desktop',
 	'configuraciones-de-vista': 'fa-table-columns',
+	tienda: 'fa-store',
 };
+
+const GENERIC_MENU_ICONS = new Set([
+	'',
+	'fa-circle',
+	'fa-cube',
+	'fa-folder',
+	'package',
+	'home',
+]);
+
+function is_generic_menu_icon(icon: unknown): boolean {
+	return GENERIC_MENU_ICONS.has(String(icon ?? '').trim());
+}
+
+function apply_declared_subject_menus(
+	sub: SubjectInfo,
+	root: ImperiumDoc,
+	menus: ImperiumDoc[],
+	by_ref: Map<string, ImperiumDoc>,
+) {
+	const declared = sub.menus ?? [];
+	if (!declared.length) return;
+	let order = 10;
+	for (const spec of declared) {
+		const ref = String(spec.menu_ref ?? '').trim();
+		if (!ref) continue;
+		const parent =
+			(spec.parent_ref ? by_ref.get(spec.parent_ref) : null) ?? root;
+		let row = by_ref.get(ref);
+		if (!row) {
+			row = {
+				_id: ref,
+				id: ref,
+				name: spec.name,
+				path: spec.path ?? '',
+				parent_id: parent._id,
+				_ref: ref,
+				icon: spec.icon,
+				order,
+				is_active: true,
+				model: '',
+			};
+			menus.push(row);
+			by_ref.set(ref, row);
+		} else {
+			row.name = spec.name || row.name;
+			if (spec.path != null) row.path = spec.path;
+			row.parent_id = parent._id;
+			if (spec.icon) row.icon = spec.icon;
+		}
+		order += 10;
+	}
+}
 
 /**
  * True si el menú cuelga (directa o indirectamente) de la raíz de la app.
@@ -1079,6 +1231,7 @@ export function reshape_subject_menus(
 	store: Pick<ImperiumStore, 'subjects'>,
 	rows: ImperiumDoc[],
 	disabled_subjects: Set<string> = new Set(),
+	has_full_access = false,
 ): ImperiumDoc[] {
 	const menus = rows.map((r) => ({ ...r }));
 	const by_ref = new Map(menus.map((m) => [String(m._ref ?? ''), m]));
@@ -1123,7 +1276,7 @@ export function reshape_subject_menus(
 		const by_id = new Map(menus.map((m) => [String(m._id), m]));
 
 		for (const mod of sub.modules) {
-			if (is_mongo_modelos_menu(mod)) continue;
+			if (should_hide_tracker_menu(mod, has_full_access)) continue;
 			const prefer = PREFER_OWNER[mod.resource];
 			if (prefer && prefer !== sub.slug) continue;
 			let found = false;
@@ -1136,6 +1289,7 @@ export function reshape_subject_menus(
 				if (!menu_is_under_root(m, String(root._id), by_id)) {
 					m.parent_id = root._id;
 				}
+				if (mod.icon && is_generic_menu_icon(m.icon)) m.icon = mod.icon;
 				found = true;
 			}
 			if (!found && mod.path && norm(mod.path) !== norm(root.path)) {
@@ -1147,15 +1301,17 @@ export function reshape_subject_menus(
 					path: mod.path,
 					parent_id: root._id,
 					_ref: mod.menu_ref || id,
-					icon: 'fa-circle',
+					icon: mod.icon || 'fa-circle',
 					order: 10,
 					is_active: true,
 					model: '',
 				};
 				menus.push(created);
+				by_ref.set(String(created._ref), created);
 				by_id.set(id, created);
 			}
 		}
+		apply_declared_subject_menus(sub, root, menus, by_ref);
 	});
 
 	const sibling = new Set<string>();
@@ -1185,8 +1341,8 @@ export function reshape_subject_menus(
 			}
 		}
 	}
-	return menus.filter((m) => {
-		if (is_mongo_modelos_menu(m)) return false;
+	const filtered = menus.filter((m) => {
+		if (should_hide_tracker_menu(m, has_full_access)) return false;
 		if (disabled_ids.has(String(m._id))) return false;
 		if (menu_path_is_disabled(norm(m.path), disabled_paths)) return false;
 		if (!m.parent_id) return root_ids.has(String(m._id));
@@ -1197,6 +1353,7 @@ export function reshape_subject_menus(
 		sibling.add(key);
 		return true;
 	});
+	return ensure_super_admin_tracker_menu(filtered, has_full_access);
 }
 
 /** True si el path es el de una app desinstalada o un hijo suyo. */

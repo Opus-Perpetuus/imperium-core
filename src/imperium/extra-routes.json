@@ -102,6 +102,12 @@
     "action": "ai_generate_text"
   },
   {
+    "resource": "configuration",
+    "method": "post",
+    "path": "/sync-missing-seeds",
+    "action": "sync_missing_seeds"
+  },
+  {
     "resource": "custom-pattern-increment-sequence-parts",
     "method": "get",
     "path": "/by-counter-config/:counter_config_id",
@@ -1164,31 +1170,31 @@
     "action": "report"
   },
   {
-    "resource": "model-tracker",
+    "resource": "postgres-table-tracker",
     "method": "get",
     "path": "/all-models",
     "action": "get_all_models"
   },
   {
-    "resource": "model-tracker",
+    "resource": "postgres-table-tracker",
     "method": "get",
     "path": "/search-engine/status",
     "action": "get_search_engine_status"
   },
   {
-    "resource": "model-tracker",
+    "resource": "postgres-table-tracker",
     "method": "get",
     "path": "/global/:model_tracker_id/field-values/:field_path",
     "action": "read_field_values_globally"
   },
   {
-    "resource": "model-tracker",
+    "resource": "postgres-table-tracker",
     "method": "post",
     "path": "/reindex",
     "action": "trigger_reindex"
   },
   {
-    "resource": "model-tracker",
+    "resource": "postgres-table-tracker",
     "method": "post",
     "path": "/reindex/:model_name",
     "action": "trigger_reindex"

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'bun:test';
 import {
 	FieldValidationError,
@@ -6,9 +7,11 @@ import {
 import {
 	SubjectNotInstalledError,
 	planned_missing_install_rows,
+	stale_lifecycle_write,
 	subject_is_installed,
 	subject_marker_display_name,
 	subject_not_installed_body,
+	visible_lifecycle_status,
 } from './subjects-admin.ts';
 
 describe('subject_is_installed', () => {
@@ -111,6 +114,130 @@ describe('subject_marker_display_name', () => {
 				slug: 'rh',
 			}),
 		).toBe('Recursos Humanos');
+	});
+});
+
+describe('visible_lifecycle_status', () => {
+	test('a never-installed app including rh is not busy or installing', () => {
+		expect(visible_lifecycle_status(undefined, false, false)).toEqual({
+			status: 'not_installed',
+			busy: false,
+		});
+		expect(
+			visible_lifecycle_status('not_installed', false, false),
+		).toEqual({
+			status: 'not_installed',
+			busy: false,
+		});
+		expect(
+			visible_lifecycle_status('not_installed', false, false).status,
+		).not.toBe('installing');
+	});
+
+	test('orphan installing without an in-flight job is not presented as busy', () => {
+		expect(visible_lifecycle_status('installing', false, false)).toEqual({
+			status: 'not_installed',
+			busy: false,
+		});
+		expect(visible_lifecycle_status('uninstalling', false, false)).toEqual({
+			status: 'uninstalled',
+			busy: false,
+		});
+	});
+
+	test('a real in-flight job keeps installing/uninstalling as busy', () => {
+		expect(visible_lifecycle_status('installing', false, true)).toEqual({
+			status: 'installing',
+			busy: true,
+		});
+		expect(visible_lifecycle_status('uninstalling', false, true)).toEqual({
+			status: 'uninstalling',
+			busy: true,
+		});
+	});
+});
+
+describe('stale_lifecycle_write', () => {
+	test('does not write installing when listing a never-installed app', () => {
+		expect(
+			stale_lifecycle_write(
+				{
+					technical_id: 'subject-rh',
+					status: 'not_installed',
+					installed: false,
+				},
+				false,
+			),
+		).toBeNull();
+		expect(
+			planned_missing_install_rows(
+				[{ technical_id: 'subject-rh' }],
+				[],
+				() => false,
+			),
+		).toEqual([{ technical_id: 'subject-rh', installed: false }]);
+	});
+
+	test('reconciles leftover installing/uninstalling when no job is running', () => {
+		expect(
+			stale_lifecycle_write(
+				{
+					technical_id: 'subject-rh',
+					status: 'installing',
+					installed: false,
+				},
+				false,
+			),
+		).toEqual({
+			technical_id: 'subject-rh',
+			installed: false,
+			status: 'not_installed',
+		});
+		expect(
+			stale_lifecycle_write(
+				{
+					technical_id: 'subject-pos',
+					status: 'uninstalling',
+					installed: false,
+				},
+				false,
+			),
+		).toEqual({
+			technical_id: 'subject-pos',
+			installed: false,
+			status: 'uninstalled',
+		});
+		expect(
+			stale_lifecycle_write(
+				{
+					technical_id: 'subject-rh',
+					status: 'installing',
+					installed: false,
+				},
+				true,
+			),
+		).toBeNull();
+	});
+});
+
+describe('list_catalog_subjects wiring', () => {
+	test('listing uses lifecycle view/reconcile and does not start a lifecycle', () => {
+		const src = readFileSync(new URL('./subjects-admin.ts', import.meta.url), 'utf8');
+		const start = src.indexOf('export async function list_catalog_subjects');
+		expect(start).toBeGreaterThanOrEqual(0);
+		const lines = src.slice(start).split('\n');
+		const body_lines = [lines[0]];
+		for (let i = 1; i < lines.length; i++) {
+			body_lines.push(lines[i]);
+			if (lines[i] === '}') break;
+		}
+		const body = body_lines.join('\n');
+		expect(body).toContain('stale_lifecycle_write');
+		expect(body).not.toContain('accept_subject_lifecycle');
+		expect(body).not.toContain('begin_subject_lifecycle');
+		expect(body).not.toContain('set_subject_installed');
+		expect(src).toMatch(/visible_lifecycle_status\(/);
+		expect(src).toMatch(/busy:\s*view\.busy/);
 	});
 });
 

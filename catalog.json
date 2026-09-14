@@ -255,6 +255,7 @@
           "collection": "inventory-stock-quant",
           "model_file": "components/inventory-stock-quant/inventory-stock-quant.model.ts",
           "menu_ref": "inventory-stock-quant-menu-management-0",
+          "icon": "fa-warehouse",
           "columns": [
             {
               "name": "producto_nombre",
@@ -429,6 +430,7 @@
           "collection": "inventory-physical-count",
           "model_file": "components/inventory-physical-count/inventory-physical-count.model.ts",
           "menu_ref": "inventory-physical-count-menu-management-0",
+          "icon": "fa-calculator",
           "columns": [
             {
               "name": "ubicacion_codigo",
@@ -715,6 +717,7 @@
           "collection": "inventory-reception",
           "model_file": "components/inventory-reception/inventory-reception.model.ts",
           "menu_ref": "inventory-reception-menu-management-0",
+          "icon": "fa-inbox",
           "columns": [
             {
               "name": "estado",
@@ -1653,6 +1656,30 @@
               "crud": "json",
               "component": "input-json",
               "label": "appearance"
+            },
+            {
+              "name": "assigned_user_ids",
+              "mongo": "assigned_user_ids",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "assigned user ids"
+            },
+            {
+              "name": "assigned_user_group_ids",
+              "mongo": "assigned_user_group_ids",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "assigned user group ids"
+            },
+            {
+              "name": "table_configs",
+              "mongo": "table_configs",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "table configs"
             }
           ]
         }
@@ -1986,6 +2013,7 @@
           "collection": "user-pin",
           "model_file": "components/user-pin/user-pin.model.ts",
           "menu_ref": "user-pin-menu-management-0",
+          "icon": "fa-fingerprint",
           "columns": [
             {
               "name": "document_id",
@@ -2866,6 +2894,7 @@
           "collection": "__custom_pattern_conditions",
           "model_file": "components/custom-pattern-condition/custom-pattern-condition.model.ts",
           "menu_ref": "custom-pattern-condition-menu-management-0",
+          "icon": "fa-code-branch",
           "columns": [
             {
               "name": "part_id",
@@ -3215,13 +3244,14 @@
           ]
         },
         {
-          "resource": "model-tracker",
-          "table": "model_tracker",
-          "name": "Rastreador/Catálogo de modelos Mongo",
-          "path": "/model-tracker",
-          "collection": "__mongoose_model_tracker",
-          "model_file": "components/configuration/model-tracker/model-tracker.model.ts",
-          "menu_ref": "model-tracker-menu-management-0",
+          "resource": "postgres-table-tracker",
+          "table": "postgres_table_tracker",
+          "name": "Rastreador/Catálogo de tablas SQL",
+          "path": "/postgres-table-tracker",
+          "collection": "__postgres_table_tracker",
+          "model_file": "components/configuration/postgres-table-tracker/postgres-table-tracker.model.ts",
+          "menu_ref": "postgres-table-tracker-menu-management-0",
+          "icon": "fa-database",
           "columns": [
             {
               "name": "__model_name",
@@ -3229,7 +3259,7 @@
               "pg": "text",
               "crud": "string",
               "component": "input-text",
-              "label": "  model name"
+              "label": "Modelo"
             },
             {
               "name": "__collection",
@@ -3237,7 +3267,7 @@
               "pg": "text",
               "crud": "string",
               "component": "input-text",
-              "label": "  collection"
+              "label": "Tabla SQL"
             },
             {
               "name": "__use_text_search",
@@ -3245,7 +3275,7 @@
               "pg": "boolean",
               "crud": "boolean",
               "component": "input-checkbox",
-              "label": "  use text search"
+              "label": "Búsqueda de texto"
             },
             {
               "name": "__text_index_paths",
@@ -3253,7 +3283,7 @@
               "pg": "json",
               "crud": "json",
               "component": "input-json",
-              "label": "  text index paths"
+              "label": "Rutas de índice de texto"
             },
             {
               "name": "__text_index_populate_options",
@@ -3261,7 +3291,7 @@
               "pg": "json",
               "crud": "json",
               "component": "input-json",
-              "label": "  text index populate options"
+              "label": "Opciones de populate"
             },
             {
               "name": "__field_paths",
@@ -3269,7 +3299,7 @@
               "pg": "json",
               "crud": "json",
               "component": "input-json",
-              "label": "  field paths"
+              "label": "Rutas de campos"
             },
             {
               "name": "__fingerprint",
@@ -3277,7 +3307,7 @@
               "pg": "text",
               "crud": "string",
               "component": "input-text",
-              "label": "  fingerprint"
+              "label": "Huella"
             },
             {
               "name": "__schema_fields",
@@ -3285,15 +3315,15 @@
               "pg": "json",
               "crud": "json",
               "component": "input-json",
-              "label": "  schema fields"
+              "label": "Campos del esquema"
             },
             {
               "name": "__state_fields",
               "mongo": "__state_fields",
-              "pg": "text",
-              "crud": "string",
-              "component": "input-text",
-              "label": "  state fields"
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "Campos de estado"
             },
             {
               "name": "__batch_matchable_fields",
@@ -3301,7 +3331,7 @@
               "pg": "json",
               "crud": "json",
               "component": "input-json",
-              "label": "  batch matchable fields"
+              "label": "Campos batch"
             },
             {
               "name": "__use_history_recollection",
@@ -3309,7 +3339,7 @@
               "pg": "boolean",
               "crud": "boolean",
               "component": "input-checkbox",
-              "label": "  use history recollection"
+              "label": "Historial"
             },
             {
               "name": "__history_path_names",
@@ -3317,7 +3347,7 @@
               "pg": "json",
               "crud": "json",
               "component": "input-json",
-              "label": "  history path names"
+              "label": "Rutas de historial"
             },
             {
               "name": "__ref",
@@ -3325,279 +3355,7 @@
               "pg": "text",
               "crud": "string",
               "component": "input-text",
-              "label": "  ref"
-            },
-            {
-              "name": "__strict",
-              "mongo": "__strict",
-              "pg": "boolean",
-              "crud": "boolean",
-              "component": "input-checkbox",
-              "label": "  strict"
-            },
-            {
-              "name": "__strictQuery",
-              "mongo": "__strictQuery",
-              "pg": "boolean",
-              "crud": "boolean",
-              "component": "input-checkbox",
-              "label": "  strictQuery"
-            },
-            {
-              "name": "__bufferCommands",
-              "mongo": "__bufferCommands",
-              "pg": "boolean",
-              "crud": "boolean",
-              "component": "input-checkbox",
-              "label": "  bufferCommands"
-            },
-            {
-              "name": "__capped",
-              "mongo": "__capped",
-              "pg": "boolean",
-              "crud": "boolean",
-              "component": "input-checkbox",
-              "label": "  capped"
-            },
-            {
-              "name": "__versionKey",
-              "mongo": "__versionKey",
-              "pg": "text",
-              "crud": "string",
-              "component": "input-text",
-              "label": "  versionKey"
-            },
-            {
-              "name": "__optimisticConcurrency",
-              "mongo": "__optimisticConcurrency",
-              "pg": "boolean",
-              "crud": "boolean",
-              "component": "input-checkbox",
-              "label": "  optimisticConcurrency"
-            },
-            {
-              "name": "__minimize",
-              "mongo": "__minimize",
-              "pg": "boolean",
-              "crud": "boolean",
-              "component": "input-checkbox",
-              "label": "  minimize"
-            },
-            {
-              "name": "__autoIndex",
-              "mongo": "__autoIndex",
-              "pg": "json",
-              "crud": "json",
-              "component": "input-json",
-              "label": "  autoIndex"
-            },
-            {
-              "name": "__discriminatorKey",
-              "mongo": "__discriminatorKey",
-              "pg": "text",
-              "crud": "string",
-              "component": "input-text",
-              "label": "  discriminatorKey"
-            },
-            {
-              "name": "__shardKey",
-              "mongo": "__shardKey",
-              "pg": "json",
-              "crud": "json",
-              "component": "input-json",
-              "label": "  shardKey"
-            },
-            {
-              "name": "__read",
-              "mongo": "__read",
-              "pg": "json",
-              "crud": "json",
-              "component": "input-json",
-              "label": "  read"
-            },
-            {
-              "name": "__validateBeforeSave",
-              "mongo": "__validateBeforeSave",
-              "pg": "boolean",
-              "crud": "boolean",
-              "component": "input-checkbox",
-              "label": "  validateBeforeSave"
-            },
-            {
-              "name": "__validateModifiedOnly",
-              "mongo": "__validateModifiedOnly",
-              "pg": "boolean",
-              "crud": "boolean",
-              "component": "input-checkbox",
-              "label": "  validateModifiedOnly"
-            },
-            {
-              "name": "___id",
-              "mongo": "___id",
-              "pg": "boolean",
-              "crud": "boolean",
-              "component": "input-checkbox",
-              "label": "   id"
-            },
-            {
-              "name": "__id",
-              "mongo": "__id",
-              "pg": "boolean",
-              "crud": "boolean",
-              "component": "input-checkbox",
-              "label": "  id"
-            },
-            {
-              "name": "__typeKey",
-              "mongo": "__typeKey",
-              "pg": "text",
-              "crud": "string",
-              "component": "input-text",
-              "label": "  typeKey"
-            },
-            {
-              "name": "__timestamps",
-              "mongo": "__timestamps",
-              "pg": "boolean",
-              "crud": "boolean",
-              "component": "input-checkbox",
-              "label": "  timestamps"
-            },
-            {
-              "name": "__pluralization",
-              "mongo": "__pluralization",
-              "pg": "boolean",
-              "crud": "boolean",
-              "component": "input-checkbox",
-              "label": "  pluralization"
-            },
-            {
-              "name": "path",
-              "mongo": "path",
-              "pg": "text",
-              "crud": "string",
-              "component": "input-text",
-              "label": "path"
-            },
-            {
-              "name": "type",
-              "mongo": "type",
-              "pg": "text",
-              "crud": "string",
-              "component": "input-text",
-              "label": "type"
-            },
-            {
-              "name": "is_array",
-              "mongo": "is_array",
-              "pg": "boolean",
-              "crud": "boolean",
-              "component": "input-checkbox",
-              "label": "is array"
-            },
-            {
-              "name": "is_reference",
-              "mongo": "is_reference",
-              "pg": "boolean",
-              "crud": "boolean",
-              "component": "input-checkbox",
-              "label": "is reference"
-            },
-            {
-              "name": "label",
-              "mongo": "label",
-              "pg": "text",
-              "crud": "string",
-              "component": "input-text",
-              "label": "label"
-            },
-            {
-              "name": "source",
-              "mongo": "source",
-              "pg": "text",
-              "crud": "string",
-              "component": "input-text",
-              "label": "source"
-            },
-            {
-              "name": "value",
-              "mongo": "value",
-              "pg": "text",
-              "crud": "string",
-              "component": "input-text",
-              "label": "value"
-            },
-            {
-              "name": "display_leyend",
-              "mongo": "display_leyend",
-              "pg": "text",
-              "crud": "string",
-              "component": "input-text",
-              "label": "display leyend"
-            },
-            {
-              "name": "color",
-              "mongo": "color",
-              "pg": "text",
-              "crud": "string",
-              "component": "input-text",
-              "label": "color"
-            },
-            {
-              "name": "icon",
-              "mongo": "icon",
-              "pg": "text",
-              "crud": "string",
-              "component": "input-text",
-              "label": "icon"
-            },
-            {
-              "name": "field_name",
-              "mongo": "field_name",
-              "pg": "text",
-              "crud": "string",
-              "component": "input-text",
-              "label": "field name"
-            },
-            {
-              "name": "enabled",
-              "mongo": "enabled",
-              "pg": "boolean",
-              "crud": "boolean",
-              "component": "input-checkbox",
-              "label": "enabled"
-            },
-            {
-              "name": "read_only",
-              "mongo": "read_only",
-              "pg": "boolean",
-              "crud": "boolean",
-              "component": "input-checkbox",
-              "label": "read only"
-            },
-            {
-              "name": "values",
-              "mongo": "values",
-              "pg": "json",
-              "crud": "json",
-              "component": "input-json",
-              "label": "values"
-            },
-            {
-              "name": "fields",
-              "mongo": "fields",
-              "pg": "json",
-              "crud": "json",
-              "component": "input-json",
-              "label": "fields"
-            },
-            {
-              "name": "has_state_fields",
-              "mongo": "has_state_fields",
-              "pg": "boolean",
-              "crud": "boolean",
-              "component": "input-checkbox",
-              "label": "has state fields"
+              "label": "Recurso"
             }
           ]
         }
@@ -4965,7 +4723,7 @@
       "menu_ref": "control-emergencias-menu-root",
       "catalog_id": "SUBJECT-control-emergencias",
       "technical_id": "subject-control-emergencias",
-      "image": "ghcr.io/opus-perpetuus/subject-control-emergencias:0.1.1",
+      "image": "ghcr.io/opus-perpetuus/subject-control-emergencias:0.1.5",
       "repo": "Opus-Perpetuus/imperium-subject-control-emergencias",
       "dir": "modular/subjects/imperium-subject-control-emergencias",
       "modules": [
@@ -4977,6 +4735,7 @@
           "collection": "asociaciones",
           "model_file": "components/control-emergencias/asociaciones/asociaciones.model.ts",
           "menu_ref": "asociaciones-menu-management-0",
+          "icon": "fa-users",
           "columns": [
             {
               "name": "telefono",
@@ -5092,6 +4851,7 @@
           "collection": "rescate-animal",
           "model_file": "components/control-emergencias/rescate-animal/rescate-animal.model.ts",
           "menu_ref": "rescate-animal-menu-management-0",
+          "icon": "fa-paw",
           "columns": [
             {
               "name": "nombre_animal",
@@ -5174,6 +4934,22 @@
               "label": "peso aproximado"
             },
             {
+              "name": "sexo",
+              "mongo": "sexo",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-menu",
+              "label": "sexo"
+            },
+            {
+              "name": "tamano",
+              "mongo": "tamano",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-menu",
+              "label": "tamaño"
+            },
+            {
               "name": "fotografia",
               "mongo": "fotografia",
               "pg": "text",
@@ -5188,6 +4964,14 @@
               "crud": "string",
               "component": "input-text",
               "label": "estado animal"
+            },
+            {
+              "name": "derivado_a",
+              "mongo": "derivado_a",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-menu",
+              "label": "derivado a"
             },
             {
               "name": "material_utilizado",
@@ -5207,6 +4991,7 @@
           "collection": "registro-emergencias",
           "model_file": "components/control-emergencias/registro-emergencias/registro-emergencias.model.ts",
           "menu_ref": "registro-emergencias-menu-management-0",
+          "icon": "fa-exclamation-triangle",
           "columns": [
             {
               "name": "fecha_hora_recepcion",
@@ -5257,6 +5042,14 @@
               "label": "telefono"
             },
             {
+              "name": "medio_recepcion",
+              "mongo": "medio_recepcion",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-menu",
+              "label": "medio de recepción"
+            },
+            {
               "name": "operador",
               "mongo": "operador",
               "pg": "text",
@@ -5271,6 +5064,14 @@
               "crud": "number",
               "component": "input-number",
               "label": "duracion llamada"
+            },
+            {
+              "name": "relacion_alertante",
+              "mongo": "relacion_alertante",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-menu",
+              "label": "relación / origen"
             },
             {
               "name": "alertante_nombre",
@@ -5506,6 +5307,7 @@
           "collection": "servicios-realizados",
           "model_file": "components/control-emergencias/servicios-realizados/servicios-realizados.model.ts",
           "menu_ref": "servicios-realizados-menu-management-0",
+          "icon": "fa-clipboard-list",
           "columns": [
             {
               "name": "tipo_servicio",
@@ -5597,6 +5399,7 @@
           "collection": "directorio-contactos",
           "model_file": "components/control-emergencias/directorio-contactos/directorio-contactos.model.ts",
           "menu_ref": "directorio-contactos-menu-management-0",
+          "icon": "fa-address-book",
           "columns": [
             {
               "name": "categoria",
@@ -5664,6 +5467,7 @@
           "collection": "inventario-sanitario",
           "model_file": "components/control-emergencias/inventario-sanitario/inventario-sanitario.model.ts",
           "menu_ref": "inventario-sanitario-menu-management-0",
+          "icon": "fa-briefcase-medical",
           "columns": [
             {
               "name": "categoria",
@@ -5763,6 +5567,7 @@
           "collection": "voluntariado",
           "model_file": "components/control-emergencias/voluntariado/voluntariado.model.ts",
           "menu_ref": "voluntariado-menu-management-0",
+          "icon": "fa-hands-helping",
           "columns": [
             {
               "name": "numero_socio",
@@ -5910,6 +5715,7 @@
           "collection": "despensa-solidaria",
           "model_file": "components/control-emergencias/despensa-solidaria/despensa-solidaria.model.ts",
           "menu_ref": "despensa-solidaria-menu-management-0",
+          "icon": "fa-box-open",
           "columns": [
             {
               "name": "codigo_barras",
@@ -5993,6 +5799,7 @@
           "collection": "inventario-general",
           "model_file": "components/control-emergencias/inventario-general/inventario-general.model.ts",
           "menu_ref": "inventario-general-menu-management-0",
+          "icon": "fa-boxes",
           "columns": [
             {
               "name": "cantidad",
@@ -6028,6 +5835,7 @@
           "collection": "libro-cuentas",
           "model_file": "components/control-emergencias/libro-cuentas/libro-cuentas.model.ts",
           "menu_ref": "libro-cuentas-menu-management-0",
+          "icon": "fa-book",
           "columns": [
             {
               "name": "fecha",
@@ -6069,6 +5877,123 @@
               "component": "input-number",
               "label": "saldo"
             }
+          ]
+        },
+        {
+          "resource": "categoria-despensa-solidaria",
+          "table": "categoria_despensa_solidaria",
+          "name": "Categorías de despensa solidaria",
+          "path": "/categoria-despensa-solidaria",
+          "collection": "categoria-despensa-solidaria",
+          "model_file": "components/control-emergencias/despensa-solidaria/categoria-despensa-solidaria/categoria-despensa-solidaria.model.ts",
+          "menu_ref": "categoria-despensa-solidaria-menu-management-0",
+          "icon": "fa-tags",
+          "columns": [
+            {
+              "name": "name",
+              "mongo": "name",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "name"
+            },
+            {
+              "name": "description",
+              "mongo": "description",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "description"
+            }
+          ]
+        },
+        {
+          "resource": "categoria-inventario-sanitario",
+          "table": "categoria_inventario_sanitario",
+          "name": "Categorías de inventario sanitario",
+          "path": "/categoria-inventario-sanitario",
+          "collection": "categoria-inventario-sanitario",
+          "model_file": "components/control-emergencias/inventario-sanitario/categoria-inventario-sanitario/categoria-inventario-sanitario.model.ts",
+          "menu_ref": "categoria-inventario-sanitario-menu-management-0",
+          "icon": "fa-tag",
+          "columns": [
+            {
+              "name": "name",
+              "mongo": "name",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "name"
+            },
+            {
+              "name": "description",
+              "mongo": "description",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "description"
+            }
+          ]
+        },
+        {
+          "resource": "categoria-directorio-contactos",
+          "table": "categoria_directorio_contactos",
+          "name": "Categorías del directorio",
+          "path": "/categoria-directorio-contactos",
+          "collection": "categoria-directorio-contactos",
+          "model_file": "components/control-emergencias/directorio-contactos/categoria-directorio-contactos/categoria-directorio-contactos.model.ts",
+          "menu_ref": "categoria-directorio-contactos-menu-management-0",
+          "icon": "fa-bookmark",
+          "columns": [
+            {
+              "name": "name",
+              "mongo": "name",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "name"
+            },
+            {
+              "name": "description",
+              "mongo": "description",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "description"
+            }
+          ]
+        }        ,
+        {
+          "resource": "base-volcanica",
+          "table": "base_volcanica",
+          "name": "Base Volcánica",
+          "path": "/base-volcanica",
+          "collection": "base-volcanica",
+          "model_file": "components/control-emergencias/base-volcanica/base-volcanica.model.ts",
+          "menu_ref": "base-volcanica-menu-management-0",
+          "icon": "fa-fire",
+          "columns": [
+            {"name": "name", "mongo": "name", "pg": "text", "crud": "string", "component": "input-text", "label": "name"},
+            {"name": "categoria", "mongo": "categoria", "pg": "text", "crud": "string", "component": "input-menu", "label": "categoria"},
+            {"name": "municipio", "mongo": "municipio", "pg": "text", "crud": "string", "component": "input-text", "label": "municipio"},
+            {"name": "estado_volcan", "mongo": "estado_volcan", "pg": "text", "crud": "string", "component": "input-menu", "label": "estado volcan"},
+            {"name": "altura_msnm", "mongo": "altura_msnm", "pg": "real", "crud": "number", "component": "input-number", "label": "altura msnm"},
+            {"name": "ultima_erupcion", "mongo": "ultima_erupcion", "pg": "text", "crud": "string", "component": "input-date", "label": "ultima erupcion"},
+            {"name": "nivel_alerta", "mongo": "nivel_alerta", "pg": "text", "crud": "string", "component": "input-text", "label": "nivel alerta"}
+          ]
+        },
+        {
+          "resource": "categoria-base-volcanica",
+          "table": "categoria_base_volcanica",
+          "name": "Categorías de base volcánica",
+          "path": "/categoria-base-volcanica",
+          "collection": "categoria-base-volcanica",
+          "model_file": "components/control-emergencias/base-volcanica/categoria-base-volcanica/categoria-base-volcanica.model.ts",
+          "menu_ref": "categoria-base-volcanica-menu-management-0",
+          "icon": "fa-tags",
+          "columns": [
+            {"name": "name", "mongo": "name", "pg": "text", "crud": "string", "component": "input-text", "label": "name"},
+            {"name": "description", "mongo": "description", "pg": "text", "crud": "string", "component": "input-text", "label": "description"}
           ]
         }
       ]
@@ -6595,6 +6520,7 @@
           "collection": "agua",
           "model_file": "plugins/agua/agua.model.ts",
           "menu_ref": "agua-menu-management-0",
+          "icon": "fa-faucet-drip",
           "columns": [
             {
               "name": "vigencia_actual",
@@ -6622,6 +6548,7 @@
           "collection": "agua",
           "model_file": "plugins/agua/agua.model.ts",
           "menu_ref": "agua-menu-management-reportes",
+          "icon": "fa-chart-column",
           "columns": [
             {
               "name": "vigencia_actual",
@@ -6649,6 +6576,7 @@
           "collection": "agua",
           "model_file": "plugins/agua/agua.model.ts",
           "menu_ref": "agua-menu-management-sync",
+          "icon": "fa-arrows-rotate",
           "columns": [
             {
               "name": "vigencia_actual",
@@ -6676,6 +6604,7 @@
           "collection": "agua",
           "model_file": "plugins/agua/agua.model.ts",
           "menu_ref": "agua-menu-management-campo",
+          "icon": "fa-mobile-screen-button",
           "columns": [
             {
               "name": "vigencia_actual",
@@ -6703,6 +6632,7 @@
           "collection": "agua_lecturista",
           "model_file": "plugins/agua/lecturista/lecturista.model.ts",
           "menu_ref": "lecturista-menu-management-0",
+          "icon": "fa-user-gear",
           "columns": [
             {
               "name": "id_lecturista",
@@ -6738,6 +6668,7 @@
           "collection": "agua_impedimento",
           "model_file": "plugins/agua/impedimento/impedimento.model.ts",
           "menu_ref": "impedimento-menu-management-0",
+          "icon": "fa-ban",
           "columns": [
             {
               "name": "id_impedimento",
@@ -6765,6 +6696,7 @@
           "collection": "agua_periodo",
           "model_file": "plugins/agua/periodo/periodo.model.ts",
           "menu_ref": "periodo-menu-management-0",
+          "icon": "fa-calendar-days",
           "columns": [
             {
               "name": "meses_por_periodo",
@@ -6792,6 +6724,7 @@
           "collection": "agua_incidencia",
           "model_file": "plugins/agua/incidencia/incidencia.model.ts",
           "menu_ref": "incidencia-menu-management-0",
+          "icon": "fa-circle-exclamation",
           "columns": [
             {
               "name": "id_incidencia",
@@ -6811,6 +6744,7 @@
           "collection": "agua_lectura",
           "model_file": "plugins/agua/lectura/lectura.model.ts",
           "menu_ref": "lectura-menu-management-0",
+          "icon": "fa-gauge",
           "columns": [
             {
               "name": "contrato",
@@ -6982,6 +6916,7 @@
           "collection": "agua_tarifa",
           "model_file": "plugins/agua/tarifa/tarifa.model.ts",
           "menu_ref": "tarifa-menu-management-0",
+          "icon": "fa-money-bill-wave",
           "columns": [
             {
               "name": "id_tarifa",
@@ -7041,6 +6976,7 @@
           "collection": "agua_contrato",
           "model_file": "plugins/agua/contrato/contrato.model.ts",
           "menu_ref": "contrato-menu-management-0",
+          "icon": "fa-file-contract",
           "columns": [
             {
               "name": "contrato",
@@ -7236,6 +7172,7 @@
           "collection": "agua_ruta",
           "model_file": "plugins/agua/ruta/ruta.model.ts",
           "menu_ref": "ruta-menu-management-0",
+          "icon": "fa-route",
           "columns": [
             {
               "name": "id_ruta",
@@ -7577,6 +7514,7 @@
           "collection": "municipality",
           "model_file": "components/municipality/municipality.model.ts",
           "menu_ref": "municipality-menu-management-0",
+          "icon": "fa-city",
           "columns": []
         },
         {
@@ -7587,6 +7525,7 @@
           "collection": "boroughs",
           "model_file": "components/boroughs/boroughs.model.ts",
           "menu_ref": "boroughs-menu-management-0",
+          "icon": "fa-landmark",
           "columns": []
         },
         {
@@ -7597,6 +7536,7 @@
           "collection": "states",
           "model_file": "components/states/states.model.ts",
           "menu_ref": "states-menu-management-0",
+          "icon": "fa-map",
           "columns": [
             {
               "name": "catalog_key",
@@ -8058,6 +7998,7 @@
           "collection": "cobranza",
           "model_file": "plugins/cobranza/cobranza.model.ts",
           "menu_ref": "cobranza-menu-management-root",
+          "icon": "fa-hand-holding-dollar",
           "columns": [
             {
               "name": "reference",
@@ -8353,11 +8294,12 @@
         {
           "resource": "cfdi-catalog",
           "table": "cfdi_catalog",
-          "name": "Cfdi Catalog",
+          "name": "Catálogos CFDI",
           "path": "/cfdi-catalog",
           "collection": "cfdi-catalog",
           "model_file": "components/cfdi/cfdi-catalog/cfdi-catalog.model.ts",
           "menu_ref": "cfdi-catalog-menu-management-0",
+          "icon": "fa-list-ul",
           "columns": [
             {
               "name": "catalog",
@@ -8396,11 +8338,12 @@
         {
           "resource": "cfdi-document",
           "table": "cfdi_document",
-          "name": "Cfdi Document",
+          "name": "Documentos CFDI",
           "path": "/cfdi-document",
           "collection": "cfdi-document",
           "model_file": "components/cfdi/cfdi-document/cfdi-document.model.ts",
           "menu_ref": "cfdi-document-menu-management-0",
+          "icon": "fa-file-code",
           "columns": [
             {
               "name": "status",
@@ -8567,11 +8510,12 @@
         {
           "resource": "cfdi-issuer-profile",
           "table": "cfdi_issuer_profile",
-          "name": "Cfdi Issuer Profile",
+          "name": "Perfiles de emisor",
           "path": "/cfdi-issuer-profile",
           "collection": "cfdi-issuer-profile",
           "model_file": "components/cfdi/cfdi-issuer-profile/cfdi-issuer-profile.model.ts",
           "menu_ref": "cfdi-issuer-profile-menu-management-0",
+          "icon": "fa-id-badge",
           "columns": [
             {
               "name": "rfc",
@@ -8669,6 +8613,7 @@
           "collection": "delivery-return",
           "model_file": "components/delivery-return/delivery-return.model.ts",
           "menu_ref": "delivery-return-menu-management-0",
+          "icon": "fa-rotate-left",
           "columns": [
             {
               "name": "pedido_folio",
@@ -10945,6 +10890,7 @@
           "collection": "pos_order",
           "model_file": "components/pos-order/pos-order.model.ts",
           "menu_ref": "PosOrder-menu-management-0",
+          "icon": "fa-basket-shopping",
           "columns": [
             {
               "name": "reference",
@@ -11358,6 +11304,7 @@
           "collection": "departments",
           "model_file": "components/departments/departments.model.ts",
           "menu_ref": "departments-menu-management-0",
+          "icon": "fa-building-user",
           "columns": []
         },
         {
@@ -11627,6 +11574,7 @@
           "collection": "payroll-receipt",
           "model_file": "components/nomina/payroll-receipt/payroll-receipt.model.ts",
           "menu_ref": "payroll-receipt-menu-management-0",
+          "icon": "fa-money-check-dollar",
           "columns": [
             {
               "name": "payroll_period",
@@ -11902,6 +11850,7 @@
           "collection": "labor-schedule",
           "model_file": "components/nomina/labor-schedule/labor-schedule.model.ts",
           "menu_ref": "labor-schedule-menu-management-0",
+          "icon": "fa-business-time",
           "columns": [
             {
               "name": "employee",
@@ -11969,6 +11918,7 @@
           "collection": "labor-incident",
           "model_file": "components/nomina/labor-incident/labor-incident.model.ts",
           "menu_ref": "labor-incident-menu-management-0",
+          "icon": "fa-person-circle-exclamation",
           "columns": [
             {
               "name": "employee",
@@ -12060,6 +12010,7 @@
           "collection": "payroll-period",
           "model_file": "components/nomina/payroll-period/payroll-period.model.ts",
           "menu_ref": "payroll-period-menu-management-0",
+          "icon": "fa-calendar-check",
           "columns": [
             {
               "name": "tipo_nomina",
@@ -12159,6 +12110,7 @@
           "collection": "payroll-concept",
           "model_file": "components/nomina/payroll-concept/payroll-concept.model.ts",
           "menu_ref": "payroll-concept-menu-management-0",
+          "icon": "fa-sack-dollar",
           "columns": [
             {
               "name": "clave_interna",
@@ -12224,6 +12176,7 @@
           "collection": "reports",
           "model_file": "components/reports/reports.model.ts",
           "menu_ref": "reports-menu-management-0",
+          "icon": "fa-file-pdf",
           "columns": [
             {
               "name": "page_size",
@@ -12291,6 +12244,7 @@
           "collection": "reports-pdf-setting",
           "model_file": "components/reports/reports-pdf-setting/reports-pdf-setting.model.ts",
           "menu_ref": "reports-pdf-setting-menu-management-0",
+          "icon": "fa-sliders",
           "columns": [
             {
               "name": "page_size_preset",
@@ -12992,6 +12946,7 @@
           "collection": "ticketing-system-service-type",
           "model_file": "plugins/ticketing-system-turn/ticketing-system-service-type/ticketing-system-service-type.model.ts",
           "menu_ref": "ticketing-system-service-type-menu-management-0",
+          "icon": "fa-bell-concierge",
           "columns": [
             {
               "name": "priority_level",
@@ -14509,6 +14464,7 @@
           "collection": "sku",
           "model_file": "components/sku/sku.model.ts",
           "menu_ref": "sku-menu-management-0",
+          "icon": "fa-barcode",
           "columns": [
             {
               "name": "puedoProducirlo",
@@ -14602,7 +14558,7 @@
       "menu_ref": "tienda-menu-root",
       "catalog_id": "SUBJECT-tienda",
       "technical_id": "subject-tienda",
-      "image": "ghcr.io/opus-perpetuus/subject-tienda:0.1.0",
+      "image": "ghcr.io/opus-perpetuus/subject-tienda:0.4.4",
       "repo": "Opus-Perpetuus/imperium-subject-tienda",
       "dir": "modular/subjects/imperium-subject-tienda",
       "modules": [
@@ -14639,7 +14595,8 @@
               "component": "input-text",
               "label": "conector"
             }
-          ]
+          ],
+          "icon": "fa-truck"
         },
         {
           "resource": "catalog",
@@ -14682,7 +14639,8 @@
               "component": "input-checkbox",
               "label": "publicado"
             }
-          ]
+          ],
+          "icon": "fa-boxes-stacked"
         },
         {
           "resource": "pricing",
@@ -14701,7 +14659,52 @@
               "component": "input-number",
               "label": "margen global bp"
             }
-          ]
+          ],
+          "icon": "fa-coins"
+        },
+        {
+          "resource": "payment-gateways",
+          "table": "payment_gateways",
+          "name": "Cobros",
+          "path": "/payment-gateways",
+          "collection": "payment_gateways",
+          "model_file": "subjects/tienda/payment-gateways",
+          "menu_ref": "tienda-payment-gateways",
+          "columns": [
+            {
+              "name": "label",
+              "mongo": "label",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "pasarela"
+            },
+            {
+              "name": "adapter",
+              "mongo": "adapter",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "adaptador"
+            },
+            {
+              "name": "is_active",
+              "mongo": "is_active",
+              "pg": "integer",
+              "crud": "number",
+              "component": "input-checkbox",
+              "label": "activa"
+            },
+            {
+              "name": "position",
+              "mongo": "position",
+              "pg": "integer",
+              "crud": "number",
+              "component": "input-number",
+              "label": "orden"
+            }
+          ],
+          "icon": "fa-money-bill-transfer"
         },
         {
           "resource": "sync",
@@ -14728,7 +14731,8 @@
               "component": "input-text",
               "label": "estado"
             }
-          ]
+          ],
+          "icon": "fa-rotate"
         },
         {
           "resource": "orders",
@@ -14763,7 +14767,129 @@
               "component": "input-number",
               "label": "total ¢"
             }
-          ]
+          ],
+          "icon": "fa-clipboard-list"
+        }
+      ],
+      "menus": [
+        {
+          "name": "Administración",
+          "menu_ref": "tienda-nav-admin",
+          "path": "",
+          "icon": "fa-cogs",
+          "parent_ref": "tienda-menu-root"
+        },
+        {
+          "name": "Tienda pública",
+          "menu_ref": "tienda-nav-store",
+          "path": "",
+          "icon": "fa-store",
+          "parent_ref": "tienda-menu-root"
+        },
+        {
+          "name": "Proveedores",
+          "menu_ref": "tienda-providers",
+          "path": "/providers",
+          "icon": "fa-truck",
+          "parent_ref": "tienda-nav-admin"
+        },
+        {
+          "name": "Conectores",
+          "menu_ref": "tienda-connectors",
+          "path": "/connectors",
+          "icon": "fa-plug",
+          "parent_ref": "tienda-nav-admin"
+        },
+        {
+          "name": "Catálogo",
+          "menu_ref": "tienda-catalog",
+          "path": "/catalog",
+          "icon": "fa-boxes-stacked",
+          "parent_ref": "tienda-nav-admin"
+        },
+        {
+          "name": "Precios",
+          "menu_ref": "tienda-pricing",
+          "path": "/pricing",
+          "icon": "fa-coins",
+          "parent_ref": "tienda-nav-admin"
+        },
+        {
+          "name": "Cobros",
+          "menu_ref": "tienda-payment-gateways",
+          "path": "/payment-gateways",
+          "icon": "fa-money-bill-transfer",
+          "parent_ref": "tienda-nav-admin"
+        },
+        {
+          "name": "Sincronización",
+          "menu_ref": "tienda-sync",
+          "path": "/sync",
+          "icon": "fa-rotate",
+          "parent_ref": "tienda-nav-admin"
+        },
+        {
+          "name": "Pedidos",
+          "menu_ref": "tienda-orders",
+          "path": "/orders",
+          "icon": "fa-clipboard-list",
+          "parent_ref": "tienda-nav-admin"
+        },
+        {
+          "name": "Inicio",
+          "menu_ref": "tienda-store-home",
+          "path": "/store-home",
+          "icon": "fa-house",
+          "parent_ref": "tienda-nav-store"
+        },
+        {
+          "name": "Catálogo público",
+          "menu_ref": "tienda-store-catalog",
+          "path": "/store-catalog",
+          "icon": "fa-shop",
+          "parent_ref": "tienda-nav-store"
+        },
+        {
+          "name": "Carrito",
+          "menu_ref": "tienda-store-cart",
+          "path": "/store-cart",
+          "icon": "fa-cart-shopping",
+          "parent_ref": "tienda-nav-store"
+        },
+        {
+          "name": "Listas",
+          "menu_ref": "tienda-store-lists",
+          "path": "/store-lists",
+          "icon": "fa-list",
+          "parent_ref": "tienda-nav-store"
+        },
+        {
+          "name": "Favoritos",
+          "menu_ref": "tienda-store-favorites",
+          "path": "/store-favorites",
+          "icon": "fa-heart",
+          "parent_ref": "tienda-nav-store"
+        },
+        {
+          "name": "Mis pedidos",
+          "menu_ref": "tienda-store-orders",
+          "path": "/store-orders",
+          "icon": "fa-bag-shopping",
+          "parent_ref": "tienda-nav-store"
+        },
+        {
+          "name": "Direcciones",
+          "menu_ref": "tienda-store-addresses",
+          "path": "/store-addresses",
+          "icon": "fa-location-dot",
+          "parent_ref": "tienda-nav-store"
+        },
+        {
+          "name": "Formas de pago",
+          "menu_ref": "tienda-store-payment-methods",
+          "path": "/store-payment-methods",
+          "icon": "fa-credit-card",
+          "parent_ref": "tienda-nav-store"
         }
       ]
     }

@@ -10,7 +10,7 @@ import {
 	type KirletSchemaBundle,
 } from '@opus-perpetuus/imperium-core-kit';
 import { handle_service_plane, service_plane_match } from './service-plane.ts';
-import { create_imperium_layer } from './imperium/router.ts';
+import { add_cors, create_imperium_layer } from './imperium/router.ts';
 import {
 	handle_socket_io,
 	SOCKET_IO_IDLE_TIMEOUT_SECONDS,
@@ -20,7 +20,31 @@ import {
 	print_console_log,
 } from './imperium/debug-request-log.ts';
 import { apply_subject_schema_bundle } from './imperium/subject-schema.ts';
+import {
+	is_column_name,
+	qident,
+	search_sql,
+	where_sql,
+} from './imperium/data-plane-where.ts';
 import { technical_id_is_installed } from './imperium/subjects-admin.ts';
+import { portal_html_sanitize } from './imperium/portal-sanitize.ts';
+import { remember_socket_ip } from './imperium/auth-rate-limit.ts';
+import { get_published } from './imperium/portal.ts';
+import {
+	merge_subject_page,
+	subject_override_slug,
+} from './imperium/subject-page-override.ts';
+import { is_stale_schema_cache } from './imperium/postgres-stale-plan.ts';
+import {
+	resolve_email_settings,
+	send_subject_notification_email,
+} from './imperium/email.ts';
+import {
+	apply_subject_identity_headers,
+	resolve_subject_identity,
+	type SubjectIdentityRealm,
+	type SubjectModuleRef,
+} from './imperium/subject-identity.ts';
 
 const PORT = Number(process.env.PORT ?? 3100);
 const DATABASE_URL =
@@ -43,6 +67,8 @@ type Catalog = {
 		collection: string;
 		path: string;
 		kind: string;
+		menu_ref?: string;
+		modules?: SubjectModuleRef[];
 	}>;
 };
 
@@ -78,47 +104,48 @@ async function apply_bundle(bundle: KirletSchemaBundle): Promise<void> {
 	await apply_subject_schema_bundle(sql, bundle);
 }
 
-function qident(name: string): string {
-	if (!/^[a-z_][a-z0-9_]*$/i.test(name)) throw new Error(`bad ident ${name}`);
-	return `"${name.replace(/"/g, '""')}"`;
+/**
+ * Lista de columnas de una tabla, en caché.
+ *
+ * El plano de datos consultaba con `SELECT *`, y ahí está la raíz del fallo tras
+ * un DDL: el tipo del resultado depende de las columnas, Postgres invalida el
+ * plan preparado al añadir una y Bun guarda el statement por **texto** de la
+ * consulta — así que reintentar el mismo `SELECT *` reusa el statement muerto y
+ * falla igual, para siempre, hasta reiniciar el núcleo (medido: el reintento
+ * corre y vuelve a fallar).
+ *
+ * Con la lista explícita, añadir una columna cambia el texto: se prepara un
+ * statement nuevo y el viejo nunca se vuelve a usar. La caché se vacía cuando el
+ * error aparece, que es la única señal fiable de que alguien movió el esquema —
+ * puede haber sido otra réplica o una migración a mano.
+ */
+const column_cache = new Map<string, string[]>();
+
+function forget_columns(schema: string): void {
+	for (const key of [...column_cache.keys()]) {
+		if (key.startsWith(`${schema}.`)) column_cache.delete(key);
+	}
 }
 
-function where_sql(
-	schema: string,
-	table: string,
-	where: Record<string, unknown> | undefined,
-	start = 1,
-): { sql: string; params: unknown[] } {
-	const params: unknown[] = [];
-	const clauses: string[] = [];
-	if (!where) return { sql: '', params };
-	let i = start;
-	for (const [k, v] of Object.entries(where)) {
-		if (!/^[a-z_][a-z0-9_]*$/i.test(k)) continue;
-		if (v && typeof v === 'object' && !Array.isArray(v)) {
-			const o = v as Record<string, unknown>;
-			if ('in' in o && Array.isArray(o.in)) {
-				params.push(o.in);
-				clauses.push(`${qident(k)} = ANY($${i++})`);
-				continue;
-			}
-			if ('ne' in o) {
-				params.push(o.ne);
-				clauses.push(`${qident(k)} IS DISTINCT FROM $${i++}`);
-				continue;
-			}
-			if ('isNull' in o) {
-				clauses.push(`${qident(k)} IS NULL`);
-				continue;
-			}
-		}
-		params.push(v);
-		clauses.push(`${qident(k)} = $${i++}`);
+async function select_list(schema: string, table: string): Promise<string> {
+	const key = `${schema}.${table}`;
+	let cols = column_cache.get(key);
+	if (!cols) {
+		const rows = await sql.unsafe(
+			`SELECT column_name FROM information_schema.columns
+              WHERE table_schema = $1 AND table_name = $2
+              ORDER BY ordinal_position`,
+			[schema, table],
+		);
+		cols = rows
+			.map((row) => String((row as { column_name: unknown }).column_name))
+			.filter(is_column_name);
+		// Tabla que aún no existe: `*` deja que Postgres dé el error de siempre
+		// («relation does not exist»), que es el que la app sabe leer.
+		if (cols.length === 0) return '*';
+		column_cache.set(key, cols);
 	}
-	return {
-		sql: clauses.length ? ` WHERE ${clauses.join(' AND ')}` : '',
-		params,
-	};
+	return cols.map(qident).join(', ');
 }
 
 async function data_plane(
@@ -146,24 +173,14 @@ async function data_plane(
 			orderBy?: Record<string, string>;
 			search?: { fields: string[]; q: string };
 		};
-		const w = where_sql(schema, table, opts.where);
-		let extra = '';
-		const params = [...w.params];
-		if (opts.search?.q && opts.search.fields?.length) {
-			const likes = opts.search.fields
-				.filter((f) => /^[a-z_][a-z0-9_]*$/i.test(f))
-				.map((f) => {
-					params.push(`%${opts.search!.q}%`);
-					return `${qident(f)} ILIKE $${params.length}`;
-				});
-			if (likes.length)
-				extra =
-					(w.sql ? ' AND ' : ' WHERE ') + `(${likes.join(' OR ')})`;
-		}
+		const w = where_sql(opts.where);
+		const se = search_sql(opts.search, Boolean(w.sql), w.params.length + 1);
+		const extra = se.sql;
+		const params = [...w.params, ...se.params];
 		const order = opts.orderBy
 			? ' ORDER BY ' +
 				Object.entries(opts.orderBy)
-					.filter(([k]) => /^[a-z_][a-z0-9_]*$/i.test(k))
+					.filter(([k]) => is_column_name(k))
 					.map(
 						([k, d]) =>
 							`${qident(k)} ${d === 'desc' ? 'DESC' : 'ASC'}`,
@@ -177,60 +194,46 @@ async function data_plane(
 			? ` OFFSET ${Number(opts.offset)}`
 			: '';
 		const rows = await sql.unsafe(
-			`SELECT * FROM ${qt}${w.sql}${extra}${order}${limit}${offset}`,
+			`SELECT ${await select_list(schema, table)} FROM ${qt}${w.sql}${extra}${order}${limit}${offset}`,
 			params,
 		);
 		return rows;
 	}
 	if (op === 'findOne') {
-		const w = where_sql(
-			schema,
-			table,
-			body.where as Record<string, unknown>,
-		);
+		const w = where_sql(body.where as Record<string, unknown>);
 		const rows = await sql.unsafe(
-			`SELECT * FROM ${qt}${w.sql} LIMIT 1`,
+			`SELECT ${await select_list(schema, table)} FROM ${qt}${w.sql} LIMIT 1`,
 			w.params,
 		);
 		return rows[0] ?? null;
 	}
 	if (op === 'insert') {
 		const row = (body.row ?? {}) as Record<string, unknown>;
-		const keys = Object.keys(row).filter((k) =>
-			/^[a-z_][a-z0-9_]*$/i.test(k),
-		);
+		const keys = Object.keys(row).filter(is_column_name);
 		const cols = keys.map(qident).join(', ');
 		const vals = keys.map((_, i) => `$${i + 1}`).join(', ');
 		const rows = await sql.unsafe(
-			`INSERT INTO ${qt} (${cols}) VALUES (${vals}) RETURNING *`,
+			`INSERT INTO ${qt} (${cols}) VALUES (${vals}) RETURNING ${await select_list(schema, table)}`,
 			keys.map((k) => row[k]),
 		);
 		return rows[0];
 	}
 	if (op === 'update') {
 		const patch = (body.patch ?? {}) as Record<string, unknown>;
-		const keys = Object.keys(patch).filter((k) =>
-			/^[a-z_][a-z0-9-]*$/i.test(k),
-		);
+		const keys = Object.keys(patch).filter(is_column_name);
 		const set = keys.map((k, i) => `${qident(k)} = $${i + 1}`).join(', ');
 		const w = where_sql(
-			schema,
-			table,
 			body.where as Record<string, unknown>,
 			keys.length + 1,
 		);
 		const rows = await sql.unsafe(
-			`UPDATE ${qt} SET ${set}${w.sql} RETURNING *`,
+			`UPDATE ${qt} SET ${set}${w.sql} RETURNING ${await select_list(schema, table)}`,
 			[...keys.map((k) => patch[k]), ...w.params],
 		);
 		return rows[0] ?? null;
 	}
 	if (op === 'delete') {
-		const w = where_sql(
-			schema,
-			table,
-			body.where as Record<string, unknown>,
-		);
+		const w = where_sql(body.where as Record<string, unknown>);
 		const rows = await sql.unsafe(
 			`DELETE FROM ${qt}${w.sql} RETURNING id`,
 			w.params,
@@ -238,20 +241,21 @@ async function data_plane(
 		return rows.length;
 	}
 	if (op === 'count') {
-		const w = where_sql(
-			schema,
-			table,
-			body.where as Record<string, unknown>,
+		const w = where_sql(body.where as Record<string, unknown>);
+		const se = search_sql(
+			body.search as { fields?: string[]; q?: string } | undefined,
+			Boolean(w.sql),
+			w.params.length + 1,
 		);
 		const rows = await sql.unsafe(
-			`SELECT count(*)::int AS n FROM ${qt}${w.sql}`,
-			w.params,
+			`SELECT count(*)::int AS n FROM ${qt}${w.sql}${se.sql}`,
+			[...w.params, ...se.params],
 		);
 		return rows[0]?.n ?? 0;
 	}
 	if (op === 'distinct') {
 		const field = String(body.field ?? '');
-		if (!/^[a-z_][a-z0-9_]*$/i.test(field)) throw new Error('invalid field');
+		if (!is_column_name(field)) throw new Error('invalid field');
 		const q = String(body.q ?? '').trim();
 		const params: unknown[] = [];
 		let extra = '';
@@ -270,10 +274,39 @@ async function data_plane(
 	throw new Error(`unknown op ${op}`);
 }
 
+/**
+ * Una sola reintentada cuando el DDL invalidó el plan preparado.
+ *
+ * `install-schemas` añade columnas y `SELECT *` cambia de tipo de resultado, así
+ * que Postgres rechaza cada consulta posterior sobre esa tabla. La segunda
+ * preparación ya ve las columnas nuevas. Reintentar aquí —y no vaciar la caché
+ * al aplicar el DDL— es lo que cubre el caso real: el DDL puede venir de otra
+ * réplica o de una migración a mano, y esas conexiones no son nuestras.
+ */
+async function data_plane_with_retry(
+	technical_id: string,
+	body: Record<string, unknown>,
+): Promise<unknown> {
+	try {
+		return await data_plane(technical_id, body);
+	} catch (err) {
+		if (!is_stale_schema_cache(err)) throw err;
+		// El esquema cambió bajo los pies: soltar las columnas en caché hace que
+		// el reintento arme otro texto de consulta y, con él, otro statement.
+		forget_columns(pg_schema_name(technical_id));
+		print_console_log(
+			'warning',
+			`data plane ${technical_id}: el esquema cambió, releyendo columnas`,
+		);
+		return await data_plane(technical_id, body);
+	}
+}
+
 async function proxy_subject(
 	technical_id: string,
 	req: Request,
 	rest: string,
+	identity?: Parameters<typeof apply_subject_identity_headers>[1],
 ): Promise<Response> {
 	const base = subject_url(technical_id);
 	const url = new URL(req.url);
@@ -282,6 +315,11 @@ async function proxy_subject(
 	headers.set('x-nox-kirlet-gateway-secret', GATEWAY_SECRET);
 	headers.set('x-nox-kirlet-id', technical_id);
 	headers.set('x-core-subject-gateway-secret', GATEWAY_SECRET);
+	// Siempre: firmar borra primero las cabeceras de identidad que venían del
+	// cliente, que este proxy clona tal cual.
+	if (identity) {
+		apply_subject_identity_headers(headers, identity, GATEWAY_SECRET);
+	}
 	const init: RequestInit = { method: req.method, headers };
 	if (req.method !== 'GET' && req.method !== 'HEAD')
 		init.body = await req.arrayBuffer();
@@ -299,6 +337,103 @@ async function proxy_subject(
 			{ status: 502 },
 		);
 	}
+}
+
+/**
+ * Página pública de una app, vestida con la personalización publicada.
+ *
+ * El marco se guarda en el núcleo, así que la app no sabe que existe: sigue
+ * sirviendo su página igual y aquí se le pone alrededor lo que se haya
+ * configurado desde la GUI. Sin personalización la respuesta de la app pasa sin
+ * tocarse —ni siquiera se lee su cuerpo—, que es el caso normal.
+ *
+ * Solo se viste el realm público: el lanzador interno enseña la página tal como
+ * la sirve la app.
+ */
+async function dress_public_page(
+	technical_id: string,
+	req: Request,
+	rest: string,
+	res: Response,
+): Promise<Response> {
+	if (req.method !== 'GET') return res;
+	const page = rest.match(/^\/pages\/([^/?]+)$/);
+	if (!page || !res.ok) return res;
+	if (!(res.headers.get('content-type') ?? '').includes('application/json')) {
+		return res;
+	}
+	const page_id = decodeURIComponent(page[1]!);
+	let override: Record<string, unknown> | null = null;
+	try {
+		override = await get_published(
+			imperium.portal_store,
+			subject_override_slug(technical_id, page_id),
+		);
+	} catch {
+		override = null;
+	}
+	if (!override) return res;
+	// Sobre una copia: si el cuerpo no resulta ser el descriptor esperado hay
+	// que poder devolver el original, y leerlo aquí ya lo habría consumido.
+	try {
+		const doc = (await res.clone().json()) as unknown;
+		return Response.json(merge_subject_page(doc, override));
+	} catch {
+		// La personalización no puede ser motivo de que una página deje de verse.
+		return res;
+	}
+}
+
+/**
+ * Clave de memoria de grants: la cookie de sesión, no el usuario.
+ *
+ * Dos pestañas del mismo usuario comparten entrada, y cerrar sesión invalida la
+ * suya sin tocar la de nadie más.
+ */
+function session_key_of(req: Request): string {
+	const cookie = req.headers.get('cookie') ?? '';
+	const hit = cookie.match(/connect\.sid=([^;]+)/);
+	return hit?.[1] ?? 'anon';
+}
+
+function subject_of(technical_id: string) {
+	return catalog.subjects.find((s) => s.technical_id === technical_id);
+}
+
+/** Identidad firmada para un salto del gateway, o el 401 del realm interno. */
+async function gateway_identity(
+	technical_id: string,
+	req: Request,
+	realm: SubjectIdentityRealm,
+): Promise<
+	| { ok: true; identity: Awaited<ReturnType<typeof resolve_subject_identity>>['identity'] }
+	| { ok: false; response: Response }
+> {
+	const sub = subject_of(technical_id);
+	const resolved = await resolve_subject_identity({
+		store: imperium.store,
+		sql,
+		req,
+		technical_id,
+		slug: sub?.slug ?? technical_id.replace(/^subject-/, ''),
+		modules: sub?.modules ?? [],
+		realm,
+		session_key: session_key_of(req),
+	});
+	if (realm === 'internal' && !resolved.authenticated) {
+		return {
+			ok: false,
+			response: Response.json(
+				{
+					error: 'No has iniciado sesión',
+					message: 'No has iniciado sesión',
+					code: 'unauthorized',
+				},
+				{ status: 401 },
+			),
+		};
+	}
+	return { ok: true, identity: resolved.identity };
 }
 
 function log_api(
@@ -328,7 +463,11 @@ function log_api(
 const server = Bun.serve({
 	port: PORT,
 	idleTimeout: SOCKET_IO_IDLE_TIMEOUT_SECONDS,
-	async fetch(req) {
+	async fetch(req, server) {
+		// La IP del socket, que el cliente no elige: el limitador la prefiere
+		// sobre `x-forwarded-for` salvo que el despliegue declare que hay un
+		// proxy delante (ver `request_ip`).
+		remember_socket_ip(req, server.requestIP(req)?.address ?? null);
 		const started_ms = Date.now();
 		const url = new URL(req.url);
 		const path = url.pathname;
@@ -350,12 +489,17 @@ const server = Bun.serve({
 			if (socket) return socket;
 
 			if (path === '/health' || path === '/api/health') {
-				return Response.json({
-					ok: true,
-					unit: 'imperium-core',
-					subjects: catalog.subjects.length,
-					imperium_resources: imperium.store.locs.size,
-				});
+				// Con CORS: el navegador lo usa como sonda de conectividad desde
+				// el sitio publico, que corre en otro origen en desarrollo.
+				return add_cors(
+					req,
+					Response.json({
+						ok: true,
+						unit: 'imperium-core',
+						subjects: catalog.subjects.length,
+						imperium_resources: imperium.store.locs.size,
+					}),
+				)!;
 			}
 
 			if (path === '/api/subjects/dev-attach' && req.method === 'POST') {
@@ -416,6 +560,16 @@ const server = Bun.serve({
 					svc.tid,
 					svc.rest,
 					url,
+					{
+						sanitize_html: portal_html_sanitize,
+						send_email: async (input) =>
+							send_subject_notification_email({
+								settings: await resolve_email_settings(
+									imperium.store,
+								),
+								...input,
+							}),
+					},
 				);
 			}
 
@@ -434,11 +588,21 @@ const server = Bun.serve({
 					);
 				}
 				const technical_id = decodeURIComponent(data_m[1]!);
+				let body: Record<string, unknown> = {};
 				try {
-					const body = (await req.json()) as Record<string, unknown>;
-					const data = await data_plane(technical_id, body);
+					body = (await req.json()) as Record<string, unknown>;
+					const data = await data_plane_with_retry(
+						technical_id,
+						body,
+					);
 					return Response.json({ data });
 				} catch (err) {
+					// La app solo ve el 400; sin esta línea el motivo (columna,
+					// operador, SQL) no queda en ningún log del núcleo.
+					print_console_log(
+						'error',
+						`data plane ${technical_id} ${String(body.op ?? '?')} ${String(body.table ?? '')}: ${String(err)}`,
+					);
 					return Response.json(
 						{ error: String(err) },
 						{ status: 400 },
@@ -446,10 +610,13 @@ const server = Bun.serve({
 				}
 			}
 
-			const gw = path.match(/^\/api\/m\/(subject-[a-z0-9-]+)(\/.*)?$/);
+			const gw = path.match(
+				/^\/api\/(p\/)?m\/(subject-[a-z0-9-]+)(\/.*)?$/,
+			);
 			if (gw) {
-				const technical_id = gw[1]!;
-				const rest = gw[2] ?? '/';
+				const realm: SubjectIdentityRealm = gw[1] ? 'public' : 'internal';
+				const technical_id = gw[2]!;
+				const rest = gw[3] ?? '/';
 				if (
 					!(await technical_id_is_installed(
 						imperium.store,
@@ -475,7 +642,17 @@ const server = Bun.serve({
 						{ status: 404 },
 					);
 				}
-				return proxy_subject(technical_id, req, rest);
+				const gate = await gateway_identity(technical_id, req, realm);
+				if (!gate.ok) return gate.response;
+				const proxied = await proxy_subject(
+					technical_id,
+					req,
+					rest,
+					gate.identity,
+				);
+				return realm === 'public'
+					? dress_public_page(technical_id, req, rest, proxied)
+					: proxied;
 			}
 
 			const install_one = path.match(

@@ -5,6 +5,7 @@
 import {
 	apply_landing_code,
 	default_home_document,
+	is_public_landing_enabled,
 	sanitize_page_document_html,
 	validate_page_descriptor,
 	type NoxUiValidationIssue,
@@ -33,6 +34,8 @@ export type PortalRequestCtx = {
 	store: PortalPageStore;
 	sanitize: PortalHtmlSanitize;
 	actor: ImperiumDoc | null;
+	/** Anonymous reader of the landing SI/NO switch. Missing ⇒ landing hidden. */
+	read_landing_enabled?: () => Promise<unknown>;
 };
 
 const HOME_SLUG = 'home';
@@ -329,6 +332,21 @@ export async function handle_portal_request(
 	if (method === 'OPTIONS') {
 		return new Response(null, { status: 204 });
 	}
+	const public_settings = path.match(/^\/p\/portal\/settings\/?$/);
+	if (public_settings && (method === 'GET' || method === 'HEAD')) {
+		let raw: unknown;
+		try {
+			raw = ctx.read_landing_enabled
+				? await ctx.read_landing_enabled()
+				: undefined;
+		} catch {
+			raw = undefined;
+		}
+		return Response.json({
+			landing_enabled: is_public_landing_enabled(raw),
+		});
+	}
+
 	const public_page = path.match(/^\/p\/portal\/pages\/([^/]+)$/);
 	if (public_page && (method === 'GET' || method === 'HEAD')) {
 		await ensure_home(ctx.store, ctx.sanitize);

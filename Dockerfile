@@ -33,6 +33,29 @@ RUN set -eux; \
   command -v docker >/dev/null; \
   docker --version; \
   docker compose version || docker-compose version
+# Chromium: HTML → PDF en /reports/generate-pdf (sin esto el núcleo
+# devolvía el HTML como text/html y la lista fallaba al exportar).
+RUN set -eux; \
+  ver="$(cut -d. -f1,2 /etc/alpine-release)"; \
+  n=0; \
+  until [ "$n" -ge 8 ]; do \
+    for base in \
+      https://dl-cdn.alpinelinux.org/alpine \
+      https://mirror.csclub.uwaterloo.ca/alpine \
+      https://mirrors.edge.kernel.org/alpine \
+      https://uk.alpinelinux.org/alpine; do \
+      printf '%s/v%s/main\n%s/v%s/community\n' "$base" "$ver" "$base" "$ver" \
+        > /etc/apk/repositories; \
+      apk add --no-cache chromium nss freetype harfbuzz ttf-dejavu && break 2; \
+    done; \
+    n=$((n + 1)); \
+    echo "apk chromium failed ($n/8); retry"; \
+    sleep "$n"; \
+  done; \
+  CHROME_BIN="$(command -v chromium-browser || command -v chromium)"; \
+  test -n "$CHROME_BIN"; \
+  ln -sf "$CHROME_BIN" /usr/bin/google-chrome; \
+  google-chrome --version
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/vendor ./vendor
 COPY --from=deps /app/package.json ./package.json
@@ -40,6 +63,9 @@ COPY src ./src
 COPY catalog.json /app/catalog.json
 LABEL org.opencontainers.image.source="https://github.com/Opus-Perpetuus/imperium-core"
 LABEL org.opencontainers.image.url="https://github.com/Opus-Perpetuus/imperium-core"
-ENV PORT=3100 CATALOG_PATH=/app/catalog.json
+ENV PORT=3100 \
+    CATALOG_PATH=/app/catalog.json \
+    CHROME_PATH=/usr/bin/google-chrome \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome
 EXPOSE 3100
 CMD ["bun", "run", "src/server.ts"]

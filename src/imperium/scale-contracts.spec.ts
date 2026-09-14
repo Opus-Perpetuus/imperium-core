@@ -106,7 +106,7 @@ describe('scale contracts', () => {
 
 	test('model tracker reindex scans instead of taking 5000', () => {
 		const src = readFileSync(new URL('./actions.ts', import.meta.url), 'utf8');
-		const start = src.indexOf('async function model_tracker_reindex');
+		const start = src.indexOf('async function postgres_table_tracker_reindex');
 		const body = src.slice(start, src.indexOf('function cfg_text(', start));
 		expect(body).toContain('ctx.store.scan(');
 		expect(body).toContain("scan('module-management'");
@@ -444,7 +444,7 @@ describe('scale contracts', () => {
 		expect(reports).toContain('apply_to_all must stream via iter_report_record_pages');
 		const actions = readFileSync(new URL('./actions.ts', import.meta.url), 'utf8');
 		const start = actions.indexOf('async function report_full_pdf');
-		const body = actions.slice(start, actions.indexOf('async function html_to_pdf_response'));
+		const body = actions.slice(start, actions.indexOf('async function report_pdf'));
 		expect(body).toContain('render_report_from_pages');
 		expect(body).not.toContain('hydrated.push');
 	});
@@ -638,7 +638,7 @@ describe('scale contracts', () => {
 
 	test('model-tracker field-values scan counts and refs instead of taking 20000', () => {
 		const src = readFileSync(
-			new URL('./model-tracker-field-values.ts', import.meta.url),
+			new URL('./postgres-table-tracker-field-values.ts', import.meta.url),
 			'utf8',
 		);
 		const store = readFileSync(new URL('./store.ts', import.meta.url), 'utf8');

@@ -94,7 +94,9 @@ async function active_parts(
 	})) {
 		rows.push(...page);
 	}
-	return rows.sort((a, b) => Number(a.order ?? 0) - Number(b.order ?? 0));
+	return rows
+		.filter((part) => part.is_active !== false)
+		.sort((a, b) => Number(a.order ?? 0) - Number(b.order ?? 0));
 }
 
 export async function rebuild_custom_pattern(

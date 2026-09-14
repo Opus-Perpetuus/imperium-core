@@ -4,7 +4,11 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { pg_schema_name } from '@opus-perpetuus/imperium-core-kit';
+import {
+	pg_schema_name,
+	PUBLIC_LANDING_ENABLED_REF,
+	public_landing_configuration_seed,
+} from '@opus-perpetuus/imperium-core-kit';
 import {
 	as_array,
 	as_object,
@@ -31,12 +35,10 @@ import { location_stats_extras } from './location-flow.ts';
 import { delivery_return_by_state } from './delivery-return-flow.ts';
 import { record_document_history } from './history.ts';
 import {
-	find_increment_control,
-	compute_reset_key,
-	find_or_create_increment_segment,
-	format_increment_real_value,
+	advance_increment_sequence,
 	type PatternContext,
 } from './custom-pattern-render.ts';
+import { list_search_columns } from './list-search.ts';
 import {
 	apply_schema_setters,
 	assert_required_fields,
@@ -71,7 +73,21 @@ export type SubjectInfo = {
 	menu_ref: string;
 	technical_id: string;
 	image: string;
-	modules: Array<{ resource: string; path: string; menu_ref: string; name: string }>;
+	modules: Array<{
+		resource: string;
+		path: string;
+		menu_ref: string;
+		name: string;
+		icon?: string;
+	}>;
+	/** Árbol extra (carpetas y hojas sin tabla) que reshape materializa. */
+	menus?: Array<{
+		menu_ref: string;
+		name: string;
+		path?: string;
+		icon: string;
+		parent_ref?: string;
+	}>;
 };
 
 export const PREFER_OWNER: Record<string, string> = {
@@ -144,6 +160,7 @@ const UNIQUE_FIELDS: Record<string, string[]> = {
 	'ticketing-system-consecutive': ['name'],
 	'api-keys': ['api_key'],
 	'auto-increment-control': ['_unique_string_reference'],
+	'postgres-table-tracker': ['__model_name'],
 	contrato: ['contrato'],
 	'font-awesome-icon-catalog': ['icon'],
 	'user-settings': ['user_id'],
@@ -437,6 +454,20 @@ const REFS: RefBook = JSON.parse(
 
 function field_map_for(resource: string): Record<string, string> | undefined {
 	return REFS.fields[resource] ?? REFS.fields[RESOURCE_ALIASES[resource] ?? ''];
+}
+
+/** Modelo mongoose de una columna-ref (p. ej. citizen-report.assinged_to → Employee). */
+export function related_model_for_field(
+	resource: string,
+	field: string,
+): string | undefined {
+	const map = field_map_for(resource);
+	const root = field.split('.')[0] ?? field;
+	return (
+		map?.[field] ??
+		map?.[root] ??
+		(root === 'created_by' ? 'User' : undefined)
+	);
 }
 
 const OBJECT_ID_HEX = /^[a-fA-F0-9]{24}$/;
@@ -964,7 +995,13 @@ export function list_select_sql(resource: string, cols: Set<string>): string | n
 	const seen = new Set<string>();
 	for (const col of LIST_SQL_ALWAYS_PHYSICAL) {
 		if (!cols.has(col)) continue;
-		physical.push(qident(col));
+		if (col === 'name' && cols.has('payload')) {
+			physical.push(
+				`COALESCE(NULLIF(${qident('name')}, ''), (${payload_list_expr()}) ->> 'name') AS name`,
+			);
+		} else {
+			physical.push(qident(col));
+		}
 		seen.add(col);
 	}
 	const payload_keys: string[] = [];
@@ -1003,9 +1040,21 @@ const POPULATE_LITE_PHYSICAL = ['id', 'name', 'description', 'is_active', 'ref']
 
 /**
  * SELECT de refs para lista: id + name. flatten_list_docs tira el resto.
+ * `name` físico vacío (migración) se completa desde payload, igual que
+ * `list_select_sql`; si no, el filtro de asignado lista ids.
  */
 export function populate_lite_select_sql(cols: Set<string>): string {
-	const physical = POPULATE_LITE_PHYSICAL.filter((col) => cols.has(col)).map(qident);
+	const physical: string[] = [];
+	for (const col of POPULATE_LITE_PHYSICAL) {
+		if (!cols.has(col)) continue;
+		if (col === 'name' && cols.has('payload')) {
+			physical.push(
+				`COALESCE(NULLIF(${qident('name')}, ''), (${payload_list_expr()}) ->> 'name') AS name`,
+			);
+		} else {
+			physical.push(qident(col));
+		}
+	}
 	if (cols.has('payload')) {
 		physical.push(`(SELECT COALESCE(jsonb_object_agg(e.key, e.value), '{}'::jsonb)
 			FROM jsonb_each(${payload_list_expr()}) e
@@ -1108,7 +1157,15 @@ export class ImperiumStore {
 					name: string;
 					path?: string;
 					menu_ref?: string;
+					icon?: string;
 					columns?: ExtraCol[];
+				}>;
+				menus?: Array<{
+					menu_ref: string;
+					name: string;
+					path?: string;
+					icon: string;
+					parent_ref?: string;
 				}>;
 			}>;
 		};
@@ -1125,7 +1182,9 @@ export class ImperiumStore {
 					path: m.path ?? `/${m.resource}`,
 					menu_ref: m.menu_ref ?? '',
 					name: m.name,
+					icon: m.icon,
 				})),
+				menus: s.menus,
 			});
 			for (const m of s.modules ?? []) {
 				const loc: ModuleLoc = {
@@ -1178,7 +1237,19 @@ export class ImperiumStore {
 					table: resource.replace(/-/g, '_'),
 					collection: resource,
 					name: resource,
-					columns: [],
+					columns:
+						resource === 'user-settings'
+							? [
+									{
+										name: 'table_configs',
+										mongo: 'table_configs',
+										pg: 'json',
+										crud: 'json',
+										component: 'input-json',
+										label: 'table configs',
+									},
+								]
+							: [],
 				};
 				this.all_locs.push(loc);
 				this.locs.set(resource, loc);
@@ -1326,6 +1397,16 @@ export class ImperiumStore {
 
 	async ensure_defaults(): Promise<void> {
 		await this.ensure_orphan_tables();
+		await this.ensure_catalog_columns();
+		try {
+			await this.ensure_postgres_table_tracker_table();
+			const { sync_postgres_table_tracker, ensure_postgres_table_tracker_access } =
+				await import('./postgres-table-tracker.ts');
+			await ensure_postgres_table_tracker_access(this);
+			await sync_postgres_table_tracker(this);
+		} catch {
+			/* schema/tabla aún no disponibles */
+		}
 		await this.ensure_object_json_cells();
 		await this.ensure_search_indexes();
 		await this.ensure_unique_indexes();
@@ -1359,6 +1440,29 @@ export class ImperiumStore {
 						});
 					}
 				}
+			}
+		}
+		if (this.has('configuration')) {
+			try {
+				const { apply_missing_configuration_seeds } = await import(
+					'./configuration-seed-sync.ts'
+				);
+				await apply_missing_configuration_seeds(this);
+			} catch {
+				/* snapshot o tabla ausente */
+			}
+			try {
+				const landing_flag = await this.find_where('configuration', {
+					_ref: PUBLIC_LANDING_ENABLED_REF,
+				});
+				if (!landing_flag) {
+					await this.insert(
+						'configuration',
+						public_landing_configuration_seed() as ImperiumDoc,
+					);
+				}
+			} catch {
+				/* tabla ausente o carrera en _ref; el GET público usa default false */
 			}
 		}
 		if (this.has('access-rights')) {
@@ -1500,6 +1604,70 @@ export class ImperiumStore {
 		console.log(`[icons] Catálogo Font Awesome sembrado: ${catalog.length} íconos`);
 	}
 
+	async ensure_postgres_table_tracker_table(): Promise<void> {
+		if (!this.has('postgres-table-tracker')) return;
+		const loc = this.loc('postgres-table-tracker');
+		const schema = qident(pg_schema_name(loc.technical_id));
+		const qt = this.qt('postgres-table-tracker');
+		await this.sql.unsafe(`CREATE SCHEMA IF NOT EXISTS ${schema}`);
+		await this.sql.unsafe(`
+        CREATE TABLE IF NOT EXISTS ${qt} (
+          id TEXT PRIMARY KEY,
+          name TEXT,
+          description TEXT,
+          is_active BOOLEAN DEFAULT true,
+          state TEXT,
+          ref TEXT,
+          search_field TEXT,
+          created_by TEXT,
+          custom_data JSONB DEFAULT '{}'::jsonb,
+          payload JSONB DEFAULT '{}'::jsonb,
+          created_at TEXT,
+          updated_at TEXT
+        )
+      `);
+		await this.ensure_loc_columns('postgres-table-tracker');
+	}
+
+	/**
+	 * Columnas extra del catálogo (p. ej. table_configs) sobre tablas ya creadas.
+	 * Sin esto un INSERT del núcleo falla hasta que el subject vuelva a emitir DDL.
+	 */
+	async ensure_catalog_columns(): Promise<void> {
+		const seen = new Set<string>();
+		for (const loc of this.locs.values()) {
+			if (seen.has(loc.resource)) continue;
+			seen.add(loc.resource);
+			await this.ensure_loc_columns(loc.resource);
+		}
+	}
+
+	private async ensure_loc_columns(resource: string): Promise<void> {
+		if (!this.has(resource)) return;
+		const loc = this.loc(resource);
+		const qt = this.qt(resource);
+		const jsons = this.json_cols(resource);
+		for (const col of loc.columns) {
+			const name = String(col.name ?? '').trim();
+			if (!name || GENERAL.has(name)) continue;
+			if (!/^[a-z_][a-z0-9_]*$/i.test(name)) continue;
+			const pg = jsons.has(name)
+				? 'JSONB'
+				: col.pg === 'boolean'
+					? 'BOOLEAN'
+					: col.pg === 'real' || col.pg === 'number'
+						? 'DOUBLE PRECISION'
+						: 'TEXT';
+			try {
+				await this.sql.unsafe(
+					`ALTER TABLE ${qt} ADD COLUMN IF NOT EXISTS ${qident(name)} ${pg}`,
+				);
+			} catch {
+				/* columna o tabla aún no aplicables */
+			}
+		}
+	}
+
 	async ensure_orphan_tables(): Promise<void> {
 		for (const resource of [
 			'messages',
@@ -1536,6 +1704,7 @@ export class ImperiumStore {
           updated_at TEXT
         )
       `);
+			await this.ensure_loc_columns(resource);
 		}
 	}
 
@@ -1645,55 +1814,35 @@ export class ImperiumStore {
 		increment_field: string,
 		opts: { resource?: string; context?: PatternContext } = {},
 	): Promise<number> {
-		const config = this.has('auto-increment-control')
-			? await find_increment_control(this, model_name, increment_field)
-			: null;
-		const reset_key = config
-			? await compute_reset_key(this, config, opts.context)
-			: null;
-		let floor = 0;
-		const resource = opts.resource;
-		if (!reset_key && resource && this.has(resource)) {
-			floor = await this.max_numeric(resource, increment_field);
-		}
-		if (!this.has('auto-increment-control')) return floor + 1;
-		const target = config
-			? await find_or_create_increment_segment(this, config, reset_key)
-			: null;
-		if (!target?._id) return floor + 1;
-		const qt = this.qt('auto-increment-control');
-		const now = new Date().toISOString();
-		const updated = await this.sql.unsafe(
-			`UPDATE ${qt}
-			 SET current_sequence = GREATEST(COALESCE(current_sequence, 0), $1) + 1,
-			     updated_at = $2
-			 WHERE id = $3
-			 RETURNING id, current_sequence`,
-			[floor, now, String(target._id)],
-		);
-		const row = updated[0] as { id?: string; current_sequence?: number } | undefined;
-		if (row?.current_sequence == null) return floor + 1;
-		const next = Number(row.current_sequence);
-		const real_value = await format_increment_real_value(
-			this,
-			config ?? target,
-			next,
-			opts.context,
-		);
-		await this.update('auto-increment-control', String(row.id), {
-			current_sequence: next,
-			current: next,
-			valor: next,
-			current_real_value: real_value,
+		return advance_increment_sequence(this, model_name, increment_field, {
+			resource: opts.resource,
+			context: opts.context,
+			max_numeric: (resource, field) => this.max_numeric(resource, field),
+			bump: async (target, floor) => {
+				const qt = this.qt('auto-increment-control');
+				const now = new Date().toISOString();
+				const updated = await this.sql.unsafe(
+					`UPDATE ${qt}
+					 SET current_sequence = GREATEST(COALESCE(current_sequence, 0), $1) + 1,
+					     updated_at = $2
+					 WHERE id = $3
+					 RETURNING id, current_sequence`,
+					[floor, now, String(target._id)],
+				);
+				const row = updated[0] as { id?: string; current_sequence?: number } | undefined;
+				if (row?.current_sequence == null) return floor + 1;
+				return Number(row.current_sequence);
+			},
 		});
-		return next;
 	}
 
 	/** `MAX` de un campo numérico (columna o `payload ->>`). Una fila, no N docs. */
 	async max_numeric(resource: string, field: string): Promise<number> {
 		if (!this.has(resource) || !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(field)) return 0;
 		const cols = this.column_names(resource);
-		const expr = cols.has(field) ? qident(field) : `payload ->> ${literal(field)}`;
+		// Paréntesis obligatorios: `::` liga más que `->>`, así que sin ellos
+		// `payload ->> 'f'::numeric` castea la CLAVE 'f' a numeric y revienta.
+		const expr = cols.has(field) ? qident(field) : `(payload ->> ${literal(field)})`;
 		const rows = await this.sql.unsafe(
 			`SELECT ${max_numeric_expr(expr)} AS m FROM ${this.qt(resource)}`,
 		);
@@ -1815,9 +1964,7 @@ export class ImperiumStore {
 		}
 		if (opts.q) {
 			const like = `%${opts.q}%`;
-			const search_cols = ['name', 'description', 'ref', 'search_field', 'code'].filter((c) =>
-				cols.has(c),
-			);
+			const search_cols = list_search_columns(resource, cols);
 			const parts = search_cols.map((c) => {
 				params.push(like);
 				return `${qident(c)} ILIKE $${params.length}`;
@@ -2351,8 +2498,10 @@ export class ImperiumStore {
 				}
 				const id_key = `${field}_id`;
 				if (out[id_key] == null || out[id_key] === '') out[id_key] = id;
-				// El $lookup original siempre deja el nombre (aunque vacío), no el objeto.
-				out[field] = String((val as ImperiumDoc).name ?? '').trim();
+				const related = val as ImperiumDoc;
+				out[field] = String(
+					related.name ?? related.nombreCompleto ?? '',
+				).trim();
 			}
 			return out;
 		});

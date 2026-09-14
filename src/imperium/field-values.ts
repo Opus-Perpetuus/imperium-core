@@ -240,6 +240,60 @@ export function build_field_values(
 	);
 }
 
+const LOOKS_LIKE_ID = /^[a-fA-F0-9]{24}$|^[0-9a-fA-F-]{36}$/;
+
+/** Ids crudos del distinct que el filtro debe seguir usando como value. */
+export function field_value_ids_needing_label(options: FieldValueOption[]): string[] {
+	return options
+		.filter(
+			(option) =>
+				LOOKS_LIKE_ID.test(option.value.trim()) && option.label.trim() === option.value.trim(),
+		)
+		.map((option) => option.value.trim());
+}
+
+/**
+ * El distinct de una ref (assinged_to, etc.) devuelve ids. El filtro lista
+ * personas: label = name, value sigue siendo el id.
+ */
+export function apply_related_labels(
+	options: FieldValueOption[],
+	names_by_id: Map<string, string>,
+): FieldValueOption[] {
+	return options.map((option) => {
+		const name =
+			names_by_id.get(option.value)?.trim() ||
+			names_by_id.get(option.value.trim())?.trim();
+		if (!name) return option;
+		return { ...option, label: name };
+	});
+}
+
+const RELATED_NAME_KEYS = ['name', 'nombreCompleto', 'username', 'email'] as const;
+
+/** Nombre visible de un doc relacionado (empleado / usuario). */
+export function related_doc_label(row: Record<string, unknown>): string {
+	for (const key of RELATED_NAME_KEYS) {
+		const value = String(row[key] ?? '').trim();
+		if (value) return value;
+	}
+	return '';
+}
+
+export function merge_related_names(
+	primary: Map<string, string>,
+	fallback: Map<string, string>,
+): Map<string, string> {
+	if (!fallback.size) return primary;
+	const out = new Map(primary);
+	for (const [id, name] of fallback) {
+		const label = name.trim();
+		if (!label || out.has(id)) continue;
+		out.set(id, label);
+	}
+	return out;
+}
+
 export async function filter_pedido_estado_options(
 	store: ImperiumStore,
 	actor: ImperiumDoc | null,

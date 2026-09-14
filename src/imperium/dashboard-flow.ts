@@ -482,7 +482,7 @@ const INTERNAL_CATALOG_RESOURCES = new Set([
 	'debug-log',
 	'document-change-history',
 	'mentions',
-	'model-tracker',
+	'postgres-table-tracker',
 ]);
 
 const CATALOG_FIELD_LABELS: Record<string, string> = {

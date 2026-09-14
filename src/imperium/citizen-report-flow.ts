@@ -3,7 +3,6 @@
  */
 import { as_object, type ImperiumDoc } from './envelope.ts';
 import type { ImperiumStore } from './store.ts';
-import { format_model_field_value } from './custom-pattern-render.ts';
 
 const REF_FIELDS = [
 	'employee_taken_the_report',
@@ -68,7 +67,7 @@ export function is_citizen_report_resource(resource: string) {
 }
 
 export async function prepare_citizen_report_write(
-	store: ImperiumStore,
+	_store: ImperiumStore,
 	incoming: ImperiumDoc,
 	is_create: boolean,
 ): Promise<ImperiumDoc> {
@@ -125,17 +124,6 @@ export async function prepare_citizen_report_write(
 		if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
 			throw new Error('Debes definir un email valido');
 		}
-		const sequence = await store.next_auto_increment('CitizenReport', 'sequence', {
-			resource: 'citizen-report',
-			context: doc,
-		});
-		doc.sequence = sequence;
-		doc.name = String(
-			await format_model_field_value(store, 'CitizenReport', 'name', sequence, {
-				...doc,
-				sequence,
-			}, `CR-${sequence}`),
-		);
 		if (!doc.status) doc.status = 'pendiente';
 	}
 	return doc;

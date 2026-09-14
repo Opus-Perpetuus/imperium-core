@@ -15,7 +15,7 @@ const MOCK_FORBIDDEN_MODEL_NAMES = new Set([
 	'MenuManagement',
 	'AccessRights',
 	'RecordRules',
-	'ModelTrackerCustom',
+	'PostGressTableTracker',
 	'DocumentChangeHistory',
 	'AutoIncrementTrackerControl',
 	'Configuration',

@@ -41,6 +41,93 @@ export function access_has_full_admin_scope(
 	return access?.has_full_access === true;
 }
 
+export type MenuAccessSlice = {
+	has_full_access?: boolean;
+	has_user_groups?: boolean;
+	menu_ids?: string[];
+	models?: string[];
+	permissions_by_model?: Record<string, { allow_update?: boolean }>;
+};
+
+/** Quien puede escribir grupos ve el catálogo entero de menús en el picker. */
+export function can_manage_user_groups(access: MenuAccessSlice | null | undefined): boolean {
+	if (access_has_full_admin_scope(access)) return true;
+	const perms = access?.permissions_by_model ?? {};
+	for (const [model, flags] of Object.entries(perms)) {
+		if (model.replace(/[^A-Za-z0-9]/g, '').toLowerCase() !== 'usergroup') continue;
+		if (flags.allow_update) return true;
+	}
+	return false;
+}
+
+/**
+ * Menús del launcher: con grupos, solo `menus_ids`; un AccessRights amplio
+ * no pinta todos los menús del modelo. Sin modelo en ACL se oculta (ticket 63).
+ */
+export function filter_menus_for_access<
+	T extends { _id?: unknown; parent_id?: unknown; model?: unknown },
+>(rows: T[], access: MenuAccessSlice): T[] {
+	if (access_has_full_admin_scope(access)) return rows;
+	const assigned = new Set((access.menu_ids ?? []).map(String).filter(Boolean));
+	const models = new Set((access.models ?? []).map(String).filter(Boolean));
+	let filtered: T[];
+	if (access.has_user_groups) {
+		if (!assigned.size) return [];
+		filtered = rows.filter((row) => assigned.has(String(row._id ?? '')));
+	} else {
+		filtered = rows.filter((row) => {
+			const mid = String(row._id ?? '');
+			const model = String(row.model ?? '').trim();
+			return assigned.has(mid) || (model !== '' && models.has(model));
+		});
+	}
+	filtered = filtered.filter((row) => {
+		const model = String(row.model ?? '').trim();
+		if (!model) return true;
+		return models.has(model);
+	});
+	const by_id = new Map(rows.map((row) => [String(row._id ?? ''), row]));
+	const keep = new Map(filtered.map((row) => [String(row._id ?? ''), row]));
+	for (const row of [...keep.values()]) {
+		let pid = row.parent_id ? String(row.parent_id) : '';
+		while (pid && !keep.has(pid) && by_id.has(pid)) {
+			const parent = by_id.get(pid)!;
+			keep.set(pid, parent);
+			pid = parent.parent_id ? String(parent.parent_id) : '';
+		}
+	}
+	return [...keep.values()];
+}
+
+/**
+ * `reshape_subject_menus` materializa apps instaladas del catálogo.
+ * Tras el ACL, solo quedan las filas permitidas y las carpetas padre
+ * que las agrupan — no las raíces sintéticas del resto de subjects.
+ */
+export function keep_reshaped_menus_for_access<
+	T extends { _id?: unknown; parent_id?: unknown },
+>(allowed_rows: T[], reshaped: T[]): T[] {
+	const allowed_ids = new Set(
+		allowed_rows.map((row) => String(row._id ?? '')).filter(Boolean),
+	);
+	if (!allowed_ids.size) return [];
+	const by_id = new Map(reshaped.map((row) => [String(row._id ?? ''), row]));
+	const keep = new Map<string, T>();
+	for (const row of reshaped) {
+		const id = String(row._id ?? '');
+		if (allowed_ids.has(id)) keep.set(id, row);
+	}
+	for (const row of [...keep.values()]) {
+		let pid = row.parent_id ? String(row.parent_id) : '';
+		while (pid && !keep.has(pid) && by_id.has(pid)) {
+			const parent = by_id.get(pid)!;
+			keep.set(pid, parent);
+			pid = parent.parent_id ? String(parent.parent_id) : '';
+		}
+	}
+	return reshaped.filter((row) => keep.has(String(row._id ?? '')));
+}
+
 function id_list(value: unknown): string[] {
 	return as_array(value)
 		.map((item) => {

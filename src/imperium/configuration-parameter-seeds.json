@@ -1,0 +1,501 @@
+[
+  {
+    "_ref": "configuration-inventory-recepcion-default-location",
+    "name": "Inventario · Ubicación por defecto de recepción",
+    "description": "Ubicación destino donde aterriza la mercancía al confirmar una recepción de compra. Por defecto el Almacén de recepciones (permite acomodo por escaneo). Cambia a Almacén general solo si no usas acomodo por ubicación.",
+    "is_system": true,
+    "module_id": "NA",
+    "type": "text",
+    "value": "inventory-internal-location-receptions"
+  },
+  {
+    "_ref": "configuration-inventory-transito-entrada-location",
+    "name": "Inventario · Ubicación de tránsito de entrada",
+    "description": "Ubicación informativa que etiqueta la mercancía en camino (comprada, aún no recibida).",
+    "is_system": true,
+    "module_id": "NA",
+    "type": "text",
+    "value": "inventory-internal-location-in-transit-in"
+  },
+  {
+    "_ref": "configuration-company-logo",
+    "description": "Logo SVG personalizado de la empresa",
+    "is_system": true,
+    "module_id": "NA",
+    "name": "Logo de la empresa",
+    "type": "image",
+    "value": ""
+  },
+  {
+    "_ref": "configuration-branding-mode",
+    "description": "Define si la interfaz usa Imperium o la marca de la empresa",
+    "is_system": true,
+    "module_id": "NA",
+    "name": "Marca de la interfaz",
+    "type": "select",
+    "value": "imperium"
+  },
+  {
+    "_ref": "configuration-branding-logo-width",
+    "description": "Ancho del logo de marca en pixeles",
+    "is_system": true,
+    "module_id": "NA",
+    "name": "Ancho del logo",
+    "type": "number",
+    "value": ""
+  },
+  {
+    "_ref": "configuration-branding-logo-height",
+    "description": "Alto del logo de marca en pixeles",
+    "is_system": true,
+    "module_id": "NA",
+    "name": "Alto del logo",
+    "type": "number",
+    "value": ""
+  },
+  {
+    "_ref": "configuration-branding-logo-text-position",
+    "description": "Posicion del texto junto al logo: right, bottom, top, hidden",
+    "is_system": true,
+    "module_id": "NA",
+    "name": "Posicion del texto del logo",
+    "type": "select",
+    "value": ""
+  },
+  {
+    "_ref": "configuration-pos-pins-enabled",
+    "description": "Permite habilitar o deshabilitar el requerimiento de PIN para las sesiones POS.",
+    "is_system": true,
+    "module_id": "NA",
+    "name": "Activar PIN de sesiones POS",
+    "type": "checkbox",
+    "value": true
+  },
+  {
+    "_ref": "configuration-support-public-enabled",
+    "description": "Habilita el formulario público de tickets de soporte en la ruta /public.",
+    "is_system": true,
+    "module_id": "NA",
+    "name": "Activar soporte público",
+    "type": "checkbox",
+    "value": true
+  },
+  {
+    "_ref": "configuration-support-public-rate-limit-window-minutes",
+    "description": "Ventana en minutos para el rate limiting de tickets públicos.",
+    "is_system": true,
+    "module_id": "NA",
+    "name": "Ventana rate limit soporte público",
+    "type": "number",
+    "value": 15
+  },
+  {
+    "_ref": "configuration-support-public-rate-limit-max",
+    "description": "Número máximo de tickets públicos permitidos por IP dentro de la ventana configurada.",
+    "is_system": true,
+    "module_id": "NA",
+    "name": "Máximo rate limit soporte público",
+    "type": "number",
+    "value": 10
+  },
+  {
+    "_ref": "configuration-messaging-enabled",
+    "description": "Habilita el sistema interno de mensajería operativa.",
+    "is_system": true,
+    "module_id": "NA",
+    "name": "Activar mensajería interna",
+    "type": "checkbox",
+    "value": true
+  },
+  {
+    "_ref": "configuration-desktop-hardware-reporting-enabled",
+    "description": "Fuerza a las apps nativas (escritorio y móvil) a reportar su hardware al inventario de dispositivos físicos.",
+    "is_system": true,
+    "module_id": "NA",
+    "name": "Reportar hardware de dispositivos",
+    "type": "checkbox",
+    "value": false
+  },
+  {
+    "_ref": "configuration-public-landing-enabled",
+    "description": "Si está en SI, la raíz del sitio muestra la landing. Si está en NO, redirige al inicio de sesión.",
+    "is_system": true,
+    "module_id": "NA",
+    "name": "Mostrar landing pública",
+    "type": "switch",
+    "value": false
+  },
+  {
+    "_ref": "configuration-messaging-interinstance-enabled",
+    "description": "Permite enviar mensajes federados entre instancias configuradas.",
+    "is_system": true,
+    "module_id": "NA",
+    "name": "Activar mensajería interinstancia",
+    "type": "checkbox",
+    "value": false
+  },
+  {
+    "_ref": "configuration-messaging-interinstance-endpoint",
+    "description": "Endpoint base remoto para enrutar tickets y mensajes interinstancia.",
+    "is_system": true,
+    "module_id": "NA",
+    "name": "Endpoint interinstancia",
+    "type": "text",
+    "value": ""
+  },
+  {
+    "_ref": "configuration-messaging-interinstance-api-key",
+    "description": "Api key compartida entre instancias para validar tickets y mensajes entrantes.",
+    "is_system": true,
+    "module_id": "NA",
+    "name": "Api key interinstancia",
+    "type": "text",
+    "value": ""
+  },
+  {
+    "_ref": "configuration-violation-uma-value",
+    "description": "Valor en pesos de la UMA (Unidad de Medida y Actualización) usado para calcular el monto de las infracciones. Se actualiza anualmente.",
+    "is_system": true,
+    "module_id": "NA",
+    "name": "Valor de la UMA (infracciones)",
+    "type": "number",
+    "value": 113.14
+  },
+  {
+    "_ref": "configuration-email-mode",
+    "description": "Modo de envío de correo: 'default' usa el relay por defecto del proveedor; 'custom' usa el servidor SMTP capturado abajo.",
+    "is_system": true,
+    "module_id": "NA",
+    "name": "Modo de envío de correo",
+    "type": "select",
+    "value": "default"
+  },
+  {
+    "_ref": "configuration-email-smtp-host",
+    "description": "Host del servidor SMTP propio (solo se usa en modo 'custom').",
+    "is_system": true,
+    "module_id": "NA",
+    "name": "Correo · Host SMTP",
+    "type": "text",
+    "value": "mail.codice-progressio.online"
+  },
+  {
+    "_ref": "configuration-email-smtp-port",
+    "description": "Puerto del servidor SMTP propio (solo se usa en modo 'custom'). Típicamente 587 o 465.",
+    "is_system": true,
+    "module_id": "NA",
+    "name": "Correo · Puerto SMTP",
+    "type": "number",
+    "value": 587
+  },
+  {
+    "_ref": "configuration-email-smtp-secure",
+    "description": "Usa conexión segura (TLS implícito, puerto 465) para el SMTP propio.",
+    "is_system": true,
+    "module_id": "NA",
+    "name": "Correo · Conexión segura (SSL/TLS)",
+    "type": "checkbox",
+    "value": false
+  },
+  {
+    "_ref": "configuration-email-smtp-user",
+    "description": "Usuario de autenticación del servidor SMTP propio (solo modo 'custom').",
+    "is_system": true,
+    "module_id": "NA",
+    "name": "Correo · Usuario SMTP",
+    "type": "text",
+    "value": ""
+  },
+  {
+    "_ref": "configuration-email-smtp-pass",
+    "description": "Contraseña de autenticación del servidor SMTP propio (solo modo 'custom').",
+    "is_system": true,
+    "module_id": "NA",
+    "name": "Correo · Contraseña SMTP",
+    "type": "password",
+    "value": ""
+  },
+  {
+    "_ref": "configuration-email-from",
+    "description": "Remitente de los correos del sistema (ej. 'EMPRESA NUEVA <correo@dominio.example>'). Si se deja vacío se usa el usuario SMTP.",
+    "is_system": true,
+    "module_id": "NA",
+    "name": "Correo · Remitente (from)",
+    "type": "text",
+    "value": ""
+  },
+  {
+    "_ref": "configuration-email-app-name",
+    "description": "Nombre de la aplicación mostrado en los correos del sistema.",
+    "is_system": true,
+    "module_id": "NA",
+    "name": "Correo · Nombre de la aplicación",
+    "type": "text",
+    "value": ""
+  },
+  {
+    "_ref": "configuration-email-app-domain",
+    "description": "Dominio público de la app usado para construir los enlaces de los correos (ej. https://miciudad.gob.mx). Si se deja vacío se infiere de la petición.",
+    "is_system": true,
+    "module_id": "NA",
+    "name": "Correo · Dominio de la aplicación",
+    "type": "text",
+    "value": ""
+  },
+  {
+    "_ref": "configuration-email-require-activation",
+    "description": "Si está activo, los usuarios nuevos nacen inactivos y deben activar su cuenta mediante un enlace enviado por correo.",
+    "is_system": true,
+    "module_id": "NA",
+    "name": "Correo · Requerir activación de cuenta",
+    "type": "checkbox",
+    "value": false
+  },
+  {
+    "_ref": "configuration-ai-extraction-provider",
+    "description": "Proveedor de IA usado para extraer datos de documentos y consultas (valores: 'opencode' o 'anthropic').",
+    "is_system": true,
+    "module_id": "NA",
+    "name": "IA · Proveedor de extracción",
+    "type": "text",
+    "value": "opencode"
+  },
+  {
+    "_ref": "configuration-ai-extraction-opencode-endpoint",
+    "description": "URL base de la API de opencode (Zen); vacío usa https://opencode.ai/zen/v1.",
+    "is_system": true,
+    "module_id": "NA",
+    "name": "IA · Endpoint de opencode",
+    "type": "text",
+    "value": ""
+  },
+  {
+    "_ref": "configuration-ai-extraction-opencode-api-key",
+    "description": "API key de opencode (opencode.ai) — obligatoria para el proveedor 'opencode'.",
+    "is_system": true,
+    "module_id": "NA",
+    "name": "IA · API key de opencode",
+    "type": "text",
+    "value": ""
+  },
+  {
+    "_ref": "configuration-ai-extraction-opencode-model",
+    "description": "Modelo de opencode Zen a usar (p. ej. deepseek-v4-flash-free, big-pickle, north-mini-code-free); vacío usa el modelo por defecto.",
+    "is_system": true,
+    "module_id": "NA",
+    "name": "IA · Modelo de opencode",
+    "type": "text",
+    "value": "deepseek-v4-flash-free"
+  },
+  {
+    "_ref": "configuration-ai-extraction-anthropic-api-key",
+    "description": "API key de Anthropic (console.anthropic.com) para el proveedor 'anthropic'.",
+    "is_system": true,
+    "module_id": "NA",
+    "name": "IA · API key de Anthropic",
+    "type": "text",
+    "value": ""
+  },
+  {
+    "_ref": "configuration-ai-extraction-anthropic-model",
+    "description": "Modelo de Anthropic a usar (p. ej. claude-opus-4-8); vacío usa el modelo por defecto.",
+    "is_system": true,
+    "module_id": "NA",
+    "name": "IA · Modelo de Anthropic",
+    "type": "text",
+    "value": ""
+  },
+  {
+    "_ref": "configuration-pdf-direct-host",
+    "description": "IP, hostname o URL de la impresora Zebra para PDF Direct por Ethernet (TCP RAW). Ejemplo: 192.168.1.50 o http://192.168.1.50:9100",
+    "is_system": true,
+    "module_id": "NA",
+    "name": "PDF Direct · Dirección de impresora",
+    "type": "text",
+    "value": ""
+  },
+  {
+    "_ref": "configuration-pdf-direct-port",
+    "description": "Puerto RAW de la impresora (9100 por defecto). Se ignora si la dirección ya trae puerto.",
+    "is_system": true,
+    "module_id": "NA",
+    "name": "PDF Direct · Puerto",
+    "type": "number",
+    "value": 9100
+  },
+  {
+    "_ref": "configuration-default-theme",
+    "description": "Tema predeterminado del sistema. Se aplica a usuarios nuevos y, si un administrador lo establece como global, a todos los usuarios.",
+    "is_system": true,
+    "module_id": "NA",
+    "name": "Tema predeterminado del sistema",
+    "type": "text",
+    "value": "default"
+  },
+  {
+    "_ref": "configuration-agua-mssql-enabled",
+    "name": "Agua: habilitar conexión MSSQL (SIMAPA)",
+    "description": "Activa la sincronización opcional con el sistema externo MSSQL (SIMAPA). Desactivado, el sistema de agua opera 100% sobre MongoDB.",
+    "is_system": false,
+    "module_id": "agua",
+    "type": "checkbox",
+    "value": false
+  },
+  {
+    "_ref": "configuration-agua-mssql-server",
+    "name": "Agua MSSQL: servidor",
+    "description": "Host o IP del servidor SQL Server externo (SIMAPA).",
+    "is_system": false,
+    "module_id": "agua",
+    "type": "text",
+    "value": ""
+  },
+  {
+    "_ref": "configuration-agua-mssql-port",
+    "name": "Agua MSSQL: puerto",
+    "description": "Puerto del servidor SQL Server externo.",
+    "is_system": false,
+    "module_id": "agua",
+    "type": "number",
+    "value": 1433
+  },
+  {
+    "_ref": "configuration-agua-mssql-user",
+    "name": "Agua MSSQL: usuario",
+    "description": "Usuario de conexión al SQL Server externo.",
+    "is_system": false,
+    "module_id": "agua",
+    "type": "text",
+    "value": ""
+  },
+  {
+    "_ref": "configuration-agua-mssql-password",
+    "name": "Agua MSSQL: contraseña",
+    "description": "Contraseña de conexión al SQL Server externo.",
+    "is_system": false,
+    "module_id": "agua",
+    "type": "text",
+    "value": ""
+  },
+  {
+    "_ref": "configuration-agua-mssql-database",
+    "name": "Agua MSSQL: base de datos",
+    "description": "Nombre de la base de datos en el SQL Server externo.",
+    "is_system": false,
+    "module_id": "agua",
+    "type": "text",
+    "value": ""
+  },
+  {
+    "_ref": "configuration-agua-print-mode",
+    "name": "Agua: tecnología de impresión de tickets",
+    "description": "Selecciona la conexión para imprimir tickets de lectura: 'escpos' (QZ Tray — Epson y mini-impresoras tipo Zebra ESC/POS) o 'zpl' (Zebra BrowserPrint — impresoras Zebra ZPL).",
+    "is_system": false,
+    "module_id": "agua",
+    "type": "text",
+    "value": "escpos"
+  },
+  {
+    "_ref": "configuration-agua-public-url",
+    "name": "Agua: URL pública de consulta (QR)",
+    "description": "URL pública para consulta de contrato (código QR del ticket). Usa un placeholder de EMPRESA, nunca un dominio municipal.",
+    "is_system": false,
+    "module_id": "agua",
+    "type": "text",
+    "value": "https://ejemplo.empresa.local/consulta-agua"
+  },
+  {
+    "_ref": "configuration-payments-stripe-mode",
+    "name": "Pagos · Stripe modo",
+    "description": "test o live. Usa test hasta tener cuenta productiva.",
+    "is_system": true,
+    "module_id": "payments",
+    "type": "select",
+    "value": "test"
+  },
+  {
+    "_ref": "configuration-payments-stripe-publishable-key",
+    "name": "Pagos · Stripe publishable key",
+    "description": "pk_test_… (Dashboard Stripe, modo test). Visible en el portal.",
+    "is_system": true,
+    "module_id": "payments",
+    "type": "text",
+    "value": ""
+  },
+  {
+    "_ref": "configuration-payments-stripe-secret-key",
+    "name": "Pagos · Stripe secret key",
+    "description": "sk_test_… solo backend. Vacío = checkout deshabilitado.",
+    "is_system": true,
+    "module_id": "payments",
+    "type": "password",
+    "value": ""
+  },
+  {
+    "_ref": "configuration-payments-stripe-webhook-secret",
+    "name": "Pagos · Stripe webhook secret",
+    "description": "whsec_… de `stripe listen --forward-to localhost:3000/api/payments/webhook/stripe`.",
+    "is_system": true,
+    "module_id": "payments",
+    "type": "password",
+    "value": ""
+  },
+  {
+    "_ref": "configuration-payments-currency",
+    "name": "Pagos · Moneda",
+    "description": "Código ISO en minúsculas (mxn).",
+    "is_system": true,
+    "module_id": "payments",
+    "type": "text",
+    "value": "mxn"
+  },
+  {
+    "_ref": "configuration-payments-mitec-key",
+    "name": "Pagos · Mitec llave AES",
+    "description": "Llave hexadecimal AES-128 de Mitec.",
+    "is_system": true,
+    "module_id": "cobranza",
+    "type": "password",
+    "value": ""
+  },
+  {
+    "_ref": "configuration-payments-mitec-company",
+    "name": "Pagos · Mitec compañía",
+    "is_system": true,
+    "module_id": "cobranza",
+    "type": "text",
+    "value": ""
+  },
+  {
+    "_ref": "configuration-payments-mitec-branch",
+    "name": "Pagos · Mitec sucursal",
+    "is_system": true,
+    "module_id": "cobranza",
+    "type": "text",
+    "value": ""
+  },
+  {
+    "_ref": "configuration-payments-mitec-user",
+    "name": "Pagos · Mitec usuario",
+    "is_system": true,
+    "module_id": "cobranza",
+    "type": "text",
+    "value": ""
+  },
+  {
+    "_ref": "configuration-payments-mitec-password",
+    "name": "Pagos · Mitec contraseña",
+    "is_system": true,
+    "module_id": "cobranza",
+    "type": "password",
+    "value": ""
+  },
+  {
+    "_ref": "configuration-payments-mitec-data0",
+    "name": "Pagos · Mitec data0",
+    "is_system": true,
+    "module_id": "cobranza",
+    "type": "text",
+    "value": ""
+  }
+]

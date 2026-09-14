@@ -553,6 +553,41 @@ function build_option_rows(module_record: ImperiumDoc, configuration: ImperiumDo
 	});
 }
 
+const MODULE_LIST_INSTANCE_KEYS = [
+	'name',
+	'module_name',
+	'model_id',
+	'is_enable',
+	'status_fields_count',
+	'status_options_count',
+	'has_configuration',
+] as const;
+
+const OPTION_LIST_INSTANCE_KEYS = [
+	'name',
+	'description',
+	'option_field_name',
+	'option_color',
+	'option_type',
+] as const;
+
+type ListInstanceType = Record<string, { nombre_encabezado: string; tipo: string }>;
+
+function list_instance_type(keys: readonly string[]): ListInstanceType {
+	const out: ListInstanceType = {};
+	for (const key of keys) {
+		out[key] = { nombre_encabezado: key.replace(/_/g, ' '), tipo: 'string' };
+	}
+	return out;
+}
+
+function with_list_instance_type<T extends Record<string, unknown>>(
+	body: T,
+	keys: readonly string[],
+): T & { tipo_de_instancia: ListInstanceType } {
+	return { ...body, tipo_de_instancia: list_instance_type(keys) };
+}
+
 /**
  * GET /status-option-control: filas virtuales por módulo (o por opción si `?module=`).
  */
@@ -561,10 +596,18 @@ export async function list_status_option_control(ctx: StatusCtx) {
 	const module_filter = text(ctx.url?.searchParams.get('module'));
 	if (module_filter) {
 		if (!/^[a-f0-9]{24}$/i.test(module_filter)) {
-			return ok([], 'No se encontró el módulo solicitado.');
+			return with_list_instance_type(
+				ok([], 'No se encontró el módulo solicitado.'),
+				OPTION_LIST_INSTANCE_KEYS,
+			);
 		}
 		const module_record = await find_module(ctx.store, module_filter);
-		if (!module_record) return ok([], 'No se encontró el módulo solicitado.');
+		if (!module_record) {
+			return with_list_instance_type(
+				ok([], 'No se encontró el módulo solicitado.'),
+				OPTION_LIST_INSTANCE_KEYS,
+			);
+		}
 		const configuration = await find_existing_configuration(ctx.store, String(module_record._id));
 		const filtered = build_option_rows(module_record, configuration).filter((row) =>
 			matches_term(
@@ -573,14 +616,20 @@ export async function list_status_option_control(ctx: StatusCtx) {
 				q.q,
 			),
 		);
-		return ok(
-			filtered.slice(q.skip, q.skip + q.take),
-			`Opciones configuradas para ${module_record.name}.`,
-			filtered.length,
+		return with_list_instance_type(
+			ok(
+				filtered.slice(q.skip, q.skip + q.take),
+				`Opciones configuradas para ${module_record.name}.`,
+				filtered.length,
+			),
+			OPTION_LIST_INSTANCE_KEYS,
 		);
 	}
 	if (!ctx.store.has('module-management')) {
-		return ok([], 'Opciones de estado por módulo cargadas correctamente.');
+		return with_list_instance_type(
+			ok([], 'Opciones de estado por módulo cargadas correctamente.'),
+			MODULE_LIST_INSTANCE_KEYS,
+		);
 	}
 	const modules: ImperiumDoc[] = [];
 	for await (const page of ctx.store.scan('module-management', { include_inactive: true })) {
@@ -598,10 +647,13 @@ export async function list_status_option_control(ctx: StatusCtx) {
 		)
 		.sort((a, b) => String(a.name).localeCompare(String(b.name), 'es'))
 		.filter((row) => matches_term(row, ['name', 'description', 'module_name', 'model_id'], q.q));
-	return ok(
-		filtered.slice(q.skip, q.skip + q.take),
-		'Opciones de estado por módulo cargadas correctamente.',
-		filtered.length,
+	return with_list_instance_type(
+		ok(
+			filtered.slice(q.skip, q.skip + q.take),
+			'Opciones de estado por módulo cargadas correctamente.',
+			filtered.length,
+		),
+		MODULE_LIST_INSTANCE_KEYS,
 	);
 }
 

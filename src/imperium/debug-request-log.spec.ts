@@ -2,6 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import {
 	format_console_log,
 	is_noisy_path,
+	request_result,
+	should_read_response_body,
 } from './debug-request-log.ts';
 
 describe('is_noisy_path', () => {
@@ -34,5 +36,25 @@ describe('format_console_log', () => {
 		expect(ok).toContain('GET /products');
 		expect(err).toContain('[ERROR');
 		expect(err).toContain('\x1b[0m');
+	});
+});
+
+describe('should_read_response_body', () => {
+	test('skips PDF and other binary types so logging cannot corrupt the clone', () => {
+		expect(should_read_response_body('application/pdf')).toBe(false);
+		expect(should_read_response_body('application/pdf; charset=binary')).toBe(
+			false,
+		);
+		expect(should_read_response_body('image/png')).toBe(false);
+		expect(should_read_response_body('application/json')).toBe(true);
+		expect(should_read_response_body('text/html; charset=utf-8')).toBe(true);
+	});
+});
+
+describe('request_result', () => {
+	test('adjunto sin bytes no se trata como error fatal', () => {
+		expect(request_result(404, 'attachment_bytes_missing')).toBe('warning');
+		expect(request_result(404, 'attachment_not_found')).toBe('warning');
+		expect(request_result(404, '')).toBe('error');
 	});
 });

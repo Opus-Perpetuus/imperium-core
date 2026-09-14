@@ -56,3 +56,62 @@ describe('auth.ts wires shipped surface helpers', () => {
 		expect(can_enter_internal({ type: 'external' })).toBe(false);
 	});
 });
+
+describe('alta de cliente del sitio público', () => {
+	test('la ruta pública de registro está reconocida como anónima', () => {
+		// Si no la reconoce, la petición cae al chequeo de sesión y responde
+		// 401: nadie podría crearse una cuenta.
+		const post = (p: string) =>
+			new Request(`http://t${p}`, { method: 'POST' });
+		expect(is_public_login_post(post('/api/auth/public/register'))).toBe(true);
+		expect(is_public_login_post(post('/api/auth/public/register/'))).toBe(true);
+		expect(is_public_login_post(post('/api/auth/public/login'))).toBe(true);
+		// Y no abre de más: el alta del personal no es pública.
+		expect(is_public_login_post(post('/api/auth/register'))).toBe(false);
+		expect(is_public_login_post(post('/api/auth/login'))).toBe(false);
+	});
+
+	test('el registro se despacha antes de exigir sesión', () => {
+		// El handler tiene que estar en el tramo anónimo de handle_auth; si
+		// quedara detrás de load_session, nunca se alcanzaría.
+		const registro = auth_src.indexOf("rest === '/public/register'");
+		const sesion = auth_src.indexOf('const session = await load_session(');
+		expect(registro).toBeGreaterThan(0);
+		expect(sesion).toBeGreaterThan(0);
+		expect(registro).toBeLessThan(sesion);
+	});
+
+	test('el documento se arma con lista blanca, nunca con el cuerpo', () => {
+		// El admin de verdad no se decide por is_admin sino por el _ref de la
+		// semilla y por los grupos: copiar el cuerpo seria una via de escalada.
+		const cuerpo = auth_src.slice(
+			auth_src.indexOf('async function register_public_user('),
+			auth_src.indexOf('async function login_on_surface('),
+		);
+		expect(cuerpo).toContain("type: 'external'");
+		expect(cuerpo).toContain('prepare_user_write');
+		// Ni spread del cuerpo ni campos de privilegio.
+		expect(cuerpo).not.toContain('...body');
+		expect(cuerpo).not.toContain('_ref');
+		expect(cuerpo).not.toContain('groups');
+		expect(cuerpo).not.toContain('access_rights');
+	});
+
+	test('pasa por su propio limitador y el mensaje de duplicado es genérico', () => {
+		// Matiz honesto: el MENSAJE no nombra la cuenta, pero el comportamiento
+		// sí difiere (201 si el correo es nuevo, 409 si ya existe). Cualquier
+		// alta que además inicie sesión dice eso; lo que acota el abuso es el
+		// cubo por IP, y por eso `request_ip` no se fía del cliente.
+		const cuerpo = auth_src.slice(
+			auth_src.indexOf('async function register_public_user('),
+			auth_src.indexOf('async function login_on_surface('),
+		);
+		expect(cuerpo).toContain('consume_public_register_limits');
+		expect(cuerpo).not.toContain('Ya existe');
+	});
+
+	test('la contraseña se hashea por el mismo camino que el alta interna', () => {
+		expect(crud_src).toContain('export async function prepare_user_write');
+		expect(crud_src).toContain('argon2');
+	});
+});

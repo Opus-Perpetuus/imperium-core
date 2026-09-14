@@ -10,6 +10,8 @@ const LOGIN_BLOCKED =
 	'Demasiados intentos de inicio de sesión. Intenta más tarde o contacta a un administrador.';
 const RESET_BLOCKED =
 	'Demasiadas solicitudes de recuperación. Intenta más tarde o contacta a un administrador.';
+const REGISTER_BLOCKED =
+	'Demasiados intentos de alta. Espera unos minutos y vuelve a intentarlo.';
 
 function env_int(name: string, fallback: number): number {
 	const raw = process.env[name];
@@ -23,6 +25,8 @@ const login_email_max = env_int('AUTH_LOGIN_EMAIL_RATE_LIMIT_MAX', 15);
 const login_ip_max = env_int('AUTH_LOGIN_IP_RATE_LIMIT_MAX', 60);
 const reset_email_max = env_int('AUTH_PASSWORD_RESET_EMAIL_RATE_LIMIT_MAX', 5);
 const reset_ip_max = env_int('AUTH_PASSWORD_RESET_IP_RATE_LIMIT_MAX', 20);
+const register_email_max = env_int('AUTH_PUBLIC_REGISTER_EMAIL_RATE_LIMIT_MAX', 3);
+const register_ip_max = env_int('AUTH_PUBLIC_REGISTER_IP_RATE_LIMIT_MAX', 10);
 
 export function normalize_auth_rate_limit_email(email: unknown): string {
 	return String(email ?? '')
@@ -30,13 +34,42 @@ export function normalize_auth_rate_limit_email(email: unknown): string {
 		.toLowerCase();
 }
 
+/**
+ * IP real de quien llama, para los cubos del limitador.
+ *
+ * `x-forwarded-for` la escribe el cliente: fiarse de ella sin más deja el
+ * limitador por IP a la vez esquivable —rotando la cabecera se estrena cubo en
+ * cada intento— y envenenable: mandando la IP de otra persona se le consume el
+ * suyo y se le bloquea. Por eso solo se cree cuando el despliegue declara que
+ * hay un proxy delante (`TRUST_PROXY_HEADERS=1`); si no, manda la dirección del
+ * socket, que el cliente no elige.
+ *
+ * Detrás de un proxy sin esa variable todas las peticiones comparten la IP del
+ * proxy y el cubo por IP se vuelve global: es la opción segura por defecto, y
+ * activarla es una línea de configuración.
+ */
+const socket_ips = new WeakMap<Request, string>();
+
+export function remember_socket_ip(req: Request, ip: string | null): void {
+	if (ip) socket_ips.set(req, ip);
+}
+
+function trusts_proxy_headers(): boolean {
+	const raw = String(process.env.TRUST_PROXY_HEADERS ?? '').trim().toLowerCase();
+	return raw === '1' || raw === 'true' || raw === 'yes';
+}
+
 export function request_ip(req: Request): string {
-	const forwarded = req.headers.get('x-forwarded-for');
-	if (forwarded) {
-		const first = forwarded.split(',')[0]?.trim();
-		if (first) return first;
+	if (trusts_proxy_headers()) {
+		const forwarded = req.headers.get('x-forwarded-for');
+		if (forwarded) {
+			const first = forwarded.split(',')[0]?.trim();
+			if (first) return first;
+		}
+		const real = req.headers.get('x-real-ip')?.trim();
+		if (real) return real;
 	}
-	return req.headers.get('x-real-ip')?.trim() || 'unknown';
+	return socket_ips.get(req) || 'unknown';
 }
 
 export async function ensure_auth_rate_limit_table(sql: Bun.SQL): Promise<void> {
@@ -114,6 +147,34 @@ export async function consume_password_reset_request_limits(
 	}
 	if (await consume(sql, `ri:reset-ip:${ip}`, reset_ip_max)) {
 		return blocked_body(RESET_BLOCKED);
+	}
+	return null;
+}
+
+/**
+ * Cubos del alta pública.
+ *
+ * Propios y no los de la recuperación: darse de alta y recuperar la contraseña
+ * son cosas distintas y no deben gastarse el presupuesto la una a la otra.
+ *
+ * El cubo por IP es el que importa de verdad. Un formulario de alta que además
+ * inicia sesión dice, inevitablemente, si un correo ya existe —cualquiera
+ * responde distinto a «creada» y a «ya estaba»—, así que quien quiera enumerar
+ * correos solo necesita probarlos uno a uno. El cubo por correo no lo frena
+ * (cada intento usa un correo distinto): lo frena el de IP, y por eso importa
+ * que la IP no la elija el cliente (ver `request_ip`).
+ */
+export async function consume_public_register_limits(
+	sql: Bun.SQL,
+	email: string,
+	ip: string,
+): Promise<{ error: string; message: string } | null> {
+	const identity = email || `missing:${ip}`;
+	if (await consume(sql, `ge:register-email:${identity}`, register_email_max)) {
+		return blocked_body(REGISTER_BLOCKED);
+	}
+	if (await consume(sql, `gi:register-ip:${ip}`, register_ip_max)) {
+		return blocked_body(REGISTER_BLOCKED);
 	}
 	return null;
 }

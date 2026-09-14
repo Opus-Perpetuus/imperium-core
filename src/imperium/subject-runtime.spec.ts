@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
 import {
 	BASE_SUBJECT_SLUGS,
 	compose_install_args,
@@ -59,5 +60,23 @@ describe('subject-runtime', () => {
 			}),
 		).toBe('ghcr.io/opus-perpetuus/subject-pos:0.1.0');
 		expect(subject_service_name('almacen')).toBe('subject-almacen');
+	});
+
+	test('operator compose file declares a service for every catalog slug including tienda', () => {
+		const catalog = JSON.parse(
+			readFileSync(new URL('../../catalog.json', import.meta.url), 'utf8'),
+		) as { subjects: Array<{ slug: string }> };
+		const compose = readFileSync(
+			new URL('../../../docker-compose.yml', import.meta.url),
+			'utf8',
+		);
+		const missing: string[] = [];
+		for (const subject of catalog.subjects) {
+			const service = subject_service_name(subject.slug);
+			const declared = new RegExp(`^  ${service}:`, 'm').test(compose);
+			if (!declared) missing.push(service);
+		}
+		expect(missing).toEqual([]);
+		expect(compose).toContain('subject-tienda:');
 	});
 });

@@ -239,6 +239,22 @@ describe('list_select_sql', () => {
 		const count = list_select_sql('inventory-physical-count', cols);
 		expect(count).toContain("'lineas'");
 	});
+
+	test('citizen-report Folio column coalesces empty SQL name from payload', () => {
+		const citizen_cols = new Set([
+			...cols,
+			'citizen_name',
+			'priority',
+			'status',
+			'sequence',
+		]);
+		const sql = list_select_sql('citizen-report', citizen_cols);
+		expect(sql).toBeTruthy();
+		expect(sql).toContain('NULLIF');
+		expect(sql).toMatch(/COALESCE/i);
+		expect(sql).toMatch(/payload/i);
+		expect(sql).toMatch(/->>'name'|->> 'name'/);
+	});
 });
 
 describe('populate_lite_select_sql', () => {
@@ -251,6 +267,14 @@ describe('populate_lite_select_sql', () => {
 		expect(sql).toContain("'name'");
 		expect(sql).not.toContain('"existencia"');
 		expect(sql).not.toBe('*');
+	});
+
+	test('fills empty physical name from payload so assigned-to lists people', () => {
+		const sql = populate_lite_select_sql(
+			new Set(['id', 'name', 'payload']),
+		);
+		expect(sql).toContain('COALESCE');
+		expect(sql).toMatch(/->>'name'|->> 'name'/);
 	});
 });
 

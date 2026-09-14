@@ -5,7 +5,7 @@ import { apply_public_user_create } from '@opus-perpetuus/imperium-core-kit';
 import { as_array, as_object, fail, ok, type ImperiumDoc } from './envelope.ts';
 import { run_batch_import } from './batch-import.ts';
 import { query_list, read_imperium_body } from './body.ts';
-import type { ImperiumStore } from './store.ts';
+import { related_model_for_field, type ImperiumStore } from './store.ts';
 import {
 	assert_pos_pin,
 	finalize_user_pin_notice,
@@ -131,12 +131,17 @@ import {
 import { assign_document_increments } from './custom-pattern-render.ts';
 import { prepare_increment_create } from './increment-normalize.ts';
 import { build_access } from './auth.ts';
-import { is_seed_admin } from './group-access.ts';
+import { can_manage_user_groups, is_seed_admin } from './group-access.ts';
 import {
+	apply_related_labels,
+	field_value_ids_needing_label,
 	field_values_from_distinct,
 	field_values_message,
 	field_values_missing_field_error,
 	filter_pedido_estado_options,
+	merge_related_names,
+	related_doc_label,
+	type FieldValueOption,
 } from './field-values.ts';
 import {
 	apply_custom_list_values,
@@ -151,12 +156,60 @@ import {
 	state_field_for,
 } from './state-fields.ts';
 import {
+	is_postgres_table_tracker_resource,
+	lookup_tracker,
+} from './postgres-table-tracker.ts';
+import {
 	assert_record_in_scope,
 	operation_flag,
 	record_rule_lookup_keys,
 	record_rule_scope_from_access,
 	type RecordRuleMatchResult,
 } from './record-rules.ts';
+
+async function names_for_ids(
+	store: ImperiumStore,
+	resource: string,
+	ids: string[],
+): Promise<Map<string, string>> {
+	const names = new Map<string, string>();
+	if (!ids.length || !store.has(resource)) return names;
+	const { rows } = await store.find_many(resource, {
+		ids,
+		take: ids.length,
+		include_inactive: true,
+		populate: false,
+		skip_total: true,
+		populate_lite: true,
+	});
+	for (const row of rows) {
+		const id = String(row._id ?? '').trim();
+		const name = related_doc_label(row);
+		if (id && name) names.set(id, name);
+	}
+	return names;
+}
+
+async function label_ref_field_values(
+	store: ImperiumStore,
+	resource: string,
+	field_path: string,
+	options: FieldValueOption[],
+): Promise<FieldValueOption[]> {
+	const ids = field_value_ids_needing_label(options);
+	if (!ids.length) return options;
+	const model = related_model_for_field(resource, field_path);
+	if (!model) return options;
+	const related = store.resource_for_model(model);
+	let names = related ? await names_for_ids(store, related, ids) : new Map<string, string>();
+	const missing = ids.filter((id) => !names.has(id));
+	const fallback =
+		related === 'employee' ? 'user' : related === 'user' ? 'employee' : '';
+	if (missing.length && fallback && fallback !== related) {
+		names = merge_related_names(names, await names_for_ids(store, fallback, missing));
+	}
+	return apply_related_labels(options, names);
+}
 
 async function record_rule_scope(
 	store: ImperiumStore,
@@ -166,6 +219,9 @@ async function record_rule_scope(
 ): Promise<RecordRuleMatchResult> {
 	if (!actor || is_seed_admin(actor)) return { match: null, applicable_rules: [] };
 	const access = await build_access(store, actor);
+	if (resource === 'menu-management' && can_manage_user_groups(access)) {
+		return { match: null, applicable_rules: [] };
+	}
 	return record_rule_scope_from_access(
 		access,
 		actor,
@@ -268,6 +324,10 @@ export async function handle_crud(
 	const segs = rest.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean);
 	const body = async () => read_imperium_body(req);
 
+	if (is_postgres_table_tracker_resource(resource) && method !== 'GET') {
+		throw new Error('No disponible');
+	}
+
 	if (resource === 'cobranza-payment') {
 		if (method === 'POST' && segs.length === 0) {
 			return json(
@@ -313,7 +373,12 @@ export async function handle_crud(
 			actor,
 			resource,
 			field_path,
-			field_values_from_distinct(values, field_path, state_field_for(metadata, field_path)),
+			await label_ref_field_values(
+				store,
+				resource,
+				field_path,
+				field_values_from_distinct(values, field_path, state_field_for(metadata, field_path)),
+			),
 		);
 		return json(resource, ok(options, field_values_message(field_path), options.length));
 	}
@@ -530,8 +595,21 @@ export async function handle_crud(
 				actor,
 			);
 		}
-		const doc = await store.find_id(resource, segs[0]!);
-		if (!doc) return json(resource, fail('No encontrado', 404).body, 404);
+		const doc = is_postgres_table_tracker_resource(resource)
+			? await lookup_tracker(store, segs[0]!)
+			: await store.find_id(resource, segs[0]!);
+		if (!doc) {
+			return json(
+				resource,
+				fail(
+					is_postgres_table_tracker_resource(resource)
+						? 'No se encontró el modelo solicitado.'
+						: 'No encontrado',
+					404,
+				).body,
+				404,
+			);
+		}
 		if (is_dashboard_resource(resource)) {
 			const access = await dashboard_access(store, actor);
 			if (!dashboard_is_visible(doc, access)) {
@@ -1359,6 +1437,9 @@ function detail_message(resource: string) {
 	if (resource === 'custom-pattern-increment-sequence-parts') {
 		return 'Parte del patrón encontrada.';
 	}
+	if (is_postgres_table_tracker_resource(resource)) {
+		return 'Modelo encontrado correctamente.';
+	}
 	if (is_location_resource(resource)) return 'Ubicación encontrada';
 	if (is_physical_count_resource(resource)) return 'Conteo encontrado';
 	if (is_dashboard_resource(resource)) return 'Tablero encontrado';
@@ -1430,7 +1511,7 @@ function sanitize_payload(resource: string, body: unknown): unknown {
 	};
 }
 
-async function prepare_user_write(
+export async function prepare_user_write(
 	resource: string,
 	doc: ImperiumDoc,
 	require_password: boolean,

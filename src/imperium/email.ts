@@ -146,3 +146,67 @@ export async function send_password_reset_email(input: {
 		text,
 	});
 }
+
+/**
+ * Aviso de una app a una persona, por correo.
+ *
+ * `nox.notify` era un stub que devolvía un id y tiraba el mensaje: una app no
+ * tenía forma de avisarle nada a nadie. Comparte transporte y remitente con el
+ * resto del correo del núcleo; el cuerpo lo pone la app, que es quien sabe de
+ * qué habla.
+ */
+export async function send_subject_notification_email(input: {
+	settings: EmailSettings;
+	to: string;
+	title: string;
+	body?: string;
+}) {
+	if (!email_is_configured(input.settings)) {
+		throw new Error(
+			'El servicio de correo no está configurado (revisa Configuración → Correo o las variables CORREO_*).',
+		);
+	}
+	const app_name = input.settings.app_name || 'la plataforma';
+	const paragraphs = String(input.body ?? '')
+		.split(/\n{2,}/)
+		.map((p) => p.trim())
+		.filter(Boolean);
+	const html = `<!doctype html><html><body style="font-family:sans-serif">
+<h2>${escape_html(input.title)}</h2>
+${paragraphs.map((p) => `<p>${escape_html(p).replace(/\n/g, '<br>')}</p>`).join('\n')}
+<p style="color:#666;font-size:12px">${escape_html(app_name)}</p>
+</body></html>`;
+	const text = [input.title, '', ...paragraphs].join('\n');
+	const nodemailer = await import('nodemailer');
+	const transporter = nodemailer.createTransport({
+		host: input.settings.host,
+		port: input.settings.port,
+		secure: input.settings.secure,
+		auth: { user: input.settings.user, pass: input.settings.pass },
+		// Un servidor de correo caído tarda ocho segundos en rechazar la conexión
+		// (medido), y el salto del núcleo a una app se corta a los cuatro. Un aviso
+		// es accesorio: se rinde antes de que su lentitud se note en la operación
+		// que lo disparó.
+		connectionTimeout: NOTIFICATION_TIMEOUT_MS,
+		greetingTimeout: NOTIFICATION_TIMEOUT_MS,
+		socketTimeout: NOTIFICATION_TIMEOUT_MS,
+	});
+	await transporter.sendMail({
+		from: input.settings.from || input.settings.user,
+		to: input.to,
+		subject: input.title,
+		html,
+		text,
+	});
+}
+
+/** Lo que se espera a un servidor de correo antes de darlo por perdido. */
+export const NOTIFICATION_TIMEOUT_MS = 2500;
+
+function escape_html(value: string): string {
+	return value
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;')
+		.replace(/"/g, '&quot;');
+}

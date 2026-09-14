@@ -12,7 +12,10 @@ import {
 	is_public_auth_get,
 	is_public_extra_action,
 } from './auth.ts';
-import { can_enter_internal } from '@opus-perpetuus/imperium-core-kit';
+import {
+	can_enter_internal,
+	PUBLIC_LANDING_ENABLED_REF,
+} from '@opus-perpetuus/imperium-core-kit';
 import { handle_crud } from './crud.ts';
 import { handle_action } from './actions.ts';
 import { handle_mcp_agent, seed_mcp_access } from './mcp-agent.ts';
@@ -20,7 +23,12 @@ import { serve_media } from './media.ts';
 import { ImperiumStore, load_catalog_path } from './store.ts';
 import { fail, humanize_caught_error } from './envelope.ts';
 import { PinChallengeError } from './user-pin.ts';
-import { bind_debug_store, debug_error, persist_request_log } from './debug-request-log.ts';
+import {
+	bind_debug_store,
+	debug_error,
+	persist_request_log,
+	should_read_response_body,
+} from './debug-request-log.ts';
 import { run_with_history_context } from './history.ts';
 import {
 	assert_subject_resource_access,
@@ -86,6 +94,9 @@ export function create_imperium_layer(sql: Bun.SQL) {
 
 	return {
 		store,
+		// El gateway de apps lo necesita para vestir sus páginas públicas con la
+		// personalización que se haya publicado desde la GUI.
+		portal_store,
 		async handle(req: Request): Promise<Response | null> {
 			const started_ms = Date.now();
 			const url = new URL(req.url);
@@ -95,6 +106,7 @@ export function create_imperium_layer(sql: Bun.SQL) {
 					store: portal_store,
 					sanitize: portal_html_sanitize,
 					actor: null,
+					read_landing_enabled: () => read_landing_enabled_flag(store),
 				});
 				return portal ? add_cors(req, portal) : portal;
 			}
@@ -128,11 +140,18 @@ export function create_imperium_layer(sql: Bun.SQL) {
 					store: portal_store,
 					sanitize: portal_html_sanitize,
 					actor,
+					read_landing_enabled: () => read_landing_enabled_flag(store),
 				});
 				if (portal) {
 					const out = add_cors(req, portal);
 					if (out && req.method !== 'OPTIONS') {
-						await persist_request_log(store, req, out.clone(), actor, started_ms);
+						await persist_request_log(
+							store,
+							req,
+							clone_for_request_log(out),
+							actor,
+							started_ms,
+						);
 					}
 					return out;
 				}
@@ -140,7 +159,13 @@ export function create_imperium_layer(sql: Bun.SQL) {
 			const out = await dispatch(store, sql, req, url, path);
 			if (out && req.method !== 'OPTIONS') {
 				const actor = await current_user(sql, req).catch(() => null);
-				await persist_request_log(store, req, out.clone(), actor, started_ms);
+				await persist_request_log(
+					store,
+					req,
+					clone_for_request_log(out),
+					actor,
+					started_ms,
+				);
 			}
 			return out;
 		},
@@ -353,6 +378,20 @@ async function handle_subjects(
 	return Response.json({ error: 'not found' }, { status: 404 });
 }
 
+async function read_landing_enabled_flag(
+	store: ImperiumStore,
+): Promise<unknown> {
+	try {
+		if (!store.has('configuration')) return undefined;
+		const doc = await store.find_where('configuration', {
+			_ref: PUBLIC_LANDING_ENABLED_REF,
+		});
+		return doc?.value;
+	} catch {
+		return undefined;
+	}
+}
+
 function strip_api_prefix(path: string): string {
 	if (path === '/api') return '/';
 	if (path.startsWith('/api/')) return path.slice(4) || '/';
@@ -413,7 +452,14 @@ function match_path(pattern: string, actual: string): Record<string, string> | n
 	return params;
 }
 
-function add_cors(req: Request, res: Response | null): Response | null {
+function clone_for_request_log(res: Response): Response {
+	if (!should_read_response_body(res.headers.get('content-type'))) {
+		return new Response(null, { status: res.status, headers: res.headers });
+	}
+	return res.clone();
+}
+
+export function add_cors(req: Request, res: Response | null): Response | null {
 	if (!res) return null;
 	const origin = req.headers.get('origin');
 	if (!origin) return res;

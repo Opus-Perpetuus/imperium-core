@@ -28,10 +28,6 @@ function is_id(value: string): boolean {
 	return /^[a-f0-9]{24}$/i.test(value);
 }
 
-function round_qty(value: number): number {
-	return Math.round((value + Number.EPSILON) * 10000) / 10000;
-}
-
 async function location_by_ref(store: ImperiumStore, ref: string) {
 	if (!store.has('inventory-internal-location')) return null;
 	return (
