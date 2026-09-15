@@ -4,24 +4,65 @@ on:
     branches: [main]
   workflow_dispatch:
 permissions:
-  contents: read
+  # `contents: write` para poder empujar el tag de la version publicada.
+  contents: write
   packages: write
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
   docker:
+    if: ${{ github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip image]') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Sin la historia completa no hay tags y no se puede saber si esta
+          # version ya se publico.
+          fetch-depth: 0
+      - name: Version del producto
+        id: version
+        run: |
+          VERSION="$(jq -r .version package.json)"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
+            echo "package.json sin version" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
+            # Ya se publico esta version: un push de chore no vuelve a pisar la
+            # imagen que ya esta en GHCR.
+            echo "nueva=false" >> "$GITHUB_OUTPUT"
+            echo "v$VERSION ya publicada; no se republica." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "nueva=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Tag de la version publicada
+        if: steps.version.outputs.nueva == 'true'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v$VERSION" -m "v$VERSION"
+          git push origin "v$VERSION"
       - uses: docker/setup-buildx-action@v3
+        if: steps.version.outputs.nueva == 'true'
       - uses: docker/login-action@v3
+        if: steps.version.outputs.nueva == 'true'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push
+        if: steps.version.outputs.nueva == 'true'
         run: |
-          docker build --build-context kit=./vendor/kit \
-            -t ghcr.io/opus-perpetuus/imperium-core:0.1.0 \
+          VERSION="${{ steps.version.outputs.version }}"
+          docker buildx build --build-context kit=./vendor/kit \
+            --label org.opencontainers.image.source=https://github.com/Opus-Perpetuus/imperium-core \
+            --annotation org.opencontainers.image.source=https://github.com/Opus-Perpetuus/imperium-core \
+            --annotation index:org.opencontainers.image.source=https://github.com/Opus-Perpetuus/imperium-core \
+            --annotation manifest:org.opencontainers.image.source=https://github.com/Opus-Perpetuus/imperium-core \
+            -t ghcr.io/opus-perpetuus/imperium-core:"$VERSION" \
             -t ghcr.io/opus-perpetuus/imperium-core:latest \
+            --push \
             .
-          docker push ghcr.io/opus-perpetuus/imperium-core:0.1.0
-          docker push ghcr.io/opus-perpetuus/imperium-core:latest
