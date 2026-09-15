@@ -5,6 +5,7 @@
 import {
 	apply_landing_code,
 	default_home_document,
+	is_legacy_placeholder_home,
 	is_public_landing_enabled,
 	sanitize_page_document_html,
 	validate_page_descriptor,
@@ -182,12 +183,28 @@ function prepare_document(
 	return { ok: true, document: sanitized };
 }
 
+/**
+ * Una landing que sigue siendo, palabra por palabra, el cartel de obra que se
+ * sembraba antes de que existiera la plantilla.
+ *
+ * Se mira el borrador **y** lo publicado: si alguno de los dos ya es otra cosa,
+ * alguien escribio ahi y no se toca. Sin esto la plantilla completa solo la veia
+ * una instalacion nueva, y toda instalacion anterior se quedaba con
+ * "Configura esta landing desde el administrador" para siempre.
+ */
+function is_untouched_placeholder(row: PortalPageRow): boolean {
+	return (
+		is_legacy_placeholder_home(row.draft) &&
+		(row.published == null || is_legacy_placeholder_home(row.published))
+	);
+}
+
 export async function ensure_home(
 	store: PortalPageStore,
 	sanitize: PortalHtmlSanitize,
 ): Promise<PortalPageRow> {
 	const existing = await store.get(HOME_SLUG);
-	if (existing) return existing;
+	if (existing && !is_untouched_placeholder(existing)) return existing;
 	const prepared = prepare_document(default_home_document(), sanitize);
 	const doc = prepared.ok ? prepared.document : default_home_document();
 	const now = new Date().toISOString();
@@ -198,7 +215,9 @@ export async function ensure_home(
 		published: doc,
 		published_at: now,
 		published_by: 'seed',
-		is_active: true,
+		// Cambiar el cartel de obra por la plantilla no vuelve a encender una
+		// landing que el administrador dejó apagada.
+		is_active: existing?.is_active ?? true,
 	};
 	await store.put(row);
 	return row;

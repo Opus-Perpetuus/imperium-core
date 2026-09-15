@@ -32,7 +32,7 @@ import { postgres_table_tracker_field_values } from './postgres-table-tracker-fi
 import { TRACKER_RESOURCE } from './postgres-table-tracker.ts';
 import { debug_read_logs, debug_read_related, debug_statistics } from './debug-log-flow.ts';
 import { AguaMssqlService } from './agua-mssql.ts';
-import { calcular_importe } from './agua-importe.ts';
+import { after_lectura_create, calcular_importe } from './agua-importe.ts';
 import { looks_like_canonical, serialize_cfdi_to_xml, type CfdiCanonical } from './cfdi-xml.ts';
 import { has_cfdi_errors, run_cfdi_validation } from './cfdi-validator.ts';
 import { create_cfdi_from_invoice_request } from './cfdi-from-invoice.ts';
@@ -6152,17 +6152,7 @@ async function agua_push_lecturas_lote(ctx: Ctx) {
 			...payload,
 		});
 		saved.push(created);
-		if (item.contrato) {
-			const contrato = await ctx.store.find_where('contrato', {
-				contrato: String(item.contrato),
-			});
-			if (contrato) {
-				await ctx.store.update('contrato', String(contrato._id), {
-					tomada: true,
-					sincronizada: true,
-				});
-			}
-		}
+		await after_lectura_create(ctx.store, created);
 	}
 	return ok(saved, `Se registraron ${saved.length} lecturas`);
 }

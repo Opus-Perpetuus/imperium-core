@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import {
 	apply_landing_code,
 	default_home_document,
+	legacy_placeholder_home_document,
 	sanitize_nox_html,
 	type NoxHtmlPurifier,
 } from '@opus-perpetuus/imperium-core-kit';
@@ -43,6 +44,87 @@ describe('portal persist', () => {
 		expect((page?.children ?? []).length).toBeGreaterThan(0);
 		expect(published?.['email']).toBeUndefined();
 		expect(published?.['password']).toBeUndefined();
+	});
+
+	test('el cartel de obra intacto sube a la plantilla completa', async () => {
+		// `ensure_home` solo sembraba cuando no habia fila, asi que toda
+		// instalacion anterior a la plantilla se quedaba con dos bloques.
+		const pages = store();
+		const cartel = legacy_placeholder_home_document();
+		await pages.put({
+			slug: 'home',
+			name: 'Inicio',
+			draft: cartel,
+			published: cartel,
+			published_at: '2026-01-01T00:00:00.000Z',
+			published_by: 'seed',
+			is_active: true,
+		});
+
+		await ensure_home(pages, sanitize);
+
+		const published = await get_published(pages, 'home');
+		const page = published?.['page'] as { children?: unknown[] };
+		expect((page?.children ?? []).length).toBe(
+			(
+				(default_home_document()['page'] as { children: unknown[] })
+					.children
+			).length,
+		);
+		expect(JSON.stringify(published)).not.toContain(
+			'Configura esta landing',
+		);
+	});
+
+	test('una landing escrita por alguien no se toca nunca', async () => {
+		const pages = store();
+		const propia = {
+			id: 'portal.home',
+			owner: 'portal',
+			title: 'Inicio',
+			page: {
+				component: 'nox.page',
+				children: [
+					{
+						component: 'nox.markdown-view',
+						props: { content: '# Bienvenido a la tienda' },
+					},
+				],
+			},
+		};
+		await pages.put({
+			slug: 'home',
+			name: 'Inicio',
+			draft: propia,
+			published: propia,
+			published_at: '2026-01-01T00:00:00.000Z',
+			published_by: 'seed',
+			is_active: true,
+		});
+
+		await ensure_home(pages, sanitize);
+
+		expect(await get_published(pages, 'home')).toEqual(propia);
+	});
+
+	test('el cartel apagado sube de plantilla pero sigue apagado', async () => {
+		const pages = store();
+		const cartel = legacy_placeholder_home_document();
+		await pages.put({
+			slug: 'home',
+			name: 'Inicio',
+			draft: cartel,
+			published: cartel,
+			published_at: '2026-01-01T00:00:00.000Z',
+			published_by: 'seed',
+			is_active: false,
+		});
+
+		await ensure_home(pages, sanitize);
+
+		const row = await get_draft(pages, 'home');
+		expect(row?.is_active).toBe(false);
+		expect(JSON.stringify(row?.draft)).not.toContain('Configura esta landing');
 	});
 
 	test('draft replace does not become public until publish', async () => {

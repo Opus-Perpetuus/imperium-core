@@ -803,6 +803,16 @@ async function finish_subject_lifecycle(
 	}
 
 	await upsert_subject_marker(store, sub, installed);
+	if (installed) {
+		try {
+			const { ensure_installed_subject_menus } = await import(
+				'./subject-menu-seed.ts'
+			);
+			await ensure_installed_subject_menus(store, [sub]);
+		} catch {
+			/* menú-management ausente */
+		}
+	}
 	await write_install_row(
 		sql,
 		technical_id,

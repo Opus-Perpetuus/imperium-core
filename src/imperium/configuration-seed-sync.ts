@@ -11,9 +11,10 @@ import {
 	reconcile_configuration_seeds,
 	type ConfigurationSeedDoc,
 } from './reconcile-configuration-seeds.ts';
-import type { ImperiumStore } from './store.ts';
+import type { ImperiumStore, SubjectInfo } from './store.ts';
 import { plan_escritorio_menu } from './escritorio-menu-seed.ts';
 import { plan_portal_menus } from './portal-menu-seed.ts';
+import { ensure_installed_subject_menus } from './subject-menu-seed.ts';
 
 function backend_src_root(): string {
 	const from_env = process.env.IMPERIUM_BACKEND_SRC;
@@ -57,6 +58,30 @@ async function ensure_portal_landing_menu(store: ImperiumStore): Promise<void> {
 	for (const row of plan_portal_menus(menus)) {
 		await store.insert('menu-management', row);
 	}
+}
+
+function is_disabled_flag(value: unknown) {
+	return value === false || value === 'false';
+}
+
+function installed_subjects_from_markers(
+	store: ImperiumStore,
+	modules: ImperiumDoc[],
+): SubjectInfo[] {
+	return store.subjects.filter((sub) => {
+		const rows = modules.filter((row) => {
+			const ref = String(row._ref ?? row.ref ?? '');
+			const module_name = String(row.module_name ?? '');
+			const name = String(row.name ?? '');
+			return (
+				ref === sub.technical_id ||
+				module_name === sub.slug ||
+				name === sub.name
+			);
+		});
+		if (!rows.length) return false;
+		return rows.some((row) => !is_disabled_flag(row.is_enable));
+	});
 }
 
 async function ensure_escritorio_menu(store: ImperiumStore): Promise<void> {
@@ -105,6 +130,10 @@ export async function apply_missing_configuration_seeds(
 	}
 	await ensure_portal_landing_menu(store);
 	await ensure_escritorio_menu(store);
+	await ensure_installed_subject_menus(
+		store,
+		installed_subjects_from_markers(store, modules),
+	);
 	const created = plan.inserts.map((row) => row._ref);
 	const patched = plan.module_id_patches.map((row) => row._ref);
 	const message =

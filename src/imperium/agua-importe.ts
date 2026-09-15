@@ -2,6 +2,7 @@
  * Cálculo de importe de lecturas — mismo contrato que
  * backend/src/plugins/agua/agua-importe.service.ts
  */
+import type { ImperiumDoc } from './envelope.ts';
 import type { ImperiumStore } from './store.ts';
 
 export type ImporteCalculo = {
@@ -58,4 +59,35 @@ export async function calcular_importe(
 		consumo_mts3,
 		importe: importe_from_bracket(consumo_mts3, pick_bracket(rows, consumo_mts3)),
 	};
+}
+
+export async function prepare_lectura_write(
+	store: ImperiumStore,
+	doc: ImperiumDoc,
+): Promise<ImperiumDoc> {
+	const { consumo_mts3, importe } = await calcular_importe(
+		store,
+		Number(doc.lectura_actual ?? 0),
+		Number(doc.lectura_anterior ?? 0),
+		doc.id_tarifa ? String(doc.id_tarifa) : undefined,
+	);
+	return { ...doc, consumo_mts3, importe };
+}
+
+export async function after_lectura_create(
+	store: ImperiumStore,
+	created: ImperiumDoc,
+): Promise<void> {
+	const numero = String(created.contrato ?? '').trim();
+	if (!numero || !store.has('contrato')) return;
+	const contrato =
+		(await store.find_where('contrato', { contrato: numero })) ??
+		(await store.find_where('contrato', { name: numero }));
+	if (!contrato?._id) return;
+	const importe = Number(created.importe ?? 0);
+	await store.update('contrato', String(contrato._id), {
+		tomada: true,
+		sincronizada: true,
+		adeudo: Number(contrato.adeudo ?? 0) + importe,
+	});
 }

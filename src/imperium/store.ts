@@ -1452,6 +1452,21 @@ export class ImperiumStore {
 				/* snapshot o tabla ausente */
 			}
 			try {
+				const { disabled_subject_slugs } = await import(
+					'./subjects-admin.ts'
+				);
+				const { ensure_installed_subject_menus } = await import(
+					'./subject-menu-seed.ts'
+				);
+				const disabled = await disabled_subject_slugs(this, this.sql);
+				await ensure_installed_subject_menus(
+					this,
+					this.subjects.filter((sub) => !disabled.has(sub.slug)),
+				);
+			} catch {
+				/* subject_installs o menús ausentes */
+			}
+			try {
 				const landing_flag = await this.find_where('configuration', {
 					_ref: PUBLIC_LANDING_ENABLED_REF,
 				});

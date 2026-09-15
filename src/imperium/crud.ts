@@ -14,6 +14,7 @@ import {
 	serialize_user_pin_record,
 	type UserPinWriteNotice,
 } from './user-pin.ts';
+import { after_lectura_create, prepare_lectura_write } from './agua-importe.ts';
 import { apply_uploads, link_attachments_to_record } from './uploads.ts';
 import {
 	after_pedido_mutate,
@@ -738,6 +739,9 @@ export async function handle_crud(
 			incoming = prepared.persisted;
 			user_pin_notice = prepared.notice;
 		}
+		if (resource === 'lectura') {
+			incoming = await prepare_lectura_write(store, incoming);
+		}
 		const doc = await before_create(store, resource, incoming, actor);
 		const created = await store.insert(resource, doc);
 		await link_attachments_to_record(store, resource, created);
@@ -951,6 +955,9 @@ export async function handle_crud(
 			const prepared = await prepare_user_pin_write(store, b, previous);
 			b = prepared.persisted;
 			user_pin_notice = prepared.notice;
+		}
+		if (resource === 'lectura') {
+			b = await prepare_lectura_write(store, b);
 		}
 		const updated = await store.update(resource, id, b);
 		if (updated) await link_attachments_to_record(store, resource, updated);
@@ -1697,6 +1704,10 @@ async function after_create(
 ): Promise<unknown> {
 	if (resource === 'pos-session') {
 		return maybe_create_pos_session_pin(store, created, actor);
+	}
+	if (resource === 'lectura') {
+		await after_lectura_create(store, created);
+		return null;
 	}
 	if (resource !== 'pos-tickets') return null;
 	if (String(created.ticket_type ?? 'VENTA').toUpperCase() !== 'VENTA') return;
