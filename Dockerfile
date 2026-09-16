@@ -12,6 +12,8 @@ FROM oven/bun:1.3-alpine
 WORKDIR /app
 # Alpine CDN a veces falla (APKINDEX "temporary error") y apk dice
 # "no such package". Espejos + reintentos; docker-cli sí está en community.
+# postgresql16-client (pg_dump/pg_dumpall/pg_restore) es lo que usa el gestor
+# de base de datos; la versión mayor tiene que casar con postgres:16-alpine.
 RUN set -eux; \
   ver="$(cut -d. -f1,2 /etc/alpine-release)"; \
   n=0; \
@@ -23,8 +25,8 @@ RUN set -eux; \
       https://uk.alpinelinux.org/alpine; do \
       printf '%s/v%s/main\n%s/v%s/community\n' "$base" "$ver" "$base" "$ver" \
         > /etc/apk/repositories; \
-      apk add --no-cache docker-cli docker-cli-compose && break 2; \
-      apk add --no-cache docker-cli docker-compose && break 2; \
+      apk add --no-cache docker-cli docker-cli-compose postgresql16-client tar && break 2; \
+      apk add --no-cache docker-cli docker-compose postgresql16-client tar && break 2; \
     done; \
     n=$((n + 1)); \
     echo "apk docker-cli failed ($n/8); retry"; \
