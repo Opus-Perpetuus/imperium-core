@@ -233,6 +233,77 @@ export function default_home_document(): Record<string, unknown> {
 }
 
 /**
+ * La landing de obra que se sembro antes de que existiera la plantilla.
+ *
+ * Era lo unico que traia una instalacion nueva: un titulo y "Configura esta
+ * landing desde el administrador". `ensure_home` solo siembra cuando no hay
+ * fila, asi que toda instalacion anterior a la plantilla se quedo con el cartel
+ * para siempre, aunque nadie hubiera escrito nunca una linea en ella.
+ *
+ * Se conserva aqui para poder reconocerla **exacta** y cambiarla por la
+ * plantilla. Fuera de esa comparacion no se usa: nada la vuelve a sembrar.
+ */
+export function legacy_placeholder_home_document(): Record<string, unknown> {
+  return {
+    id: "portal.home",
+    owner: "portal",
+    title: "Inicio",
+    page: {
+      component: "nox.page",
+      children: [
+        {
+          component: "nox.markdown-view",
+          props: {
+            block: "hero",
+            content:
+              "# Bienvenido\n\nConfigura esta landing desde el administrador.",
+          },
+        },
+        {
+          component: "nox.stack",
+          props: { gap: 1 },
+          children: [
+            {
+              component: "nox.button",
+              text: "Entrar",
+              props: { href: "/login" },
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+/**
+ * Este documento es, palabra por palabra, el cartel de obra de fabrica.
+ *
+ * Compara la forma, no el texto suelto: solo asi se distingue "nadie la ha
+ * tocado" de "alguien escribio algo que se le parece", y solo lo primero se
+ * puede reemplazar sin pisarle el trabajo a nadie.
+ */
+export function is_legacy_placeholder_home(document: unknown): boolean {
+  if (!is_plain_object(document)) return false;
+  try {
+    return (
+      JSON.stringify(sort_keys(document)) ===
+      JSON.stringify(sort_keys(legacy_placeholder_home_document()))
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Orden de claves estable: dos documentos iguales comparan iguales. */
+function sort_keys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sort_keys);
+  if (!is_plain_object(value)) return value;
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(value).sort()) out[key] = sort_keys(value[key]);
+  return out;
+}
+
+/**
  * Parse landing JSON. Invalid JSON or unknown component ids never return a
  * partial document — the caller keeps the last good one.
  *

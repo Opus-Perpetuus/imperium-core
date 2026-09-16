@@ -3,6 +3,8 @@ import DOMPurify from "isomorphic-dompurify";
 import {
   apply_landing_code,
   default_home_document,
+  is_legacy_placeholder_home,
+  legacy_placeholder_home_document,
   plan_landing_document,
   sanitize_page_document_html,
 } from "./landing.js";
@@ -175,5 +177,33 @@ describe("la landing que trae el producto", () => {
     const json = JSON.stringify(default_home_document());
     expect(json).toContain("assets/images/landing/");
     expect(json).toContain("cuenta/entrar");
+  });
+});
+
+describe("cartel de obra de fabrica", () => {
+  test("se reconoce exacto, y con las claves en otro orden tambien", () => {
+    expect(is_legacy_placeholder_home(legacy_placeholder_home_document())).toBe(
+      true,
+    );
+    const reordenado = JSON.parse(
+      JSON.stringify({
+        page: legacy_placeholder_home_document().page,
+        title: "Inicio",
+        owner: "portal",
+        id: "portal.home",
+      }),
+    ) as unknown;
+    expect(is_legacy_placeholder_home(reordenado)).toBe(true);
+  });
+
+  test("cualquier otra landing no lo es", () => {
+    // Un texto parecido no basta: solo se reemplaza lo que nadie toco.
+    expect(is_legacy_placeholder_home(default_home_document())).toBe(false);
+    expect(is_legacy_placeholder_home(null)).toBe(false);
+    const casi = JSON.parse(
+      JSON.stringify(legacy_placeholder_home_document()),
+    ) as { title: string };
+    casi.title = "Portada";
+    expect(is_legacy_placeholder_home(casi)).toBe(false);
   });
 });
