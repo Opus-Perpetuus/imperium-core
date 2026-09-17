@@ -18,6 +18,7 @@ import {
 } from '@opus-perpetuus/imperium-core-kit';
 import { handle_crud } from './crud.ts';
 import { handle_action } from './actions.ts';
+import { handle_db_admin, is_db_admin_path } from './db-admin.ts';
 import { handle_mcp_agent, seed_mcp_access } from './mcp-agent.ts';
 import { serve_media } from './media.ts';
 import { ImperiumStore, load_catalog_path } from './store.ts';
@@ -195,6 +196,12 @@ async function dispatch(
 			}
 			if (path === '/subjects' || path.startsWith('/subjects/')) {
 				return add_cors(req, await handle_subjects(store, sql, req, path));
+			}
+			if (is_db_admin_path(path)) {
+				return add_cors(
+					req,
+					await handle_db_admin(store, sql, req, url, path),
+				);
 			}
 			if (path === '/auth' || path.startsWith('/auth/')) {
 				const auth_url = new URL(req.url);

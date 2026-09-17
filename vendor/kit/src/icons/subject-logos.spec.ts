@@ -27,7 +27,8 @@ const catalog = existsSync(CATALOG_PATH)
 describe.skipIf(!catalog)('subject SVG logo registry', () => {
 	test('every catalog L1 slug resolves to an SVG', () => {
 		const slugs = catalog!.subjects.map((s) => s.slug);
-		expect(slugs.length).toBe(20);
+		expect(slugs.length).toBe(catalog!.subjects.length);
+		expect(slugs.length).toBeGreaterThanOrEqual(20);
 		for (const slug of slugs) {
 			expect(
 				SUBJECT_SLUGS.includes(slug as (typeof SUBJECT_SLUGS)[number]),

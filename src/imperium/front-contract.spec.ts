@@ -3,7 +3,9 @@
  * (`create_imperium_layer`) y compara status + forma con el backend original.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
 import { create_imperium_layer } from './router.ts';
+import { load_catalog_path } from './store.ts';
 
 const DATABASE_URL =
 	process.env.DATABASE_URL ??
@@ -292,7 +294,14 @@ describe('front-used Imperium contract via shipped create_imperium_layer', () =>
 		const listed = await call('GET', '/subjects', { cookie });
 		expect(listed.status).toBe(200);
 		const subjects = (listed.json?.data as Record<string, unknown>[]) ?? [];
-		expect(subjects.length).toBe(20);
+		// Contra el catálogo, no contra un número: cada app nueva rompía esta
+		// prueba sin que nada estuviera mal.
+		const catalog_size = (
+			JSON.parse(
+				readFileSync(load_catalog_path(), 'utf8'),
+			) as { subjects: unknown[] }
+		).subjects.length;
+		expect(subjects.length).toBe(catalog_size);
 		const turnos = subjects.find(
 			(s) => s.technical_id === 'subject-turnos',
 		);

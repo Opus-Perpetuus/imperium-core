@@ -85,11 +85,23 @@ export function plan_subject_menus(
 	>,
 	existing: MenuRow[],
 ): PlannedSubjectMenu[] {
+	// `present` arranca con lo que ya está en la base, pero cada fila planeada se
+	// añade también: el mismo `menu_ref` puede aparecer en `modules[]` y en
+	// `menus[]` del catálogo —es la forma de decir "este nodo es el del módulo,
+	// con este icono y esta ruta"— y sin registrarlo sobre la marcha se planeaban
+	// dos INSERT del mismo `_ref`. Una app ya sembrada no lo notaba (la base lo
+	// filtraba); una app nueva reventaba con `menu_management_ref_key` y dejaba
+	// `POST /module-management/seed-default-data` en 500.
 	const present = present_refs(existing);
 	const out: PlannedSubjectMenu[] = [];
+	const add = (row: PlannedSubjectMenu) => {
+		if (present.has(row._ref)) return;
+		present.add(row._ref);
+		out.push(row);
+	};
 	const menu_ref = String(sub.menu_ref ?? '').trim();
-	if (menu_ref && !present.has(menu_ref)) {
-		out.push({
+	if (menu_ref) {
+		add({
 			_ref: menu_ref,
 			name: sub.name,
 			path: sub.path || '',
@@ -107,7 +119,7 @@ export function plan_subject_menus(
 			order += 10;
 			continue;
 		}
-		out.push({
+		add({
 			_ref: ref,
 			name: mod.name,
 			path: mod.path || '',
@@ -122,7 +134,7 @@ export function plan_subject_menus(
 	for (const spec of sub.menus ?? []) {
 		const ref = String(spec.menu_ref ?? '').trim();
 		if (!ref || present.has(ref)) continue;
-		out.push({
+		add({
 			_ref: ref,
 			name: spec.name,
 			path: spec.path ?? '',
