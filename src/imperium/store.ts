@@ -1814,6 +1814,13 @@ export class ImperiumStore {
 		return out;
 	}
 
+	bool_cols(resource: string): Set<string> {
+		const loc = this.loc(resource);
+		const out = new Set<string>();
+		for (const c of loc.columns) if (c.pg === 'boolean') out.add(c.name);
+		return out;
+	}
+
 	qt(resource: string): string {
 		const loc = this.loc(resource);
 		return `${qident(pg_schema_name(loc.technical_id))}.${qident(loc.table)}`;
@@ -2333,6 +2340,7 @@ export class ImperiumStore {
 		await this.assert_unique_business_keys(resource, doc);
 		const cols = this.column_names(resource);
 		const jsons = this.json_cols(resource);
+		const bools = this.bool_cols(resource);
 		const row = from_imperium(doc, cols);
 		if (!row.id) row.id = crypto.randomUUID().replace(/-/g, '').slice(0, 24);
 		const ts = new Date().toISOString();
@@ -2340,7 +2348,7 @@ export class ImperiumStore {
 		row.updated_at ??= ts;
 		if (row.is_active === undefined) row.is_active = true;
 		const keys = Object.keys(row).filter((k) => cols.has(k));
-		const values = keys.map((k) => cell(row[k], jsons.has(k)));
+		const values = keys.map((k) => cell(row[k], jsons.has(k), bools.has(k)));
 		const qt = this.qt(resource);
 		const inserted = await this.sql.unsafe(
 			`INSERT INTO ${qt} (${keys.map(qident).join(', ')}) VALUES (${keys.map((k, i) => json_placeholder(i + 1, jsons.has(k))).join(', ')}) RETURNING *`,
@@ -2361,6 +2369,7 @@ export class ImperiumStore {
 		if (!existing) return null;
 		const cols = this.column_names(resource);
 		const jsons = this.json_cols(resource);
+		const bools = this.bool_cols(resource);
 		const merged: ImperiumDoc = {
 			...existing,
 			...patch,
@@ -2375,7 +2384,7 @@ export class ImperiumStore {
 		row.id = id;
 		row.updated_at = new Date().toISOString();
 		const keys = Object.keys(row).filter((k) => cols.has(k) && k !== 'id');
-		const values = keys.map((k) => cell(row[k], jsons.has(k)));
+		const values = keys.map((k) => cell(row[k], jsons.has(k), bools.has(k)));
 		values.push(id);
 		const set = keys.map((k, i) => `${qident(k)} = ${json_placeholder(i + 1, jsons.has(k))}`).join(', ');
 		const updated = await this.sql.unsafe(
@@ -3705,8 +3714,18 @@ export function json_bind_value(v: unknown): unknown {
 	return typeof v === 'string' ? parse_json_cell(v) : v;
 }
 
-function cell(v: unknown, json: boolean): unknown {
+/** SWITCH del front a veces manda 0/1; PG BOOLEAN no acepta integer. */
+export function pg_boolean(v: unknown): unknown {
+	if (v === true || v === 1 || v === '1' || v === 'true') return true;
+	if (v === false || v === 0 || v === '0' || v === 'false' || v === '') {
+		return false;
+	}
+	return v;
+}
+
+function cell(v: unknown, json: boolean, is_bool = false): unknown {
 	if (v == null) return null;
+	if (is_bool) return pg_boolean(v);
 	if (json) return json_bind_value(v);
 	if (Array.isArray(v) || (typeof v === 'object' && !(v instanceof Date))) {
 		return JSON.stringify(v);
