@@ -75,15 +75,31 @@ type Session = {
 
 const memory = new Map<string, Session>();
 
-export async function ensure_session_table(sql: Bun.SQL): Promise<void> {
-	await sql.unsafe(`
+/**
+ * Trabajo de arranque, no de cada petición.
+ *
+ * Estas dos tablas se aseguraban en **toda** petición de la API: dos viajes a
+ * Postgres en la ruta caliente para un `CREATE TABLE IF NOT EXISTS` que solo
+ * puede cambiar algo la primera vez. Se recuerda la promesa por proceso y, si
+ * falla, se olvida para que la siguiente petición lo vuelva a intentar.
+ */
+let session_tables_ready: Promise<void> | null = null;
+
+export function ensure_session_table(sql: Bun.SQL): Promise<void> {
+	session_tables_ready ??= (async () => {
+		await sql.unsafe(`
     CREATE TABLE IF NOT EXISTS public.imperium_sessions (
       id TEXT PRIMARY KEY,
       payload JSONB NOT NULL,
       expires_at TIMESTAMPTZ NOT NULL
     )
   `);
-	await ensure_auth_rate_limit_table(sql);
+		await ensure_auth_rate_limit_table(sql);
+	})().catch((err) => {
+		session_tables_ready = null;
+		throw err;
+	});
+	return session_tables_ready;
 }
 
 function auth_pathname(req: Request): string {

@@ -27,6 +27,7 @@ import { PinChallengeError } from './user-pin.ts';
 import {
 	bind_debug_store,
 	debug_error,
+	debug_info,
 	persist_request_log,
 	should_read_response_body,
 } from './debug-request-log.ts';
@@ -61,9 +62,18 @@ export function create_imperium_layer(sql: Bun.SQL) {
 	const store = new ImperiumStore(sql, load_catalog_path());
 	const portal_store = create_postgres_portal_store(sql);
 	let ready: Promise<void> | null = null;
+	/**
+	 * Preparación única del proceso. Toda petición autenticada espera aquí, así
+	 * que deja rastro al empezar y al terminar: sin esas dos líneas, un arranque
+	 * lento es indistinguible de un núcleo colgado —el puerto acepta, nadie
+	 * contesta y el log no dice nada.
+	 */
 	const boot = () => {
 		ready ??= (async () => {
+			const started = Date.now();
+			// El logger no escribe hasta tener el store enlazado.
 			bind_debug_store(store);
+			debug_info('imperium-core: preparando el arranque…');
 			await ensure_session_table(sql);
 			try {
 				await store.ensure_defaults();
@@ -86,6 +96,9 @@ export function create_imperium_layer(sql: Bun.SQL) {
 					err instanceof Error ? err.message : String(err),
 				);
 			}
+			debug_info(
+				`imperium-core: arranque listo en ${Date.now() - started} ms`,
+			);
 		})().catch((err) => {
 			ready = null;
 			throw err;
