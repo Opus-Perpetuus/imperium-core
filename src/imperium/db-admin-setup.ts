@@ -195,17 +195,70 @@ export async function write_audit(sql: Bun.SQL, entry: AuditEntry): Promise<void
 	}
 }
 
+/**
+ * Filtro de texto de la bitácora. Busca donde el operador mira: qué se hizo,
+ * quién y con qué sentencia. `null` cuando no hay término, para no pegar un
+ * WHERE que siempre es cierto.
+ */
+function audit_search(term?: string): { clause: string; value: string } | null {
+	const needle = (term ?? '').trim();
+	if (!needle) return null;
+	return {
+		clause: `WHERE operation ILIKE $1 OR actor_label ILIKE $1
+			 OR statement ILIKE $1 OR target ILIKE $1 OR error ILIKE $1`,
+		value: `%${needle}%`,
+	};
+}
+
 export async function read_audit(
 	sql: Bun.SQL,
-	opts: { limit?: number; offset?: number } = {},
+	opts: { limit?: number; offset?: number; term?: string } = {},
 ): Promise<Record<string, unknown>[]> {
 	const limit = Math.min(Math.max(1, opts.limit ?? 100), 500);
 	const offset = Math.max(0, opts.offset ?? 0);
-	const rows = await sql.unsafe(
-		`SELECT * FROM ${DB_ADMIN_SCHEMA}.audit_log
-		 ORDER BY created_at DESC, id DESC
-		 LIMIT $1 OFFSET $2`,
-		[limit, offset],
-	);
+	const search = audit_search(opts.term);
+	const rows = search
+		? await sql.unsafe(
+				`SELECT * FROM ${DB_ADMIN_SCHEMA}.audit_log
+			 ${search.clause}
+			 ORDER BY created_at DESC, id DESC
+			 LIMIT $2 OFFSET $3`,
+				[search.value, limit, offset],
+			)
+		: await sql.unsafe(
+				`SELECT * FROM ${DB_ADMIN_SCHEMA}.audit_log
+			 ORDER BY created_at DESC, id DESC
+			 LIMIT $1 OFFSET $2`,
+				[limit, offset],
+			);
 	return rows as Record<string, unknown>[];
+}
+
+/**
+ * Cuántas entradas casan con el término. El paginador de la lista necesita el
+ * total real: sin él solo sabe cuántas filas trajo la página que está viendo.
+ */
+export async function count_audit(sql: Bun.SQL, term?: string): Promise<number> {
+	const search = audit_search(term);
+	const rows = search
+		? await sql.unsafe(
+				`SELECT COUNT(*)::int AS total FROM ${DB_ADMIN_SCHEMA}.audit_log ${search.clause}`,
+				[search.value],
+			)
+		: await sql.unsafe(`SELECT COUNT(*)::int AS total FROM ${DB_ADMIN_SCHEMA}.audit_log`);
+	return Number((rows as Array<{ total?: number }>)[0]?.total ?? 0);
+}
+
+/** Una entrada por id, para la vista de detalle. */
+export async function read_audit_entry(
+	sql: Bun.SQL,
+	id: string,
+): Promise<Record<string, unknown> | null> {
+	const numeric = Number(id);
+	if (!Number.isSafeInteger(numeric) || numeric <= 0) return null;
+	const rows = await sql.unsafe(
+		`SELECT * FROM ${DB_ADMIN_SCHEMA}.audit_log WHERE id = $1`,
+		[numeric],
+	);
+	return (rows as Record<string, unknown>[])[0] ?? null;
 }

@@ -22,8 +22,10 @@ import { ok, fail, type ImperiumDoc } from './envelope.ts';
 import type { ImperiumStore } from './store.ts';
 import { disabled_subject_slugs } from './subjects-admin.ts';
 import {
+	count_audit,
 	ensure_db_admin_objects,
 	read_audit,
+	read_audit_entry,
 	type DbAdminCapabilities,
 } from './db-admin-setup.ts';
 import {
@@ -335,9 +337,29 @@ async function route(
 	}
 
 	if (head === 'audit' && method === 'GET') {
-		const limit = Number(url.searchParams.get('limit') ?? 100);
-		const offset = Number(url.searchParams.get('offset') ?? 0);
-		return Response.json(ok(await read_audit(sql, { limit, offset }), 'Bitácora'));
+		if (tail[0]) {
+			const entry = await read_audit_entry(sql, tail[0]);
+			if (!entry) {
+				return Response.json(fail('No existe esa entrada.', 404).body, {
+					status: 404,
+				});
+			}
+			return Response.json(ok(entry, 'Entrada de la bitácora'));
+		}
+		// `limite`/`desde`/`termino` son los nombres que manda la lista de
+		// Angular; `limit`/`offset` siguen aceptándose para quien llame a mano.
+		const limit = Number(
+			url.searchParams.get('limite') ?? url.searchParams.get('limit') ?? 100,
+		);
+		const offset = Number(
+			url.searchParams.get('desde') ?? url.searchParams.get('offset') ?? 0,
+		);
+		const term = url.searchParams.get('termino') ?? undefined;
+		const [rows, total] = await Promise.all([
+			read_audit(sql, { limit, offset, term }),
+			count_audit(sql, term),
+		]);
+		return Response.json(ok(rows, 'Bitácora', total));
 	}
 
 	void store;
