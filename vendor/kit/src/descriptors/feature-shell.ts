@@ -287,13 +287,28 @@ export function parse_list_query(
   if (!Number.isFinite(skip) || skip < 0) skip = 0;
   skip = Math.floor(skip);
 
+  // La lista compartida de Angular manda el orden en dos parámetros
+  // (`campoSort=titulo` + `sort=1|-1`), igual que ya manda `limite`/`desde`/
+  // `termino`. Sin traducirlo, el `sort` numérico no casa con `campo:dir` y el
+  // CRUD no solo ignoraba la columna pedida: también se quedaba sin el
+  // `default_sort` de la app, porque un valor inválido pisa al de por defecto.
   const sort_raw = search_params.get("sort");
-  const sort =
-    sort_raw && /^[a-zA-Z_][a-zA-Z0-9_]*:(asc|desc)$/.test(sort_raw)
-      ? sort_raw
-      : sort_raw && sort_raw.trim()
-        ? sort_raw.trim()
-        : undefined;
+  const campo_sort = search_params.get("campoSort")?.trim();
+  const sort_is_direction = !!sort_raw && /^-?\d+$/.test(sort_raw.trim());
+  let sort: string | undefined;
+  if (campo_sort) {
+    const dir = sort_is_direction && Number(sort_raw) < 0 ? "desc" : "asc";
+    sort = `${campo_sort}:${dir}`;
+  } else if (sort_is_direction) {
+    sort = undefined;
+  } else {
+    sort =
+      sort_raw && /^[a-zA-Z_][a-zA-Z0-9_]*:(asc|desc)$/.test(sort_raw)
+        ? sort_raw
+        : sort_raw && sort_raw.trim()
+          ? sort_raw.trim()
+          : undefined;
+  }
 
   const result: Required<Pick<NoxListQuery, "take" | "skip">> & NoxListQuery = {
     take: Math.floor(take),

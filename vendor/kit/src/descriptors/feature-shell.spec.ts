@@ -104,4 +104,31 @@ describe("feature-shell", () => {
     expect(q.q).toBe("ada");
     expect(q.sort).toBe("name:asc");
   });
+
+  test("parse_list_query traduce el orden que manda la lista de Angular", () => {
+    const asc = parse_list_query(
+      new URLSearchParams("desde=0&limite=25&campoSort=title&sort=1&termino="),
+    );
+    expect(asc.sort).toBe("title:asc");
+    expect(asc.skip).toBe(0);
+    expect(asc.take).toBe(25);
+
+    const desc = parse_list_query(
+      new URLSearchParams("campoSort=title&sort=-1"),
+    );
+    expect(desc.sort).toBe("title:desc");
+  });
+
+  test("un sort numérico suelto no pisa el orden por defecto de la app", () => {
+    const q = parse_list_query(new URLSearchParams("sort=1"));
+    expect(q.sort).toBeUndefined();
+  });
+
+  test("campoSort vacío tampoco: es la primera carga de cualquier lista", () => {
+    // view-list manda `campoSort=` vacío con `sort=-1` hasta que el usuario
+    // toca una columna. Si esto empezara a devolver ":asc", el CRUD se quedaría
+    // sin ORDER BY y la paginación repetiría y perdería filas.
+    const q = parse_list_query(new URLSearchParams("campoSort=&sort=-1"));
+    expect(q.sort).toBeUndefined();
+  });
 });
