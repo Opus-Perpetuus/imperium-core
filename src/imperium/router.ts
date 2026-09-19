@@ -254,7 +254,7 @@ async function dispatch(
 					},
 					async () => {
 				const extra_hit = match_extra(hit.resource, req.method, hit.rest);
-				if (!is_public_extra_action(extra_hit?.action)) {
+				if (!is_public_extra_action(hit.resource, extra_hit?.action)) {
 					await assert_http_access(store, actor, hit.resource, req.method, {
 						extra: Boolean(extra_hit),
 						action: extra_hit?.action,

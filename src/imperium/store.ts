@@ -372,14 +372,20 @@ export function value_counts_sql(
  * Lote que convierte JSONB string-wrapped (`"{\"a\":1}"`) en objeto.
  * Así `payload ->>` y los btrees de expresión vuelven a ver las claves.
  */
+/** Un `\\u0000` en el texto no cabe en jsonb (22P05): esas filas se quedan como string. */
+function unwrappable_where(col: string): string {
+	return `jsonb_typeof(${col}) = 'string'
+		  AND (${col} #>> '{}') ~ '^[[:space:]]*[\\{\\[]'
+		  AND strpos((${col} #>> '{}'), '\\u0000') = 0`;
+}
+
 export function unwrap_jsonb_string_sql(quoted_table: string, column: string): string {
 	const col = qident(column);
 	return `UPDATE ${quoted_table} AS t
 		SET ${col} = (t.${col} #>> '{}')::jsonb
 		FROM (
 			SELECT id FROM ${quoted_table}
-			WHERE jsonb_typeof(${col}) = 'string'
-			  AND (${col} #>> '{}') ~ '^[[:space:]]*[\\{\\[]'
+			WHERE ${unwrappable_where(col)}
 			LIMIT 1000
 		) s
 		WHERE t.id = s.id
@@ -389,8 +395,7 @@ export function unwrap_jsonb_string_sql(quoted_table: string, column: string): s
 export function string_jsonb_ids_sql(quoted_table: string, column: string): string {
 	const col = qident(column);
 	return `SELECT id FROM ${quoted_table}
-		WHERE jsonb_typeof(${col}) = 'string'
-		  AND (${col} #>> '{}') ~ '^[[:space:]]*[\\{\\[]'
+		WHERE ${unwrappable_where(col)}
 		LIMIT 1000`;
 }
 

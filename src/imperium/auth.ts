@@ -738,32 +738,28 @@ export async function build_access(store: ImperiumStore, user: ImperiumDoc) {
 	};
 }
 
+/**
+ * Extras que se sirven SIN sesión. La clave es `recurso:acción`, no la acción
+ * suelta: indexar solo por nombre hacía pública la acción en CUALQUIER recurso
+ * que la declarase.
+ */
 const PUBLIC_EXTRA_ACTIONS = new Set([
-	'read_public_metadata',
-	'create_public_ticket',
-	'public_catalog',
-	'public_checkout',
-	'public_session',
-	'public_contrato',
-	'public_url',
-	'stripe_webhook',
-	'mitec_webhook',
-	'receive_interinstance_message',
-	'receive_interinstance_ticket',
-	// El router original de reports va `secured: false` (module.config
-	// add_router(..., false)) para preview HTML / placeholders.
-	'get_image_base64',
-	'get_first_record',
-	'get_model_fields',
-	'get_model_fields_detailed',
-	'get_model_records',
-	'get_model_record_by_id',
-	'get_pdf_direct_target',
-	'validate_template',
-	'generate_pdf',
-	'generate_full_report_pdf',
-	'process_preview',
-	'print_pdf_direct',
+	'tickets:read_public_metadata',
+	'tickets:create_public_ticket',
+	'tickets:receive_interinstance_ticket',
+	'payments:public_catalog',
+	'payments:public_checkout',
+	'payments:public_session',
+	'payments:stripe_webhook',
+	'cobranza:stripe_webhook',
+	'cobranza:mitec_webhook',
+	'agua:public_contrato',
+	'agua:public_url',
+	'messages:receive_interinstance_message',
+	// El Chromium que arma el PDF pide las imágenes por `<img src=…>` y no
+	// lleva cookie, así que esta tiene que seguir abierta. Lee un adjunto por
+	// id y nada más.
+	'reports:get_image_base64',
 ]);
 
 /** Extras del original que solo exigen sesión (el handler acota al usuario). */
@@ -959,8 +955,13 @@ export class HttpAccessDeniedError extends Error {
 	}
 }
 
-export function is_public_extra_action(action?: string): boolean {
-	return Boolean(action && PUBLIC_EXTRA_ACTIONS.has(action));
+export function is_public_extra_action(
+	resource?: string,
+	action?: string
+): boolean {
+	return Boolean(
+		resource && action && PUBLIC_EXTRA_ACTIONS.has(`${resource}:${action}`)
+	);
 }
 
 function crud_flag(method: string): RecordRuleOperationFlag {
@@ -1056,7 +1057,7 @@ export async function assert_http_access(
 	method: string,
 	opts: { action?: string; extra?: boolean; rest?: string } = {},
 ): Promise<void> {
-	if (opts.extra && is_public_extra_action(opts.action)) return;
+	if (opts.extra && is_public_extra_action(resource, opts.action)) return;
 	if (reports_pdf_setting_public_read(resource, method, opts.rest)) return;
 	if (!actor) {
 		if (resource === 'reports-pdf-setting' && method === 'GET') {
