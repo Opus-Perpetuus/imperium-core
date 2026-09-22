@@ -7,6 +7,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { as_array, as_object, fail, ok, type ImperiumDoc } from './envelope.ts';
 import { apply_missing_configuration_seeds } from './configuration-seed-sync.ts';
+import { plan_documentation_sync } from './documentation-sync.ts';
 import { serve_attachment_bytes } from './media.ts';
 import { query_list, read_imperium_body } from './body.ts';
 import { qident, type ImperiumStore } from './store.ts';
@@ -2455,24 +2456,46 @@ async function documentation_sync(ctx: Ctx) {
 	if (!documents.length) {
 		return ok([], 'No se proporcionaron documentos para sincronizar.');
 	}
+	const existing: ImperiumDoc[] = [];
 	for await (const page of ctx.store.scan('documentation-page', {
 		include_inactive: true,
 	})) {
-		for (const row of page) {
-			await ctx.store.remove('documentation-page', String(row._id));
-		}
+		existing.push(...page);
 	}
-	const created: ImperiumDoc[] = [];
-	for (const raw of documents) {
-		const doc = as_object(raw);
-		created.push(
-			await ctx.store.insert('documentation-page', {
-				name: String(doc.title ?? doc.name ?? doc.slug ?? 'documento'),
-				...doc,
-			}),
-		);
+
+	/*
+	 * No se borra y reinserta: `store.remove` es lógico y el único compuesto
+	 * de `documentation-page` no es parcial, así que la fila "borrada" seguía
+	 * ocupando `(slug, folder_path)` y el reinsert chocaba con
+	 * `uq_documentation_page_slug_folder_path` de la segunda corrida en
+	 * adelante. Se reaprovecha la fila que ya tiene la clave.
+	 */
+	const plan = plan_documentation_sync(
+		existing,
+		documents.map((raw) => as_object(raw)),
+	);
+
+	const named = (doc: Record<string, unknown>) => ({
+		name: String(doc.title ?? doc.name ?? doc.slug ?? 'documento'),
+		...doc,
+	});
+
+	const synced: ImperiumDoc[] = [];
+	for (const { id, doc } of plan.update) {
+		const updated = await ctx.store.update('documentation-page', id, {
+			...named(doc),
+			is_active: true,
+		});
+		if (updated) synced.push(updated);
 	}
-	return ok(created, `${created.length} documento(s) sincronizado(s) correctamente.`);
+	for (const doc of plan.insert) {
+		synced.push(await ctx.store.insert('documentation-page', named(doc)));
+	}
+	for (const id of plan.deactivate) {
+		await ctx.store.remove('documentation-page', id);
+	}
+
+	return ok(synced, `${synced.length} documento(s) sincronizado(s) correctamente.`);
 }
 
 async function dashboard_catalog(ctx: Ctx) {
