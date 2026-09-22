@@ -72,7 +72,17 @@ type Catalog = {
 	}>;
 };
 
-const catalog: Catalog = JSON.parse(readFileSync(CATALOG_PATH, 'utf8'));
+const catalog_text = readFileSync(CATALOG_PATH, 'utf8');
+const catalog: Catalog = JSON.parse(catalog_text);
+/**
+ * Huella del catálogo con el que arrancó el proceso. El fichero es un bind
+ * mount: un update puede reescribirlo sin recrear el contenedor, y entonces el
+ * núcleo sigue sirviendo los pines viejos. Comparar este hash con el
+ * `sha256sum` del fichero en disco delata ese desfase.
+ */
+const CATALOG_HASH = new Bun.CryptoHasher('sha256')
+	.update(catalog_text)
+	.digest('hex');
 const sql = new Bun.SQL(DATABASE_URL);
 const imperium = create_imperium_layer(sql);
 /** Overrides de desarrollo (`POST /api/subjects/dev-attach`). Gana a env/DNS. */
@@ -497,6 +507,7 @@ const server = Bun.serve({
 						ok: true,
 						unit: 'imperium-core',
 						subjects: catalog.subjects.length,
+						catalog_hash: CATALOG_HASH,
 						imperium_resources: imperium.store.locs.size,
 					}),
 				)!;

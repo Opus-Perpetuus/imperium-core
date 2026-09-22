@@ -145,6 +145,20 @@ describe('visible_lifecycle_status', () => {
 		});
 	});
 
+	test('an orphan re-install of an installed app goes back to installed', () => {
+		expect(visible_lifecycle_status('installing', true, false)).toEqual({
+			status: 'installed',
+			busy: false,
+		});
+	});
+
+	test('an orphan uninstall never resurrects the app', () => {
+		expect(visible_lifecycle_status('uninstalling', true, false)).toEqual({
+			status: 'uninstalled',
+			busy: false,
+		});
+	});
+
 	test('a real in-flight job keeps installing/uninstalling as busy', () => {
 		expect(visible_lifecycle_status('installing', false, true)).toEqual({
 			status: 'installing',
@@ -176,6 +190,23 @@ describe('stale_lifecycle_write', () => {
 				() => false,
 			),
 		).toEqual([{ technical_id: 'subject-rh', installed: false }]);
+	});
+
+	test('a leftover re-install does not uninstall an app that was working', () => {
+		expect(
+			stale_lifecycle_write(
+				{
+					technical_id: 'subject-pos',
+					status: 'installing',
+					installed: true,
+				},
+				false,
+			),
+		).toEqual({
+			technical_id: 'subject-pos',
+			installed: true,
+			status: 'installed',
+		});
 	});
 
 	test('reconciles leftover installing/uninstalling when no job is running', () => {

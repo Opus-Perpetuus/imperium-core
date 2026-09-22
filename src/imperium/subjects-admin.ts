@@ -260,8 +260,11 @@ export function visible_lifecycle_status(
 		return { status: raw, busy: true };
 	}
 	if (transitional) {
+		// Un installing huérfano sobre una app que YA estaba instalada vuelve a
+		// instalada: era un reintento, no una primera instalación.
+		const settled = installed ? 'installed' : 'not_installed';
 		return {
-			status: raw === 'uninstalling' ? 'uninstalled' : 'not_installed',
+			status: raw === 'uninstalling' ? 'uninstalled' : settled,
 			busy: false,
 		};
 	}
@@ -679,6 +682,15 @@ async function begin_subject_lifecycle(
 	const technical_id = sub.technical_id;
 	const ver = await schema_version(sql, technical_id);
 	const busy_status = installed ? 'installing' : 'uninstalling';
+	/**
+	 * Si la app ya estaba instalada, un reintento que falle no debe dejarla
+	 * desinstalada: el acceso se decide por este booleano, no por el estado.
+	 * Solo al instalar: una desinstalación que falle sí deja `installed=false`,
+	 * que es lo correcto —el contenedor ya no está y el marcador va deshabilitado.
+	 */
+	const was_installed =
+		installed &&
+		((await install_records(sql)).get(technical_id)?.installed ?? false);
 	if (!installed) {
 		await upsert_subject_marker(store, sub, false);
 		await write_install_row(
@@ -705,7 +717,7 @@ async function begin_subject_lifecycle(
 		await write_install_row(
 			sql,
 			technical_id,
-			false,
+			was_installed,
 			ver.version,
 			busy_status,
 		);
@@ -714,7 +726,7 @@ async function begin_subject_lifecycle(
 				technical_id: sub.technical_id,
 				slug: sub.slug,
 				name: sub.name,
-				installed: false,
+				installed: was_installed,
 				status: busy_status,
 				phase: 'sql',
 				level: 'info',
@@ -723,7 +735,7 @@ async function begin_subject_lifecycle(
 			job,
 		);
 	}
-	return { ver, busy_status };
+	return { ver, busy_status, was_installed };
 }
 
 async function finish_subject_lifecycle(
@@ -733,6 +745,7 @@ async function finish_subject_lifecycle(
 	installed: boolean,
 	ver: { version: number | null },
 	busy_status: string,
+	was_installed: boolean,
 	job?: JobCtx | null,
 ) {
 	const technical_id = sub.technical_id;
@@ -758,13 +771,19 @@ async function finish_subject_lifecycle(
 	);
 
 	if (installed && !docker.ok && !docker.skipped) {
-		await write_install_row(sql, technical_id, false, ver.version, 'error');
+		await write_install_row(
+			sql,
+			technical_id,
+			was_installed,
+			ver.version,
+			'error',
+		);
 		emit_subject_event(
 			{
 				technical_id: sub.technical_id,
 				slug: sub.slug,
 				name: sub.name,
-				installed: false,
+				installed: was_installed,
 				status: 'error',
 				phase: 'error',
 				level: 'error',
@@ -883,6 +902,7 @@ export async function set_subject_installed(
 		installed,
 		started.ver,
 		started.busy_status,
+		started.was_installed,
 		job,
 	);
 }
@@ -961,6 +981,7 @@ export async function accept_subject_lifecycle(
 		installed,
 		started.ver,
 		started.busy_status,
+		started.was_installed,
 		job,
 	)
 		.catch(async (err) => {
@@ -968,7 +989,7 @@ export async function accept_subject_lifecycle(
 			await write_install_row(
 				sql,
 				technical_id,
-				false,
+				started.was_installed,
 				started.ver.version,
 				'error',
 			);
@@ -977,7 +998,7 @@ export async function accept_subject_lifecycle(
 					technical_id: sub.technical_id,
 					slug: sub.slug,
 					name: sub.name,
-					installed: false,
+					installed: started.was_installed,
 					status: 'error',
 					phase: 'error',
 					level: 'error',
