@@ -639,31 +639,49 @@ const server = Bun.serve({
 						(item) => item.technical_id === technical_id,
 					);
 					const name = sub?.name ?? 'Esta app';
-					return Response.json(
-						{
-							error: `${name} no está instalada`,
-							message: `${name} no está instalada`,
-							code: 'subject_not_installed',
-							details: {
-								slug: sub?.slug,
-								name: sub?.name,
-								technical_id,
+					return add_cors(
+						req,
+						Response.json(
+							{
+								error: `${name} no está instalada`,
+								message: `${name} no está instalada`,
+								code: 'subject_not_installed',
+								details: {
+									slug: sub?.slug,
+									name: sub?.name,
+									technical_id,
+								},
 							},
-						},
-						{ status: 404 },
-					);
+							{ status: 404 },
+						),
+					)!;
 				}
 				const gate = await gateway_identity(technical_id, req, realm);
-				if (!gate.ok) return gate.response;
+				if (!gate.ok) return add_cors(req, gate.response)!;
 				const proxied = await proxy_subject(
 					technical_id,
 					req,
 					rest,
 					gate.identity,
 				);
-				return realm === 'public'
-					? dress_public_page(technical_id, req, rest, proxied)
-					: proxied;
+				// Todo lo que sale del núcleo lleva CORS menos esto, que se
+				// devolvía crudo. El escaparate público de una app
+				// (`/api/p/m/<app>/…`) se consume desde otro origen —la APK se
+				// sirve a sí misma desde `https://localhost`, y una tienda web
+				// puede vivir en otro dominio—, así que sin cabeceras el
+				// navegador tiraba la respuesta y el catálogo salía como
+				// "Esta aplicación no está disponible".
+				return add_cors(
+					req,
+					realm === 'public'
+						? await dress_public_page(
+								technical_id,
+								req,
+								rest,
+								proxied,
+							)
+						: proxied,
+				)!;
 			}
 
 			const install_one = path.match(
