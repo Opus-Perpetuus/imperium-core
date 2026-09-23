@@ -10,7 +10,14 @@ import {
 	type KirletSchemaBundle,
 } from '@opus-perpetuus/imperium-core-kit';
 import { handle_service_plane, service_plane_match } from './service-plane.ts';
-import { add_cors, create_imperium_layer } from './imperium/router.ts';
+import {
+	add_cors,
+	create_imperium_layer,
+	subject_gateway_ok,
+} from './imperium/router.ts';
+import { current_user, ensure_session_table } from './imperium/auth.ts';
+import { start_subject_auto_update } from './imperium/subject-auto-update.ts';
+import { can_enter_internal } from '@opus-perpetuus/imperium-core-kit';
 import {
 	handle_socket_io,
 	SOCKET_IO_IDLE_TIMEOUT_SECONDS,
@@ -691,6 +698,27 @@ const server = Bun.serve({
 				req.method === 'POST' &&
 				(path === '/api/subjects/install-schemas' || install_one)
 			) {
+				// Aplica DDL de cualquier app, y estaba abierto: era la única
+				// ruta de este bloque pre-Imperium sin comprobación. Candado
+				// doble, como sus vecinas: el secreto de gateway para el
+				// arranque en frío (todavía no hay usuario ni cookie) y la
+				// sesión de un usuario interno para la UI del núcleo.
+				if (!subject_gateway_ok(req)) {
+					// La tabla de sesión la crea la capa Imperium; aquí se
+					// entra antes, así que hay que asegurarla o revienta en una
+					// base virgen.
+					await ensure_session_table(sql);
+					const actor = await current_user(sql, req).catch(() => null);
+					if (!actor || !can_enter_internal(actor)) {
+						return Response.json(
+							{
+								error: 'No estás autenticado',
+								message: 'No estás autenticado',
+							},
+							{ status: 401 },
+						);
+					}
+				}
 				const only =
 					install_one?.[1] ??
 					url.searchParams.get('technical_id') ??
@@ -746,3 +774,8 @@ const server = Bun.serve({
 });
 
 console.log(`imperium-core listening on :${server.port}`);
+
+// Reloj de actualización automática de apps. Apagado mientras el parámetro de
+// sistema esté en NO, que es como nace. Solo corre en el proceso del núcleo:
+// el operador arranca por `subject-operator.ts` y no pasa por aquí.
+start_subject_auto_update(imperium.store, sql);

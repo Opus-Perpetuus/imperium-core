@@ -36,11 +36,19 @@ import {
 	assert_subject_resource_access,
 	get_subject_details,
 	list_catalog_subjects,
+	list_subject_updates,
+	backfill_installed_images,
 	accept_subject_lifecycle,
+	accept_subject_update,
+	accept_subject_update_all,
 	seed_missing_install_rows,
 	SubjectLifecycleError,
 	SubjectNotInstalledError,
 } from './subjects-admin.ts';
+import {
+	read_subject_auto_update_enabled,
+	write_subject_auto_update_enabled,
+} from './subject-auto-update.ts';
 import {
 	create_postgres_portal_store,
 	handle_portal_request,
@@ -317,7 +325,7 @@ async function dispatch(
 			}
 }
 
-function subject_gateway_ok(req: Request): boolean {
+export function subject_gateway_ok(req: Request): boolean {
 	const expected = process.env.CORE_SUBJECT_GATEWAY_SECRET ?? '';
 	if (!expected) return false;
 	const got = req.headers.get('x-core-subject-gateway-secret') ?? '';
@@ -333,19 +341,132 @@ async function handle_subjects(
 	req: Request,
 	path: string,
 ): Promise<Response> {
+	// Un solo candado para toda la rama. El listado publicaba el catálogo —y
+	// ahora también qué versión corre cada app— a cualquiera que alcanzara el
+	// puerto; era la única sub-ruta sin comprobación.
+	const actor = await current_user(sql, req);
+	if (!actor && !subject_gateway_ok(req)) {
+		return Response.json(
+			{ error: 'No estás autenticado', message: 'No estás autenticado' },
+			{ status: 401 },
+		);
+	}
 	if (req.method === 'GET' && (path === '/subjects' || path === '/subjects/')) {
 		const data = await list_catalog_subjects(store, sql);
 		return Response.json({ data, total_elementos: data.length, message: 'Apps' });
 	}
+	if (
+		path === '/subjects/auto-update' ||
+		path === '/subjects/auto-update/'
+	) {
+		if (req.method === 'GET') {
+			return Response.json({
+				enabled: await read_subject_auto_update_enabled(store),
+			});
+		}
+		if (req.method === 'PUT' || req.method === 'POST') {
+			const body = (await req.json().catch(() => ({}))) as {
+				enabled?: unknown;
+			};
+			const result = await write_subject_auto_update_enabled(
+				store,
+				body.enabled === true,
+			);
+			if (!result.ok) {
+				return Response.json(
+					{
+						error: 'no_configuration',
+						message:
+							'No se pudo guardar el ajuste: falta el parámetro de sistema',
+					},
+					{ status: 409 },
+				);
+			}
+			return Response.json({ enabled: result.enabled });
+		}
+	}
+	if (
+		req.method === 'POST' &&
+		(path === '/subjects/updates/refresh' ||
+			path === '/subjects/updates/refresh/')
+	) {
+		// "Buscar actualizaciones": antes de comparar, se averigua qué corre
+		// de verdad en las apps que se instalaron cuando aún no se anotaba.
+		const filled = await backfill_installed_images(store, sql);
+		const data = await list_subject_updates(store, sql);
+		return Response.json({
+			data,
+			total_elementos: data.length,
+			filled: filled.filled,
+			unknown: filled.unknown,
+			message: 'Actualizaciones disponibles',
+		});
+	}
+	if (
+		req.method === 'GET' &&
+		(path === '/subjects/updates' || path === '/subjects/updates/')
+	) {
+		const data = await list_subject_updates(store, sql);
+		return Response.json({
+			data,
+			total_elementos: data.length,
+			message: 'Actualizaciones disponibles',
+		});
+	}
+	if (
+		req.method === 'POST' &&
+		(path === '/subjects/updates/apply' ||
+			path === '/subjects/updates/apply/')
+	) {
+		const result = await accept_subject_update_all(store, sql, actor);
+		return Response.json(
+			{
+				...result,
+				message: result.total
+					? `Actualizando ${result.total} apps en segundo plano`
+					: 'No hay apps con versión nueva',
+			},
+			{ status: 202 },
+		);
+	}
+	const upd = path.match(/^\/subjects\/(subject-[a-z0-9-]+)\/update\/?$/);
+	if (upd && req.method === 'POST') {
+		const technical_id = upd[1]!;
+		try {
+			const accepted = await accept_subject_update(
+				store,
+				sql,
+				technical_id,
+				actor,
+			);
+			if (!accepted) {
+				return Response.json(
+					{ error: `unknown subject ${technical_id}` },
+					{ status: 404 },
+				);
+			}
+			return Response.json(
+				{
+					accepted: true,
+					already_running: accepted.already_running,
+					data: [accepted.row],
+					notification: accepted.notification,
+					message: 'Actualización en segundo plano',
+				},
+				{ status: 202 },
+			);
+		} catch (err) {
+			if (err instanceof SubjectLifecycleError) {
+				return Response.json(
+					{ error: err.code, message: err.message },
+					{ status: err.status },
+				);
+			}
+			throw err;
+		}
+	}
 	const m = path.match(/^\/subjects\/(subject-[a-z0-9-]+)\/(install|uninstall)\/?$/);
 	if (m && req.method === 'POST') {
-		const actor = await current_user(sql, req);
-		if (!actor && !subject_gateway_ok(req)) {
-			return Response.json(
-				{ error: 'No estás autenticado', message: 'No estás autenticado' },
-				{ status: 401 },
-			);
-		}
 		const technical_id = m[1]!;
 		const installed = m[2] === 'install';
 		try {

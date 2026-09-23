@@ -18,7 +18,7 @@ const IMAGE_RE =
 const SERVICE_RE = /^subject-[a-z0-9]+(-[a-z0-9]+)*$/;
 const PROJECT_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 
-export type SubjectRuntimeOp = 'install' | 'uninstall';
+export type SubjectRuntimeOp = 'install' | 'uninstall' | 'update';
 
 export type SubjectRuntimeResult = {
 	ok: boolean;
@@ -30,6 +30,39 @@ export type SubjectRuntimeResult = {
 	steps: string[];
 	error?: string;
 };
+
+/**
+ * Variable por app que el compose interpola en su `image:`
+ * (`…/subject-pos:${IMPERIUM_SUBJECT_TAG_POS:-<pin>}`). Es el ÚNICO selector de
+ * versión que tenemos: el directorio de compose se monta `:ro`, así que el tag
+ * viaja por entorno hasta el `docker compose` que lanza el operador.
+ */
+export function subject_tag_env_name(slug: string): string {
+	return `IMPERIUM_SUBJECT_TAG_${slug.replace(/-/g, '_').toUpperCase()}`;
+}
+
+/** `ghcr.io/…/subject-pos:0.1.2` → `0.1.2`. */
+export function image_tag(image: string | null | undefined): string {
+	const raw = String(image ?? '').trim();
+	if (!raw || !IMAGE_RE.test(raw)) return '';
+	return raw.split(':').pop() ?? '';
+}
+
+/**
+ * Entorno extra para el `docker compose` de una app: fija su tag.
+ *
+ * `${VAR:-default}` cae al default tanto si la variable falta como si viene
+ * vacía, así que un tag en blanco no se publica: se deja que mande el pin del
+ * compose en vez de arrastrar la app a una imagen inexistente.
+ */
+export function subject_tag_env(
+	slug: string,
+	image: string | null | undefined,
+): Record<string, string> {
+	const tag = image_tag(image);
+	if (!tag) return {};
+	return { [subject_tag_env_name(slug)]: tag };
+}
 
 export type SubjectRuntimeProgress = {
 	phase: string;
@@ -57,18 +90,36 @@ export function subject_service_name(slug: string): string {
 	return `subject-${slug}`;
 }
 
+/**
+ * Imagen efectiva de una app, por precedencia:
+ *
+ *   1. `IMPERIUM_SUBJECT_TAG_<SLUG>` — el selector por app.
+ *   2. la imagen que se pasa (lo instalado en `subject_installs`, o el pin del
+ *      catálogo).
+ *   3. `IMPERIUM_SUBJECT_TAG` — palanca global, para pinar toda la flota.
+ *   4. `0.1.0`.
+ *
+ * El global estaba por ENCIMA de la imagen recibida, así que reescribía a su
+ * valor el tag de todas las apps. Como el compose lo trae puesto a `0.1.0` por
+ * defecto, el `docker rmi` del desinstalar apuntaba a una imagen que no era la
+ * que corría y se iba en silencio por el `no such image`. Debajo de la imagen
+ * concreta sigue sirviendo para pinar la flota, que es para lo que está.
+ */
 export function subject_image_ref(input: {
 	slug: string;
 	image?: string | null;
 }): string {
 	const slug = normalize_subject_slug(input.slug) ?? '';
-	const tag = env('IMPERIUM_SUBJECT_TAG');
-	const catalog = String(input.image ?? '').trim();
-	if (catalog && IMAGE_RE.test(catalog)) {
-		if (tag) return catalog.replace(/:[^:]+$/, `:${tag}`);
-		return catalog;
+	const per_app = env(subject_tag_env_name(slug));
+	const global_tag = env('IMPERIUM_SUBJECT_TAG');
+	const given = String(input.image ?? '').trim();
+	if (per_app) {
+		return `ghcr.io/opus-perpetuus/subject-${slug}:${per_app}`;
 	}
-	const fallback_tag = tag || '0.1.0';
+	if (given && IMAGE_RE.test(given)) {
+		return given;
+	}
+	const fallback_tag = global_tag || '0.1.0';
 	return `ghcr.io/opus-perpetuus/subject-${slug}:${fallback_tag}`;
 }
 
@@ -99,6 +150,29 @@ export function compose_install_args(
 		'up',
 		'-d',
 		'--no-deps',
+		service,
+	];
+}
+
+/**
+ * Recrear con la imagen nueva. `--force-recreate` porque cuando se republica
+ * el MISMO tag el `image:` interpolado no cambia y compose dejaría el
+ * contenedor viejo en pie; `--pull always` porque el pin puede haberse movido
+ * bajo el mismo tag.
+ */
+export function compose_update_args(
+	service: string,
+	profiles: string[],
+): string[] {
+	assert_service(service);
+	return [
+		...compose_profile_args(profiles),
+		'up',
+		'-d',
+		'--no-deps',
+		'--force-recreate',
+		'--pull',
+		'always',
 		service,
 	];
 }
@@ -199,9 +273,16 @@ function compose_bin(): string[] {
 async function run_cmd(
 	argv: string[],
 	cwd?: string,
+	extra_env?: Record<string, string>,
 ): Promise<{ ok: boolean; output: string }> {
 	const proc = Bun.spawn(argv, {
 		cwd: cwd || undefined,
+		// `env` sustituye el entorno entero, así que se parte de `process.env`:
+		// sin él el hijo perdería PATH, DOCKER_HOST y el resto.
+		env:
+			extra_env && Object.keys(extra_env).length
+				? { ...process.env, ...extra_env }
+				: undefined,
 		stdout: 'pipe',
 		stderr: 'pipe',
 	});
@@ -283,7 +364,9 @@ async function call_operator(
 		message:
 			op === 'install'
 				? 'Descargando y arrancando el contenedor…'
-				: 'Deteniendo y borrando la imagen Docker…',
+				: op === 'update'
+					? `Descargando la versión ${image_tag(input.image) || 'nueva'} y recreando el contenedor…`
+					: 'Deteniendo y borrando la imagen Docker…',
 		level: 'info',
 	});
 	const secret = env('CORE_SUBJECT_GATEWAY_SECRET');
@@ -350,15 +433,38 @@ export async function run_subject_docker_local(
 	const files = file_args();
 	const profiles = compose_profiles();
 	const project = compose_project_args(await resolve_compose_project());
+	// El tag pedido viaja hasta el `image:` del compose por esta variable. El
+	// directorio se monta `:ro`, así que es la única forma de elegir versión.
+	const tag_env = subject_tag_env(input.slug, input.image);
 	const run_compose = async (args: string[], label: string) => {
 		const argv = [...bin, ...project, ...files, ...args];
-		const result = await run_cmd(argv, dir);
+		const result = await run_cmd(argv, dir, tag_env);
 		steps.push(label);
 		if (!result.ok) {
 			throw new Error(result.output || `falló ${label}`);
 		}
 	};
 	try {
+		if (op === 'update') {
+			on_progress?.({
+				phase: 'docker_pull',
+				message: `Descargando la versión ${image_tag(input.image) || 'nueva'}…`,
+				level: 'info',
+			});
+			await run_compose(
+				compose_update_args(input.service, profiles),
+				'compose up --force-recreate',
+			);
+			return {
+				ok: true,
+				skipped: false,
+				op,
+				slug: input.slug,
+				service: input.service,
+				image: input.image,
+				steps,
+			};
+		}
 		if (op === 'install') {
 			on_progress?.({
 				phase: 'docker_up',
@@ -427,6 +533,67 @@ export async function run_subject_docker_local(
 	}
 }
 
+/**
+ * Imagen con la que corre AHORA MISMO el contenedor de una app.
+ *
+ * Es observación, no deducción: `docker inspect` del contenedor que compose
+ * tiene levantado para ese servicio. Sirve para rellenar `installed_image` en
+ * instalaciones anteriores a esa columna, donde el sistema no sabía qué
+ * versión estaba sirviendo.
+ *
+ * Cadena vacía = no hay contenedor (app parada o no instalada). No se
+ * confunde con "no se sabe": el llamador decide qué hacer con cada caso.
+ */
+export async function inspect_subject_image(slug: string): Promise<string> {
+	const clean = normalize_subject_slug(slug);
+	if (!clean) return '';
+	const dir = compose_dir();
+	if (!dir) return '';
+	const service = subject_service_name(clean);
+	assert_service(service);
+	const bin = compose_bin();
+	const project = compose_project_args(await resolve_compose_project());
+	const files = file_args();
+	const ps = await run_cmd(
+		[...bin, ...project, ...files, 'ps', '-aq', service],
+		dir,
+	);
+	const id = ps.output.trim().split('\n').filter(Boolean).pop() ?? '';
+	if (!ps.ok || !/^[0-9a-f]{12,64}$/i.test(id)) return '';
+	const inspect = await run_cmd(
+		['docker', 'inspect', '-f', '{{ .Config.Image }}', id],
+		dir,
+	);
+	const image = inspect.output.trim().split('\n').filter(Boolean).pop() ?? '';
+	return inspect.ok && IMAGE_RE.test(image) ? image : '';
+}
+
+/** Pregunta la imagen al operador remoto; local si no hay sidecar. */
+export async function resolve_running_subject_image(
+	slug: string,
+): Promise<string> {
+	const clean = normalize_subject_slug(slug);
+	if (!clean || !docker_runtime_wanted()) return '';
+	const remote = operator_url();
+	if (!remote) return inspect_subject_image(clean);
+	try {
+		const res = await fetch(`${remote}/runtime/${clean}/image`, {
+			headers: {
+				'x-core-subject-gateway-secret': env(
+					'CORE_SUBJECT_GATEWAY_SECRET',
+				),
+			},
+			signal: AbortSignal.timeout(30 * 1000),
+		});
+		if (!res.ok) return '';
+		const json = (await res.json().catch(() => ({}))) as { image?: string };
+		const image = String(json.image ?? '');
+		return IMAGE_RE.test(image) ? image : '';
+	} catch {
+		return '';
+	}
+}
+
 function operator_secret_ok(req: Request): boolean {
 	const expected = env('CORE_SUBJECT_GATEWAY_SECRET');
 	if (!expected) return false;
@@ -445,8 +612,16 @@ export async function handle_operator_http(req: Request): Promise<Response> {
 	if (!operator_secret_ok(req)) {
 		return Response.json({ error: 'forbidden' }, { status: 403 });
 	}
+	const peek = url.pathname.match(/^\/runtime\/([a-z0-9-]+)\/image\/?$/);
+	if (peek && req.method === 'GET') {
+		const slug = normalize_subject_slug(peek[1]!);
+		if (!slug) {
+			return Response.json({ error: 'invalid slug' }, { status: 400 });
+		}
+		return Response.json({ image: await inspect_subject_image(slug) });
+	}
 	const hit = url.pathname.match(
-		/^\/runtime\/([a-z0-9-]+)\/(install|uninstall)\/?$/,
+		/^\/runtime\/([a-z0-9-]+)\/(install|uninstall|update)\/?$/,
 	);
 	if (!hit || req.method !== 'POST') {
 		return Response.json({ error: 'not found' }, { status: 404 });

@@ -15,6 +15,7 @@ import {
 import { broadcast_event } from './socket-stub.ts';
 import { apply_subject_schema_from_url } from './subject-schema.ts';
 import {
+	resolve_running_subject_image,
 	docker_runtime_wanted,
 	is_base_subject_slug,
 	run_subject_docker,
@@ -121,6 +122,13 @@ export async function ensure_install_table(sql: Bun.SQL): Promise<void> {
     ALTER TABLE public.subject_installs
       ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'not_installed'
   `);
+	// Imagen con la que quedó el contenedor. Sin esto el sistema no sabía qué
+	// versión corría y anunciaba la del catálogo, que es la DESEADA. NULL =
+	// instalada antes de que existiera la columna (desconocida), no "ninguna".
+	await sql.unsafe(`
+    ALTER TABLE public.subject_installs
+      ADD COLUMN IF NOT EXISTS installed_image TEXT
+  `);
 	await sql.unsafe(`
     UPDATE public.subject_installs
        SET status = 'installed'
@@ -214,12 +222,13 @@ type InstallRec = {
 	installed_at: string | null;
 	uninstalled_at: string | null;
 	version: number | null;
+	installed_image: string | null;
 };
 
 async function install_records(sql: Bun.SQL): Promise<Map<string, InstallRec>> {
 	await ensure_install_table(sql);
 	const rows = (await sql.unsafe(
-		`SELECT technical_id, installed, status, installed_at, uninstalled_at, version
+		`SELECT technical_id, installed, status, installed_at, uninstalled_at, version, installed_image
      FROM public.subject_installs`,
 	)) as Array<{
 		technical_id: string;
@@ -228,6 +237,7 @@ async function install_records(sql: Bun.SQL): Promise<Map<string, InstallRec>> {
 		installed_at: Date | string | null;
 		uninstalled_at: Date | string | null;
 		version: number | null;
+		installed_image: string | null;
 	}>;
 	const out = new Map<string, InstallRec>();
 	for (const row of rows) {
@@ -240,6 +250,9 @@ async function install_records(sql: Bun.SQL): Promise<Map<string, InstallRec>> {
 				? String(row.uninstalled_at)
 				: null,
 			version: row.version == null ? null : Number(row.version),
+			installed_image: row.installed_image
+				? String(row.installed_image)
+				: null,
 		});
 	}
 	return out;
@@ -255,16 +268,24 @@ export function visible_lifecycle_status(
 	has_in_flight_job: boolean,
 ): { status: string; busy: boolean } {
 	const raw = status || (installed ? 'installed' : 'not_installed');
-	const transitional = raw === 'installing' || raw === 'uninstalling';
+	const transitional =
+		raw === 'installing' || raw === 'uninstalling' || raw === 'updating';
 	if (transitional && has_in_flight_job) {
 		return { status: raw, busy: true };
 	}
 	if (transitional) {
 		// Un installing huérfano sobre una app que YA estaba instalada vuelve a
-		// instalada: era un reintento, no una primera instalación.
+		// instalada: era un reintento, no una primera instalación. Un updating
+		// huérfano siempre vuelve a instalada: actualizar nunca desinstala, así
+		// que la app sigue ahí aunque el contenedor se quedara a medias.
 		const settled = installed ? 'installed' : 'not_installed';
 		return {
-			status: raw === 'uninstalling' ? 'uninstalled' : settled,
+			status:
+				raw === 'uninstalling'
+					? 'uninstalled'
+					: raw === 'updating'
+						? 'installed'
+						: settled,
 			busy: false,
 		};
 	}
@@ -291,12 +312,39 @@ export function stale_lifecycle_write(
 	};
 }
 
+/** `ghcr.io/…/subject-pos:0.1.2` → `0.1.2`; vacío si no hay imagen. */
+export function subject_image_tag(image: string | null | undefined): string {
+	const raw = String(image ?? '').trim();
+	if (!raw.includes(':')) return '';
+	return raw.split(':').pop() ?? '';
+}
+
+/**
+ * Hay actualización si la app está instalada, se sabe con qué imagen quedó y
+ * el catálogo pide otra distinta. Sin `installed_image` no se compara nada:
+ * una app instalada antes de que existiera la columna no debe salir como
+ * "actualizable" solo porque no sepamos qué corre.
+ */
+export function subject_update_available(
+	installed: boolean,
+	installed_image: string | null | undefined,
+	available_image: string | null | undefined,
+): boolean {
+	if (!installed) return false;
+	const have = String(installed_image ?? '').trim();
+	const want = String(available_image ?? '').trim();
+	if (!have || !want) return false;
+	return have !== want;
+}
+
 function catalog_row(sub: SubjectInfo, installed: boolean, rec?: InstallRec) {
 	const view = visible_lifecycle_status(
 		rec?.status,
 		installed,
 		in_flight.has(sub.technical_id),
 	);
+	const installed_image = rec?.installed_image ?? null;
+	const available_image = sub.image ?? null;
 	return {
 		slug: sub.slug,
 		name: sub.name,
@@ -310,6 +358,19 @@ function catalog_row(sub: SubjectInfo, installed: boolean, rec?: InstallRec) {
 		busy: view.busy,
 		base: is_base_subject_slug(sub.slug),
 		installed_at: rec?.installed_at ?? null,
+		// Lo que corre vs. lo que el catálogo pide. `installed_image` en NULL
+		// es "no se sabe" (instalada antes de que existiera la columna), y eso
+		// NO se anuncia como actualización pendiente: se avisaría de algo que
+		// no se puede comparar.
+		installed_image: installed_image,
+		available_image: available_image,
+		installed_tag: subject_image_tag(installed_image),
+		available_tag: subject_image_tag(available_image),
+		update_available: subject_update_available(
+			installed,
+			installed_image,
+			available_image,
+		),
 		modules: sub.modules.map((m) => ({
 			resource: m.resource,
 			path: m.path,
@@ -410,43 +471,61 @@ async function upsert_subject_marker(
 	}
 }
 
+/**
+ * `image` va al final y es opcional a propósito: hay siete llamadores
+ * posicionales y casi ninguno sabe la imagen. Los que no la pasan NO deben
+ * borrar la guardada, de ahí el `COALESCE` — el mismo patrón que `version`.
+ */
 async function write_install_row(
 	sql: Bun.SQL,
 	technical_id: string,
 	installed: boolean,
 	version: number | null,
 	status?: string,
+	image?: string | null,
 ) {
 	await ensure_install_table(sql);
 	const next_status =
 		status || (installed ? 'installed' : 'uninstalled');
+	const image_value = image ? String(image) : null;
 	if (installed) {
 		await sql.unsafe(
 			`INSERT INTO public.subject_installs
-        (technical_id, installed, status, installed_at, uninstalled_at, version)
-       VALUES ($1, TRUE, $3, NOW(), NULL, $2)
+        (technical_id, installed, status, installed_at, uninstalled_at, version, installed_image)
+       VALUES ($1, TRUE, $3, NOW(), NULL, $2, $4)
        ON CONFLICT (technical_id) DO UPDATE SET
          installed = TRUE,
          status = EXCLUDED.status,
          installed_at = COALESCE(public.subject_installs.installed_at, NOW()),
          uninstalled_at = NULL,
-         version = COALESCE(EXCLUDED.version, public.subject_installs.version)`,
-			[technical_id, version, next_status],
+         version = COALESCE(EXCLUDED.version, public.subject_installs.version),
+         installed_image = COALESCE(
+           EXCLUDED.installed_image,
+           public.subject_installs.installed_image
+         )`,
+			[technical_id, version, next_status, image_value],
 		);
 		return;
 	}
 	const stamp_uninstall =
 		next_status === 'uninstalled' || next_status === 'uninstalling';
+	// Desinstalada de verdad: ya no corre ninguna imagen, así que se olvida.
+	// Mientras está `uninstalling` se conserva, por si el Docker falla y hay
+	// que dejar la fila como estaba.
 	await sql.unsafe(
 		`INSERT INTO public.subject_installs
-      (technical_id, installed, status, installed_at, uninstalled_at, version)
-     VALUES ($1, FALSE, $3, NULL, CASE WHEN $4 THEN NOW() ELSE NULL END, $2)
+      (technical_id, installed, status, installed_at, uninstalled_at, version, installed_image)
+     VALUES ($1, FALSE, $3, NULL, CASE WHEN $4 THEN NOW() ELSE NULL END, $2, NULL)
      ON CONFLICT (technical_id) DO UPDATE SET
        installed = FALSE,
        status = EXCLUDED.status,
        uninstalled_at = CASE
          WHEN $4 THEN NOW()
          ELSE public.subject_installs.uninstalled_at
+       END,
+       installed_image = CASE
+         WHEN $3 = 'uninstalled' THEN NULL
+         ELSE public.subject_installs.installed_image
        END`,
 		[technical_id, version, next_status, stamp_uninstall],
 	);
@@ -838,6 +917,9 @@ async function finish_subject_lifecycle(
 		installed,
 		ver.version,
 		installed ? 'installed' : 'uninstalled',
+		// Queda registrado CON QUÉ imagen se instaló. Si el operador se saltó
+		// Docker no se inventa nada: sin contenedor no hay imagen que anotar.
+		installed && !docker.skipped ? docker.image : null,
 	);
 	const wanted_docker = docker_runtime_wanted();
 	const docker_note =
@@ -1017,6 +1099,348 @@ export async function accept_subject_lifecycle(
 		accepted: true,
 		already_running: false,
 		row: catalog_row(sub, false, recs.get(technical_id)),
+		notification,
+	};
+}
+
+/**
+ * Rellena `installed_image` en las apps instaladas que no lo tienen,
+ * preguntando al operador qué imagen corre su contenedor.
+ *
+ * Hace falta porque la columna llegó después: sin esto, una instancia ya
+ * montada no vería NINGUNA actualización hasta reinstalar app por app. No es
+ * adivinar — es `docker inspect` del contenedor vivo. Si no hay contenedor
+ * (app parada, o sin operador), se deja en NULL: sigue siendo "no se sabe".
+ */
+export async function backfill_installed_images(
+	store: ImperiumStore,
+	sql: Bun.SQL,
+): Promise<{ filled: number; unknown: number }> {
+	const recs = await install_records(sql);
+	let filled = 0;
+	let unknown = 0;
+	for (const sub of store.subjects) {
+		const rec = recs.get(sub.technical_id);
+		if (!rec?.installed || rec.installed_image) continue;
+		const running = await resolve_running_subject_image(sub.slug);
+		if (!running) {
+			unknown += 1;
+			continue;
+		}
+		await write_install_row(
+			sql,
+			sub.technical_id,
+			true,
+			rec.version,
+			rec.status || 'installed',
+			running,
+		);
+		filled += 1;
+	}
+	return { filled, unknown };
+}
+
+/**
+ * Apps con actualización pendiente: instaladas, con imagen conocida y con el
+ * catálogo pidiendo otra. Es la lista que alimenta "Actualizar todas" y el
+ * trabajo automático.
+ */
+export async function list_subject_updates(
+	store: ImperiumStore,
+	sql: Bun.SQL,
+): Promise<
+	Array<{
+		technical_id: string;
+		slug: string;
+		name: string;
+		installed_image: string | null;
+		available_image: string | null;
+		installed_tag: string;
+		available_tag: string;
+	}>
+> {
+	const recs = await install_records(sql);
+	const out = [];
+	for (const sub of store.subjects) {
+		const rec = recs.get(sub.technical_id);
+		if (!rec) continue;
+		if (
+			!subject_update_available(
+				rec.installed,
+				rec.installed_image,
+				sub.image,
+			)
+		) {
+			continue;
+		}
+		out.push({
+			technical_id: sub.technical_id,
+			slug: sub.slug,
+			name: sub.name,
+			installed_image: rec.installed_image,
+			available_image: sub.image ?? null,
+			installed_tag: subject_image_tag(rec.installed_image),
+			available_tag: subject_image_tag(sub.image),
+		});
+	}
+	return out;
+}
+
+/**
+ * Actualiza una app instalada a la imagen que pide el catálogo.
+ *
+ * A diferencia de instalar/desinstalar, la app NO cambia de estado: sigue
+ * instalada de principio a fin. Por eso aquí no se toca el marcador de
+ * `module-management` — apagarlo cortaría el acceso a mitad de un pull que
+ * puede durar minutos, y si el pull falla la app se queda como estaba.
+ *
+ * Tras recrear el contenedor se reaplica el esquema: una versión nueva puede
+ * traer tablas o columnas nuevas y sin esto la app arrancaría contra una base
+ * vieja.
+ */
+export async function run_subject_update(
+	store: ImperiumStore,
+	sql: Bun.SQL,
+	sub: SubjectInfo,
+	job?: JobCtx | null,
+): Promise<SubjectRuntimeResult> {
+	const technical_id = sub.technical_id;
+	const ver = await schema_version(sql, technical_id);
+	await write_install_row(sql, technical_id, true, ver.version, 'updating');
+	emit_subject_event(
+		{
+			technical_id,
+			slug: sub.slug,
+			name: sub.name,
+			installed: true,
+			status: 'updating',
+			phase: 'start',
+			level: 'info',
+			message: `Actualizando ${sub.name}…`,
+		},
+		job,
+	);
+	const docker = await run_subject_docker(
+		'update',
+		{ slug: sub.slug, image: sub.image },
+		(event) => {
+			emit_subject_event(
+				{
+					technical_id,
+					slug: sub.slug,
+					name: sub.name,
+					installed: true,
+					status: 'updating',
+					phase: event.phase,
+					level: event.level,
+					message: event.message,
+				},
+				job,
+			);
+		},
+	);
+	if (!docker.ok && !docker.skipped) {
+		// La app sigue instalada con su imagen anterior: solo se deshace el
+		// estado transitorio.
+		await write_install_row(
+			sql,
+			technical_id,
+			true,
+			ver.version,
+			'installed',
+		);
+		emit_subject_event(
+			{
+				technical_id,
+				slug: sub.slug,
+				name: sub.name,
+				installed: true,
+				status: 'installed',
+				phase: 'error',
+				level: 'error',
+				message: `No se pudo actualizar ${sub.name}: ${docker.error}`,
+			},
+			job,
+		);
+		throw new SubjectLifecycleError(
+			docker.error || 'Falló Docker al actualizar la app',
+			502,
+			'docker_failed',
+		);
+	}
+	if (!docker.skipped) {
+		const schema = await apply_subject_schema_from_url(
+			sql,
+			technical_id,
+			subject_base_url(technical_id),
+		);
+		if (!schema.ok) {
+			emit_subject_event(
+				{
+					technical_id,
+					slug: sub.slug,
+					name: sub.name,
+					installed: true,
+					status: 'updating',
+					phase: 'schema',
+					level: 'warning',
+					message: `${sub.name} actualizada, pero su esquema no se pudo aplicar`,
+				},
+				job,
+			);
+		}
+	}
+	const applied = await schema_version(sql, technical_id);
+	await write_install_row(
+		sql,
+		technical_id,
+		true,
+		applied.version,
+		'installed',
+		docker.skipped ? null : docker.image,
+	);
+	emit_subject_event(
+		{
+			technical_id,
+			slug: sub.slug,
+			name: sub.name,
+			installed: true,
+			status: 'installed',
+			phase: 'done',
+			level: 'success',
+			message: docker.skipped
+				? `${sub.name}: no hay operador Docker, no se actualizó el contenedor`
+				: `${sub.name} actualizada a ${subject_image_tag(docker.image)}`,
+		},
+		job,
+	);
+	return docker;
+}
+
+/**
+ * Encola la actualización de TODAS las apps con versión nueva y devuelve al
+ * momento con la lista de lo que va a tocar.
+ *
+ * Secuencial dentro de un único trabajo: disparar veinte `docker pull` a la
+ * vez satura la red del host y deja varias apps a medias. Cada app se marca
+ * `updating` al empezar la suya, así que la pantalla las va viendo caer una
+ * por una.
+ */
+export async function accept_subject_update_all(
+	store: ImperiumStore,
+	sql: Bun.SQL,
+	actor: ImperiumDoc | null,
+) {
+	const pending = await list_subject_updates(store, sql);
+	const targets = pending.filter((item) => !in_flight.has(item.technical_id));
+	if (!targets.length) {
+		return { accepted: true, total: 0, slugs: [] as string[] };
+	}
+	const uid = actor_uid(actor);
+	const notification = await create_background_job_notification(store, {
+		recipient_id: uid,
+		actor,
+		job_kind: 'subject_update',
+		technical_id: targets[0]!.technical_id,
+		slug: targets[0]!.slug,
+		name: `${targets.length} apps`,
+		message: `Actualizando ${targets.length} apps…`,
+	});
+	const job: JobCtx = {
+		store,
+		notification_id: notification?._id
+			? String(notification._id)
+			: undefined,
+		recipient_id: uid,
+	};
+	const chain = (async () => {
+		for (const item of targets) {
+			const sub = store.subjects.find(
+				(s) => s.technical_id === item.technical_id,
+			);
+			if (!sub || in_flight.has(item.technical_id)) continue;
+			const work = run_subject_update(store, sql, sub, job)
+				.then(() => null)
+				.catch(() => null)
+				.finally(() => in_flight.delete(item.technical_id));
+			in_flight.set(item.technical_id, work);
+			await work;
+		}
+	})();
+	void chain;
+	return {
+		accepted: true,
+		total: targets.length,
+		slugs: targets.map((item) => item.slug),
+		notification,
+	};
+}
+
+/**
+ * Encola la actualización de una app y devuelve al momento, igual que
+ * instalar: el pull puede tardar minutos y la petición no se queda esperando.
+ */
+export async function accept_subject_update(
+	store: ImperiumStore,
+	sql: Bun.SQL,
+	technical_id: string,
+	actor: ImperiumDoc | null,
+) {
+	const sub = store.subjects.find((s) => s.technical_id === technical_id);
+	if (!sub) return null;
+	const recs_before = await install_records(sql);
+	const rec = recs_before.get(technical_id);
+	if (!rec?.installed) {
+		throw new SubjectLifecycleError(
+			`${sub.name} no está instalada`,
+			400,
+			'not_installed',
+		);
+	}
+	if (in_flight.has(technical_id)) {
+		return {
+			accepted: true,
+			already_running: true,
+			row: catalog_row(sub, true, rec),
+			notification: null as ImperiumDoc | null,
+		};
+	}
+	const uid = actor_uid(actor);
+	const notification = await create_background_job_notification(store, {
+		recipient_id: uid,
+		actor,
+		job_kind: 'subject_update',
+		technical_id,
+		slug: sub.slug,
+		name: sub.name,
+		message: `Actualizando ${sub.name}…`,
+	});
+	const job: JobCtx = {
+		store,
+		notification_id: notification?._id
+			? String(notification._id)
+			: undefined,
+		recipient_id: uid,
+	};
+	if (uid && job.notification_id) {
+		notify_background_job_refresh(
+			uid,
+			job.notification_id,
+			'background_job_start',
+		);
+	}
+	const work = run_subject_update(store, sql, sub, job)
+		.then(() => null)
+		.catch(() => null)
+		.finally(() => {
+			in_flight.delete(technical_id);
+		});
+	in_flight.set(technical_id, work);
+	const recs = await install_records(sql);
+	return {
+		accepted: true,
+		already_running: false,
+		row: catalog_row(sub, true, recs.get(technical_id)),
 		notification,
 	};
 }
