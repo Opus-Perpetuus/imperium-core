@@ -29,6 +29,19 @@ describe('is_stale_schema_cache', () => {
 		).toBe(true);
 	});
 
+	test('statement preparado con menos columnas de las que hay ahora', () => {
+		// Sin SQLSTATE propio: solo el mensaje del protocolo. Aparece al aplicar
+		// el esquema de una app con el núcleo caliente, y sin reconocerlo la ruta
+		// se queda en 400 hasta reiniciar el núcleo (comprobado).
+		expect(
+			is_stale_schema_cache({
+				code: 'ERR_POSTGRES_SERVER_ERROR',
+				message:
+					'bind message has 21 result formats but query has 22 columns',
+			}),
+		).toBe(true);
+	});
+
 	test('no traga otros 0A000 ni errores ajenos', () => {
 		expect(
 			is_stale_schema_cache({ errno: '0A000', message: 'no se soporta eso' }),
