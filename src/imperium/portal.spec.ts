@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import {
 	apply_landing_code,
 	default_home_document,
+	home_document_v1,
 	legacy_placeholder_home_document,
 	sanitize_nox_html,
 	type NoxHtmlPurifier,
@@ -44,6 +45,50 @@ describe('portal persist', () => {
 		expect((page?.children ?? []).length).toBeGreaterThan(0);
 		expect(published?.['email']).toBeUndefined();
 		expect(published?.['password']).toBeUndefined();
+	});
+
+	test('la plantilla anterior intacta sube a la vigente', async () => {
+		const pages = store();
+		const anterior = home_document_v1();
+		await pages.put({
+			slug: 'home',
+			name: 'Inicio',
+			draft: anterior,
+			published: anterior,
+			published_at: '2026-09-15T00:00:00.000Z',
+			published_by: 'seed',
+			is_active: false,
+		});
+
+		await ensure_home(pages, sanitize);
+
+		const row = await pages.get('home');
+		expect(JSON.stringify(row?.published)).toContain('Plataforma modular');
+		// Subir la plantilla no enciende una landing que se dejó apagada.
+		expect(row?.is_active).toBe(false);
+	});
+
+	test('una plantilla anterior editada se respeta', async () => {
+		const pages = store();
+		const editada = home_document_v1() as {
+			page: { children: Array<{ props: Record<string, unknown> }> };
+		};
+		editada.page.children[0]!.props['title'] = 'Mi municipio';
+		await pages.put({
+			slug: 'home',
+			name: 'Inicio',
+			draft: editada as unknown as Record<string, unknown>,
+			published: editada as unknown as Record<string, unknown>,
+			published_at: '2026-09-15T00:00:00.000Z',
+			published_by: 'admin',
+			is_active: true,
+		});
+
+		await ensure_home(pages, sanitize);
+
+		expect(JSON.stringify(await get_published(pages, 'home'))).toContain(
+			'Mi municipio',
+		);
 	});
 
 	test('el cartel de obra intacto sube a la plantilla completa', async () => {

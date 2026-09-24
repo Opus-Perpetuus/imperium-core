@@ -3,7 +3,7 @@
  * El front manda multipart (`File` + `imperium-sic__data__`); sin esto el SQL
  * serializa el File a `{}` y GET /media no tiene bytes.
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import sharp from 'sharp';
 import type { ImperiumDoc } from './envelope.ts';
@@ -54,6 +54,9 @@ const LIMITE_OTROS = 50 * 1024 * 1024;
 const IMAGEN_ANCHO_MAXIMO = 4000;
 const IMAGEN_ALTO_MAXIMO = 4000;
 const IMAGEN_TIMEOUT_MS = 30_000;
+export const FILE_READINESS_PROCESSING = 'processing';
+export const FILE_READINESS_USABLE = 'usable';
+
 const EXTS_OPTIMIZABLES = new Set([
 	'jpg',
 	'jpeg',
@@ -120,6 +123,7 @@ export async function apply_uploads(
 			out.mimetype = saved.mime;
 			out.file_ext = saved.ext;
 			out.size_in_kb = saved.bytes.length / 1024;
+			out.file_readiness = saved.file_readiness;
 			out.created_by_id = out.created_by_id ?? actor_id;
 			out.related_model =
 				out.related_model || 'AttachmentManagement';
@@ -245,12 +249,13 @@ export async function persist_upload_as_attachment(
 		field: meta.field,
 	});
 	const name = filename_without_extension(file_name(file));
-	return store.insert('attachment-management', {
+	const created = await store.insert('attachment-management', {
 		name: name.length >= 4 ? name : `file-${name ? name : 'adjunto'}`,
 		name_stored: saved.filename,
 		mimetype: saved.mime,
 		file_ext: saved.ext,
 		size_in_kb: saved.bytes.length / 1024,
+		file_readiness: saved.file_readiness,
 		created_by_id: meta.actor_id,
 		related_model: meta.related_model,
 		related_record_id: meta.related_record_id,
@@ -259,12 +264,35 @@ export async function persist_upload_as_attachment(
 		inside_array: meta.inside_array,
 		is_active: true,
 	});
+	bind_deferred_image_optimize(store, created);
+	return created;
 }
+
+type SavedBlob = {
+	filename: string;
+	bytes: Buffer;
+	mime: string;
+	ext: string;
+	file_readiness: typeof FILE_READINESS_PROCESSING | typeof FILE_READINESS_USABLE;
+};
+
+type DeferredImageJob = {
+	store: ImperiumStore;
+	attachment_id: string;
+	path: string;
+	field: string;
+	filename: string;
+};
+
+const pending_optimize = new Map<string, { path: string; field: string }>();
+const optimize_queue: DeferredImageJob[] = [];
+let optimize_drain: Promise<void> = Promise.resolve();
+let optimize_scheduled = false;
 
 async function persist_blob(
 	file: Blob,
 	opts: { related_model: string; field?: string },
-): Promise<{ filename: string; bytes: Buffer; mime: string; ext: string }> {
+): Promise<SavedBlob> {
 	const name = file_name(file);
 	const ext = name.includes('.') ? name.split('.').pop()!.toLowerCase() : '';
 	const mime = (file.type || 'application/octet-stream').toLowerCase();
@@ -276,61 +304,181 @@ async function persist_blob(
 	mkdirSync(folder, { recursive: true });
 	const path = join(folder, filename);
 	writeFileSync(path, bytes);
-	const optimized = await maybe_optimize_image(path, ext, mime, opts.field ?? '');
-	if (optimized) {
+	const original_mime = file.type || mime;
+	if (!should_defer_image_optimize(ext, mime)) {
 		return {
 			filename,
-			bytes: optimized.bytes,
-			mime: 'image/webp',
-			ext: 'webp',
+			bytes,
+			mime: original_mime,
+			ext,
+			file_readiness: FILE_READINESS_USABLE,
 		};
 	}
-	return { filename, bytes, mime: file.type || mime, ext };
+	pending_optimize.set(filename, { path, field: opts.field ?? '' });
+	return {
+		filename,
+		bytes,
+		mime: original_mime,
+		ext,
+		file_readiness: FILE_READINESS_PROCESSING,
+	};
 }
 
-async function maybe_optimize_image(
-	path: string,
-	ext: string,
-	mime: string,
-	field: string,
-): Promise<{ bytes: Buffer } | null> {
+function should_defer_image_optimize(ext: string, mime: string): boolean {
 	const is_image = mime.startsWith('image/') || EXTS_OPTIMIZABLES.has(ext);
-	if (!is_image || ext === 'svg' || !EXTS_OPTIMIZABLES.has(ext)) return null;
-	try {
-		const metadata = await sharp(path).metadata();
-		if (metadata.width && metadata.width > IMAGEN_ANCHO_MAXIMO) {
-			throw new Error(`Ancho de imagen excede el límite máximo: ${IMAGEN_ANCHO_MAXIMO}px`);
+	return is_image && ext !== 'svg' && EXTS_OPTIMIZABLES.has(ext);
+}
+
+export function bind_deferred_image_optimize(store: ImperiumStore, doc: ImperiumDoc): void {
+	const filename = String(doc.name_stored ?? '').trim();
+	const attachment_id = String(doc._id ?? doc.id ?? '').trim();
+	if (!filename || !attachment_id) return;
+	const pending = pending_optimize.get(filename);
+	if (!pending) return;
+	pending_optimize.delete(filename);
+	optimize_queue.push({
+		store,
+		attachment_id,
+		path: pending.path,
+		field: pending.field,
+		filename,
+	});
+	schedule_image_optimize_drain();
+}
+
+export function when_deferred_image_optimize_idle(): Promise<void> {
+	return optimize_drain;
+}
+
+function schedule_image_optimize_drain(): void {
+	if (optimize_scheduled) return;
+	optimize_scheduled = true;
+	optimize_drain = new Promise((resolve) => {
+		setTimeout(() => {
+			void drain_image_optimize_queue().finally(() => {
+				optimize_scheduled = false;
+				resolve();
+				if (optimize_queue.length) schedule_image_optimize_drain();
+			});
+		}, 0);
+	});
+}
+
+async function drain_image_optimize_queue(): Promise<void> {
+	let job = optimize_queue.shift();
+	while (job) {
+		try {
+			await run_deferred_image_optimize(job);
+		} catch (error) {
+			console.error(`[uploads] optimización de imagen diferida: ${error_message(error)}`);
+			await mark_image_usable(job).catch(() => undefined);
 		}
-		if (metadata.height && metadata.height > IMAGEN_ALTO_MAXIMO) {
-			throw new Error(`Alto de imagen excede el límite máximo: ${IMAGEN_ALTO_MAXIMO}px`);
-		}
-		const withoutEnlargement = Boolean(
-			metadata.width &&
-				metadata.height &&
-				metadata.width < IMAGEN_ANCHO_MAXIMO &&
-				metadata.height < IMAGEN_ALTO_MAXIMO,
-		);
-		const pipeline = sharp(path).resize({
-			width: IMAGEN_ANCHO_MAXIMO,
-			height: IMAGEN_ALTO_MAXIMO,
-			fit: 'inside',
-			withoutEnlargement,
-		});
-		const lossless = field.toLowerCase().includes('signature');
-		const result_path = `${path}.result`;
-		const work = lossless
-			? pipeline.webp({ lossless: true, quality: 100 }).toFile(result_path)
-			: pipeline.webp({ quality: 70 }).toFile(result_path);
-		const timeout = new Promise<never>((_, reject) => {
-			setTimeout(() => reject(new Error('Timeout en procesamiento de imagen')), IMAGEN_TIMEOUT_MS);
-		});
-		await Promise.race([work, timeout]);
-		unlinkSync(path);
-		renameSync(result_path, path);
-		return { bytes: readFileSync(path) };
-	} catch (error) {
-		throw new Error(`No se ha podido procesar el fichero: ${error}`);
+		job = optimize_queue.shift();
 	}
+}
+
+async function run_deferred_image_optimize(job: DeferredImageJob): Promise<void> {
+	const doc = await job.store.find_id('attachment-management', job.attachment_id);
+	if (!doc || doc.is_active === false) return;
+	if (String(doc.name_stored ?? '') !== job.filename) return;
+	if (!existsSync(job.path)) {
+		await mark_image_usable(job);
+		return;
+	}
+	try {
+		const optimized = await convert_image_to_webp(job.path, job.field);
+		const current = await job.store.find_id('attachment-management', job.attachment_id);
+		if (!current || current.is_active === false) return;
+		if (String(current.name_stored ?? '') !== job.filename) return;
+		if (!optimized) {
+			await mark_image_usable(job);
+			return;
+		}
+		await job.store.update('attachment-management', job.attachment_id, {
+			mimetype: 'image/webp',
+			file_ext: 'webp',
+			size_in_kb: optimized.bytes / 1024,
+			file_readiness: FILE_READINESS_USABLE,
+		});
+	} catch (error) {
+		unlink_result(job.path);
+		await mark_image_usable(job);
+		console.error(`[uploads] se conserva el original: ${error_message(error)}`);
+	}
+}
+
+async function mark_image_usable(job: DeferredImageJob): Promise<void> {
+	const doc = await job.store.find_id('attachment-management', job.attachment_id);
+	if (!doc || doc.is_active === false) return;
+	if (String(doc.name_stored ?? '') !== job.filename) return;
+	if (String(doc.file_readiness ?? '') === FILE_READINESS_USABLE) return;
+	await job.store.update('attachment-management', job.attachment_id, {
+		file_readiness: FILE_READINESS_USABLE,
+	});
+}
+
+async function convert_image_to_webp(
+	path: string,
+	field: string,
+): Promise<{ bytes: number } | null> {
+	const metadata = await sharp(path).metadata();
+	if (metadata.width && metadata.width > IMAGEN_ANCHO_MAXIMO) return null;
+	if (metadata.height && metadata.height > IMAGEN_ALTO_MAXIMO) return null;
+	const withoutEnlargement = Boolean(
+		metadata.width &&
+			metadata.height &&
+			metadata.width < IMAGEN_ANCHO_MAXIMO &&
+			metadata.height < IMAGEN_ALTO_MAXIMO,
+	);
+	const pipeline = sharp(path).resize({
+		width: IMAGEN_ANCHO_MAXIMO,
+		height: IMAGEN_ALTO_MAXIMO,
+		fit: 'inside',
+		withoutEnlargement,
+	});
+	const lossless = field.toLowerCase().includes('signature');
+	const result_path = `${path}.result`;
+	const encoded = lossless
+		? pipeline.webp({ lossless: true, quality: 100 })
+		: pipeline.webp({ quality: 70 });
+	try {
+		const info = await with_timeout(encoded.toFile(result_path), IMAGEN_TIMEOUT_MS);
+		renameSync(result_path, path);
+		return { bytes: info.size };
+	} catch (error) {
+		unlink_result(path);
+		throw error;
+	}
+}
+
+function error_message(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+function unlink_result(path: string): void {
+	const result_path = `${path}.result`;
+	if (!existsSync(result_path)) return;
+	try {
+		unlinkSync(result_path);
+	} catch {
+		return;
+	}
+}
+
+function with_timeout<T>(work: Promise<T>, ms: number): Promise<T> {
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => reject(new Error('Timeout en procesamiento de imagen')), ms);
+		work.then(
+			(value) => {
+				clearTimeout(timer);
+				resolve(value);
+			},
+			(error) => {
+				clearTimeout(timer);
+				reject(error);
+			},
+		);
+	});
 }
 
 function is_cleared_attachment(value: unknown): boolean {

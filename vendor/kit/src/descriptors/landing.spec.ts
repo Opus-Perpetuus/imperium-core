@@ -3,7 +3,9 @@ import DOMPurify from "isomorphic-dompurify";
 import {
   apply_landing_code,
   default_home_document,
+  home_document_v1,
   is_legacy_placeholder_home,
+  is_untouched_default_home,
   legacy_placeholder_home_document,
   plan_landing_document,
   sanitize_page_document_html,
@@ -205,5 +207,35 @@ describe("cartel de obra de fabrica", () => {
     ) as { title: string };
     casi.title = "Portada";
     expect(is_legacy_placeholder_home(casi)).toBe(false);
+  });
+});
+
+describe("plantilla anterior intacta", () => {
+  test("la landing anterior sin tocar se reconoce para subirla a la vigente", () => {
+    expect(is_untouched_default_home(home_document_v1())).toBe(true);
+    expect(is_untouched_default_home(legacy_placeholder_home_document())).toBe(true);
+  });
+
+  test("la vigente no se reescribe en cada arranque", () => {
+    expect(is_untouched_default_home(default_home_document())).toBe(false);
+  });
+
+  test("una landing editada, aunque sea una coma, se respeta", () => {
+    const editada = JSON.parse(JSON.stringify(home_document_v1()));
+    editada.page.children[0].props.title = "Mi municipio";
+    expect(is_untouched_default_home(editada)).toBe(false);
+    expect(is_untouched_default_home(null)).toBe(false);
+  });
+
+  test("la vigente abre con portada de dos fotos y antetitulo", () => {
+    const doc = default_home_document() as {
+      page: { children: Array<{ component: string; props: Record<string, unknown> }> };
+    };
+    const portada = doc.page.children[0]!;
+    expect(portada.props["block"]).toBe("portada");
+    expect(portada.props["kicker"]).toBeTruthy();
+    expect((portada.props["images"] as string[]).length).toBe(2);
+    // `image` sigue presente para los renderers que solo leen una foto.
+    expect(portada.props["image"]).toBe((portada.props["images"] as string[])[0]);
   });
 });

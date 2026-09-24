@@ -5,8 +5,8 @@
 import {
 	apply_landing_code,
 	default_home_document,
-	is_legacy_placeholder_home,
 	is_public_landing_enabled,
+	is_untouched_default_home,
 	sanitize_page_document_html,
 	validate_page_descriptor,
 	type NoxUiValidationIssue,
@@ -184,18 +184,18 @@ function prepare_document(
 }
 
 /**
- * Una landing que sigue siendo, palabra por palabra, el cartel de obra que se
- * sembraba antes de que existiera la plantilla.
+ * Una landing que sigue siendo, palabra por palabra, una plantilla que el
+ * producto sembro antes: el cartel de obra o la landing anterior a la vigente.
  *
  * Se mira el borrador **y** lo publicado: si alguno de los dos ya es otra cosa,
- * alguien escribio ahi y no se toca. Sin esto la plantilla completa solo la veia
- * una instalacion nueva, y toda instalacion anterior se quedaba con
- * "Configura esta landing desde el administrador" para siempre.
+ * alguien escribio ahi y no se toca. Sin esto cada plantilla nueva solo la veia
+ * una instalacion nueva, y las anteriores se quedaban con la vieja para siempre
+ * aunque nadie la hubiera tocado.
  */
 function is_untouched_placeholder(row: PortalPageRow): boolean {
 	return (
-		is_legacy_placeholder_home(row.draft) &&
-		(row.published == null || is_legacy_placeholder_home(row.published))
+		is_untouched_default_home(row.draft) &&
+		(row.published == null || is_untouched_default_home(row.published))
 	);
 }
 

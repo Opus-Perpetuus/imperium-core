@@ -15,7 +15,11 @@ import {
 	type UserPinWriteNotice,
 } from './user-pin.ts';
 import { after_lectura_create, prepare_lectura_write } from './agua-importe.ts';
-import { apply_uploads, link_attachments_to_record } from './uploads.ts';
+import {
+	apply_uploads,
+	bind_deferred_image_optimize,
+	link_attachments_to_record,
+} from './uploads.ts';
 import {
 	after_pedido_mutate,
 	decorate_pedido,
@@ -744,6 +748,7 @@ export async function handle_crud(
 		}
 		const doc = await before_create(store, resource, incoming, actor);
 		const created = await store.insert(resource, doc);
+		if (resource === 'attachment-management') bind_deferred_image_optimize(store, created);
 		await link_attachments_to_record(store, resource, created);
 		const notice = user_pin_notice
 			? finalize_user_pin_notice(user_pin_notice, created, actor ? String(actor._id) : '')
@@ -960,6 +965,9 @@ export async function handle_crud(
 			b = await prepare_lectura_write(store, b);
 		}
 		const updated = await store.update(resource, id, b);
+		if (updated && resource === 'attachment-management') {
+			bind_deferred_image_optimize(store, updated);
+		}
 		if (updated) await link_attachments_to_record(store, resource, updated);
 		if (!updated) return json(resource, fail('No encontrado', 404).body, 404);
 		if (resource === 'pedidos') await after_pedido_mutate(store, 'update', updated, previous);
@@ -1123,6 +1131,9 @@ export async function handle_crud(
 			patched = await prepare_pattern_part_update(patched, previous);
 		}
 		const updated = await store.update(resource, segs[0]!, patched);
+		if (updated && resource === 'attachment-management') {
+			bind_deferred_image_optimize(store, updated);
+		}
 		if (updated) await link_attachments_to_record(store, resource, updated);
 		if (!updated) return json(resource, fail('No encontrado', 404).body, 404);
 		if (resource === 'pedidos') await after_pedido_mutate(store, 'update', updated, previous);

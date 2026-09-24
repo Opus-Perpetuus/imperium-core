@@ -228,7 +228,21 @@ const LIST_PROJECTIONS: Record<string, ListProjection> = {
 		],
 	},
 	'ticketing-system-turn': {
+		// `priority_level` sin columna: el tablero ordena «Próximos» con él.
 		rows: [
+			'_id',
+			'name',
+			'description',
+			'movements',
+			'customer_type',
+			'assigned_box',
+			'services',
+			'status',
+			'time',
+			'createdAt',
+			'priority_level',
+		],
+		tipo: [
 			'_id',
 			'name',
 			'description',
