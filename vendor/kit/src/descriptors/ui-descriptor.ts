@@ -49,6 +49,25 @@ export type NoxUiComponentId =
   | "nox.input-checkbox"
   | "nox.input-hidden"
   | "nox.input-menu"
+  | "nox.input-mask"
+  | "nox.input-week"
+  | "nox.input-month"
+  | "nox.input-year"
+  | "nox.input-weekday"
+  | "nox.input-switch"
+  | "nox.input-radio-buttons"
+  | "nox.input-radio-group"
+  | "nox.input-datalist"
+  | "nox.input-signature"
+  | "nox.input-coordinates"
+  | "nox.input-color"
+  | "nox.input-icon"
+  | "nox.input-markdown"
+  | "nox.input-code-editor"
+  | "nox.input-editor-html-pdf"
+  | "nox.input-object"
+  | "nox.input-timer"
+  | "nox.input-status"
   | "nox.link"
   | "nox.loading-overlay"
   | "nox.login"
@@ -139,6 +158,25 @@ export const NOX_UI_COMPONENT_ALLOWLIST: readonly NoxUiComponentId[] = [
   "nox.input-checkbox",
   "nox.input-hidden",
   "nox.input-menu",
+  "nox.input-mask",
+  "nox.input-week",
+  "nox.input-month",
+  "nox.input-year",
+  "nox.input-weekday",
+  "nox.input-switch",
+  "nox.input-radio-buttons",
+  "nox.input-radio-group",
+  "nox.input-datalist",
+  "nox.input-signature",
+  "nox.input-coordinates",
+  "nox.input-color",
+  "nox.input-icon",
+  "nox.input-markdown",
+  "nox.input-code-editor",
+  "nox.input-editor-html-pdf",
+  "nox.input-object",
+  "nox.input-timer",
+  "nox.input-status",
   "nox.link",
   "nox.loading-overlay",
   "nox.login",
@@ -246,6 +284,30 @@ export const NOX_UI_MVP_RENDER_IDS: readonly NoxUiComponentId[] = [
   /** Storefront facet sidebar: exclusive open group + radio/switch filters. */
   "nox.collapsible",
   "nox.input-choice",
+  /** Every other input type of the canonical Imperium input inside `nox.form`. */
+  "nox.input-datetime",
+  "nox.input-time",
+  "nox.input-date-range",
+  "nox.input-checkbox-group",
+  "nox.input-mask",
+  "nox.input-week",
+  "nox.input-month",
+  "nox.input-year",
+  "nox.input-weekday",
+  "nox.input-switch",
+  "nox.input-radio-buttons",
+  "nox.input-radio-group",
+  "nox.input-datalist",
+  "nox.input-signature",
+  "nox.input-coordinates",
+  "nox.input-color",
+  "nox.input-icon",
+  "nox.input-markdown",
+  "nox.input-code-editor",
+  "nox.input-editor-html-pdf",
+  "nox.input-object",
+  "nox.input-timer",
+  "nox.input-status",
 ] as const;
 
 /** Single node in a declarative UI tree (no raw HTML). */
