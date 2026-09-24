@@ -115,7 +115,21 @@ function apply_field(
   if (spec.type === "boolean" && v != null && typeof v !== "boolean") {
     v = v === "true" || v === true || v === 1 || v === "1";
   }
+  if (spec.type === "json" && typeof v === "string") v = parse_json_text(v);
   return v;
+}
+
+/**
+ * El editor JSON de un formulario manda texto. En un campo `json` se guarda
+ * el objeto; el texto que no es JSON se queda como vino.
+ */
+function parse_json_text(text: string): unknown {
+  if (!text.trim()) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
 }
 
 function pick_body(

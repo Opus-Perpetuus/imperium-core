@@ -334,3 +334,59 @@ describe("define_crud redact_history", () => {
     server.stop();
   });
 });
+
+describe("define_crud json fields", () => {
+  test("el texto JSON de un editor llega como objeto a un campo json", async () => {
+    const routes = define_crud({
+      resource: "notes",
+      table: "notes",
+      fields: {
+        title: { type: "string", required: true },
+        meta: { type: "json" },
+      },
+    });
+    const def = define_kirlet({
+      id: "KIRLET-json",
+      name: "Json",
+      version: "0.1.0",
+      compat: { nox: ">=0.5.0", kit: "^0.5.0" },
+      modules: [
+        define_module({
+          resource: "notes",
+          labels: { singular: "Note", plural: "Notes" },
+          routes,
+          tables: [
+            {
+              name: "notes",
+              columns: [
+                { name: "id", type: "text", primaryKey: true },
+                { name: "title", type: "text", notNull: true },
+                { name: "meta", type: "json" },
+                { name: "created_at", type: "text" },
+                { name: "updated_at", type: "text" },
+              ],
+            },
+          ],
+        }),
+      ],
+    });
+    const server = create_kirlet_test_context(def, { auth_disabled: true });
+    const post = async (meta: unknown) => {
+      const res = await server.fetch(
+        new Request("http://t/notes", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ title: "x", meta }),
+        }),
+      );
+      return ((await res.json()) as { data: { meta: unknown } }).data.meta;
+    };
+
+    expect(await post('{\n  "a": [1, 2]\n}')).toEqual({ a: [1, 2] });
+    expect(await post({ b: true })).toEqual({ b: true });
+    expect(await post("   ")).toBeNull();
+    expect(await post("no es json")).toBe("no es json");
+
+    server.stop();
+  });
+});
