@@ -52,6 +52,11 @@ import {
 	type SubjectIdentityRealm,
 	type SubjectModuleRef,
 } from './imperium/subject-identity.ts';
+import {
+	AppProxyRequestError,
+	bytes_for_proxy,
+	guard_app_proxy_body,
+} from './imperium/app-proxy-body.ts';
 
 const PORT = Number(process.env.PORT ?? 3100);
 const DATABASE_URL =
@@ -338,8 +343,24 @@ async function proxy_subject(
 		apply_subject_identity_headers(headers, identity, GATEWAY_SECRET);
 	}
 	const init: RequestInit = { method: req.method, headers };
-	if (req.method !== 'GET' && req.method !== 'HEAD')
-		init.body = await req.arrayBuffer();
+	if (req.method !== 'GET' && req.method !== 'HEAD') {
+		try {
+			const raw = await bytes_for_proxy(req);
+			init.body = await guard_app_proxy_body(
+				raw,
+				headers.get('content-type'),
+			);
+		} catch (err) {
+			if (err instanceof AppProxyRequestError) {
+				return Response.json(
+					{ error: err.message, message: err.message },
+					{ status: err.status },
+				);
+			}
+			throw err;
+		}
+		headers.delete('content-length');
+	}
 	try {
 		return await fetch(target, {
 			...init,
