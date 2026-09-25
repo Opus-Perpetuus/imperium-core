@@ -27,6 +27,7 @@ import {
 	print_console_log,
 } from './imperium/debug-request-log.ts';
 import { apply_subject_schema_bundle } from './imperium/subject-schema.ts';
+import { ColumnListCache } from './imperium/column-list-cache.ts';
 import {
 	is_column_name,
 	qident,
@@ -124,6 +125,7 @@ function hash(s: string): number {
 
 async function apply_bundle(bundle: KirletSchemaBundle): Promise<void> {
 	await apply_subject_schema_bundle(sql, bundle);
+	forget_columns(pg_schema_name(bundle.technicalId));
 }
 
 /**
@@ -137,16 +139,19 @@ async function apply_bundle(bundle: KirletSchemaBundle): Promise<void> {
  * corre y vuelve a fallar).
  *
  * Con la lista explícita, añadir una columna cambia el texto: se prepara un
- * statement nuevo y el viejo nunca se vuelve a usar. La caché se vacía cuando el
- * error aparece, que es la única señal fiable de que alguien movió el esquema —
- * puede haber sido otra réplica o una migración a mano.
+ * statement nuevo y el viejo nunca se vuelve a usar.
+ *
+ * Pero la lista vieja tampoco falla: sigue siendo una consulta válida, solo que
+ * sin las columnas nuevas. Una app que subía de esquema escribía en ellas y al
+ * leerlas recibía la fila sin esos campos hasta reiniciar el núcleo (la ficha
+ * de la tienda sin sus accesorios ni su ficha técnica). Por eso la lista caduca
+ * y se olvida al instalar un esquema aquí; el DDL de otra réplica o una
+ * migración a mano se ve, a más tardar, al caducar.
  */
-const column_cache = new Map<string, string[]>();
+const column_cache = new ColumnListCache(30_000);
 
 function forget_columns(schema: string): void {
-	for (const key of [...column_cache.keys()]) {
-		if (key.startsWith(`${schema}.`)) column_cache.delete(key);
-	}
+	column_cache.forget_schema(schema);
 }
 
 async function select_list(schema: string, table: string): Promise<string> {
