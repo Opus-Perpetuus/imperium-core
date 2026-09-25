@@ -21,7 +21,9 @@ import {
 	email_is_configured,
 	resolve_email_settings,
 	send_password_reset_email,
+	send_subject_notification_email,
 } from './email.ts';
+import { read_public_registration } from './public-registration.ts';
 import {
 	find_user_by_reset_token,
 	generate_password_reset,
@@ -381,8 +383,6 @@ async function register_public_user(
 ): Promise<Response> {
 	const body = await read_imperium_body(req);
 	const email = normalize_auth_rate_limit_email(body.email);
-	const password = String(body.password ?? '');
-	const name = String(body.name ?? '').trim();
 
 	// Cubo propio: darse de alta y recuperar la contraseña no deben gastarse el
 	// presupuesto la una a la otra.
@@ -393,12 +393,10 @@ async function register_public_user(
 	);
 	if (limited) return Response.json(limited, { status: 429 });
 
-	if (!email || !email.includes('@') || !password) {
+	const read = read_public_registration(body);
+	if (!read.ok) {
 		return Response.json(
-			{
-				error: 'Faltan datos para crear la cuenta',
-				message: 'Escribe tu correo y una contraseña.',
-			},
+			{ error: read.message, message: read.message },
 			{ status: 400 },
 		);
 	}
@@ -408,9 +406,9 @@ async function register_public_user(
 		doc = await prepare_user_write(
 			'user',
 			{
-				name: name || email,
-				email,
-				password,
+				name: read.value.name,
+				email: read.value.email,
+				password: read.value.password,
 				type: 'external',
 			} as ImperiumDoc,
 			true,
@@ -446,12 +444,45 @@ async function register_public_user(
 	safe.type = 'external';
 	safe.is_admin = false;
 	const session = await create_session(sql, safe);
+	void send_public_welcome(store, read.value.name, read.value.email);
 	return with_cookie(
 		Response.json({ user: safe, destination: PUBLIC_LOGIN_DESTINATION }),
 		session.id,
 		false,
 		req,
 	);
+}
+
+/**
+ * Bienvenida al cliente que se acaba de dar de alta.
+ *
+ * Le confirma con qué correo quedó la cuenta —el que tendrá que usar para
+ * entrar— y le avisa si alguien la creó con su dirección sin pedírselo. Sin
+ * correo configurado no hay nada que mandar, y un servidor caído no debe
+ * frenar ni tumbar el alta: va aparte y sus errores solo se registran.
+ */
+async function send_public_welcome(
+	store: ImperiumStore,
+	name: string,
+	email: string,
+): Promise<void> {
+	try {
+		const settings = await resolve_email_settings(store);
+		if (!email_is_configured(settings)) return;
+		const app_name = settings.app_name || 'la plataforma';
+		await send_subject_notification_email({
+			settings,
+			to: email,
+			title: `Tu cuenta en ${app_name} está lista`,
+			body: [
+				`Hola ${name}:`,
+				`Creaste tu cuenta con el correo ${email}. Úsalo junto con tu contraseña para entrar cuando quieras.`,
+				'Si tú no creaste esta cuenta, responde a este correo y la damos de baja.',
+			].join('\n\n'),
+		});
+	} catch (err) {
+		debug_error(`bienvenida de alta publica no enviada: ${String((err as Error).message)}`);
+	}
 }
 
 async function login_on_surface(
