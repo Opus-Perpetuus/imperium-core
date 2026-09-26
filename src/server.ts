@@ -140,13 +140,6 @@ async function apply_bundle(bundle: KirletSchemaBundle): Promise<void> {
  *
  * Con la lista explícita, añadir una columna cambia el texto: se prepara un
  * statement nuevo y el viejo nunca se vuelve a usar.
- *
- * Pero la lista vieja tampoco falla: sigue siendo una consulta válida, solo que
- * sin las columnas nuevas. Una app que subía de esquema escribía en ellas y al
- * leerlas recibía la fila sin esos campos hasta reiniciar el núcleo (la ficha
- * de la tienda sin sus accesorios ni su ficha técnica). Por eso la lista caduca
- * y se olvida al instalar un esquema aquí; el DDL de otra réplica o una
- * migración a mano se ve, a más tardar, al caducar.
  */
 const column_cache = new ColumnListCache(30_000);
 
