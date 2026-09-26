@@ -126,7 +126,7 @@ export function query_list(url: URL): {
 	const skip = Math.max(0, Number(url.searchParams.get('desde') ?? url.searchParams.get('skip') ?? 0) || 0);
 	let take = Number(url.searchParams.get('limite') ?? url.searchParams.get('take') ?? 100);
 	if (!Number.isFinite(take) || take < 1) take = 100;
-	take = Math.min(Math.floor(take), 10000);
+	take = Math.min(Math.floor(take), 200);
 	const campo = (url.searchParams.get('campoSort') ?? '').trim();
 	const sort_raw = (url.searchParams.get('sort') ?? '').trim();
 	let sort = '';
