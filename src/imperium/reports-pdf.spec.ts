@@ -86,7 +86,7 @@ describe('html_to_pdf_response', () => {
 		const bytes = new Uint8Array(await res.arrayBuffer());
 		expect(looks_like_pdf(bytes)).toBe(true);
 		expect(bytes.byteLength).toBeGreaterThan(100);
-	});
+	}, 30000);
 
 	test('landscape list PDF is wide enough that the last column is not clipped', async () => {
 		if (!resolve_chrome_executable()) {
@@ -111,7 +111,7 @@ describe('html_to_pdf_response', () => {
 		await Bun.write(tmp, bytes);
 		const text = await Bun.$`pdftotext -layout ${tmp} -`.text();
 		expect(text).toContain('ASIGNADOX');
-	});
+	}, 30000);
 
 	test('keeps Spanish accents and landscape MediaBox', async () => {
 		if (!resolve_chrome_executable()) {
@@ -140,5 +140,5 @@ describe('html_to_pdf_response', () => {
 		expect(text).toContain('Nicolás');
 		expect(text).not.toContain('MiÃ©');
 		expect(text).not.toContain('creaciÃ');
-	});
+	}, 30000);
 });

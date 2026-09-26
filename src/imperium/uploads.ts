@@ -249,21 +249,33 @@ export async function persist_upload_as_attachment(
 		field: meta.field,
 	});
 	const name = filename_without_extension(file_name(file));
-	const created = await store.insert('attachment-management', {
-		name: name.length >= 4 ? name : `file-${name ? name : 'adjunto'}`,
-		name_stored: saved.filename,
-		mimetype: saved.mime,
-		file_ext: saved.ext,
-		size_in_kb: saved.bytes.length / 1024,
-		file_readiness: saved.file_readiness,
-		created_by_id: meta.actor_id,
-		related_model: meta.related_model,
-		related_record_id: meta.related_record_id,
-		field: meta.field,
-		index_if_is_array: meta.index_if_is_array,
-		inside_array: meta.inside_array,
-		is_active: true,
-	});
+	let created: ImperiumDoc;
+	try {
+		created = await store.insert('attachment-management', {
+			name: name.length >= 4 ? name : `file-${name ? name : 'adjunto'}`,
+			name_stored: saved.filename,
+			mimetype: saved.mime,
+			file_ext: saved.ext,
+			size_in_kb: saved.bytes.length / 1024,
+			file_readiness: saved.file_readiness,
+			created_by_id: meta.actor_id,
+			related_model: meta.related_model,
+			related_record_id: meta.related_record_id,
+			field: meta.field,
+			index_if_is_array: meta.index_if_is_array,
+			inside_array: meta.inside_array,
+			is_active: true,
+		});
+	} catch (error) {
+		pending_optimize.delete(saved.filename);
+		const path = join(writable_upload_folder(), saved.filename);
+		try {
+			unlinkSync(path);
+		} catch (unlink_error) {
+			if ((unlink_error as { code?: string }).code !== 'ENOENT') throw unlink_error;
+		}
+		throw error;
+	}
 	bind_deferred_image_optimize(store, created);
 	return created;
 }
@@ -299,6 +311,9 @@ async function persist_blob(
 	validate_upload(ext, mime, file.size, opts.related_model);
 	const bytes = Buffer.from(await file.arrayBuffer());
 	if (!bytes.length) throw new Error('No se ha subido un archivo');
+	if (should_defer_image_optimize(ext, mime)) {
+		await assert_upload_image(bytes);
+	}
 	const filename = crypto.randomUUID();
 	const folder = writable_upload_folder();
 	mkdirSync(folder, { recursive: true });
@@ -348,6 +363,68 @@ export function bind_deferred_image_optimize(store: ImperiumStore, doc: Imperium
 
 export function when_deferred_image_optimize_idle(): Promise<void> {
 	return optimize_drain;
+}
+
+const RECOVERY_PAGE = 200;
+
+export async function recover_orphan_processing_uploads(
+	store: ImperiumStore,
+): Promise<number> {
+	if (!store.has('attachment-management')) return 0;
+	const seen = new Set<string>();
+	let recovered = 0;
+	for (;;) {
+		const { rows } = await store.find_many('attachment-management', {
+			where: { file_readiness: FILE_READINESS_PROCESSING },
+			include_inactive: true,
+			take: RECOVERY_PAGE,
+			skip: 0,
+			populate: false,
+			skip_total: true,
+		});
+		if (!rows.length) break;
+		let progressed = 0;
+		for (const row of rows) {
+			if (String(row.file_readiness ?? '') !== FILE_READINESS_PROCESSING) continue;
+			const id = String(row._id ?? row.id ?? '').trim();
+			if (!id || seen.has(id)) continue;
+			seen.add(id);
+			try {
+				const saved = await store.update('attachment-management', id, {
+					file_readiness: FILE_READINESS_USABLE,
+				});
+				if (!saved || String(saved.file_readiness ?? '') !== FILE_READINESS_USABLE) {
+					continue;
+				}
+				recovered++;
+				progressed++;
+			} catch (error) {
+				console.error(
+					`[uploads] adjunto en processing no se pudo marcar usable: ${error_message(error)}`,
+				);
+			}
+		}
+		if (!progressed || rows.length < RECOVERY_PAGE) break;
+	}
+	return recovered;
+}
+
+async function assert_upload_image(bytes: Buffer): Promise<void> {
+	let metadata: sharp.Metadata;
+	try {
+		metadata = await sharp(bytes).metadata();
+	} catch {
+		throw upload_rejected('El archivo no es una imagen válida');
+	}
+	if (!metadata.format || !metadata.width || !metadata.height) {
+		throw upload_rejected('El archivo no es una imagen válida');
+	}
+}
+
+function upload_rejected(message: string): Error {
+	const error = new Error(message) as Error & { status: number };
+	error.status = 400;
+	return error;
 }
 
 function schedule_image_optimize_drain(): void {
@@ -422,8 +499,6 @@ async function convert_image_to_webp(
 	field: string,
 ): Promise<{ bytes: number } | null> {
 	const metadata = await sharp(path).metadata();
-	if (metadata.width && metadata.width > IMAGEN_ANCHO_MAXIMO) return null;
-	if (metadata.height && metadata.height > IMAGEN_ALTO_MAXIMO) return null;
 	const withoutEnlargement = Boolean(
 		metadata.width &&
 			metadata.height &&

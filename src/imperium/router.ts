@@ -21,6 +21,7 @@ import { handle_action } from './actions.ts';
 import { handle_db_admin, is_db_admin_path } from './db-admin.ts';
 import { handle_mcp_agent, seed_mcp_access } from './mcp-agent.ts';
 import { serve_media } from './media.ts';
+import { recover_orphan_processing_uploads } from './uploads.ts';
 import { ImperiumStore, load_catalog_path } from './store.ts';
 import { fail, humanize_caught_error } from './envelope.ts';
 import { PinChallengeError } from './user-pin.ts';
@@ -99,6 +100,13 @@ export function create_imperium_layer(sql: Bun.SQL) {
 			}
 			try {
 				await seed_missing_install_rows(store, sql);
+			} catch (err) {
+				debug_error(
+					err instanceof Error ? err.message : String(err),
+				);
+			}
+			try {
+				await recover_orphan_processing_uploads(store);
 			} catch (err) {
 				debug_error(
 					err instanceof Error ? err.message : String(err),
