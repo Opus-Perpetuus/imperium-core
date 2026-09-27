@@ -26,6 +26,8 @@ describe('subject-runtime', () => {
 	test('base slugs cannot be uninstalled', () => {
 		expect(is_base_subject_slug('configuracion')).toBe(true);
 		expect(is_base_subject_slug('subject-planeacion')).toBe(true);
+		expect(is_base_subject_slug('reportes')).toBe(true);
+		expect(is_base_subject_slug('subject-reportes')).toBe(true);
 		expect(is_base_subject_slug('pos')).toBe(false);
 		expect(BASE_SUBJECT_SLUGS.has('configuraciones-de-vista')).toBe(true);
 	});

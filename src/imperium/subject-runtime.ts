@@ -10,6 +10,7 @@ export const BASE_SUBJECT_SLUGS = new Set([
 	'configuracion',
 	'configuraciones-de-vista',
 	'planeacion',
+	'reportes',
 ]);
 
 const SLUG_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
