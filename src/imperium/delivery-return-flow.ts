@@ -26,8 +26,52 @@ function round_qty(value: number): number {
 	return Math.round((value + Number.EPSILON) * 10000) / 10000;
 }
 
-export async function prepare_delivery_return_create(doc: ImperiumDoc): Promise<ImperiumDoc> {
+/**
+ * El folio solo no alcanza: el comentario del pedido busca el id en `pedido`.
+ * Si el folio no casa con ningún pedido, la devolución se guarda igual.
+ */
+export async function attach_pedido_link(
+	store: ImperiumStore,
+	doc: ImperiumDoc,
+	previous?: ImperiumDoc | null,
+): Promise<ImperiumDoc> {
 	const out = { ...doc };
+	const folio = text(out.pedido_folio) || text(previous?.pedido_folio);
+	const linked = await resolve_pedido_id(
+		store,
+		folio,
+		ref_id(out.pedido) || ref_id(previous?.pedido),
+	);
+	if (linked) out.pedido = linked;
+	return out;
+}
+
+async function resolve_pedido_id(
+	store: ImperiumStore,
+	folio: string,
+	current: string,
+): Promise<string> {
+	if (current && OBJECT_ID.test(current)) return current;
+	if (!folio || !store.has('pedidos')) return '';
+	const candidates = [{ folio }, { name: folio }, { name: `PEDIDO-${folio}` }];
+	for (const where of candidates) {
+		const found = await store.find_many('pedidos', {
+			where,
+			take: 1,
+			populate: false,
+			include_inactive: true,
+		});
+		const id = text(found.rows[0]?._id);
+		if (OBJECT_ID.test(id)) return id;
+	}
+	return '';
+}
+
+export async function prepare_delivery_return_create(
+	store: ImperiumStore,
+	doc: ImperiumDoc,
+): Promise<ImperiumDoc> {
+	const out = await attach_pedido_link(store, { ...doc });
 	delete out._id;
 	const folio = text(out.pedido_folio);
 	out.name = text(out.name) || `Devolución ${folio}`.trim();
@@ -37,6 +81,7 @@ export async function prepare_delivery_return_create(doc: ImperiumDoc): Promise<
 }
 
 export async function prepare_delivery_return_update(
+	store: ImperiumStore,
 	doc: ImperiumDoc,
 	previous: ImperiumDoc | null,
 ): Promise<ImperiumDoc> {
@@ -44,7 +89,7 @@ export async function prepare_delivery_return_update(
 	if (text(previous.estado) === STATE_RECEIVED) {
 		throw new Error('Una devolución recibida en almacén no se puede modificar');
 	}
-	return { ...doc };
+	return attach_pedido_link(store, { ...doc }, previous);
 }
 
 export async function recibir_delivery_return(
@@ -75,10 +120,16 @@ export async function recibir_delivery_return(
 	}
 	const fecha = new Date();
 	await register_return_receipt(store, devolucion, location_id, text(ubicacion.codigo), fecha);
+	const pedido_id = await resolve_pedido_id(
+		store,
+		text(devolucion.pedido_folio),
+		ref_id(devolucion.pedido),
+	);
 	const updated = await store.update('delivery-return', id, {
 		estado: STATE_RECEIVED,
 		ubicacion_recepcion: location_id,
 		ubicacion_recepcion_codigo: text(ubicacion.codigo),
+		...(pedido_id ? { pedido: pedido_id } : {}),
 	});
 	if (!updated) throw new Error('No se encontró la devolución indicada');
 	try {

@@ -10,6 +10,7 @@ const EXTRA_SEARCH: Record<string, readonly string[]> = {
 		'report_description',
 		'citizen_street',
 	],
+	'delivery-return': ['pedido_folio', 'contacto_nombre'],
 };
 
 const BASE_SEARCH = ['name', 'description', 'ref', 'search_field', 'code'] as const;

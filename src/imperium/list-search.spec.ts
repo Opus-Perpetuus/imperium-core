@@ -22,6 +22,16 @@ describe('list_search_columns', () => {
 		expect(cols).not.toContain('payload');
 	});
 
+	test('delivery-return busca folio y cliente', () => {
+		const cols = list_search_columns(
+			'delivery-return',
+			new Set(['name', 'pedido_folio', 'contacto_nombre', 'estado']),
+		);
+		expect(cols).toContain('pedido_folio');
+		expect(cols).toContain('contacto_nombre');
+		expect(cols).toContain('name');
+	});
+
 	test('otros recursos no inventan columnas de reportes', () => {
 		expect(list_search_columns('user', new Set(['name', 'email']))).toEqual([
 			'name',

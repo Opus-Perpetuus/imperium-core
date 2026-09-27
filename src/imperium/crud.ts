@@ -653,7 +653,7 @@ export async function handle_crud(
 			incoming = await prepare_delivery_package_create(store, incoming);
 		}
 		if (resource === 'delivery-return') {
-			incoming = await prepare_delivery_return_create(incoming);
+			incoming = await prepare_delivery_return_create(store, incoming);
 		}
 		if (is_delivery_route_resource(resource)) {
 			incoming = await prepare_delivery_route_write(store, incoming);
@@ -887,7 +887,7 @@ export async function handle_crud(
 			b = await prepare_delivery_package_update(store, b, previous);
 		}
 		if (resource === 'delivery-return') {
-			b = await prepare_delivery_return_update(b, previous);
+			b = await prepare_delivery_return_update(store, b, previous);
 		}
 		if (is_delivery_route_resource(resource)) {
 			b = await prepare_delivery_route_write(store, b, previous);
@@ -1066,7 +1066,7 @@ export async function handle_crud(
 			patched = await prepare_delivery_package_update(store, patched, previous);
 		}
 		if (resource === 'delivery-return') {
-			patched = await prepare_delivery_return_update(patched, previous);
+			patched = await prepare_delivery_return_update(store, patched, previous);
 		}
 		if (is_delivery_route_resource(resource)) {
 			patched = await prepare_delivery_route_write(store, patched, previous);
