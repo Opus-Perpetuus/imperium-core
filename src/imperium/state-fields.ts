@@ -417,8 +417,6 @@ async function find_tracker_metadata(store: ImperiumStore, resource: string) {
 	return normalize_metadata(tracker?.__state_fields);
 }
 
-const OBJECT_ID_PATTERN = '^[0-9a-fA-F]{24}$';
-
 function json_schema_type(type: string) {
 	const normalized = type.toLowerCase();
 	if (normalized === 'number' || normalized === 'decimal128') return 'number';
@@ -426,10 +424,13 @@ function json_schema_type(type: string) {
 	return 'string';
 }
 
+/**
+ * Sin `pattern` de ObjectId: las filas que crea una app llevan ids del kit
+ * (`registro_…`), y el formulario rechazaba cualquier referencia a ellas.
+ */
 function object_id_property(ref?: string) {
 	return {
 		type: 'string',
-		pattern: OBJECT_ID_PATTERN,
 		...(ref ? { 'x-ref': ref } : {}),
 	};
 }

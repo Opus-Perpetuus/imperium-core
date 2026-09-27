@@ -480,6 +480,16 @@ export function related_model_for_field(
 }
 
 const OBJECT_ID_HEX = /^[a-fA-F0-9]{24}$/;
+/** Id que genera el kit de una app (`new_id`): `prefijo_` + 16 hex. */
+const KIT_RECORD_ID = /^[a-z][a-z0-9-]*_[a-f0-9]{16}$/;
+
+/**
+ * Referencia válida: ObjectId migrado de Mongo o id de una fila creada por una
+ * app. Sin lo segundo, el CRUD rechazaba toda referencia a esas filas.
+ */
+export function is_record_id(value: string): boolean {
+	return OBJECT_ID_HEX.test(value) || KIT_RECORD_ID.test(value);
+}
 
 function objectid_model_label(resource: string) {
 	const canonical = RESOURCE_ALIASES[resource] ?? resource;
@@ -505,12 +515,12 @@ function assert_objectid_leaf(
 	if (typeof value === 'object') {
 		const id = ref_id(value);
 		if (!id) return;
-		if (!OBJECT_ID_HEX.test(id)) add(path, id);
+		if (!is_record_id(id)) add(path, id);
 		return;
 	}
 	const text = String(value).trim();
 	if (!text) return;
-	if (!OBJECT_ID_HEX.test(text)) add(path, value);
+	if (!is_record_id(text)) add(path, value);
 }
 
 function visit_objectid_path(

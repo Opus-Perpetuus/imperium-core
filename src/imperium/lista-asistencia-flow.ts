@@ -34,11 +34,19 @@ function actor_id(actor: ImperiumDoc | null): string {
 	return ref_id(actor?._id ?? actor?.id);
 }
 
+/**
+ * Día de la asistencia como `AAAA-MM-DD`, igual que lo escribe la app. Con la
+ * hora (medianoche UTC) el formulario lo pintaba un día antes en México.
+ */
+export function solo_dia(value: unknown): string | null {
+	const raw = value instanceof Date ? value.toISOString() : String(value ?? '').trim();
+	if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+	const parsed = new Date(raw);
+	return raw && !Number.isNaN(parsed.getTime()) ? parsed.toISOString().slice(0, 10) : null;
+}
+
 function normalize_date(value: unknown): string {
-	if (!value) return new Date().toISOString();
-	if (value instanceof Date) return value.toISOString();
-	const parsed = new Date(String(value));
-	return Number.isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString();
+	return solo_dia(value) ?? new Date().toISOString().slice(0, 10);
 }
 
 function normalize_number(value: unknown): number | undefined {

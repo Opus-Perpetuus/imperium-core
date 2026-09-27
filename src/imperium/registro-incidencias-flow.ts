@@ -3,6 +3,7 @@
  * que el service original.
  */
 import type { ImperiumDoc } from './envelope.ts';
+import { solo_dia } from './lista-asistencia-flow.ts';
 
 const REF_FIELDS = [
 	'alumno_id',
@@ -79,14 +80,7 @@ export function prepare_incidencia_write(
 		doc.evidencia = trim_text(doc.evidencia);
 	}
 	if (Object.hasOwn(doc, 'fecha_asistencia')) {
-		if (!doc.fecha_asistencia) {
-			doc.fecha_asistencia = null;
-		} else {
-			const parsed = new Date(String(doc.fecha_asistencia));
-			doc.fecha_asistencia = Number.isNaN(parsed.getTime())
-				? null
-				: parsed.toISOString();
-		}
+		doc.fecha_asistencia = solo_dia(doc.fecha_asistencia);
 	}
 	return doc;
 }

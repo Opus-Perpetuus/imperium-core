@@ -403,6 +403,22 @@ describe('front-used Imperium contract via shipped create_imperium_layer', () =>
 		expect(allowed.status).not.toBe(404);
 	});
 
+	test('una referencia acepta ids de app, no solo ObjectId de Mongo', async () => {
+		const login = await call('POST', '/auth/login', {
+			body: { email: EMAIL, password: PASSWORD },
+		});
+		const cookie = sid_from(login.set_cookie);
+		const res = await call('GET', '/lista-asistencia?limite=1', { cookie });
+		expect(res.status).toBe(200);
+		const ref = (
+			res.json?.schema_validation as {
+				properties?: Record<string, { pattern?: string; 'x-ref'?: string }>;
+			}
+		)?.properties?.registro_asistencia_id;
+		expect(ref?.['x-ref']).toBeTruthy();
+		expect(ref?.pattern).toBeUndefined();
+	});
+
 	test('GET /products schema uses catalog checkbox/number widgets; user list partial search', async () => {
 		const login = await call('POST', '/auth/login', {
 			body: { email: EMAIL, password: PASSWORD },
