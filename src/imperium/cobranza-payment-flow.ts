@@ -156,6 +156,7 @@ export async function apply_cobranza_payment(ctx: CobranzaPaymentCtx) {
 	if (amount > balance + 0.009) {
 		throw new Error(`El monto excede el saldo pendiente (${balance.toFixed(2)}).`);
 	}
+	await ctx.store.assert_resource_installed('pos-session');
 	const session = await ctx.store.find_id('pos-session', pos_session_id);
 	if (!session) throw new Error('No se encontró la sesión de caja.');
 	if (!is_pos_session_open(session)) {

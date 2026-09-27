@@ -340,7 +340,7 @@ export async function enrich_pedidos_list(
 		for (const id of rutas) route_ids.add(id);
 	}
 	const names = new Map<string, string>();
-	if (route_ids.size && store.has('delivery-route')) {
+	if (route_ids.size && store.has('delivery-route') && store.is_resource_installed('delivery-route')) {
 		const routes = await store.find_many('delivery-route', {
 			ids: [...route_ids],
 			take: route_ids.size,

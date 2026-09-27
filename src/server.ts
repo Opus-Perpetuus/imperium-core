@@ -10,14 +10,9 @@ import {
 	type KirletSchemaBundle,
 } from '@opus-perpetuus/imperium-core-kit';
 import { handle_service_plane, service_plane_match } from './service-plane.ts';
-import {
-	add_cors,
-	create_imperium_layer,
-	subject_gateway_ok,
-} from './imperium/router.ts';
+import { add_cors, create_imperium_layer } from './imperium/router.ts';
 import { current_user, ensure_session_table } from './imperium/auth.ts';
 import { start_subject_auto_update } from './imperium/subject-auto-update.ts';
-import { can_enter_internal } from '@opus-perpetuus/imperium-core-kit';
 import {
 	handle_socket_io,
 	SOCKET_IO_IDLE_TIMEOUT_SECONDS,
@@ -26,7 +21,10 @@ import {
 	is_noisy_path,
 	print_console_log,
 } from './imperium/debug-request-log.ts';
-import { apply_subject_schema_bundle } from './imperium/subject-schema.ts';
+import {
+	apply_subject_schema_bundle,
+	schema_bundle_mismatch,
+} from './imperium/subject-schema.ts';
 import { ColumnListCache } from './imperium/column-list-cache.ts';
 import {
 	is_column_name,
@@ -34,7 +32,10 @@ import {
 	search_sql,
 	where_sql,
 } from './imperium/data-plane-where.ts';
-import { technical_id_is_installed } from './imperium/subjects-admin.ts';
+import {
+	subjects_access_denied,
+	technical_id_is_installed,
+} from './imperium/subjects-admin.ts';
 import { portal_html_sanitize } from './imperium/portal-sanitize.ts';
 import { remember_socket_ip } from './imperium/auth-rate-limit.ts';
 import { get_published } from './imperium/portal.ts';
@@ -48,11 +49,21 @@ import {
 	send_subject_notification_email,
 } from './imperium/email.ts';
 import {
-	apply_subject_identity_headers,
 	resolve_subject_identity,
+	subject_proxy_headers,
+	subject_proxy_response,
 	type SubjectIdentityRealm,
 	type SubjectModuleRef,
 } from './imperium/subject-identity.ts';
+import {
+	authorize_subject_plane,
+	dev_attach_enabled,
+	gateway_secret_warnings,
+	is_master_request,
+	is_subject_request,
+	master_secret,
+	subject_secret_mode,
+} from './imperium/subject-secret.ts';
 import {
 	AppProxyRequestError,
 	bytes_for_proxy,
@@ -63,8 +74,6 @@ const PORT = Number(process.env.PORT ?? 3100);
 const DATABASE_URL =
 	process.env.DATABASE_URL ??
 	'postgres://imperium:imperium@127.0.0.1:5434/imperium_core';
-const GATEWAY_SECRET =
-	process.env.CORE_SUBJECT_GATEWAY_SECRET ?? 'imperium-subject-dev-secret';
 const CATALOG_PATH =
 	process.env.CATALOG_PATH ?? join(import.meta.dir, '../../catalog.json');
 
@@ -87,6 +96,8 @@ type Catalog = {
 
 const catalog_text = readFileSync(CATALOG_PATH, 'utf8');
 const catalog: Catalog = JSON.parse(catalog_text);
+/** Los tid que aceptan el plano de datos y el de servicios. */
+const CATALOG_TIDS = new Set(catalog.subjects.map((s) => s.technical_id));
 /**
  * Huella del catálogo con el que arrancó el proceso. El fichero es un bind
  * mount: un update puede reescribirlo sin recrear el contenedor, y entonces el
@@ -96,6 +107,15 @@ const catalog: Catalog = JSON.parse(catalog_text);
 const CATALOG_HASH = new Bun.CryptoHasher('sha256')
 	.update(catalog_text)
 	.digest('hex');
+
+// Bun termina el proceso ante un rechazo o una excepción sin atender: un
+// trabajo en segundo plano que falle no puede tumbar el núcleo entero.
+const failure_text = (value: unknown) =>
+	value instanceof Error ? (value.stack ?? value.message) : String(value);
+process.on('unhandledRejection', (reason) => {
+	print_console_log('error', `Promesa rechazada sin atender: ${failure_text(reason)}`);
+});
+
 const sql = new Bun.SQL(DATABASE_URL);
 const imperium = create_imperium_layer(sql);
 /** Overrides de desarrollo (`POST /api/subjects/dev-attach`). Gana a env/DNS. */
@@ -326,20 +346,24 @@ async function proxy_subject(
 	technical_id: string,
 	req: Request,
 	rest: string,
-	identity?: Parameters<typeof apply_subject_identity_headers>[1],
+	identity: Parameters<typeof subject_proxy_headers>[2],
 ): Promise<Response> {
+	// Sin maestro no hay firma, y una app en `SUBJECT_AUTH=off` trataría la
+	// petición sin firmar como su admin sintético.
+	if (!master_secret()) {
+		return Response.json(
+			{
+				error: 'El secreto de gateway del núcleo no está configurado',
+				message: 'El secreto de gateway del núcleo no está configurado',
+				code: 'gateway_secret_missing',
+			},
+			{ status: 503 },
+		);
+	}
 	const base = subject_url(technical_id);
 	const url = new URL(req.url);
 	const target = `${base}${rest}${url.search}`;
-	const headers = new Headers(req.headers);
-	headers.set('x-nox-kirlet-gateway-secret', GATEWAY_SECRET);
-	headers.set('x-nox-kirlet-id', technical_id);
-	headers.set('x-core-subject-gateway-secret', GATEWAY_SECRET);
-	// Siempre: firmar borra primero las cabeceras de identidad que venían del
-	// cliente, que este proxy clona tal cual.
-	if (identity) {
-		apply_subject_identity_headers(headers, identity, GATEWAY_SECRET);
-	}
+	const headers = subject_proxy_headers(req.headers, technical_id, identity);
 	const init: RequestInit = { method: req.method, headers };
 	if (req.method !== 'GET' && req.method !== 'HEAD') {
 		try {
@@ -360,10 +384,12 @@ async function proxy_subject(
 		headers.delete('content-length');
 	}
 	try {
-		return await fetch(target, {
-			...init,
-			signal: AbortSignal.timeout(4000),
-		});
+		return subject_proxy_response(
+			await fetch(target, {
+				...init,
+				signal: AbortSignal.timeout(4000),
+			}),
+		);
 	} catch (err) {
 		return Response.json(
 			{
@@ -398,7 +424,12 @@ async function dress_public_page(
 	if (!(res.headers.get('content-type') ?? '').includes('application/json')) {
 		return res;
 	}
-	const page_id = decodeURIComponent(page[1]!);
+	let page_id: string;
+	try {
+		page_id = decodeURIComponent(page[1]!);
+	} catch {
+		return res;
+	}
 	let override: Record<string, unknown> | null = null;
 	try {
 		override = await get_published(
@@ -535,16 +566,20 @@ const server = Bun.serve({
 						subjects: catalog.subjects.length,
 						catalog_hash: CATALOG_HASH,
 						imperium_resources: imperium.store.locs.size,
+						// Solo el modo, nunca material secreto: dev-local elige
+						// con él si la app recibe el maestro o su derivado.
+						secret_mode: subject_secret_mode(),
 					}),
 				)!;
 			}
 
 			if (path === '/api/subjects/dev-attach' && req.method === 'POST') {
-				const secret =
-					req.headers.get('x-core-subject-gateway-secret') ??
-					req.headers.get('x-nox-kirlet-gateway-secret') ??
-					'';
-				if (secret !== GATEWAY_SECRET) {
+				// Repunta el tráfico de una app a cualquier URL: fuera de
+				// desarrollo la ruta no existe.
+				if (!dev_attach_enabled()) {
+					return Response.json({ error: 'not found' }, { status: 404 });
+				}
+				if (!is_master_request(req)) {
 					return Response.json(
 						{ error: 'forbidden' },
 						{ status: 403 },
@@ -588,11 +623,23 @@ const server = Bun.serve({
 					},
 				});
 			}
-			const svc = service_plane_match(path);
+			let svc: ReturnType<typeof service_plane_match> = null;
+			try {
+				svc = service_plane_match(path);
+			} catch {
+				// Tid mal codificado (`decodeURIComponent` lanza): no es ninguna app.
+				return Response.json({ error: 'unknown subject' }, { status: 404 });
+			}
 			if (svc) {
+				if (!CATALOG_TIDS.has(svc.tid)) {
+					return Response.json(
+						{ error: `unknown subject ${svc.tid}` },
+						{ status: 404 },
+					);
+				}
 				return handle_service_plane(
 					sql,
-					GATEWAY_SECRET,
+					is_subject_request,
 					req,
 					svc.tid,
 					svc.rest,
@@ -614,17 +661,18 @@ const server = Bun.serve({
 				/^\/api\/(?:subjects|kirlets)\/data\/([^/]+)$/,
 			);
 			if (data_m && req.method === 'POST') {
-				const secret =
-					req.headers.get('x-core-subject-gateway-secret') ??
-					req.headers.get('x-nox-kirlet-gateway-secret') ??
-					'';
-				if (secret !== GATEWAY_SECRET) {
-					return Response.json(
-						{ error: 'forbidden' },
-						{ status: 403 },
-					);
+				let technical_id = '';
+				try {
+					technical_id = decodeURIComponent(data_m[1]!);
+				} catch {
+					/* mal codificado: fuera del catálogo, 404 */
 				}
-				const technical_id = decodeURIComponent(data_m[1]!);
+				const denied = authorize_subject_plane(
+					req,
+					technical_id,
+					CATALOG_TIDS,
+				);
+				if (denied) return denied;
 				let body: Record<string, unknown> = {};
 				try {
 					body = (await req.json()) as Record<string, unknown>;
@@ -717,26 +765,17 @@ const server = Bun.serve({
 				req.method === 'POST' &&
 				(path === '/api/subjects/install-schemas' || install_one)
 			) {
-				// Aplica DDL de cualquier app, y estaba abierto: era la única
-				// ruta de este bloque pre-Imperium sin comprobación. Candado
-				// doble, como sus vecinas: el secreto de gateway para el
-				// arranque en frío (todavía no hay usuario ni cookie) y la
-				// sesión de un usuario interno para la UI del núcleo.
-				if (!subject_gateway_ok(req)) {
+				// Aplica DDL de cualquier app: el mismo candado que instalar
+				// desde /subjects. El maestro para el arranque en frío (todavía
+				// no hay usuario ni cookie) o la sesión del administrador.
+				if (!is_master_request(req)) {
 					// La tabla de sesión la crea la capa Imperium; aquí se
 					// entra antes, así que hay que asegurarla o revienta en una
 					// base virgen.
 					await ensure_session_table(sql);
 					const actor = await current_user(sql, req).catch(() => null);
-					if (!actor || !can_enter_internal(actor)) {
-						return Response.json(
-							{
-								error: 'No estás autenticado',
-								message: 'No estás autenticado',
-							},
-							{ status: 401 },
-						);
-					}
+					const denied = subjects_access_denied(req.method, actor, false);
+					if (denied) return denied;
 				}
 				const only =
 					install_one?.[1] ??
@@ -765,6 +804,18 @@ const server = Bun.serve({
 							continue;
 						}
 						const bundle = (await res.json()) as KirletSchemaBundle;
+						const mismatch = schema_bundle_mismatch(
+							bundle,
+							s.technical_id,
+						);
+						if (mismatch) {
+							results.push({
+								id: s.technical_id,
+								ok: false,
+								error: mismatch,
+							});
+							continue;
+						}
 						await apply_bundle(bundle);
 						results.push({
 							id: s.technical_id,
@@ -793,6 +844,14 @@ const server = Bun.serve({
 });
 
 console.log(`imperium-core listening on :${server.port}`);
+// Después de escuchar: un fallo de arranque (puerto ocupado) debe seguir
+// tumbando el proceso con código de error, no dejarlo vivo sin servir.
+process.on('uncaughtException', (err) => {
+	print_console_log('error', `Excepción sin atender: ${failure_text(err)}`);
+});
+for (const warning of gateway_secret_warnings()) {
+	print_console_log('warning', warning);
+}
 
 // Reloj de actualización automática de apps. Apagado mientras el parámetro de
 // sistema esté en NO, que es como nace. Solo corre en el proceso del núcleo:

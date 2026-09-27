@@ -6,6 +6,7 @@ import {
 	background_job_title,
 	is_background_job_doc,
 	merge_background_job_payload,
+	read_background_job_payload,
 	should_refresh_shell_for_subject,
 	should_toast_subject_event,
 	type BackgroundJobPayload,
@@ -117,5 +118,31 @@ describe('background_job helpers', () => {
 			is_background_job_doc({ payload: { kind: 'background_job' } }),
 		).toBe(true);
 		expect(is_background_job_doc({ type: 'message' })).toBe(false);
+	});
+
+	test('an update job keeps its kind and reads as an update', () => {
+		const read = read_background_job_payload({
+			type: 'background_job',
+			payload: { job_kind: 'subject_update', name: 'POS' },
+		});
+		expect(read?.job_kind).toBe('subject_update');
+		expect(background_job_title('subject_update', 'POS', 'running')).toBe(
+			'Actualizando POS',
+		);
+		expect(background_job_title('subject_update', 'POS', 'success')).toBe(
+			'POS actualizada',
+		);
+		expect(background_job_title('subject_update', 'POS', 'error')).toBe(
+			'Error al actualizar POS',
+		);
+		expect(background_job_title('subject_uninstall', 'POS', 'success')).toBe(
+			'POS desinstalada',
+		);
+		expect(
+			read_background_job_payload({
+				type: 'background_job',
+				payload: { job_kind: 'otra_cosa' },
+			})?.job_kind,
+		).toBe('subject_install');
 	});
 });

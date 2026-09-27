@@ -27,7 +27,7 @@ async function call(
 	const req = svc_request(path, body);
 	const res = await handle_service_plane(
 		sql,
-		SECRET,
+		(r) => r.headers.get('x-core-subject-gateway-secret') === SECRET,
 		req,
 		'subject-tienda',
 		path,
@@ -91,5 +91,33 @@ describe('html/sanitize limpia de verdad', () => {
 		});
 		expect(String(out.data?.html)).not.toContain('<script');
 		expect(String(out.data?.html)).toContain('hola');
+	});
+});
+
+describe('verificador del secreto', () => {
+	test('si el verificador rechaza, 403 sin tocar la base', async () => {
+		let touched = false;
+		const spy = {
+			unsafe: async () => {
+				touched = true;
+				return [];
+			},
+		} as unknown as Bun.SQL;
+		const req = svc_request('/html/to-text', { html: 'hola' });
+		const seen: string[] = [];
+		const res = await handle_service_plane(
+			spy,
+			(_r, tid) => {
+				seen.push(tid);
+				return false;
+			},
+			req,
+			'subject-tienda',
+			'/html/to-text',
+			new URL(req.url),
+		);
+		expect(res.status).toBe(403);
+		expect(seen).toEqual(['subject-tienda']);
+		expect(touched).toBe(false);
 	});
 });

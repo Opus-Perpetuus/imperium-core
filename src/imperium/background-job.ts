@@ -1,6 +1,6 @@
 /**
  * Notificación `background_job`: progreso + registro de un trabajo largo
- * (instalar / desinstalar app) sin saturar toasts ni el hilo de la UI.
+ * (instalar / desinstalar / actualizar app) sin saturar toasts ni el hilo de la UI.
  */
 import { as_object, type ImperiumDoc } from './envelope.ts';
 import { emit_notifications_refresh } from './socket-stub.ts';
@@ -12,7 +12,10 @@ export const MODULE_MANAGEMENT_ROUTE = '/internal/module-management';
 
 export type BackgroundJobLevel = 'info' | 'success' | 'warning' | 'error';
 export type BackgroundJobStatus = 'running' | 'success' | 'error';
-export type BackgroundJobKind = 'subject_install' | 'subject_uninstall';
+export type BackgroundJobKind =
+	| 'subject_install'
+	| 'subject_uninstall'
+	| 'subject_update';
 
 export type BackgroundJobLog = {
 	at: string;
@@ -110,8 +113,9 @@ export function read_background_job_payload(
 	return {
 		kind: BACKGROUND_JOB_TYPE,
 		job_kind:
-			bag.job_kind === 'subject_uninstall'
-				? 'subject_uninstall'
+			bag.job_kind === 'subject_uninstall' ||
+			bag.job_kind === 'subject_update'
+				? bag.job_kind
 				: 'subject_install',
 		technical_id: String(bag.technical_id ?? ''),
 		slug: String(bag.slug ?? ''),
@@ -180,19 +184,14 @@ export function background_job_title(
 	name: string,
 	status: BackgroundJobStatus,
 ): string {
-	if (status === 'success') {
-		return job_kind === 'subject_install'
-			? `${name} instalada`
-			: `${name} desinstalada`;
-	}
-	if (status === 'error') {
-		return job_kind === 'subject_install'
-			? `Error al instalar ${name}`
-			: `Error al desinstalar ${name}`;
-	}
-	return job_kind === 'subject_install'
-		? `Instalando ${name}`
-		: `Desinstalando ${name}`;
+	const verb = {
+		subject_install: ['instalada', 'instalar', 'Instalando'],
+		subject_uninstall: ['desinstalada', 'desinstalar', 'Desinstalando'],
+		subject_update: ['actualizada', 'actualizar', 'Actualizando'],
+	}[job_kind];
+	if (status === 'success') return `${name} ${verb[0]}`;
+	if (status === 'error') return `Error al ${verb[1]} ${name}`;
+	return `${verb[2]} ${name}`;
 }
 
 export async function find_running_background_job(

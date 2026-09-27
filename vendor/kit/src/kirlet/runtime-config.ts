@@ -9,6 +9,7 @@ export type KirletRuntimeConfig = {
   files_dir: string;
   /** `on` | `off` (and aliases). */
   kirlet_auth: string;
+  /** `off` sin secreto de gateway, o `off` + `SUBJECT_DEV_ADMIN`: admin sintético sin firma. */
   auth_disabled: boolean;
   gateway_secret: string;
   nox_data_url: string | null;
@@ -23,6 +24,8 @@ export type KirletRuntimeConfigOptions = {
   /** Env object (defaults to process.env). */
   env?: Record<string, string | undefined>;
 };
+
+let auth_off_ignored_logged = false;
 
 function env_bool(raw: string | undefined, default_on: boolean): boolean {
   if (raw === undefined || raw === "") return default_on;
@@ -46,10 +49,21 @@ export function resolve_kirlet_config(
     default_tid;
   const data_dir = env.DATA_DIR ?? "/data";
   const kirlet_auth = (env.SUBJECT_AUTH ?? env.KIRLET_AUTH ?? "on").toLowerCase();
-  const auth_disabled =
+  const auth_off =
     kirlet_auth === "off" || kirlet_auth === "false" || kirlet_auth === "0";
   const gateway_secret =
     env.CORE_SUBJECT_GATEWAY_SECRET ?? env.NOX_KIRLET_GATEWAY_SECRET ?? "";
+  const dev_admin =
+    env_bool(env.SUBJECT_DEV_ADMIN, false) || env_bool(env.KIRLET_DEV_ADMIN, false);
+  // Con secreto hay un núcleo que firma: "off" ya no regala el admin sintético
+  // a quien llama sin firma (otro contenedor de la red, un curl en la LAN).
+  const auth_disabled = auth_off && (dev_admin || !gateway_secret.trim());
+  if (auth_off && !auth_disabled && !auth_off_ignored_logged) {
+    auth_off_ignored_logged = true;
+    console.warn(
+      `[${technical_id}] auth off (SUBJECT_AUTH/KIRLET_AUTH) ignorado: hay secreto de gateway, se exige identidad firmada (SUBJECT_DEV_ADMIN=1 para el admin sintético)`,
+    );
+  }
   const nox_data_url =
     env.CORE_DATA_URL?.trim() || env.NOX_DATA_URL?.trim() || null;
   const data_mode: "http" | "memory" =

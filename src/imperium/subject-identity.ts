@@ -21,6 +21,7 @@ import {
 import { build_access, build_menus, current_user } from './auth.ts';
 import type { ImperiumDoc } from './envelope.ts';
 import type { ImperiumStore } from './store.ts';
+import { GATEWAY_SECRET_HEADERS, signing_secret_for } from './subject-secret.ts';
 
 export type SubjectModuleRef = { resource: string; menu_ref?: string };
 
@@ -220,4 +221,54 @@ export function apply_subject_identity_headers(
 	if (!secret) return;
 	const signed = sign_kirlet_identity_v2(identity, secret);
 	for (const [k, v] of Object.entries(signed)) headers.set(k, v);
+}
+
+/** Cookie de sesión del núcleo (`auth.ts`). */
+const CORE_SESSION_COOKIE = 'connect.sid';
+/** El token MCP del núcleo viaja en cualquiera de las dos (`mcp-agent.ts`). */
+const CORE_TOKEN_HEADERS = ['authorization', 'x-imperium-sic-token'] as const;
+
+/**
+ * Cabeceras con las que `proxy_subject` llama a una app: las del cliente sin
+ * secretos de gateway (ninguna app los lee, y reenviar el maestro se lo daba a
+ * todas) ni credenciales del usuario ante el núcleo (su cookie de sesión y su
+ * token: una app hostil las reusaría contra `/api/*`), el tid destino y la
+ * identidad firmada con la clave de esa app. Las demás cookies pasan.
+ */
+/**
+ * Respuesta de una app hacia el navegador sin los Set-Cookie de la sesión del
+ * núcleo: la app no debe poder fijar ni borrar la sesión en el origen del
+ * núcleo. Sin cookie de sesión se devuelve tal cual (fetch ya decodificó el
+ * cuerpo y rehacerla sin motivo arriesga el content-encoding).
+ */
+export function subject_proxy_response(res: Response): Response {
+	const cookies = res.headers.getSetCookie();
+	const keep = cookies.filter((c) => c.split('=')[0]!.trim() !== CORE_SESSION_COOKIE);
+	if (keep.length === cookies.length) return res;
+	const headers = new Headers(res.headers);
+	headers.delete('set-cookie');
+	headers.delete('content-encoding');
+	headers.delete('content-length');
+	for (const c of keep) headers.append('set-cookie', c);
+	return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+}
+
+export function subject_proxy_headers(
+	client_headers: HeadersInit,
+	technical_id: string,
+	identity: KirletIdentity,
+): Headers {
+	const headers = new Headers(client_headers);
+	for (const name of GATEWAY_SECRET_HEADERS) headers.delete(name);
+	for (const name of CORE_TOKEN_HEADERS) headers.delete(name);
+	const cookie = (headers.get('cookie') ?? '')
+		.split(';')
+		.map((pair) => pair.trim())
+		.filter((pair) => pair && pair.split('=')[0]!.trim() !== CORE_SESSION_COOKIE)
+		.join('; ');
+	if (cookie) headers.set('cookie', cookie);
+	else headers.delete('cookie');
+	headers.set('x-nox-kirlet-id', technical_id);
+	apply_subject_identity_headers(headers, identity, signing_secret_for(technical_id));
+	return headers;
 }

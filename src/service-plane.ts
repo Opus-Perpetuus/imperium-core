@@ -100,20 +100,19 @@ export type ServicePlaneDeps = {
   }) => Promise<void>;
 };
 
+/** Decide si la petición trae el secreto de la app `tid` (ver `subject-secret.ts`). */
+export type ServicePlaneVerifier = (req: Request, tid: string) => boolean;
+
 export async function handle_service_plane(
   sql: Bun.SQL,
-  secret: string,
+  verify: ServicePlaneVerifier,
   req: Request,
   tid: string,
   rest: string,
   url: URL,
   deps: ServicePlaneDeps = {},
 ): Promise<Response> {
-  const got =
-    req.headers.get("x-core-subject-gateway-secret") ??
-    req.headers.get("x-nox-kirlet-gateway-secret") ??
-    "";
-  if (got !== secret) {
+  if (!verify(req, tid)) {
     return Response.json({ error: "forbidden" }, { status: 403 });
   }
   await ensure_svc_tables(sql);

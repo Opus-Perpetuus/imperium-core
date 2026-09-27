@@ -202,6 +202,9 @@ async function assert_widget_module_enabled(
 	resource: string,
 	model_id: string,
 ) {
+	if (!store.is_resource_installed(resource)) {
+		throw new Error(`El módulo del modelo '${model_id}' no está instalado.`);
+	}
 	if (!store.has('module-management')) return;
 	const exact = await store.find_many('module-management', {
 		where: { model_id, is_enable: true },
@@ -609,6 +612,9 @@ export async function resolve_dashboard_catalog(
 	const pending: Array<{ resource: string; model_id: string; module_name: string }> = [];
 	const consider = (resource: string, model_id: string, module_name: string) => {
 		if (!resource || INTERNAL_CATALOG_RESOURCES.has(resource) || !store.has(resource)) return;
+		// Mismo criterio que `resolve_widget_data`: no ofrecer lo que luego se
+		// rechaza, ni muestrear la tabla de una app que nunca se instaló.
+		if (!store.is_resource_installed(resource)) return;
 		if (seen.has(resource) || seen.has(model_id)) return;
 		if (!can_read_model(access, resource, model_id).ok) return;
 		seen.add(resource);

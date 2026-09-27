@@ -350,6 +350,15 @@ export function validate_kirlet_manifest(input: unknown): KirletManifestValidati
     }
   }
 
+  let depends_on: string[] | undefined;
+  if (input["dependsOn"] !== undefined && input["dependsOn"] !== null) {
+    depends_on = validate_depends_on(
+      input["dependsOn"],
+      typeof input["technicalId"] === "string" ? input["technicalId"] : "",
+      issues,
+    );
+  }
+
   let widgets: KirletManifestWidget[] | undefined;
   if (input["widgets"] !== undefined) {
     widgets = validate_widgets(input["widgets"], page_ids, slug, issues);
@@ -424,8 +433,51 @@ export function validate_kirlet_manifest(input: unknown): KirletManifestValidati
     }
   }
   if (widgets?.length) manifest.widgets = widgets;
+  if (depends_on?.length) manifest.dependsOn = depends_on;
 
   return { ok: true, manifest };
+}
+
+/**
+ * `dependsOn`: ids técnicos de otras apps, sin repetir y sin la propia. El
+ * núcleo instala en ese orden, así que un slug suelto o una auto-referencia
+ * tienen que fallar aquí y no al instalar.
+ */
+function validate_depends_on(
+  raw: unknown,
+  technical_id: string,
+  issues: Array<{ path: string; message: string }>,
+): string[] | undefined {
+  if (!Array.isArray(raw)) {
+    issues.push({
+      path: "$.dependsOn",
+      message: "dependsOn must be an array of technical ids",
+    });
+    return undefined;
+  }
+  const seen = new Set<string>();
+  const result: string[] = [];
+  raw.forEach((entry, i) => {
+    const p = `$.dependsOn[${i}]`;
+    if (typeof entry !== "string" || !is_kirlet_technical_id(entry)) {
+      issues.push({
+        path: p,
+        message: "dependency must be a technical id (subject-<slug>)",
+      });
+      return;
+    }
+    if (entry === technical_id) {
+      issues.push({ path: p, message: "an app cannot depend on itself" });
+      return;
+    }
+    if (seen.has(entry)) {
+      issues.push({ path: p, message: `duplicate dependency "${entry}"` });
+      return;
+    }
+    seen.add(entry);
+    result.push(entry);
+  });
+  return result;
 }
 
 const PUBLIC_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);

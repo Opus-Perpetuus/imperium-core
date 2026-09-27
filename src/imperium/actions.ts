@@ -80,6 +80,7 @@ import {
 	resolve_comment_mentioned_users,
 } from './notifications.ts';
 import { assert_target_model_read, build_access } from './auth.ts';
+import { SubjectNotInstalledError } from './subjects-admin.ts';
 import {
 	enrich_history_row,
 	history_find_many_opts,
@@ -112,9 +113,12 @@ import {
 	interpolate_report_template,
 	iter_report_record_pages,
 	render_report_from_pages,
+	strip_report_delimiters,
 	report_validation_ok,
 } from './reports-flow.ts';
-import { html_to_pdf_response } from './reports-pdf.ts';
+import { html_to_pdf_response, pdf_options_from_input, type PdfRenderOptions } from './reports-pdf.ts';
+import { REPORT_PRINT_CSS } from './report-print-css.ts';
+import { REPORT_FORMATTERS } from './report-template-engine.ts';
 import {
 	GROUP_REF_ALMACEN,
 	GROUP_REF_SURTIDORES,
@@ -564,6 +568,11 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return report_full_pdf(ctx);
 		case 'reports:process_preview':
 			return report_preview(ctx);
+		case 'reports:print_css':
+			return ok(
+				[{ css: REPORT_PRINT_CSS, formatters: REPORT_FORMATTERS }],
+				'Hoja de impresión de reportes',
+			);
 		case 'reports:get_pdf_direct_target':
 			return reports_pdf_direct_target(ctx);
 		case 'reports:print_pdf_direct':
@@ -4653,6 +4662,8 @@ async function resolve_report_target(ctx: Ctx, raw: string) {
 	const model_name = String(module_record?.model_id || ident);
 	try {
 		const resource = resolve_model(ctx, model_name);
+		// Sin la app dueña su tabla no existe: 404 con la pista de instalar, no 42P01.
+		await ctx.store.assert_resource_installed(resource);
 		await assert_target_model_read(ctx.store, ctx.actor, resource);
 		return resource;
 	} catch (error) {
@@ -4686,7 +4697,10 @@ async function report_first(ctx: Ctx) {
 	}
 }
 
+const REPORT_FIELD_SAMPLE_ROWS = 1000;
+
 const REPORT_SYSTEM_PATHS = new Set([
+	'search',
 	'_id',
 	'id',
 	'__v',
@@ -4778,7 +4792,12 @@ async function build_report_field_metadata(ctx: Ctx, resource: string) {
 	 * leftover y no en columnas SQL. */
 	const payload_keys = new Set<string>();
 	let sample: ImperiumDoc = {};
-	for await (const page of ctx.store.scan(resource, { include_inactive: true })) {
+	/* Basta una muestra para descubrir las claves del payload: recorrer la
+	 * tabla entera (31 mil productos en tienda) hacía esperar al diseñador. */
+	let scanned = 0;
+	for await (const page of ctx.store.scan(resource, { include_inactive: true, page_size: 250 })) {
+		if (scanned >= REPORT_FIELD_SAMPLE_ROWS) break;
+		scanned += page.length;
 		for (const row of page) {
 			for (const key of Object.keys(row)) payload_keys.add(key);
 			if (
@@ -4940,16 +4959,20 @@ async function report_records(ctx: Ctx) {
 			take: limite,
 		});
 		return ok(rows, 'Registros del modelo obtenidos correctamente', total);
-	} catch {
+	} catch (err) {
+		if (err instanceof SubjectNotInstalledError) throw err;
 		return ok([], `Error obteniendo registros del modelo ${model}`);
 	}
 }
+
+/** Ids de Mongo migrados (24 hex) y los de v13 (`reports_294f…`, uuid). */
+const REPORT_RECORD_ID = /^[\w-]{1,64}$/;
 
 async function report_record(ctx: Ctx) {
 	const model = ctx.params.model_identifier ?? '';
 	const record_id = String(ctx.params.record_id ?? '').trim();
 	try {
-		if (!/^[a-f0-9]{24}$/i.test(record_id)) {
+		if (!REPORT_RECORD_ID.test(record_id)) {
 			return ok([], 'ID de registro inválido', 0);
 		}
 		const resource = await resolve_report_target(ctx, model);
@@ -4998,6 +5021,32 @@ async function report_preview(ctx: Ctx) {
 	const html = String(ctx.body.htmlContent ?? ctx.body.html_content ?? '');
 	const model_name = String(ctx.body.model_name ?? ctx.body.related_model ?? '');
 	const record_id = String(ctx.body.record_id ?? '');
+	const record_ids = as_array(ctx.body.record_ids)
+		.map((id) => String(id ?? '').trim())
+		.filter(Boolean)
+		.slice(0, 200);
+	/* Vista previa de una plantilla de lista: varios registros poblados. */
+	if (html && model_name && record_ids.length) {
+		const resource = await resolve_report_target(ctx, model_name);
+		const loaded: ImperiumDoc[] = [];
+		for (const id of record_ids) {
+			const doc = await ctx.store.find_id(resource, id);
+			if (doc) loaded.push(doc);
+		}
+		if (!loaded.length) throw new Error('No se encontraron los registros para la vista previa');
+		const populated = await ctx.store.populate_docs(resource, loaded, { full: true });
+		const hydrated = await hydrate_loose_product_references_many(
+			ctx.store,
+			populated.map((row) => as_object(row)),
+		);
+		return {
+			html: await interpolate_report_records(html, hydrated, actor_name(ctx) || 'USER', new Date(), {
+				store: ctx.store,
+				model_name,
+			}),
+			processed: true,
+		};
+	}
 	if (!html || (!ctx.body.recordData && !(model_name && record_id))) {
 		throw new Error('htmlContent y recordData (o model_name+record_id) son requeridos');
 	}
@@ -5068,15 +5117,44 @@ async function report_full_pdf(ctx: Ctx) {
 	const filename = `${(await interpolate_report_template(gen_name, rendered.first, user_name, now, opts)) || 'REPORTE_GENERADO'}${
 		rendered.count > 1 ? `_LOTE_${rendered.count}` : ''
 	}.pdf`;
-	const pdf_setting = as_object(ctx.body.pdf_setting);
-	return html_to_pdf_response(rendered.html, filename, {
-		pageSize: String(pdf_setting.pageSize ?? 'a4'),
-		orientation: String(pdf_setting.orientation ?? 'portrait'),
-		marginTopMm: Number(pdf_setting.marginTopMm ?? 10),
-		marginRightMm: Number(pdf_setting.marginRightMm ?? 10),
-		marginBottomMm: Number(pdf_setting.marginBottomMm ?? 10),
-		marginLeftMm: Number(pdf_setting.marginLeftMm ?? 10),
-	});
+	return html_to_pdf_response(
+		rendered.html,
+		filename,
+		await report_pdf_options(ctx, report, as_object(ctx.body.pdf_setting), 'stored'),
+	);
+}
+
+/**
+ * Hoja del PDF: configuración PDF guardada en el reporte (tamaño personalizado,
+ * márgenes, numeración) combinada con la que manda el cliente. Un reporte ya
+ * guardado (`stored`) manda sobre el cliente, que rellena con valores por
+ * defecto (A4, 10 mm) lo que no conoce; el diseñador (`client`) manda la hoja
+ * que el usuario está editando aunque aún no la guarde.
+ */
+async function report_pdf_options(
+	ctx: Ctx,
+	report: ImperiumDoc | null,
+	from_client: Record<string, unknown>,
+	prefer: 'stored' | 'client' = 'client',
+): Promise<PdfRenderOptions> {
+	let stored: PdfRenderOptions = {};
+	const setting_id = String(report?.pdf_setting ?? '').trim();
+	if (setting_id && ctx.store.has('reports-pdf-setting')) {
+		const setting = await ctx.store.find_id('reports-pdf-setting', setting_id).catch(() => null);
+		if (setting) stored = pdf_options_from_input(as_object(setting));
+	}
+	if (!stored.pageSize && report?.page_size) stored.pageSize = String(report.page_size);
+	/* El diseñador guarda encabezado y pie en custom_data.designer del reporte. */
+	const designer = as_object(as_object(report?.custom_data).designer);
+	if (designer.header_text) stored.headerText = String(designer.header_text);
+	if (designer.footer_text) stored.footerText = String(designer.footer_text);
+	const sent = pdf_options_from_input(from_client);
+	const [base, over] = prefer === 'stored' ? [sent, stored] : [stored, sent];
+	const merged: PdfRenderOptions = { ...base };
+	for (const [key, value] of Object.entries(over)) {
+		if (value !== undefined) (merged as Record<string, unknown>)[key] = value;
+	}
+	return merged;
 }
 
 async function report_pdf(ctx: Ctx) {
@@ -5090,7 +5168,7 @@ async function report_pdf(ctx: Ctx) {
 			: {},
 	);
 	const html = Object.keys(record).length
-		? await interpolate_report_template(
+		? strip_report_delimiters(await interpolate_report_template(
 				html_raw || '<html><body>{{name}}</body></html>',
 				await hydrate_loose_product_references(ctx.store, record),
 				actor_name(ctx) || String(ctx.body.user_name ?? 'USER'),
@@ -5099,17 +5177,15 @@ async function report_pdf(ctx: Ctx) {
 					store: ctx.store,
 					model_name: String(ctx.body.model_name ?? ctx.body.related_model ?? ''),
 				},
-			)
+			))
 		: html_raw;
 	const filename = String(ctx.body.fileName ?? ctx.body.filename ?? 'report.pdf');
-	return html_to_pdf_response(html, filename, {
-		pageSize: String(ctx.body.pageSize ?? 'a4'),
-		orientation: String(ctx.body.orientation ?? 'portrait'),
-		marginTopMm: Number(ctx.body.marginTopMm ?? 10),
-		marginRightMm: Number(ctx.body.marginRightMm ?? 10),
-		marginBottomMm: Number(ctx.body.marginBottomMm ?? 10),
-		marginLeftMm: Number(ctx.body.marginLeftMm ?? 10),
-	});
+	const report_id = String(ctx.body.report_id ?? '').trim();
+	const report =
+		report_id && ctx.store.has('reports')
+			? await ctx.store.find_id('reports', report_id).catch(() => null)
+			: null;
+	return html_to_pdf_response(html, filename, await report_pdf_options(ctx, report, ctx.body));
 }
 
 function resolve_model(ctx: Ctx, raw: string) {
@@ -5125,7 +5201,7 @@ function resolve_model(ctx: Ctx, raw: string) {
 
 async function attachment_base64(ctx: Ctx, id: string) {
 	const attach_id = String(id ?? '').trim();
-	if (!/^[a-f0-9]{24}$/i.test(attach_id)) {
+	if (!REPORT_RECORD_ID.test(attach_id)) {
 		throw new Error('ID de attachment inválido');
 	}
 	const doc = ctx.store.has('attachment-management')
@@ -5857,12 +5933,25 @@ async function disabled_model_ids(ctx: Ctx) {
 	return disabled;
 }
 
+/** Un servicio se ofrece si su módulo está habilitado y su app instalada. */
+function payable_service_available(ctx: Ctx, disabled: Set<string>, model_id: string | null) {
+	return !model_id || (!disabled.has(model_id) && ctx.store.is_model_installed(model_id));
+}
+
+function payments_cfdi_on(ctx: Ctx, disabled: Set<string>) {
+	return (
+		!disabled.has('CfdiDocument') &&
+		ctx.store.has('cfdi-document') &&
+		ctx.store.is_resource_installed('cfdi-document')
+	);
+}
+
 async function payments_catalog(ctx: Ctx) {
 	const disabled = await disabled_model_ids(ctx);
-	const cfdi_on = !disabled.has('CfdiDocument') && ctx.store.has('cfdi-document');
+	const cfdi_on = payments_cfdi_on(ctx, disabled);
 	const services = payable_services();
 	const data = services
-		.filter((s) => !s.required_model_id || !disabled.has(s.required_model_id))
+		.filter((s) => payable_service_available(ctx, disabled, s.required_model_id))
 		.map((s) => ({
 			slug: s.slug,
 			title: s.title,
@@ -5998,7 +6087,7 @@ async function payments_checkout(ctx: Ctx) {
 	const service = payable_services().find((s) => s.slug === slug);
 	if (!service) throw new Error('Servicio de pago no encontrado.');
 	const disabled = await disabled_model_ids(ctx);
-	if (service.required_model_id && disabled.has(service.required_model_id)) {
+	if (!payable_service_available(ctx, disabled, service.required_model_id)) {
 		throw new Error('Este servicio no está disponible.');
 	}
 	const lookup = String(ctx.body.lookup ?? '').trim();
@@ -6009,7 +6098,7 @@ async function payments_checkout(ctx: Ctx) {
 	if (!Number.isFinite(amount) || amount <= 0) {
 		throw new Error('El monto debe ser mayor a cero.');
 	}
-	const cfdi_on = !disabled.has('CfdiDocument') && ctx.store.has('cfdi-document');
+	const cfdi_on = payments_cfdi_on(ctx, disabled);
 	const invoice_requested = Boolean(ctx.body.invoice) && cfdi_on && service.billable;
 	const secret = await payments_stripe_secret(ctx);
 	const currency =

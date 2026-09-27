@@ -47,6 +47,7 @@ import {
 	required_fields_for,
 } from './required-fields.ts';
 import { list_projection_keys } from './list-projection.ts';
+import { is_base_subject_slug } from './subject-runtime.ts';
 
 export type ExtraCol = {
 	name: string;
@@ -74,6 +75,8 @@ export type SubjectInfo = {
 	menu_ref: string;
 	technical_id: string;
 	image: string;
+	/** Apps que deben estar instaladas antes (technical ids, sin las base). */
+	depends_on?: string[];
 	modules: Array<{
 		resource: string;
 		path: string;
@@ -1143,6 +1146,11 @@ export class ImperiumStore {
 	readonly locs = new Map<string, ModuleLoc>();
 	readonly all_locs: ModuleLoc[] = [];
 	readonly subjects: SubjectInfo[] = [];
+	/**
+	 * Technical ids de las apps instaladas. `null` hasta la primera carga:
+	 * mientras tanto todo cuenta como instalado, como antes de este caché.
+	 */
+	private installed_subjects: Set<string> | null = null;
 
 	constructor(
 		private readonly sql: Bun.SQL,
@@ -1156,6 +1164,7 @@ export class ImperiumStore {
 				menu_ref?: string;
 				technical_id: string;
 				image?: string;
+				depends_on?: string[];
 				modules?: Array<{
 					resource: string;
 					table: string;
@@ -1183,6 +1192,7 @@ export class ImperiumStore {
 				menu_ref: s.menu_ref ?? `${s.slug}-menu-root`,
 				technical_id: s.technical_id ?? `subject-${s.slug}`,
 				image: s.image ?? '',
+				depends_on: [...(s.depends_on ?? [])],
 				modules: (s.modules ?? []).map((m) => ({
 					resource: m.resource,
 					path: m.path ?? `/${m.resource}`,
@@ -1427,27 +1437,7 @@ export class ImperiumStore {
 				});
 			}
 		}
-		if (this.has('employee')) {
-			const { total } = await this.find_many('employee', { take: 1, include_inactive: true });
-			if (!total) {
-				const employee = await this.insert('employee', {
-					name: 'Administrador',
-					_ref: 'employee-admin-0',
-					description: 'Empleado predeterminado',
-					is_active: true,
-				});
-				if (this.has('user') && employee?._id) {
-					const admin =
-						(await this.find_where('user', { _ref: 'user-menu-management-0' })) ??
-						(await this.find_where('user', { email: 'admin@admin.com' }));
-					if (admin?._id && !admin.employee) {
-						await this.update('user', String(admin._id), {
-							employee: employee._id,
-						});
-					}
-				}
-			}
-		}
+		await this.seed_default_employee();
 		if (this.has('configuration')) {
 			try {
 				const { apply_missing_configuration_seeds } = await import(
@@ -1507,6 +1497,39 @@ export class ImperiumStore {
 		}
 		if (process.env.AUTO_REINDEX_SEARCH_ON_STARTUP !== 'false') {
 			void this.warmup_search_indexes();
+		}
+	}
+
+	/**
+	 * Empleado "Administrador" ligado al admin. Es de RH: sin RH instalada, o
+	 * sin su tabla, se salta; nunca aborta el resto de `ensure_defaults`.
+	 */
+	async seed_default_employee(): Promise<void> {
+		if (!this.has('employee') || !this.is_resource_installed('employee')) return;
+		try {
+			const { total } = await this.find_many('employee', { take: 1, include_inactive: true });
+			if (total) return;
+			const employee = await this.insert('employee', {
+				name: 'Administrador',
+				_ref: 'employee-admin-0',
+				description: 'Empleado predeterminado',
+				is_active: true,
+			});
+			if (this.has('user') && employee?._id) {
+				const admin =
+					(await this.find_where('user', { _ref: 'user-menu-management-0' })) ??
+					(await this.find_where('user', { email: 'admin@admin.com' }));
+				if (admin?._id && !admin.employee) {
+					await this.update('user', String(admin._id), {
+						employee: employee._id,
+					});
+				}
+			}
+		} catch (err) {
+			if (is_missing_relation(err)) return;
+			console.warn(
+				`[defaults] No se sembró el empleado predeterminado: ${err instanceof Error ? err.message : String(err)}`,
+			);
 		}
 	}
 
@@ -1731,6 +1754,50 @@ export class ImperiumStore {
 
 	has(resource: string): boolean {
 		return this.locs.has(resource);
+	}
+
+	/** Reemplaza el caché de apps instaladas (al arrancar). */
+	set_installed_subjects(technical_ids: Iterable<string>): void {
+		this.installed_subjects = new Set(technical_ids);
+	}
+
+	/** Refleja en el caché un `installed` recién escrito en `subject_installs`. */
+	mark_subject_installed(technical_id: string, installed: boolean): void {
+		if (!this.installed_subjects) return;
+		if (installed) this.installed_subjects.add(technical_id);
+		else this.installed_subjects.delete(technical_id);
+	}
+
+	/**
+	 * ¿Está instalada la app dueña del recurso (PREFER_OWNER incluido)? Para
+	 * los flujos que cruzan apps. Sin dueño en el catálogo, app base o caché
+	 * sin cargar: true.
+	 */
+	is_resource_installed(resource: string): boolean {
+		const loc = this.locs.get(resource);
+		if (!loc || !this.installed_subjects || is_base_subject_slug(loc.slug)) return true;
+		return this.installed_subjects.has(loc.technical_id);
+	}
+
+	/** `is_resource_installed` por `model_id` (`Employee`); un modelo sin recurso cuenta como instalado. */
+	is_model_installed(model_id: string): boolean {
+		const resource = this.resource_for_model(model_id);
+		return !resource || this.is_resource_installed(resource);
+	}
+
+	/** Lanza `SubjectNotInstalledError` (404 con la pista de instalar) si la app dueña no está instalada. */
+	async assert_resource_installed(resource: string): Promise<void> {
+		if (this.is_resource_installed(resource)) return;
+		const loc = this.loc(resource);
+		// Import dinámico: subjects-admin importa este módulo.
+		const { SubjectNotInstalledError } = await import('./subjects-admin.ts');
+		const sub = this.subjects.find((s) => s.technical_id === loc.technical_id);
+		throw new SubjectNotInstalledError({
+			slug: sub?.slug ?? loc.slug,
+			name: sub?.name ?? loc.name,
+			technical_id: loc.technical_id,
+			resource: loc.resource,
+		});
 	}
 
 	/**
@@ -2479,15 +2546,24 @@ export class ImperiumStore {
 			}
 		}
 		const loaded = new Map<string, Map<string, ImperiumDoc>>();
+		// Destinos sin tabla (app que nunca se instaló): sus ids se quedan como ids.
+		const unreachable = new Set<string>();
 		for (const [target, ids] of needed) {
-			const { rows } = await this.find_many(target, {
-				ids: [...ids],
-				take: ids.size,
-				include_inactive: true,
-				populate: false,
-				skip_total: true,
-				populate_lite: lite,
-			});
+			let rows: ImperiumDoc[];
+			try {
+				({ rows } = await this.find_many(target, {
+					ids: [...ids],
+					take: ids.size,
+					include_inactive: true,
+					populate: false,
+					skip_total: true,
+					populate_lite: lite,
+				}));
+			} catch (err) {
+				if (!is_missing_relation(err)) throw err;
+				unreachable.add(target);
+				continue;
+			}
 			loaded.set(
 				target,
 				new Map(rows.map((r) => [String(r._id), full ? strip_populated_secrets(target, r) : r])),
@@ -2497,6 +2573,7 @@ export class ImperiumStore {
 			const out = { ...doc };
 			for (const [field, model] of Object.entries(field_map)) {
 				const target = this.resource_for_model(model);
+				if (target && unreachable.has(target)) continue;
 				const lookup = target ? loaded.get(target) : undefined;
 				apply_populated_path(out, field.split('.'), lookup, full);
 			}

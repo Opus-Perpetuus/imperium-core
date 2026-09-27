@@ -148,11 +148,13 @@ export async function link_or_create_from_purchase_order(
 
 export async function sync_inbound_supplier_invoice(store: ImperiumStore, purchase_order: ImperiumDoc) {
 	const uuid = normalize_cfdi_uuid(purchase_order.uuid_xml);
-	if (!uuid) return null;
+	// La OC ya se guardó: sin facturación no hay vínculo que crear.
+	if (!uuid || !store.is_resource_installed('cfdi-document')) return null;
 	return link_or_create_from_purchase_order(store, purchase_order);
 }
 
 export async function create_cfdi_from_purchase_order(ctx: CfdiFromPurchaseCtx) {
+	await ctx.store.assert_resource_installed('cfdi-document');
 	const purchase_order_id =
 		text(ctx.params.purchaseOrderId) ||
 		text(ctx.params.purchase_order_id) ||

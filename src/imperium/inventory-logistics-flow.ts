@@ -447,11 +447,16 @@ export async function cost_entry_stats(
 		string,
 		{ quantity: number; sale_amount: number; fifo_cost: number }
 	>();
-	for await (const page of store.scan('pedidos', {
-		include_inactive: false,
-		order: 'created_at',
-		where: { created_at: { lte: date_to.toISOString() } },
-	})) {
+	// Sin Ventas instalada, la estimación de ventas queda en cero.
+	const sales_installed = store.is_resource_installed('pedidos');
+	const sale_pages: AsyncIterable<ImperiumDoc[]> | ImperiumDoc[][] = sales_installed
+		? store.scan('pedidos', {
+				include_inactive: false,
+				order: 'created_at',
+				where: { created_at: { lte: date_to.toISOString() } },
+			})
+		: [];
+	for await (const page of sale_pages) {
 		for (const sale of page) {
 			if (sale.is_active === false || String(sale.estado ?? '') === 'cancelado') continue;
 			const stamp = sale_time(sale);

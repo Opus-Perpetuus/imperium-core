@@ -28,7 +28,7 @@ function ref_id(value: unknown): string {
 }
 
 async function load_issuer(store: ImperiumStore, issuer_profile_id?: string): Promise<ImperiumDoc> {
-	if (!store.has('cfdi-issuer-profile')) {
+	if (!store.has('cfdi-issuer-profile') || !store.is_resource_installed('cfdi-issuer-profile')) {
 		throw new Error(
 			'No hay perfil de emisor CFDI activo. Configura un emisor antes de generar el comprobante.',
 		);
@@ -69,7 +69,9 @@ async function build_product_map(
 ): Promise<Record<string, CfdiBuilderProductMapEntry>> {
 	const unique = [...new Set(product_ids.filter(Boolean))];
 	const map: Record<string, CfdiBuilderProductMapEntry> = {};
-	if (!unique.length || !store.has('products')) return map;
+	if (!unique.length || !store.has('products') || !store.is_resource_installed('products')) {
+		return map;
+	}
 	for (const id of unique) {
 		const product = await store.find_id('products', id);
 		if (!product) continue;
@@ -111,6 +113,9 @@ function resolve_iva_rate(invoice_request: ImperiumDoc, body: Record<string, unk
 }
 
 export async function create_cfdi_from_invoice_request(ctx: CfdiFromInvoiceCtx) {
+	// `request_cfdi_draft` pasa la puerta como ventas: sin esto escribía en el
+	// esquema de facturación aunque estuviera desinstalada.
+	await ctx.store.assert_resource_installed('cfdi-document');
 	const invoice_request_id = text(ctx.params.invoiceRequestId ?? ctx.params.id);
 	if (!invoice_request_id) {
 		throw new Error('Debes indicar el identificador de la solicitud de facturación.');
@@ -127,7 +132,7 @@ export async function create_cfdi_from_invoice_request(ctx: CfdiFromInvoiceCtx) 
 	const issuer = await load_issuer(ctx.store, text(ctx.body.issuer_profile_id) || undefined);
 	const contacto_id = ref_id(invoice_request.contacto);
 	let contacto: ImperiumDoc | null = null;
-	if (contacto_id && ctx.store.has('contacto')) {
+	if (contacto_id && ctx.store.has('contacto') && ctx.store.is_resource_installed('contacto')) {
 		contacto = await ctx.store.find_id('contacto', contacto_id);
 		if (contacto?.is_active === false) contacto = null;
 	}

@@ -2,12 +2,24 @@
  * Reportes: validación de plantilla e interpolación como el service original.
  */
 import { as_array, as_object, ok, type ImperiumDoc } from './envelope.ts';
+import sharp from 'sharp';
 import { serve_attachment_bytes } from './media.ts';
 import {
 	build_report_qr_payload,
 	qr_payload_to_data_url,
 	render_qr_img_tag,
 } from './report-qr.ts';
+import {
+	code128_svg,
+	collect_placeholder_uses,
+	display_value,
+	lookup,
+	parse_template,
+	render_nodes,
+	uses_record_list,
+	type RenderContext,
+	type TemplateScope,
+} from './report-template-engine.ts';
 import type { ImperiumStore } from './store.ts';
 
 const STATIC_PLACEHOLDERS = new Set([
@@ -19,6 +31,9 @@ const STATIC_PLACEHOLDERS = new Set([
 	'report_item_delimiter',
 	'reporte_delimitador',
 	'qr',
+	'registros',
+	'total_registros',
+	'salto_de_pagina',
 ]);
 
 export type ReportFieldLike = {
@@ -80,10 +95,7 @@ export function apply_report_list_where(
 
 export function extract_placeholders(template: string): string[] {
 	if (!template) return [];
-	const found = [...template.matchAll(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g)].map(
-		(match) => String(match[1] ?? '').trim(),
-	);
-	return [...new Set(found.filter(Boolean))];
+	return [...new Set(collect_placeholder_uses(template).map((use) => use.path))];
 }
 
 function path_allowed(fields: ReportFieldLike[], path: string): string | null {
@@ -111,18 +123,50 @@ function path_allowed(fields: ReportFieldLike[], path: string): string | null {
 	return `No existe el campo '${path}' en el modelo`;
 }
 
+/** Dentro de `{{#each lista}}` valen los subcampos de cada elemento. */
+function path_allowed_in_loops(
+	fields: ReportFieldLike[],
+	path: string,
+	loops: string[],
+): string | null {
+	if (path === 'this' || path.startsWith('this.') || path.startsWith('@')) return null;
+	if (path.startsWith('../')) return path_allowed_in_loops(fields, path.slice(3), loops.slice(0, -1));
+	const at_root = path_allowed(fields, path);
+	if (!at_root || !loops.length) return at_root;
+	for (const loop of [...loops].reverse()) {
+		if (loop === 'registros') return path_allowed(fields, path);
+		const head = fields.find((field) => field.field_name === loop.split('.')[0]);
+		const related = head?.related_fields ?? [];
+		/* Arreglo sin forma conocida (JSON libre): no se puede validar. */
+		if (!head || !related.length) return null;
+		if (
+			related.some(
+				(item) =>
+					item.field_name === path ||
+					item.field_name === path.split('.')[0] ||
+					item.field_name.startsWith(`${path}.`),
+			)
+		) {
+			return null;
+		}
+	}
+	return at_root;
+}
+
 export function validate_report_template(
 	html: string,
 	fields: ReportFieldLike[],
 	model_name: string,
 ) {
-	const placeholders = extract_placeholders(html);
-	const invalid_placeholders = placeholders
-		.map((placeholder) => {
-			const reason = path_allowed(fields, placeholder);
-			return reason
-				? { placeholder, reason: `${reason} ${model_name}`.trim() }
-				: null;
+	const uses = html ? collect_placeholder_uses(html) : [];
+	const placeholders = [...new Set(uses.map((use) => use.path))];
+	const seen = new Set<string>();
+	const invalid_placeholders = uses
+		.map((use) => {
+			const reason = path_allowed_in_loops(fields, use.path, use.loops);
+			if (!reason || seen.has(use.path)) return null;
+			seen.add(use.path);
+			return { placeholder: use.path, reason: `${reason} ${model_name}`.trim() };
 		})
 		.filter((issue): issue is { placeholder: string; reason: string } => Boolean(issue));
 	return {
@@ -145,129 +189,10 @@ function runtime_value(path: string, now: Date, user_name: string): string | nul
 	}
 	if (path === 'usuario_genera' || path === 'usuario_actual') return user_name;
 	if (path === 'report_item_delimiter' || path === 'reporte_delimitador') {
-		return '{{report_item_delimiter}}';
+		/* Misma grafía que la plantilla: delimiter_token() busca esa. */
+		return `{{${path}}}`;
 	}
 	return null;
-}
-
-function display_value(value: unknown): string {
-	if (value == null) return '';
-	if (value instanceof Date) return value.toISOString().split('T')[0] ?? '';
-	if (Array.isArray(value)) {
-		return value.map(display_value).filter(Boolean).join(', ');
-	}
-	if (typeof value === 'object') {
-		const obj = value as { _bsontype?: string; toHexString?: () => string };
-		if (obj._bsontype === 'ObjectId' || typeof obj.toHexString === 'function') {
-			if (!('name' in obj) && !('_name' in obj)) return String(value);
-		}
-		const rec = as_object(value);
-		return String(
-			rec.name ??
-				rec._name ??
-				rec.codigo ??
-				rec.code ??
-				rec.description ??
-				rec.descripcion ??
-				rec.label ??
-				rec.title ??
-				rec._id ??
-				rec.id ??
-				'',
-		);
-	}
-	return String(value);
-}
-
-function resolve_path(record: Record<string, unknown>, path: string): unknown {
-	const segments = path
-		.split('.')
-		.map((segment) => segment.trim())
-		.filter(Boolean);
-	let current: unknown = record;
-	for (let index = 0; index < segments.length; index++) {
-		if (current == null || typeof current !== 'object') return undefined;
-		current = as_object(current)[segments[index]!];
-		if (Array.isArray(current) && index < segments.length - 1) {
-			current = current.length > 0 ? current[0] : undefined;
-		}
-	}
-	return current;
-}
-
-function is_truthy(value: unknown): boolean {
-	if (Array.isArray(value)) return value.length > 0;
-	if (typeof value === 'boolean') return value;
-	if (value == null) return false;
-	if (typeof value === 'number') return value !== 0;
-	if (typeof value === 'string') return value.length > 0;
-	return Boolean(value);
-}
-
-function evaluate_condition(condition: string, record: Record<string, unknown>): boolean {
-	const trimmed = condition.trim();
-	const eq_match = trimmed.match(/^(!)?(\w+(?:\.\w+)*)\s*(==|!=)?\s*(.*)$/);
-	if (eq_match) {
-		const negated = eq_match[1] === '!';
-		const path = eq_match[2] ?? '';
-		const operator = eq_match[3];
-		const compare_value = eq_match[4]?.trim().replace(/['"]/g, '');
-		const value = resolve_path(record, path);
-		if (!operator) return negated ? !is_truthy(value) : is_truthy(value);
-		const str_val = String(value ?? '');
-		if (operator === '==') return negated ? str_val !== compare_value : str_val === compare_value;
-		if (operator === '!=') return negated ? str_val === compare_value : str_val !== compare_value;
-	}
-	return is_truthy(resolve_path(record, trimmed));
-}
-
-function process_if_blocks(template: string, record: Record<string, unknown>): string {
-	return template.replace(
-		/\{\{\s*#if\s+([^}]+)\s*\}\}([\s\S]*?)\{\{\s*\/if\s*\}\}/g,
-		(_match, condition: string, content: string) =>
-			evaluate_condition(condition, record) ? content : '',
-	);
-}
-
-function process_each_blocks(template: string, record: Record<string, unknown>): string {
-	return template.replace(
-		/\{\{\s*#each\s+([a-zA-Z0-9_.]+)\s*\}\}([\s\S]*?)\{\{\s*\/each\s*\}\}/g,
-		(_match, array_path: string, content: string) => {
-			const array = resolve_path(record, String(array_path || '').trim());
-			if (!Array.isArray(array) || array.length === 0) return '';
-			return array
-				.map((item) => {
-					const scope =
-						item && typeof item === 'object'
-							? { ...record, ...as_object(item), this: item }
-							: { ...record, this: item };
-					let item_content = process_each_blocks(content, scope);
-					item_content = item_content.replace(
-						/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g,
-						(raw, field: string) => {
-							const clean = String(field || '').trim();
-							if (!clean || clean.startsWith('#') || clean.startsWith('/')) return raw;
-							if (clean === 'this') return display_value(item);
-							let val =
-								item && typeof item === 'object'
-									? resolve_path(as_object(item), clean)
-									: undefined;
-							if (val == null) val = resolve_path(record, clean);
-							if (val == null) return '';
-							return Array.isArray(val)
-								? val.map(display_value).filter(Boolean).join(', ')
-								: display_value(val);
-						},
-					);
-					return item_content;
-				})
-				.join('');
-		},
-	);
-}
-
-function process_handlebars_blocks(template: string, record: Record<string, unknown>): string {
-	return process_each_blocks(process_if_blocks(template, record), record);
 }
 
 function extract_reference_id(value: unknown): string {
@@ -340,7 +265,9 @@ export async function hydrate_loose_product_references_many(
 	store: ImperiumStore,
 	records: Record<string, unknown>[],
 ): Promise<Record<string, unknown>[]> {
-	if (!store.has('products') || !records.length) return records;
+	if (!store.has('products') || !store.is_resource_installed('products') || !records.length) {
+		return records;
+	}
 	const ids = new Set<string>();
 	for (const record of records) collect_loose_product_ids(record, ids);
 	if (!ids.size) return records;
@@ -376,14 +303,95 @@ async function attachment_data_url(store: ImperiumStore | undefined, attach_id: 
 	if (!attach || attach.is_active === false) return '';
 	const served = await serve_attachment_bytes(attach);
 	if (!served?.body?.length) return '';
-	const mime = served.mime || 'image/jpeg';
-	return `data:${mime};base64,${Buffer.from(served.body).toString('base64')}`;
+	const image = await shrink_report_image(served.body, served.mime || 'image/jpeg');
+	return `data:${image.mime};base64,${Buffer.from(image.body).toString('base64')}`;
+}
+
+/** Lado mayor de una imagen dentro del PDF: de sobra para imprimir a 300 dpi en 12 cm. */
+const REPORT_IMAGE_MAX_PX = 1400;
+
+/**
+ * Una foto de celular (4000 px) metida tal cual hacía PDFs de varios MB por
+ * una credencial. Se reduce y, si no tiene transparencia, va como JPEG.
+ */
+export async function shrink_report_image(
+	body: Uint8Array,
+	mime: string,
+): Promise<{ body: Uint8Array; mime: string }> {
+	if (!/^image\/(jpeg|png|webp|gif|avif|tiff)/i.test(mime)) return { body, mime };
+	try {
+		const source = sharp(body, { animated: false }).rotate();
+		const meta = await source.metadata();
+		const resized = source.resize({
+			width: REPORT_IMAGE_MAX_PX,
+			height: REPORT_IMAGE_MAX_PX,
+			fit: 'inside',
+			withoutEnlargement: true,
+		});
+		const fits =
+			Math.max(meta.width ?? 0, meta.height ?? 0) <= REPORT_IMAGE_MAX_PX && (meta.orientation ?? 1) === 1;
+		if (meta.hasAlpha) {
+			if (fits) return { body, mime };
+			return { body: await resized.png({ compressionLevel: 9 }).toBuffer(), mime: 'image/png' };
+		}
+		/* Chrome deja un JPEG tal cual dentro del PDF; WebP/PNG los guarda sin
+		 * pérdida y una foto de 900 px pesaba 1.8 MB. */
+		if (fits && /^image\/jpeg/i.test(mime)) return { body, mime };
+		return { body: await resized.jpeg({ quality: 82, mozjpeg: true }).toBuffer(), mime: 'image/jpeg' };
+	} catch {
+		return { body, mime };
+	}
 }
 
 export type InterpolateReportOpts = {
 	store?: ImperiumStore;
 	model_name?: string;
 };
+
+function render_context(
+	user_name: string,
+	now: Date,
+	opts: InterpolateReportOpts,
+	extra: Record<string, string> = {},
+): RenderContext {
+	return {
+		runtime: (path) => (path in extra ? extra[path]! : runtime_value(path, now, user_name)),
+		special: async (kind, path, scope) => {
+			if (kind === 'qr') {
+				/* Dentro de un #each el QR es del elemento, no del documento. */
+				let target: TemplateScope | null = scope;
+				while (target && (!target.data || typeof target.data !== 'object' || Array.isArray(target.data))) {
+					target = target.parent;
+				}
+				const record = as_object(target?.data ?? {});
+				try {
+					const payload = build_report_qr_payload(record, opts.model_name, path || undefined);
+					return render_qr_img_tag(await qr_payload_to_data_url(payload));
+				} catch {
+					return '';
+				}
+			}
+			const value = lookup(scope, path);
+			if (kind === 'barcode') {
+				return code128_svg(display_value(value)) ?? '';
+			}
+			if (typeof value === 'string' && /^data:image\/[\w.+-]+;base64,/i.test(value)) {
+				return `<img src="${value}" alt="${path}" style="max-width:100%;height:auto;display:block;margin:0 auto;" />`;
+			}
+			const attach_id = extract_reference_id(value);
+			if (!attach_id) return '';
+			try {
+				const data_url = await attachment_data_url(opts.store, attach_id);
+				if (data_url.length > 50) {
+					return `<img src="${data_url}" alt="${path}" style="max-width:100%;height:auto;display:block;margin:0 auto;" />`;
+				}
+			} catch {
+				/* cae al aviso */
+			}
+			return '<span class="report-field-missing">Imagen no disponible</span>';
+		},
+	};
+}
 
 export async function interpolate_report_template(
 	template: string,
@@ -393,43 +401,32 @@ export async function interpolate_report_template(
 	opts: InterpolateReportOpts = {},
 ): Promise<string> {
 	if (!template) return '';
-	let result = process_handlebars_blocks(template, record);
-	for (const match of result.matchAll(/\{\{\s*image:([a-zA-Z0-9_.]+)\s*\}\}/g)) {
-		const field = String(match[1] ?? '').trim();
-		const attach_id = extract_reference_id(resolve_path(record, field));
-		let replacement = '';
-		if (attach_id && opts.store) {
-			try {
-				const data_url = await attachment_data_url(opts.store, attach_id);
-				if (data_url.length > 50) {
-					replacement = `<img src="${data_url}" alt="${field}" style="max-width:100%;height:auto;display:block;margin:10px auto;" />`;
-				}
-			} catch {
-				replacement = '';
-			}
-		}
-		result = result.replace(match[0], replacement);
-	}
-	for (const match of result.matchAll(/\{\{\s*qr(?::([a-zA-Z0-9_.]+))?\s*\}\}/g)) {
-		const field = match[1]?.trim();
-		try {
-			const payload = build_report_qr_payload(record, opts.model_name, field || undefined);
-			const data_url = await qr_payload_to_data_url(payload);
-			result = result.replace(match[0], render_qr_img_tag(data_url));
-		} catch {
-			result = result.replace(match[0], '');
-		}
-	}
-	return result.replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (_match, path: string) => {
-		const clean = String(path ?? '').trim();
-		const runtime = runtime_value(clean, now, user_name);
-		if (runtime != null) return runtime;
-		const value = resolve_path(record, clean);
-		if (value == null) return '';
-		return Array.isArray(value)
-			? value.map(display_value).filter(Boolean).join(', ')
-			: display_value(value);
-	});
+	return render_nodes(
+		parse_template(template),
+		{ data: record, parent: null },
+		render_context(user_name, now, opts),
+	);
+}
+
+/** Un solo registro: el delimitador de lote no tiene a quién ceder el lugar. */
+export function strip_report_delimiters(html: string): string {
+	return html.replace(/\{\{\s*(?:report_item_delimiter|reporte_delimitador)\s*\}\}/g, '');
+}
+
+/** Plantilla de lista: se pinta una vez con todos los registros en `registros`. */
+export async function interpolate_report_list(
+	template: string,
+	records: Record<string, unknown>[],
+	user_name: string,
+	now = new Date(),
+	opts: InterpolateReportOpts = {},
+): Promise<string> {
+	const root = { ...(records[0] ?? {}), registros: records, total_registros: records.length };
+	return render_nodes(
+		parse_template(template),
+		{ data: root, parent: null },
+		render_context(user_name, now, opts, { total_registros: String(records.length) }),
+	);
 }
 
 function delimiter_token(template: string): string {
@@ -447,6 +444,9 @@ export async function interpolate_report_records(
 	opts: InterpolateReportOpts = {},
 	depth = 0,
 ): Promise<string> {
+	if (uses_record_list(template)) {
+		return interpolate_report_list(template, records, user_name, now, opts);
+	}
 	const token = delimiter_token(template);
 	if (!token) {
 		return interpolate_report_template(template, records[0] ?? {}, user_name, now, opts);
@@ -529,11 +529,25 @@ export async function assert_report_template_write(
 		resource = '';
 	}
 	if (!resource) return;
-	const validation = validate_report_template(
-		html_content,
-		fields_from_store(store, resource),
-		related_model,
-	);
+	const fields = fields_from_store(store, resource);
+	/* El diseñador ofrece también las claves que viven en el payload de las
+	 * filas (no son columnas); validarlas solo contra columnas rechazaba al
+	 * guardar campos que el propio diseñador había propuesto. */
+	const known = new Set(fields.map((field) => field.field_name));
+	const { rows } = await store.find_many(resource, {
+		take: 200,
+		include_inactive: true,
+		populate: false,
+		skip_total: true,
+	});
+	for (const row of rows) {
+		for (const [key, value] of Object.entries(row)) {
+			if (known.has(key) || key.startsWith('_')) continue;
+			known.add(key);
+			fields.push({ field_name: key, is_array: Array.isArray(value) });
+		}
+	}
+	const validation = validate_report_template(html_content, fields, related_model);
 	if (!validation.is_valid) {
 		const issues = validation.invalid_placeholders
 			.map((issue) => `{{${issue.placeholder}}}: ${issue.reason}`)
@@ -581,7 +595,8 @@ export async function* iter_report_record_pages(
 			populate: false,
 			skip_total: true,
 		});
-		if (rows.length) yield rows;
+		/* Sin poblar, {{departamento.name}} salía vacío en la ficha de prueba. */
+		if (rows.length) yield await store.populate_docs(resource, rows, { full: true });
 		return;
 	}
 	for (let i = 0; i < ids.length; i += 200) {
@@ -595,6 +610,8 @@ export async function* iter_report_record_pages(
 	}
 }
 
+const REPORT_LIST_MAX_RECORDS = 5000;
+
 export async function render_report_from_pages(
 	store: ImperiumStore,
 	template: string,
@@ -603,6 +620,28 @@ export async function render_report_from_pages(
 	now: Date,
 	opts: InterpolateReportOpts,
 ): Promise<{ html: string; count: number; first: Record<string, unknown> | null }> {
+	if (uses_record_list(template)) {
+		const records: Record<string, unknown>[] = [];
+		for await (const page of pages) {
+			records.push(
+				...(await hydrate_loose_product_references_many(
+					store,
+					page.map((row) => as_object(row)),
+				)),
+			);
+			if (records.length > REPORT_LIST_MAX_RECORDS) {
+				throw new Error(
+					`El reporte de lista admite hasta ${REPORT_LIST_MAX_RECORDS} registros; filtra la lista antes de generarlo.`,
+				);
+			}
+		}
+		if (!records.length) return { html: '', count: 0, first: null };
+		return {
+			html: await interpolate_report_list(template, records, user_name, now, opts),
+			count: records.length,
+			first: records[0]!,
+		};
+	}
 	const token = delimiter_token(template);
 	let html = '';
 	let count = 0;

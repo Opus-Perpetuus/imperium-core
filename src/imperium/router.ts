@@ -1,7 +1,6 @@
 /**
  * Enruta el contrato HTTP original de Imperium sobre SQL.
  */
-import { timingSafeEqual } from 'node:crypto';
 import extra from './extra-routes.json';
 import {
 	assert_http_access,
@@ -42,10 +41,14 @@ import {
 	accept_subject_lifecycle,
 	accept_subject_update,
 	accept_subject_update_all,
+	installed_technical_ids,
 	seed_missing_install_rows,
+	subject_lifecycle_body,
+	subjects_access_denied,
 	SubjectLifecycleError,
 	SubjectNotInstalledError,
 } from './subjects-admin.ts';
+import { is_master_request } from './subject-secret.ts';
 import {
 	read_subject_auto_update_enabled,
 	write_subject_auto_update_enabled,
@@ -71,6 +74,13 @@ export function create_imperium_layer(sql: Bun.SQL) {
 	const store = new ImperiumStore(sql, load_catalog_path());
 	const portal_store = create_postgres_portal_store(sql);
 	let ready: Promise<void> | null = null;
+	const load_installed_subjects = async () => {
+		try {
+			store.set_installed_subjects(await installed_technical_ids(store, sql));
+		} catch (err) {
+			debug_error(err instanceof Error ? err.message : String(err));
+		}
+	};
 	/**
 	 * Preparación única del proceso. Toda petición autenticada espera aquí, así
 	 * que deja rastro al empezar y al terminar: sin esas dos líneas, un arranque
@@ -84,6 +94,8 @@ export function create_imperium_layer(sql: Bun.SQL) {
 			bind_debug_store(store);
 			debug_info('imperium-core: preparando el arranque…');
 			await ensure_session_table(sql);
+			// Antes de ensure_defaults: la siembra de RH mira qué está instalado.
+			await load_installed_subjects();
 			try {
 				await store.ensure_defaults();
 			} catch (err) {
@@ -112,6 +124,9 @@ export function create_imperium_layer(sql: Bun.SQL) {
 					err instanceof Error ? err.message : String(err),
 				);
 			}
+			// En una base recién creada la primera carga puede fallar
+			// (module-management sin tabla); sin caché todo cuenta como instalado.
+			await load_installed_subjects();
 			debug_info(
 				`imperium-core: arranque listo en ${Date.now() - started} ms`,
 			);
@@ -333,14 +348,12 @@ async function dispatch(
 			}
 }
 
-export function subject_gateway_ok(req: Request): boolean {
-	const expected = process.env.CORE_SUBJECT_GATEWAY_SECRET ?? '';
-	if (!expected) return false;
-	const got = req.headers.get('x-core-subject-gateway-secret') ?? '';
-	const a = Buffer.from(got);
-	const b = Buffer.from(expected);
-	if (a.length !== b.length) return false;
-	return timingSafeEqual(a, b);
+function with_dependencies(
+	message: string,
+	dependencies: ReadonlyArray<{ name: string }> | undefined,
+): string {
+	if (!dependencies?.length) return message;
+	return `${message} (también: ${dependencies.map((d) => d.name).join(', ')})`;
 }
 
 async function handle_subjects(
@@ -353,12 +366,12 @@ async function handle_subjects(
 	// ahora también qué versión corre cada app— a cualquiera que alcanzara el
 	// puerto; era la única sub-ruta sin comprobación.
 	const actor = await current_user(sql, req);
-	if (!actor && !subject_gateway_ok(req)) {
-		return Response.json(
-			{ error: 'No estás autenticado', message: 'No estás autenticado' },
-			{ status: 401 },
-		);
-	}
+	const denied = subjects_access_denied(
+		req.method,
+		actor,
+		is_master_request(req),
+	);
+	if (denied) return denied;
 	if (req.method === 'GET' && (path === '/subjects' || path === '/subjects/')) {
 		const data = await list_catalog_subjects(store, sql);
 		return Response.json({ data, total_elementos: data.length, message: 'Apps' });
@@ -427,12 +440,21 @@ async function handle_subjects(
 			path === '/subjects/updates/apply/')
 	) {
 		const result = await accept_subject_update_all(store, sql, actor);
+		// Las saltadas (una dependencia desinstalándose, un grafo roto) se
+		// nombran: sin esto, "todas saltadas" se leía como "no hay nada nuevo".
+		const skipped = result.skipped.map((item) => item.message);
+		const message = result.total
+			? with_dependencies(
+					`Actualizando ${result.total} apps en segundo plano`,
+					result.dependencies,
+				)
+			: skipped.length
+				? 'No se actualizó ninguna app'
+				: 'No hay apps con versión nueva';
 		return Response.json(
 			{
 				...result,
-				message: result.total
-					? `Actualizando ${result.total} apps en segundo plano`
-					: 'No hay apps con versión nueva',
+				message: [message, ...skipped].join('. '),
 			},
 			{ status: 202 },
 		);
@@ -457,18 +479,21 @@ async function handle_subjects(
 				{
 					accepted: true,
 					already_running: accepted.already_running,
-					data: [accepted.row],
+					data: accepted.rows,
+					dependencies: accepted.dependencies,
 					notification: accepted.notification,
-					message: 'Actualización en segundo plano',
+					message: with_dependencies(
+						'Actualización en segundo plano',
+						accepted.dependencies,
+					),
 				},
 				{ status: 202 },
 			);
 		} catch (err) {
 			if (err instanceof SubjectLifecycleError) {
-				return Response.json(
-					{ error: err.code, message: err.message },
-					{ status: err.status },
-				);
+				return Response.json(subject_lifecycle_body(err), {
+					status: err.status,
+				});
 			}
 			throw err;
 		}
@@ -495,20 +520,23 @@ async function handle_subjects(
 				{
 					accepted: true,
 					already_running: accepted.already_running,
-					data: [accepted.row],
+					data: accepted.rows,
+					dependencies: accepted.dependencies,
 					notification: accepted.notification,
 					message: installed
-						? 'Instalación en segundo plano'
+						? with_dependencies(
+								'Instalación en segundo plano',
+								accepted.dependencies,
+							)
 						: 'Desinstalación en segundo plano',
 				},
 				{ status: 202 },
 			);
 		} catch (err) {
 			if (err instanceof SubjectLifecycleError) {
-				return Response.json(
-					{ error: err.code, message: err.message },
-					{ status: err.status },
-				);
+				return Response.json(subject_lifecycle_body(err), {
+					status: err.status,
+				});
 			}
 			throw err;
 		}

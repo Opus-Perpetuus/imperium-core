@@ -31,8 +31,13 @@ function signed_req(id: KirletIdentity = identity): Request {
 
 describe("runtime-auth", () => {
   test("is_meta_path", () => {
-    expect(is_meta_path("/health")).toBe(true);
-    expect(is_meta_path("/pages/x")).toBe(true);
+    for (const meta of ["/", "/health", "/schema", "/manifest", "/menu"]) {
+      expect(is_meta_path(meta)).toBe(true);
+    }
+    // Siembran o leen datos: piden identidad como cualquier ruta.
+    expect(is_meta_path("/seed")).toBe(false);
+    expect(is_meta_path("/pages")).toBe(false);
+    expect(is_meta_path("/pages/x")).toBe(false);
     expect(is_meta_path("/employees")).toBe(false);
   });
 
@@ -94,7 +99,7 @@ describe("runtime-auth", () => {
     }
   });
 
-  test("auth_disabled sin firma sigue cayendo al admin sintético", () => {
+  test("admin dev (auth_disabled) sin firma cae al admin sintético", () => {
     _reset_auth_off_warned_for_tests();
     const r = resolve_identity(new Request("http://x/employees"), "/employees", {
       technical_id: "kirlet-hr",
@@ -106,6 +111,51 @@ describe("runtime-auth", () => {
     if (r.ok) {
       expect(r.verified).toBe(false);
       expect(r.identity?.user_id).toBe("dev");
+    }
+  });
+
+  test("una firma para otra app no cuenta (replay entre apps)", () => {
+    _reset_auth_off_warned_for_tests();
+    const foreign = signed_req({ ...identity, is_admin: true, kirlet_id: "kirlet-tienda" });
+    const opts = { technical_id: "kirlet-hr", gateway_secret: secret };
+
+    const on = resolve_identity(foreign, "/employees", { ...opts, auth_disabled: false });
+    expect(on.ok).toBe(false);
+    if (!on.ok) {
+      expect(on.response.status).toBe(401);
+    }
+
+    const meta = resolve_identity(foreign, "/manifest", { ...opts, auth_disabled: false });
+    expect(meta.ok).toBe(true);
+    if (meta.ok) {
+      expect(meta.identity).toBeNull();
+      expect(meta.verified).toBe(false);
+    }
+
+    const dev = resolve_identity(foreign, "/employees", {
+      ...opts,
+      auth_disabled: true,
+      on_auth_off: () => {},
+    });
+    expect(dev.ok).toBe(true);
+    if (dev.ok) {
+      expect(dev.verified).toBe(false);
+      expect(dev.identity?.user_id).toBe("dev");
+    }
+  });
+
+  test("el 401 por firma ajena lo dice", async () => {
+    const foreign = signed_req({ ...identity, kirlet_id: "kirlet-tienda" });
+    const r = resolve_identity(foreign, "/employees", {
+      technical_id: "kirlet-hr",
+      gateway_secret: secret,
+      auth_disabled: false,
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(JSON.stringify(await r.response.json())).toContain(
+        "identity signed for another app",
+      );
     }
   });
 

@@ -37,8 +37,24 @@ export async function apply_subject_schema_bundle(
        version = GREATEST(public.subject_schema_versions.version, EXCLUDED.version),
        applied_at = NOW(),
        tables = EXCLUDED.tables`,
-		[bundle.technicalId, bundle.version, JSON.stringify(names)],
+		// Bun.SQL ya codifica el jsonb: con `JSON.stringify` quedaba un string.
+		[bundle.technicalId, bundle.version, names],
 	);
+}
+
+/**
+ * El DDL va al esquema de `bundle.technicalId`, que lo decide la app al
+ * responder `/schema`; si no es la que se instala, escribiría en el de otra.
+ * Devuelve el motivo del rechazo, o `null` si coincide.
+ */
+export function schema_bundle_mismatch(
+	bundle: KirletSchemaBundle,
+	technical_id: string,
+): string | null {
+	const got = String(bundle?.technicalId ?? '');
+	return got === technical_id
+		? null
+		: `El esquema que publicó ${technical_id} es de «${got || '(sin technicalId)'}»; no se aplica.`;
 }
 
 export async function apply_subject_schema_from_url(
@@ -57,6 +73,8 @@ export async function apply_subject_schema_from_url(
 				last_error = `http_${res.status}`;
 			} else {
 				const bundle = (await res.json()) as KirletSchemaBundle;
+				const mismatch = schema_bundle_mismatch(bundle, technical_id);
+				if (mismatch) return { ok: false, error: mismatch };
 				await apply_subject_schema_bundle(sql, bundle);
 				return { ok: true, schema: pg_schema_name(technical_id) };
 			}

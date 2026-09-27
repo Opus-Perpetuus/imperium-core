@@ -1,29 +1,58 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, setDefaultTimeout, test } from 'bun:test';
 import {
 	chrome_paper_args,
+	html_to_pdf_bytes,
 	html_to_pdf_response,
+	paper_size_inches,
+	pdf_content_disposition,
+	pdf_options_from_input,
 	looks_like_pdf,
 	resolve_chrome_executable,
 	sanitize_pdf_filename,
 	wrap_html_for_pdf,
 } from './reports-pdf.ts';
 
+/* Los casos con Chrome real tardan más con la máquina cargada. */
+setDefaultTimeout(90_000);
+
 describe('wrap_html_for_pdf', () => {
-	test('wraps a list-export fragment in a full document with @page', () => {
+	test('wraps a list-export fragment in a full document with @page margins', () => {
 		const html = wrap_html_for_pdf(
 			`<style>.t td{border:1px solid #ccc}</style><section><table><tr><td>RC-1</td></tr></table></section>`,
 			{ orientation: 'landscape', pageSize: 'a4' },
 		);
 		expect(html.startsWith('<!DOCTYPE html>')).toBe(true);
-		expect(html).toContain('@page { size: 11.69in 8.27in; margin: 0; }');
-		expect(html).toContain('padding: 10mm 10mm 10mm 10mm');
-		expect(html).toContain('table { width: 100%; border-collapse: collapse; }');
-		expect(html).not.toContain('overflow-wrap: anywhere');
-		expect(html).not.toContain('table-layout: fixed');
-		expect(html).not.toContain('width=device-width');
-		expect(html).toContain('width=1122');
+		expect(html).toContain('size: 11.69in 8.27in;');
+		/* Márgenes de hoja (se repiten en cada página), no padding del body. */
+		expect(html).toContain('margin: 10mm 10mm 10mm 10mm;');
+		expect(html).not.toMatch(/\nbody \{[^}]*padding/);
+		expect(html).toContain('thead { display: table-header-group; }');
 		expect(html).toContain('<td>RC-1</td>');
 		expect(html).not.toMatch(/<html[\s\S]*<html/i);
+	});
+
+	test('keeps <style> from the head of a full document', () => {
+		const html = wrap_html_for_pdf(
+			`<html><head><style>.logo{color:red}</style></head><body><p class="logo">x</p></body></html>`,
+		);
+		expect(html).toContain('.logo{color:red}');
+	});
+
+	test('turns designer page breaks into CSS breaks', () => {
+		const html = wrap_html_for_pdf('<p>a</p><!--designer-page-break--><p>b</p>');
+		expect(html).toContain('<p>a</p><div class="report-page-break"></div><p>b</p>');
+	});
+
+	test('page numbers and footer text go into @page margin boxes', () => {
+		const html = wrap_html_for_pdf('<p>x</p>', {
+			pageNumbers: true,
+			footerText: 'Reporte "A"',
+			marginBottomMm: 4,
+		});
+		expect(html).toContain('@bottom-right { content: "Página " counter(page) " de " counter(pages);');
+		expect(html).toContain('@bottom-left { content: "Reporte \\"A\\"";');
+		/* Con pie hace falta margen para que se vea. */
+		expect(html).toContain('margin: 10mm 10mm 10mm 10mm;');
 	});
 
 	test('extracts body from a full HTML document instead of nesting html/html', () => {
@@ -32,6 +61,48 @@ describe('wrap_html_for_pdf', () => {
 		);
 		expect(html).toContain('<h1>Hola</h1>');
 		expect((html.match(/<html/gi) ?? []).length).toBe(1);
+	});
+});
+
+describe('paper_size_inches', () => {
+	test('custom size in mm (credencial 85.6 × 53.98)', () => {
+		expect(paper_size_inches({ pageSize: 'custom', widthMm: 85.6, heightMm: 53.98 })).toEqual({
+			width: 3.3701,
+			height: 2.1252,
+		});
+		expect(
+			paper_size_inches({ pageSize: 'custom', widthMm: 85.6, heightMm: 53.98, orientation: 'landscape' }),
+		).toEqual({ width: 2.1252, height: 3.3701 });
+	});
+});
+
+describe('pdf_options_from_input', () => {
+	test('reads a stored reports-pdf-setting row', () => {
+		expect(
+			pdf_options_from_input({
+				page_size_preset: 'custom',
+				custom_width_mm: 50.8,
+				custom_height_mm: 63.5,
+				margin_top_mm: 0,
+				display_header_footer: true,
+				scale_percent: 90,
+			}),
+		).toMatchObject({
+			pageSize: 'custom',
+			widthMm: 50.8,
+			heightMm: 63.5,
+			marginTopMm: 0,
+			pageNumbers: true,
+			scale: 0.9,
+		});
+	});
+});
+
+describe('pdf_content_disposition', () => {
+	test('keeps accents in filename* and an ASCII fallback', () => {
+		const header = pdf_content_disposition('Credencial José Núñez.pdf');
+		expect(header).toContain('filename="Credencial_Jose_Nunez.pdf"');
+		expect(header).toContain(`filename*=UTF-8''${encodeURIComponent('Credencial_José_Núñez.pdf')}`);
 	});
 });
 
@@ -86,7 +157,7 @@ describe('html_to_pdf_response', () => {
 		const bytes = new Uint8Array(await res.arrayBuffer());
 		expect(looks_like_pdf(bytes)).toBe(true);
 		expect(bytes.byteLength).toBeGreaterThan(100);
-	}, 30000);
+	});
 
 	test('landscape list PDF is wide enough that the last column is not clipped', async () => {
 		if (!resolve_chrome_executable()) {
@@ -111,7 +182,7 @@ describe('html_to_pdf_response', () => {
 		await Bun.write(tmp, bytes);
 		const text = await Bun.$`pdftotext -layout ${tmp} -`.text();
 		expect(text).toContain('ASIGNADOX');
-	}, 30000);
+	});
 
 	test('keeps Spanish accents and landscape MediaBox', async () => {
 		if (!resolve_chrome_executable()) {
@@ -140,5 +211,41 @@ describe('html_to_pdf_response', () => {
 		expect(text).toContain('Nicolás');
 		expect(text).not.toContain('MiÃ©');
 		expect(text).not.toContain('creaciÃ');
-	}, 30000);
+	});
+
+	test('every page keeps its top margin (multi-page list)', async () => {
+		const rows = Array.from({ length: 120 }, (_, i) => `<tr><td>Fila ${i + 1}</td></tr>`).join('');
+		const bytes = await html_to_pdf_bytes(`<table><thead><tr><th>Encabezado</th></tr></thead><tbody>${rows}</tbody></table>`, {
+			marginTopMm: 30,
+			marginBottomMm: 30,
+			pageNumbers: true,
+		});
+		const tmp = `/tmp/imperium-pdf-margins-${Date.now()}.pdf`;
+		await Bun.write(tmp, bytes);
+		const pages = Number((await Bun.$`pdfinfo ${tmp}`.text()).match(/Pages:\s+(\d+)/)![1]);
+		expect(pages).toBeGreaterThan(1);
+		/* Página 2: el encabezado de la tabla se repite y arranca debajo del margen. */
+		const bbox = await Bun.$`pdftotext -f 2 -l 2 -bbox ${tmp} -`.text();
+		const header = bbox.match(/yMin="([\d.]+)"[^>]*>Encabezado</);
+		expect(header).toBeTruthy();
+		expect(Number(header![1])).toBeGreaterThan((30 / 25.4) * 72 - 2);
+		const text = await Bun.$`pdftotext -layout ${tmp} -`.text();
+		expect(text).toContain(`Página 2 de ${pages}`);
+	});
+
+	test('custom sheet size reaches the PDF MediaBox', async () => {
+		const bytes = await html_to_pdf_bytes('<p>Credencial</p>', {
+			pageSize: 'custom',
+			widthMm: 85.6,
+			heightMm: 53.98,
+			marginTopMm: 0,
+			marginRightMm: 0,
+			marginBottomMm: 0,
+			marginLeftMm: 0,
+		});
+		const latin = Buffer.from(bytes).toString('latin1');
+		const box = latin.match(/\/MediaBox\s*\[\s*[\d.]+\s+[\d.]+\s+([\d.]+)\s+([\d.]+)\s*\]/);
+		expect(Math.round(Number(box![1]))).toBe(243);
+		expect(Math.round(Number(box![2]))).toBe(153);
+	});
 });

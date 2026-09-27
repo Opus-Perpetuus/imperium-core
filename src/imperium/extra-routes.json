@@ -822,6 +822,12 @@
     "action": "process_preview"
   },
   {
+    "resource": "reports",
+    "method": "get",
+    "path": "/print-css",
+    "action": "print_css"
+  },
+  {
     "resource": "tickets",
     "method": "get",
     "path": "/admin",

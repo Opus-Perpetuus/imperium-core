@@ -10,9 +10,11 @@ import {
 	notify_background_job_refresh,
 	persist_background_job,
 	read_background_job_payload,
+	type BackgroundJobKind,
 	type BackgroundJobLevel,
 } from './background-job.ts';
 import { broadcast_event } from './socket-stub.ts';
+import { print_console_log } from './debug-request-log.ts';
 import { apply_subject_schema_from_url } from './subject-schema.ts';
 import {
 	resolve_running_subject_image,
@@ -21,8 +23,16 @@ import {
 	run_subject_docker,
 	type SubjectRuntimeResult,
 } from './subject-runtime.ts';
+import {
+	blocking_dependents,
+	missing_dependencies,
+	plan_subject_install,
+	SubjectDependencyError,
+	type DependencyNode,
+} from './subject-deps.ts';
 import type { ImperiumDoc } from './envelope.ts';
-import type { ImperiumStore, SubjectInfo } from './store.ts';
+import { is_seed_admin } from './group-access.ts';
+import { PREFER_OWNER, type ImperiumStore, type SubjectInfo } from './store.ts';
 
 type JobCtx = {
 	store: ImperiumStore;
@@ -30,7 +40,50 @@ type JobCtx = {
 	recipient_id?: string;
 };
 
-const in_flight = new Map<string, Promise<unknown>>();
+export type LifecycleOp = 'install' | 'uninstall' | 'update';
+
+type InFlightJob = { op: LifecycleOp; done: Promise<unknown> };
+
+/**
+ * Trabajos en curso de este proceso, por app. `done` resuelve cuando ese
+ * trabajo se asienta (nunca rechaza): quien lo espere debe releer el estado.
+ */
+const in_flight = new Map<string, InFlightJob>();
+
+let admission: Promise<unknown> = Promise.resolve();
+
+/**
+ * Serializa la admisión (comprobaciones, registro en `in_flight` y `begin`):
+ * entre mirar `in_flight` y registrar el trabajo hay `await`s, y dos peticiones
+ * a la vez pasaban las dos. Solo la admisión: Docker y las esperas corren
+ * después, en la cadena, para no bloquear al resto durante un pull.
+ */
+function admit<T>(fn: () => Promise<T>): Promise<T> {
+	const run = admission.then(fn, fn);
+	admission = run.catch(() => null);
+	return run;
+}
+
+/** Registra un trabajo; `settle` lo retira (si sigue siendo el suyo) y despierta a quien lo espera. */
+function claim(technical_id: string, op: LifecycleOp) {
+	let resolve!: () => void;
+	const entry: InFlightJob = {
+		op,
+		done: new Promise<void>((r) => (resolve = r)),
+	};
+	in_flight.set(technical_id, entry);
+	return {
+		settle() {
+			if (in_flight.get(technical_id) === entry) in_flight.delete(technical_id);
+			resolve();
+		},
+	};
+}
+
+/** Una app que se está instalando o actualizando cuenta como viva para sus dependencias. */
+function is_live_job(job: InFlightJob | undefined): boolean {
+	return job?.op === 'install' || job?.op === 'update';
+}
 
 async function collect_resource(
 	store: ImperiumStore,
@@ -258,6 +311,40 @@ async function install_records(sql: Bun.SQL): Promise<Map<string, InstallRec>> {
 	return out;
 }
 
+/** Misma regla que `technical_id_is_installed`, para todo el catálogo de una vez. */
+async function installed_from(
+	store: ImperiumStore,
+	recs: Map<string, InstallRec>,
+	all_modules?: ImperiumDoc[],
+): Promise<Set<string>> {
+	const out = new Set<string>();
+	let modules = all_modules;
+	for (const sub of store.subjects) {
+		const rec = recs.get(sub.technical_id);
+		if (!rec && !is_base_subject_slug(sub.slug)) {
+			modules ??= await collect_resource(store, 'module-management');
+		}
+		if (
+			is_base_subject_slug(sub.slug) ||
+			subject_is_installed(rec, rec ? [] : filter_module_rows(modules!, sub))
+		) {
+			out.add(sub.technical_id);
+		}
+	}
+	return out;
+}
+
+/**
+ * Technical ids de las apps instaladas ahora mismo (las base, siempre). Es lo
+ * que el ciclo de vida usa para resolver dependencias.
+ */
+export async function installed_technical_ids(
+	store: ImperiumStore,
+	sql: Bun.SQL,
+): Promise<Set<string>> {
+	return installed_from(store, await install_records(sql));
+}
+
 /**
  * Estado visible del catálogo: `installing`/`uninstalling` solo es busy
  * mientras hay un job en vuelo.
@@ -337,11 +424,47 @@ export function subject_update_available(
 	return have !== want;
 }
 
-function catalog_row(sub: SubjectInfo, installed: boolean, rec?: InstallRec) {
+/** Lo que una fila del catálogo necesita saber del resto para sus dependencias. */
+export type DependencyView = {
+	subjects: readonly DependencyNode[];
+	/** Instaladas ahora mismo, base incluidas. */
+	installed: ReadonlySet<string>;
+};
+
+/** Un grafo roto (lo vigila el spec del catálogo) no debe tumbar el listado. */
+function missing_or_empty(
+	subjects: readonly DependencyNode[],
+	technical_id: string,
+	is_ready: (technical_id: string) => boolean,
+): string[] {
+	try {
+		return missing_dependencies(subjects, technical_id, is_ready);
+	} catch (err) {
+		if (err instanceof SubjectDependencyError) return [];
+		throw err;
+	}
+}
+
+/**
+ * Fila de `GET /subjects`. `depends_on`, `required_by` (dependientes vivas) y
+ * `missing_dependencies` van en technical ids.
+ */
+export function catalog_row(
+	sub: SubjectInfo,
+	installed: boolean,
+	rec: InstallRec | undefined,
+	deps: DependencyView,
+	running: ReadonlySet<string> = new Set(),
+) {
+	const is_ready = (tid: string) => deps.installed.has(tid);
+	const is_live = (tid: string) =>
+		is_ready(tid) || is_live_job(in_flight.get(tid));
+	// `running` es la foto tomada antes de leer `rec`: si el trabajo asentó entre
+	// la lectura y aquí, la fila vieja (installing) no debe salir como huérfana.
 	const view = visible_lifecycle_status(
 		rec?.status,
 		installed,
-		in_flight.has(sub.technical_id),
+		running.has(sub.technical_id) || in_flight.has(sub.technical_id),
 	);
 	const installed_image = rec?.installed_image ?? null;
 	const available_image = sub.image ?? null;
@@ -371,11 +494,31 @@ function catalog_row(sub: SubjectInfo, installed: boolean, rec?: InstallRec) {
 			installed_image,
 			available_image,
 		),
-		modules: sub.modules.map((m) => ({
-			resource: m.resource,
-			path: m.path,
-			name: m.name,
-		})),
+		depends_on: [...(sub.depends_on ?? [])],
+		required_by: blocking_dependents(
+			deps.subjects,
+			sub.technical_id,
+			is_live,
+		),
+		missing_dependencies: missing_or_empty(
+			deps.subjects,
+			sub.technical_id,
+			is_ready,
+		),
+		// Un recurso compartido (`/pedidos`, `/products`) se atribuye a su dueña,
+		// igual que en el menú (`reshape_subject_menus`): si no, el front casaba
+		// el recurso con la primera app que lo declarara.
+		modules: sub.modules
+			.filter(
+				(m) =>
+					!PREFER_OWNER[m.resource] ||
+					PREFER_OWNER[m.resource] === sub.slug,
+			)
+			.map((m) => ({
+				resource: m.resource,
+				path: m.path,
+				name: m.name,
+			})),
 	};
 }
 
@@ -416,11 +559,14 @@ export async function list_catalog_subjects(
 	sql: Bun.SQL,
 ) {
 	await seed_missing_install_rows(store, sql);
+	// Foto ANTES de leer: si un trabajo asentaba entre la lectura y la
+	// comprobación, la reconciliación pisaba su fila recién escrita.
+	const running = new Set(in_flight.keys());
 	const recs = await install_records(sql);
 	for (const rec of recs.values()) {
 		const write = stale_lifecycle_write(
 			rec,
-			in_flight.has(rec.technical_id),
+			running.has(rec.technical_id) || in_flight.has(rec.technical_id),
 		);
 		if (!write) continue;
 		await write_install_row(
@@ -434,12 +580,13 @@ export async function list_catalog_subjects(
 		rec.installed = write.installed;
 	}
 	const all_modules = await collect_resource(store, 'module-management');
+	const installed = await installed_from(store, recs, all_modules);
+	const deps: DependencyView = { subjects: store.subjects, installed };
 	const out = [];
 	for (const sub of store.subjects) {
 		const rows = filter_module_rows(all_modules, sub);
 		const rec = recs.get(sub.technical_id);
-		const installed = subject_is_installed(rec, rows);
-		out.push(catalog_row(sub, installed, rec));
+		out.push(catalog_row(sub, subject_is_installed(rec, rows), rec, deps, running));
 	}
 	return out;
 }
@@ -531,6 +678,23 @@ async function write_install_row(
 	);
 }
 
+/**
+ * `subject_schema_versions.tables` es jsonb: normalmente llega como arreglo,
+ * pero una fila escrita como texto ya serializado vuelve como string JSON (a
+ * veces envuelto dos veces).
+ */
+export function read_schema_tables(raw: unknown): string[] {
+	let value = raw;
+	for (let i = 0; i < 3 && typeof value === 'string'; i++) {
+		try {
+			value = JSON.parse(value);
+		} catch {
+			return [];
+		}
+	}
+	return Array.isArray(value) ? value.map((t) => String(t)) : [];
+}
+
 async function schema_version(
 	sql: Bun.SQL,
 	technical_id: string,
@@ -551,13 +715,10 @@ async function schema_version(
 		}>;
 		const row = rows[0];
 		if (!row) return { version: null, applied_at: null, tables: [] };
-		const tables = Array.isArray(row.tables)
-			? row.tables.map((t) => String(t))
-			: [];
 		return {
 			version: Number(row.version),
 			applied_at: row.applied_at ? String(row.applied_at) : null,
-			tables,
+			tables: read_schema_tables(row.tables),
 		};
 	} catch {
 		return { version: null, applied_at: null, tables: [] };
@@ -653,12 +814,180 @@ export function subject_not_installed_body(err: SubjectNotInstalledError) {
 export class SubjectLifecycleError extends Error {
 	status = 400;
 	code = 'subject_lifecycle';
-	constructor(message: string, status = 400, code = 'subject_lifecycle') {
+	details?: Record<string, unknown>;
+	constructor(
+		message: string,
+		status = 400,
+		code = 'subject_lifecycle',
+		details?: Record<string, unknown>,
+	) {
 		super(message);
 		this.name = 'SubjectLifecycleError';
 		this.status = status;
 		this.code = code;
+		this.details = details;
 	}
+}
+
+/**
+ * Candado de `/subjects`: leer basta con una sesión interna o el maestro de
+ * gateway; todo lo que no sea lectura (instalar, desinstalar, actualizar, el
+ * interruptor de auto-actualización) exige administrador o el maestro.
+ */
+export function subjects_access_denied(
+	method: string,
+	actor: ImperiumDoc | null,
+	master: boolean,
+): Response | null {
+	if (master) return null;
+	if (!actor) {
+		return Response.json(
+			{ error: 'No estás autenticado', message: 'No estás autenticado' },
+			{ status: 401 },
+		);
+	}
+	const read = method === 'GET' || method === 'HEAD' || method === 'OPTIONS';
+	if (read || is_seed_admin(actor)) return null;
+	return Response.json(
+		{
+			error: 'admin_required',
+			code: 'admin_required',
+			message: 'Solo un administrador puede instalar o desinstalar apps',
+		},
+		{ status: 403 },
+	);
+}
+
+/** Cuerpo HTTP de un `SubjectLifecycleError`: `code` y `details` para el front. */
+export function subject_lifecycle_body(err: SubjectLifecycleError) {
+	return {
+		error: err.code,
+		code: err.code,
+		message: err.message,
+		details: err.details,
+	};
+}
+
+function subject_ref(subjects: readonly DependencyNode[], technical_id: string) {
+	const sub = subjects.find((s) => s.technical_id === technical_id);
+	return {
+		technical_id,
+		slug: sub?.slug ?? technical_id.replace(/^subject-/, ''),
+		name: sub?.name ?? sub?.slug ?? technical_id,
+	};
+}
+
+/**
+ * 409 si quitar `target` rompería apps vivas que dependen de ella (directa o
+ * transitivamente); `null` si se puede desinstalar.
+ */
+export function uninstall_dependents_error(
+	subjects: readonly DependencyNode[],
+	target: string,
+	is_live: (technical_id: string) => boolean,
+): SubjectLifecycleError | null {
+	const dependents = blocking_dependents(subjects, target, is_live).map(
+		(tid) => subject_ref(subjects, tid),
+	);
+	if (!dependents.length) return null;
+	const sub = subject_ref(subjects, target);
+	return new SubjectLifecycleError(
+		`No se puede desinstalar ${sub.name}: la usan ${dependents.map((d) => d.name).join(', ')}`,
+		409,
+		'subject_has_dependents',
+		{ ...sub, dependents },
+	);
+}
+
+export type InstallChainStep = {
+	technical_id: string;
+	/** `wait`: otro trabajo ya la está instalando; se espera, no se relanza. */
+	kind: 'install' | 'update' | 'wait';
+};
+
+/**
+ * Pasos para instalar (o actualizar) `target`: sus dependencias faltantes en
+ * orden y `target` al final. Lanza `SubjectLifecycleError` 409 si el grafo está
+ * roto o si una dependencia se está desinstalando.
+ */
+export function build_install_chain(
+	subjects: readonly DependencyNode[],
+	target: string,
+	op: 'install' | 'update',
+	is_ready: (technical_id: string) => boolean,
+	busy_op: (technical_id: string) => LifecycleOp | undefined,
+): InstallChainStep[] {
+	let plan: string[];
+	try {
+		plan = plan_subject_install(subjects, target, is_ready);
+	} catch (err) {
+		if (!(err instanceof SubjectDependencyError)) throw err;
+		throw new SubjectLifecycleError(err.message, 409, err.code, err.details);
+	}
+	return plan.map((tid): InstallChainStep => {
+		if (tid === target) return { technical_id: tid, kind: op };
+		const busy = busy_op(tid);
+		if (busy === 'uninstall') {
+			const sub = subject_ref(subjects, target);
+			const dependency = subject_ref(subjects, tid);
+			throw new SubjectLifecycleError(
+				`No se puede ${op === 'install' ? 'instalar' : 'actualizar'} ${sub.name}: ${dependency.name} se está desinstalando`,
+				409,
+				'dependency_busy',
+				{ ...sub, dependency },
+			);
+		}
+		return { technical_id: tid, kind: busy ? 'wait' : 'install' };
+	});
+}
+
+export type InstallChainGroup = {
+	target: string;
+	steps: InstallChainStep[];
+	/** Dependencias que instala un grupo anterior: si falla, este no corre. */
+	needs: string[];
+};
+
+/**
+ * Cadena de "Actualizar todas": un grupo por app, cada uno con las
+ * dependencias que le falten y que ningún grupo anterior ya instale. Un fallo
+ * corta su grupo y los que lo necesitan, no el resto. Las apps con un problema
+ * de dependencias se saltan y se informan.
+ */
+export function build_update_all_chain(
+	subjects: readonly DependencyNode[],
+	targets: readonly string[],
+	is_ready: (technical_id: string) => boolean,
+	busy_op: (technical_id: string) => LifecycleOp | undefined,
+): {
+	groups: InstallChainGroup[];
+	skipped: Array<{ technical_id: string; code: string; message: string }>;
+} {
+	const queued = new Set<string>();
+	const groups: InstallChainGroup[] = [];
+	const skipped: Array<{ technical_id: string; code: string; message: string }> = [];
+	for (const target of targets) {
+		let steps: InstallChainStep[];
+		try {
+			steps = build_install_chain(
+				subjects,
+				target,
+				'update',
+				(tid) => is_ready(tid) || queued.has(tid),
+				busy_op,
+			);
+		} catch (err) {
+			if (!(err instanceof SubjectLifecycleError)) throw err;
+			skipped.push({ technical_id: target, code: err.code, message: err.message });
+			continue;
+		}
+		const needs = missing_dependencies(subjects, target, is_ready).filter((tid) =>
+			queued.has(tid),
+		);
+		for (const step of steps) queued.add(step.technical_id);
+		groups.push({ target, steps, needs });
+	}
+	return { groups, skipped };
 }
 
 function emit_subject_event(
@@ -681,7 +1010,14 @@ function emit_subject_event(
 		data: [data],
 	});
 	if (job?.store && job.notification_id) {
-		void persist_job_from_event(job, data);
+		// Bun termina el proceso ante un rechazo sin atender: un fallo al
+		// guardar el progreso no puede tumbar el núcleo a mitad de la cadena.
+		void persist_job_from_event(job, data).catch((err) =>
+			print_console_log(
+				'warning',
+				`No se guardó el progreso del trabajo de ${String(payload.slug ?? '')}: ${error_text(err)}`,
+			),
+		);
 	}
 }
 
@@ -779,6 +1115,8 @@ async function begin_subject_lifecycle(
 			ver.version,
 			busy_status,
 		);
+		// Corta también los flujos internos que cruzan apps.
+		store.mark_subject_installed(technical_id, false);
 		emit_subject_event(
 			{
 				technical_id: sub.technical_id,
@@ -921,6 +1259,9 @@ async function finish_subject_lifecycle(
 		// Docker no se inventa nada: sin contenedor no hay imagen que anotar.
 		installed && !docker.skipped ? docker.image : null,
 	);
+	store.mark_subject_installed(technical_id, installed);
+	// Sin esperar al próximo arranque: el empleado predeterminado del admin.
+	if (installed && technical_id === 'subject-rh') await store.seed_default_employee();
 	const wanted_docker = docker_runtime_wanted();
 	const docker_note =
 		installed && docker.skipped && wanted_docker
@@ -970,6 +1311,16 @@ export async function set_subject_installed(
 			'base_subject',
 		);
 	}
+	if (!installed) {
+		const busy = new Map(in_flight);
+		const ready = await installed_technical_ids(store, sql);
+		const blocked = uninstall_dependents_error(
+			store.subjects,
+			technical_id,
+			(tid) => ready.has(tid) || is_live_job(busy.get(tid)),
+		);
+		if (blocked) throw blocked;
+	}
 	const started = await begin_subject_lifecycle(
 		store,
 		sql,
@@ -989,6 +1340,366 @@ export async function set_subject_installed(
 	);
 }
 
+const JOB_KIND: Record<LifecycleOp, BackgroundJobKind> = {
+	install: 'subject_install',
+	uninstall: 'subject_uninstall',
+	update: 'subject_update',
+};
+
+const JOB_VERB: Record<LifecycleOp, string> = {
+	install: 'Instalando',
+	uninstall: 'Desinstalando',
+	update: 'Actualizando',
+};
+
+/** Un paso de la cadena en ejecución. */
+type ChainRun = {
+	sub: SubjectInfo;
+	kind: LifecycleOp | 'wait';
+	job: JobCtx | null;
+	notification: ImperiumDoc | null;
+	/** Solo en los pasos propios; un `wait` es trabajo de otro. */
+	settle?: () => void;
+	/** `begin` de instalar/desinstalar: con qué dejar la fila si se corta. */
+	started?: Awaited<ReturnType<typeof begin_subject_lifecycle>>;
+	/** Actualización ya marcada `updating` en la admisión: si se corta, vuelve a `installed`. */
+	queued_update?: boolean;
+	wait?: Promise<unknown>;
+};
+
+type ChainRunGroup = { target: string; runs: ChainRun[]; needs: string[] };
+
+function error_text(err: unknown): string {
+	return err instanceof Error ? err.message : String(err);
+}
+
+/** Cierra con error un paso propio que no llegó a correr; la app queda como estaba. */
+async function cut_run(sql: Bun.SQL, run: ChainRun, message: string) {
+	try {
+		if (run.kind === 'install' && run.started) {
+			await write_install_row(
+				sql,
+				run.sub.technical_id,
+				run.started.was_installed,
+				run.started.ver.version,
+				'error',
+			);
+		}
+		if (run.kind === 'update' && run.queued_update) {
+			await write_install_row(sql, run.sub.technical_id, true, null, 'installed');
+		}
+	} catch {
+		// Sin job en vuelo, el listado reconcilia la fila transitoria que quede.
+	}
+	emit_subject_event(
+		{
+			technical_id: run.sub.technical_id,
+			slug: run.sub.slug,
+			name: run.sub.name,
+			installed:
+				run.kind === 'update' || (run.started?.was_installed ?? false),
+			status: run.kind === 'update' ? 'installed' : 'error',
+			phase: 'error',
+			level: 'error',
+			message,
+		},
+		run.job,
+	);
+	run.settle?.();
+}
+
+/**
+ * Abre un paso propio antes del 202: lo registra en `in_flight`, le da su
+ * propia notificación (un job por app: mezclar eventos de varias le cambiaba
+ * el nombre y lo daba por terminado con el primer `done`) y, al instalar o
+ * desinstalar, hace el `begin` para que el listado ya lo vea ocupado.
+ */
+async function open_run(
+	store: ImperiumStore,
+	sql: Bun.SQL,
+	sub: SubjectInfo,
+	kind: LifecycleOp,
+	actor: ImperiumDoc | null,
+): Promise<ChainRun> {
+	const run: ChainRun = {
+		sub,
+		kind,
+		job: null,
+		notification: null,
+		settle: claim(sub.technical_id, kind).settle,
+	};
+	try {
+		const uid = actor_uid(actor);
+		run.notification = await create_background_job_notification(store, {
+			recipient_id: uid,
+			actor,
+			job_kind: JOB_KIND[kind],
+			technical_id: sub.technical_id,
+			slug: sub.slug,
+			name: sub.name,
+			message: `${JOB_VERB[kind]} ${sub.name}…`,
+		});
+		run.job = {
+			store,
+			notification_id: run.notification?._id
+				? String(run.notification._id)
+				: undefined,
+			recipient_id: uid,
+		};
+		if (uid && run.job.notification_id) {
+			notify_background_job_refresh(
+				uid,
+				run.job.notification_id,
+				'background_job_start',
+			);
+		}
+		if (kind !== 'update') {
+			run.started = await begin_subject_lifecycle(
+				store,
+				sql,
+				sub,
+				kind === 'install',
+				run.job,
+			);
+		} else {
+			// Ocupada desde el 202: mientras espera su turno (o a sus
+			// dependencias) el listado la daba por terminada y el front
+			// anunciaba "actualizada" antes de tiempo. Sigue instalada.
+			await write_install_row(sql, sub.technical_id, true, null, 'updating');
+			run.queued_update = true;
+			emit_subject_event(
+				{
+					technical_id: sub.technical_id,
+					slug: sub.slug,
+					name: sub.name,
+					installed: true,
+					status: 'updating',
+					phase: 'sql',
+					level: 'info',
+					message: `${JOB_VERB.update} ${sub.name}…`,
+				},
+				run.job,
+			);
+		}
+		return run;
+	} catch (err) {
+		await cut_run(sql, run, `No se pudo preparar ${sub.name}: ${error_text(err)}`);
+		throw err;
+	}
+}
+
+/**
+ * Abre todos los pasos propios de la cadena. Los `wait` guardan la promesa
+ * del trabajo ajeno que vieron en `busy`. Si uno falla, los ya abiertos se
+ * cierran con error y se relanza.
+ */
+async function open_chain(
+	store: ImperiumStore,
+	sql: Bun.SQL,
+	groups: readonly InstallChainGroup[],
+	busy: ReadonlyMap<string, InFlightJob>,
+	actor: ImperiumDoc | null,
+): Promise<ChainRunGroup[]> {
+	const opened: ChainRun[] = [];
+	const out: ChainRunGroup[] = [];
+	try {
+		for (const group of groups) {
+			const runs: ChainRun[] = [];
+			for (const step of group.steps) {
+				const sub = store.subjects.find(
+					(s) => s.technical_id === step.technical_id,
+				)!;
+				if (step.kind === 'wait') {
+					runs.push({
+						sub,
+						kind: 'wait',
+						job: null,
+						notification: null,
+						wait: busy.get(sub.technical_id)?.done,
+					});
+					continue;
+				}
+				const run = await open_run(store, sql, sub, step.kind, actor);
+				opened.push(run);
+				runs.push(run);
+			}
+			out.push({ target: group.target, runs, needs: group.needs });
+		}
+		return out;
+	} catch (err) {
+		for (const run of opened) {
+			await cut_run(
+				sql,
+				run,
+				`No se ${run.kind === 'update' ? 'actualizó' : 'instaló'} ${run.sub.name}: ${error_text(err)}`,
+			);
+		}
+		throw err;
+	}
+}
+
+/** Corre un paso y devuelve su error (texto) o `null`. Nunca lanza. */
+async function run_step(
+	store: ImperiumStore,
+	sql: Bun.SQL,
+	run: ChainRun,
+): Promise<string | null> {
+	const technical_id = run.sub.technical_id;
+	try {
+		if (run.kind === 'wait') {
+			// La promesa ajena siempre resuelve: el resultado se relee.
+			await run.wait;
+			const installed = await installed_technical_ids(store, sql);
+			return installed.has(technical_id)
+				? null
+				: `${run.sub.name} no quedó instalada`;
+		}
+		if (run.kind === 'update') {
+			await run_subject_update(store, sql, run.sub, run.job);
+			return null;
+		}
+		const started = run.started!;
+		await finish_subject_lifecycle(
+			store,
+			sql,
+			run.sub,
+			run.kind === 'install',
+			started.ver,
+			started.busy_status,
+			started.was_installed,
+			run.job,
+		);
+		return null;
+	} catch (err) {
+		// Un fallo de Docker ya dejó su fila y su evento; el resto no. Una
+		// espera nunca escribe: la fila es de otro trabajo. Actualizar nunca
+		// desinstala: vuelve a `installed` con su imagen anterior.
+		if (run.kind !== 'wait' && !(err instanceof SubjectLifecycleError)) {
+			const update = run.kind === 'update';
+			const installed = update || (run.started?.was_installed ?? false);
+			await write_install_row(
+				sql,
+				technical_id,
+				installed,
+				run.started?.ver.version ?? null,
+				update ? 'installed' : 'error',
+			).catch(() => null);
+			emit_subject_event(
+				{
+					technical_id,
+					slug: run.sub.slug,
+					name: run.sub.name,
+					installed,
+					status: update ? 'installed' : 'error',
+					phase: 'error',
+					level: 'error',
+					message: update
+						? `No se pudo actualizar ${run.sub.name}: ${error_text(err)}`
+						: error_text(err),
+				},
+				run.job,
+			);
+		}
+		return error_text(err);
+	} finally {
+		run.settle?.();
+	}
+}
+
+/**
+ * Corre la cadena en orden, en segundo plano. Un paso que falla corta lo que
+ * queda de su grupo y los grupos que lo necesitan: cada paso cortado queda en
+ * error con su `was_installed` y un aviso que nombra la dependencia. Nunca
+ * rechaza; devuelve el error (o `null`) de cada paso propio.
+ */
+async function run_chain(
+	store: ImperiumStore,
+	sql: Bun.SQL,
+	groups: readonly ChainRunGroup[],
+): Promise<Map<string, string | null>> {
+	const results = new Map<string, string | null>();
+	const failed = new Set<string>();
+	try {
+		for (const group of groups) {
+			let blocker = group.needs.find((tid) => failed.has(tid));
+			for (const run of group.runs) {
+				const technical_id = run.sub.technical_id;
+				if (blocker) {
+					if (run.kind === 'wait') continue;
+					const dependency = subject_ref(store.subjects, blocker).name;
+					const verb = run.kind === 'update' ? 'actualizó' : 'instaló';
+					await cut_run(
+						sql,
+						run,
+						`No se ${verb} ${run.sub.name}: falló su dependencia ${dependency}`,
+					);
+					results.set(technical_id, `falló su dependencia ${dependency}`);
+					continue;
+				}
+				const error = await run_step(store, sql, run);
+				if (run.kind !== 'wait') results.set(technical_id, error);
+				if (error) {
+					failed.add(technical_id);
+					blocker = technical_id;
+				}
+			}
+		}
+	} finally {
+		for (const group of groups) {
+			for (const run of group.runs) run.settle?.();
+		}
+	}
+	return results;
+}
+
+async function catalog_rows(
+	store: ImperiumStore,
+	sql: Bun.SQL,
+	technical_ids: readonly string[],
+) {
+	const running = new Set(in_flight.keys());
+	const recs = await install_records(sql);
+	const installed = await installed_from(store, recs);
+	const deps: DependencyView = { subjects: store.subjects, installed };
+	return technical_ids.map((tid) =>
+		catalog_row(
+			store.subjects.find((s) => s.technical_id === tid)!,
+			installed.has(tid),
+			recs.get(tid),
+			deps,
+			running,
+		),
+	);
+}
+
+/** Respuesta de una cadena de una sola app: su fila primero y luego las de sus dependencias. */
+async function chain_accepted(
+	store: ImperiumStore,
+	sql: Bun.SQL,
+	group: ChainRunGroup,
+) {
+	const deps = group.runs.filter((run) => run.sub.technical_id !== group.target);
+	return {
+		accepted: true,
+		already_running: false,
+		rows: await catalog_rows(store, sql, [
+			group.target,
+			...deps.map((run) => run.sub.technical_id),
+		]),
+		dependencies: deps.map((run) =>
+			subject_ref(store.subjects, run.sub.technical_id),
+		),
+		notification:
+			group.runs.find((run) => run.sub.technical_id === group.target)
+				?.notification ?? null,
+	};
+}
+
+/**
+ * Instalar: primero las dependencias que falten, en cadena, y la app al final.
+ * Desinstalar: 409 si alguna app viva la usa. Todo se admite bajo el mismo
+ * candado y el trabajo Docker sigue en segundo plano.
+ */
 export async function accept_subject_lifecycle(
 	store: ImperiumStore,
 	sql: Bun.SQL,
@@ -1005,102 +1716,59 @@ export async function accept_subject_lifecycle(
 			'base_subject',
 		);
 	}
-	if (in_flight.has(technical_id)) {
-		const recs = await install_records(sql);
-		return {
-			accepted: true,
-			already_running: true,
-			row: catalog_row(sub, false, recs.get(technical_id)),
-			notification: null as ImperiumDoc | null,
-		};
-	}
-	const uid = actor_uid(actor);
-	const job_kind = installed ? 'subject_install' : 'subject_uninstall';
-	const message = installed
-		? `Instalando ${sub.name}…`
-		: `Desinstalando ${sub.name}…`;
-	const notification = await create_background_job_notification(store, {
-		recipient_id: uid,
-		actor,
-		job_kind,
-		technical_id,
-		slug: sub.slug,
-		name: sub.name,
-		message,
-	});
-	const job: JobCtx = {
-		store,
-		notification_id: notification?._id
-			? String(notification._id)
-			: undefined,
-		recipient_id: uid,
-	};
-	if (uid && job.notification_id) {
-		notify_background_job_refresh(
-			uid,
-			job.notification_id,
-			'background_job_start',
+	return admit(async () => {
+		// La foto de `in_flight` va ANTES de leer la base: un trabajo que
+		// termine entre medias sigue contando como vivo, nunca se pierde.
+		const busy = new Map(in_flight);
+		const ready = await installed_technical_ids(store, sql);
+		if (!installed) {
+			// Antes de `begin`: el begin de desinstalar corta el acceso al momento.
+			const blocked = uninstall_dependents_error(
+				store.subjects,
+				technical_id,
+				(tid) => ready.has(tid) || is_live_job(busy.get(tid)),
+			);
+			if (blocked) throw blocked;
+		}
+		if (in_flight.has(technical_id)) {
+			return {
+				accepted: true,
+				already_running: true,
+				rows: await catalog_rows(store, sql, [technical_id]),
+				dependencies: [] as ReturnType<typeof subject_ref>[],
+				notification: null as ImperiumDoc | null,
+			};
+		}
+		if (!installed) {
+			const run = await open_run(store, sql, sub, 'uninstall', actor);
+			void run_chain(store, sql, [
+				{ target: technical_id, runs: [run], needs: [] },
+			]);
+			return {
+				accepted: true,
+				already_running: false,
+				rows: await catalog_rows(store, sql, [technical_id]),
+				dependencies: [] as ReturnType<typeof subject_ref>[],
+				notification: run.notification,
+			};
+		}
+		const steps = build_install_chain(
+			store.subjects,
+			technical_id,
+			'install',
+			(tid) => ready.has(tid),
+			(tid) => busy.get(tid)?.op,
 		);
-	}
-	in_flight.set(technical_id, Promise.resolve());
-	let started: Awaited<ReturnType<typeof begin_subject_lifecycle>>;
-	try {
-		started = await begin_subject_lifecycle(
+		const groups = await open_chain(
 			store,
 			sql,
-			sub,
-			installed,
-			job,
+			[{ target: technical_id, steps, needs: [] }],
+			busy,
+			actor,
 		);
-	} catch (err) {
-		in_flight.delete(technical_id);
-		throw err;
-	}
-	const work = finish_subject_lifecycle(
-		store,
-		sql,
-		sub,
-		installed,
-		started.ver,
-		started.busy_status,
-		started.was_installed,
-		job,
-	)
-		.catch(async (err) => {
-			if (err instanceof SubjectLifecycleError) return null;
-			await write_install_row(
-				sql,
-				technical_id,
-				started.was_installed,
-				started.ver.version,
-				'error',
-			);
-			emit_subject_event(
-				{
-					technical_id: sub.technical_id,
-					slug: sub.slug,
-					name: sub.name,
-					installed: started.was_installed,
-					status: 'error',
-					phase: 'error',
-					level: 'error',
-					message: String(err),
-				},
-				job,
-			);
-			return null;
-		})
-		.finally(() => {
-			in_flight.delete(technical_id);
-		});
-	in_flight.set(technical_id, work);
-	const recs = await install_records(sql);
-	return {
-		accepted: true,
-		already_running: false,
-		row: catalog_row(sub, false, recs.get(technical_id)),
-		notification,
-	};
+		void run_chain(store, sql, groups);
+		return chain_accepted(store, sql, groups[0]!);
+	});
 }
 
 /**
@@ -1299,6 +1967,7 @@ export async function run_subject_update(
 		'installed',
 		docker.skipped ? null : docker.image,
 	);
+	store.mark_subject_installed(technical_id, true);
 	emit_subject_event(
 		{
 			technical_id,
@@ -1321,64 +1990,66 @@ export async function run_subject_update(
  * Encola la actualización de TODAS las apps con versión nueva y devuelve al
  * momento con la lista de lo que va a tocar.
  *
- * Secuencial dentro de un único trabajo: disparar veinte `docker pull` a la
- * vez satura la red del host y deja varias apps a medias. Cada app se marca
- * `updating` al empezar la suya, así que la pantalla las va viendo caer una
- * por una.
+ * Secuencial dentro de una única cadena: disparar veinte `docker pull` a la
+ * vez satura la red del host y deja varias apps a medias. Cada app lleva su
+ * propio job y queda `updating` desde que se admite, así que la pantalla las
+ * va viendo terminar una por una. Si a una le falta una dependencia, se
+ * instala antes, en la misma cadena.
  */
 export async function accept_subject_update_all(
 	store: ImperiumStore,
 	sql: Bun.SQL,
 	actor: ImperiumDoc | null,
 ) {
-	const pending = await list_subject_updates(store, sql);
-	const targets = pending.filter((item) => !in_flight.has(item.technical_id));
-	if (!targets.length) {
-		return { accepted: true, total: 0, slugs: [] as string[] };
-	}
-	const uid = actor_uid(actor);
-	const notification = await create_background_job_notification(store, {
-		recipient_id: uid,
-		actor,
-		job_kind: 'subject_update',
-		technical_id: targets[0]!.technical_id,
-		slug: targets[0]!.slug,
-		name: `${targets.length} apps`,
-		message: `Actualizando ${targets.length} apps…`,
+	return admit(async () => {
+		const busy = new Map(in_flight);
+		const pending = await list_subject_updates(store, sql);
+		const ready = await installed_technical_ids(store, sql);
+		const plan = build_update_all_chain(
+			store.subjects,
+			pending
+				.filter((item) => !in_flight.has(item.technical_id))
+				.map((item) => item.technical_id),
+			(tid) => ready.has(tid),
+			(tid) => busy.get(tid)?.op,
+		);
+		const idle = {
+			accepted: true,
+			total: 0,
+			slugs: [] as string[],
+			dependencies: [] as ReturnType<typeof subject_ref>[],
+			skipped: plan.skipped,
+			notification: null as ImperiumDoc | null,
+			notifications: [] as ImperiumDoc[],
+		};
+		if (!plan.groups.length) return idle;
+		const groups = await open_chain(store, sql, plan.groups, busy, actor);
+		void run_chain(store, sql, groups);
+		const runs = groups.flatMap((group) => group.runs);
+		return {
+			...idle,
+			total: groups.length,
+			slugs: groups.map((group) => subject_ref(store.subjects, group.target).slug),
+			dependencies: runs
+				.filter((run) => run.kind !== 'update')
+				.map((run) => subject_ref(store.subjects, run.sub.technical_id)),
+			notification:
+				groups[0]!.runs.find(
+					(run) => run.sub.technical_id === groups[0]!.target,
+				)?.notification ?? null,
+			notifications: runs.flatMap((run) =>
+				run.notification ? [run.notification] : [],
+			),
+		};
 	});
-	const job: JobCtx = {
-		store,
-		notification_id: notification?._id
-			? String(notification._id)
-			: undefined,
-		recipient_id: uid,
-	};
-	const chain = (async () => {
-		for (const item of targets) {
-			const sub = store.subjects.find(
-				(s) => s.technical_id === item.technical_id,
-			);
-			if (!sub || in_flight.has(item.technical_id)) continue;
-			const work = run_subject_update(store, sql, sub, job)
-				.then(() => null)
-				.catch(() => null)
-				.finally(() => in_flight.delete(item.technical_id));
-			in_flight.set(item.technical_id, work);
-			await work;
-		}
-	})();
-	void chain;
-	return {
-		accepted: true,
-		total: targets.length,
-		slugs: targets.map((item) => item.slug),
-		notification,
-	};
 }
 
 /**
  * Encola la actualización de una app y devuelve al momento, igual que
  * instalar: el pull puede tardar minutos y la petición no se queda esperando.
+ * Si le falta una dependencia (un catálogo nuevo puede añadirla), se instala
+ * antes en la misma cadena. `done` resuelve con el error de la app (o `null`)
+ * para quien sí quiera esperar, como la actualización automática.
  */
 export async function accept_subject_update(
 	store: ImperiumStore,
@@ -1388,61 +2059,46 @@ export async function accept_subject_update(
 ) {
 	const sub = store.subjects.find((s) => s.technical_id === technical_id);
 	if (!sub) return null;
-	const recs_before = await install_records(sql);
-	const rec = recs_before.get(technical_id);
-	if (!rec?.installed) {
-		throw new SubjectLifecycleError(
-			`${sub.name} no está instalada`,
-			400,
-			'not_installed',
+	return admit(async () => {
+		const busy = new Map(in_flight);
+		const recs = await install_records(sql);
+		if (!recs.get(technical_id)?.installed) {
+			throw new SubjectLifecycleError(
+				`${sub.name} no está instalada`,
+				400,
+				'not_installed',
+			);
+		}
+		if (in_flight.has(technical_id)) {
+			return {
+				accepted: true,
+				already_running: true,
+				rows: await catalog_rows(store, sql, [technical_id]),
+				dependencies: [] as ReturnType<typeof subject_ref>[],
+				notification: null as ImperiumDoc | null,
+				done: Promise.resolve<string | null>(null),
+			};
+		}
+		const ready = await installed_from(store, recs);
+		const steps = build_install_chain(
+			store.subjects,
+			technical_id,
+			'update',
+			(tid) => ready.has(tid),
+			(tid) => busy.get(tid)?.op,
 		);
-	}
-	if (in_flight.has(technical_id)) {
-		return {
-			accepted: true,
-			already_running: true,
-			row: catalog_row(sub, true, rec),
-			notification: null as ImperiumDoc | null,
-		};
-	}
-	const uid = actor_uid(actor);
-	const notification = await create_background_job_notification(store, {
-		recipient_id: uid,
-		actor,
-		job_kind: 'subject_update',
-		technical_id,
-		slug: sub.slug,
-		name: sub.name,
-		message: `Actualizando ${sub.name}…`,
+		const groups = await open_chain(
+			store,
+			sql,
+			[{ target: technical_id, steps, needs: [] }],
+			busy,
+			actor,
+		);
+		const done = run_chain(store, sql, groups).then(
+			(results) => results.get(technical_id) ?? null,
+		);
+		return { ...(await chain_accepted(store, sql, groups[0]!)), done };
 	});
-	const job: JobCtx = {
-		store,
-		notification_id: notification?._id
-			? String(notification._id)
-			: undefined,
-		recipient_id: uid,
-	};
-	if (uid && job.notification_id) {
-		notify_background_job_refresh(
-			uid,
-			job.notification_id,
-			'background_job_start',
-		);
-	}
-	const work = run_subject_update(store, sql, sub, job)
-		.then(() => null)
-		.catch(() => null)
-		.finally(() => {
-			in_flight.delete(technical_id);
-		});
-	in_flight.set(technical_id, work);
-	const recs = await install_records(sql);
-	return {
-		accepted: true,
-		already_running: false,
-		row: catalog_row(sub, true, recs.get(technical_id)),
-		notification,
-	};
 }
 
 export type SubjectDockerResult = SubjectRuntimeResult;
@@ -1455,6 +2111,7 @@ export async function get_subject_details(
 ) {
 	const sub = store.subjects.find((s) => s.technical_id === technical_id);
 	if (!sub) return null;
+	const running = new Set(in_flight.keys());
 	const [recs, module_pack, ver, weights, menu_pack, permission_pack] =
 		await Promise.all([
 			install_records(sql),
@@ -1467,6 +2124,10 @@ export async function get_subject_details(
 	const rec = recs.get(technical_id);
 	const module_rows = filter_module_rows(module_pack.rows, sub);
 	const installed = subject_is_installed(rec, module_rows);
+	const deps: DependencyView = {
+		subjects: store.subjects,
+		installed: await installed_from(store, recs, module_pack.rows),
+	};
 	const health = installed
 		? await probe_health(technical_id)
 		: { health: 'not_installed', reachable: false };
@@ -1523,7 +2184,7 @@ export async function get_subject_details(
 			? 'ok'
 			: health.health;
 	return {
-		...catalog_row(sub, installed, rec),
+		...catalog_row(sub, installed, rec, deps, running),
 		permissions,
 		menus,
 		collections,

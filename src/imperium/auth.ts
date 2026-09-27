@@ -654,10 +654,14 @@ export async function build_access(store: ImperiumStore, user: ImperiumDoc) {
 	const is_admin = user._ref === SEED_ADMIN_REF;
 	if (is_admin) {
 		// El front (`is_model_available('Pedidos')`) compara contra
-		// mongoose.models, no contra slugs kebab del catálogo.
+		// mongoose.models, no contra slugs kebab del catálogo. Solo los de
+		// apps instaladas: así esas guardas ocultan lo de una app ausente.
 		const models = [
 			...new Set([
-				...store.available_mongoose_models().map((m) => m.model_name),
+				...store
+					.available_mongoose_models()
+					.map((m) => m.model_name)
+					.filter((model) => store.is_model_installed(model)),
 				'Auth',
 				'McpAgent',
 			]),
@@ -722,11 +726,13 @@ export async function build_access(store: ImperiumStore, user: ImperiumDoc) {
 			}
 		}
 	}
+	// Los permisos sobreviven a la desinstalación; `models` no.
 	const models = [
 		...new Set(
 			mine
 				.filter((r) => access_flag(r.allow_read))
-				.map((r) => String(r.model_id)),
+				.map((r) => String(r.model_id))
+				.filter((model) => store.is_model_installed(model)),
 		),
 	];
 	const permissions_by_model: Record<string, Record<string, boolean>> = {};

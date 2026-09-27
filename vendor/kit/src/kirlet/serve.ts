@@ -163,6 +163,11 @@ function wire_runtime(
   return { config, data, nox, files };
 }
 
+/** Anónimos y externos (realm público) solo construyen páginas con `public_access`. */
+function is_internal_principal(identity: KirletIdentity | null): boolean {
+  return !!identity && (identity.user_type ?? "internal") === "internal";
+}
+
 async function handle_meta(
   definition: KirletDefinition,
   path: string,
@@ -207,6 +212,9 @@ async function handle_meta(
     for (const mod of definition.modules) {
       for (const p of mod.pages ?? []) {
         if (p.id === id) {
+          if (!p.public_access && !is_internal_principal(identity)) {
+            return error_response("forbidden", `page ${id} is not public`, 403);
+          }
           const url = new URL(req.url);
           // Awaited: pages may read their own domain tables while building.
           const page = await p.build({ url, identity, data, nox, files });
@@ -353,7 +361,14 @@ export function serve_kirlet(
         auth_disabled: config.auth_disabled && !id_result.verified,
       };
 
-      if (is_meta_path(path) || path === "/seed") {
+      const pages_path = path === "/pages" || path.startsWith("/pages/");
+      if (is_meta_path(path) || path === "/seed" || pages_path) {
+        // `/seed` ya pasó por resolve_identity (firma o admin dev); además
+        // tiene que ser admin: siembra datos de la app.
+        if (path === "/seed" && !identity?.is_admin) {
+          status = 403;
+          return error_response("forbidden", "seed requires an admin identity", 403);
+        }
         const meta = await handle_meta(
           definition,
           path,

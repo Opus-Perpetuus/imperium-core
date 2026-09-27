@@ -95,6 +95,7 @@ function ids_from(value: unknown): string[] {
 }
 
 async function resolve_order_snapshot(store: ImperiumStore, pedido_id: string) {
+	await store.assert_resource_installed('pedidos');
 	const pedido = await store.find_id('pedidos', pedido_id);
 	if (!pedido || pedido.is_active === false) {
 		throw new Error('No se encontró el pedido seleccionado');

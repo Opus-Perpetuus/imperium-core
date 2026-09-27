@@ -4,6 +4,8 @@ import {
   validate_kirlet_manifest,
 } from "./manifest-validate.js";
 import { semver_satisfies } from "./semver-lite.js";
+import { define_kirlet } from "./define-kirlet.js";
+import { define_module, define_routes } from "./define-module.js";
 
 const hr_manifest_0_3 = {
   id: "KIRLET-hr",
@@ -380,5 +382,72 @@ describe("sección pública declarada", () => {
       const result = validate_kirlet_manifest(manifest_with_segment(bad));
       expect(result.ok).toBe(false);
     }
+  });
+});
+
+describe("dependsOn", () => {
+  function issues_of(depends_on: unknown) {
+    const result = validate_kirlet_manifest({ ...hr_manifest_0_3, dependsOn: depends_on });
+    return result.ok ? [] : result.issues;
+  }
+
+  test("ids técnicos válidos llegan al manifiesto validado", () => {
+    const result = validate_kirlet_manifest({
+      ...hr_manifest_0_3,
+      dependsOn: ["subject-almacen", "kirlet-vehiculos"],
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.manifest.dependsOn).toEqual(["subject-almacen", "kirlet-vehiculos"]);
+    }
+  });
+
+  test("sin dependsOn el manifiesto no trae la clave", () => {
+    const result = validate_kirlet_manifest(hr_manifest_0_3);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect("dependsOn" in result.manifest).toBe(false);
+  });
+
+  test("un slug suelto o un id de catálogo se rechazan", () => {
+    expect(issues_of(["almacen"]).some((i) => i.path === "$.dependsOn[0]")).toBe(true);
+    expect(issues_of(["SUBJECT-almacen"]).some((i) => i.path === "$.dependsOn[0]")).toBe(true);
+    expect(issues_of([42]).some((i) => i.path === "$.dependsOn[0]")).toBe(true);
+  });
+
+  test("duplicados y la propia app se rechazan", () => {
+    expect(
+      issues_of(["subject-almacen", "subject-almacen"]).some((i) => i.path === "$.dependsOn[1]"),
+    ).toBe(true);
+    expect(issues_of(["kirlet-hr"]).some((i) => i.path === "$.dependsOn[0]")).toBe(true);
+  });
+
+  test("dependsOn null cuenta como ausente, igual que en el núcleo", () => {
+    const result = validate_kirlet_manifest({ ...hr_manifest_0_3, dependsOn: null });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect("dependsOn" in result.manifest).toBe(false);
+  });
+
+  test("dependsOn que no es arreglo se rechaza", () => {
+    expect(issues_of("subject-almacen").some((i) => i.path === "$.dependsOn")).toBe(true);
+  });
+
+  test("define_kirlet ya no cuela dependencias sin validar", () => {
+    const def = (depends_on: string[]) =>
+      define_kirlet({
+        id: "SUBJECT-ventas",
+        name: "Ventas",
+        compat: { nox: ">=0.5.0", kit: "^0.5.0" },
+        dependsOn: depends_on,
+        modules: [
+          define_module({
+            resource: "orders",
+            labels: { singular: "Pedido", plural: "Pedidos" },
+            routes: define_routes({ "GET /orders": async () => ({ data: [] }) }),
+          }),
+        ],
+      });
+    expect(def(["subject-almacen"]).manifest().dependsOn).toEqual(["subject-almacen"]);
+    expect(() => def(["almacen"]).manifest()).toThrow(/dependsOn/);
+    expect(() => def(["subject-ventas"]).manifest()).toThrow(/dependsOn/);
   });
 });

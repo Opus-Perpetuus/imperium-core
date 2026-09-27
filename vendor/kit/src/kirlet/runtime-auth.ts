@@ -11,16 +11,17 @@ import { error_response } from "./http.js";
 
 export type AuthAction = "create" | "read" | "update" | "delete";
 
-/** Meta paths that never require a signed identity. */
+/**
+ * Meta paths that never require a signed identity. `/seed` y `/pages` no lo
+ * son: siembran y construyen con datos reales, así que piden identidad como
+ * cualquier ruta (el núcleo firma una anónima en `/api/p/m`).
+ */
 export function is_meta_path(path: string): boolean {
   if (path === "/" || path === "") return true;
   if (path === "/health") return true;
   if (path === "/manifest") return true;
   if (path === "/schema") return true;
-  if (path === "/seed" || path === "/seed/") return true;
   if (path === "/menu") return true;
-  if (path === "/pages") return true;
-  if (path.startsWith("/pages/")) return true;
   return false;
 }
 
@@ -50,7 +51,7 @@ export function method_to_permission_suffix(method: string): "read" | "write" {
 }
 
 export type ResolveIdentityOptions = {
-  /** Kirlet technical id (for dev identity). */
+  /** Kirlet technical id: the signed `kirlet_id` must match it (also used for the dev identity). */
   technical_id: string;
   /** Gateway HMAC secret. */
   gateway_secret: string;
@@ -73,6 +74,23 @@ function headers_to_record(
   return out;
 }
 
+/**
+ * Firma válida *para esta app*: una identidad firmada para otra (que esa app
+ * reenvía dentro de la ventana de tiempo) no cuenta.
+ */
+function verify_for_app(
+  req: Request,
+  secret: string,
+  technical_id: string,
+): { ok: true; identity: KirletIdentity } | { ok: false; error: string } {
+  const verified = verify_kirlet_identity(headers_to_record(req), secret);
+  if (!verified.ok) return verified;
+  if (verified.identity.kirlet_id !== technical_id) {
+    return { ok: false, error: "identity signed for another app" };
+  }
+  return verified;
+}
+
 function dev_identity(technical_id: string): KirletIdentity {
   return {
     user_id: "dev",
@@ -92,8 +110,8 @@ function dev_identity(technical_id: string): KirletIdentity {
  * fallback. With `auth_disabled` the app still honours a signed identity when
  * the gateway sends one: a núcleo that signs gets real users and real grants
  * without every app having to flip `KIRLET_AUTH` in the same deploy. Only when
- * nothing is signed does the synthetic admin take over — that is what keeps an
- * app runnable standalone.
+ * nothing is signed for this app does the synthetic admin take over — that is
+ * what keeps an app runnable standalone.
  */
 export function resolve_identity(
   req: Request,
@@ -108,8 +126,7 @@ export function resolve_identity(
     if (!secret) {
       return { ok: true, identity: null, verified: false };
     }
-    const headers = headers_to_record(req);
-    const verified = verify_kirlet_identity(headers, secret);
+    const verified = verify_for_app(req, secret, opts.technical_id);
     return {
       ok: true,
       identity: verified.ok ? verified.identity : null,
@@ -119,7 +136,7 @@ export function resolve_identity(
 
   if (opts.auth_disabled) {
     if (secret) {
-      const signed = verify_kirlet_identity(headers_to_record(req), secret);
+      const signed = verify_for_app(req, secret, opts.technical_id);
       if (signed.ok) {
         return { ok: true, identity: signed.identity, verified: true };
       }
@@ -150,7 +167,7 @@ export function resolve_identity(
     };
   }
 
-  const verified = verify_kirlet_identity(headers_to_record(req), secret);
+  const verified = verify_for_app(req, secret, opts.technical_id);
   if (!verified.ok) {
     return {
       ok: false,

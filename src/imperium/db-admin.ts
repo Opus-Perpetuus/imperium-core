@@ -8,13 +8,12 @@
  *
  * Quién puede entrar:
  *   - una sesión de administrador sembrado, o
- *   - la app del gestor, con el secreto de gateway **y** estando instalada.
- * Lo segundo importa: el secreto es el mismo para las veinte apps, así que sin
- * comprobar de cuál viene, Tienda podría volcar la base. Y si la app no está
- * instalada no hay gestor — que es justo lo que pidió el usuario: por defecto
- * esto no hace nada.
+ *   - la app del gestor con **su** secreto derivado (o el maestro, que es de
+ *     las herramientas del host), **y** estando instalada.
+ * Lo segundo importa: con el secreto de otra app, Tienda podría volcar la base.
+ * Y si la app no está instalada no hay gestor — que es justo lo que pidió el
+ * usuario: por defecto esto no hace nada.
  */
-import { timingSafeEqual } from 'node:crypto';
 import { basename } from 'node:path';
 import { current_user } from './auth.ts';
 import { is_seed_admin } from './group-access.ts';
@@ -57,6 +56,13 @@ import {
 	verify_backup,
 } from './db-admin-backup.ts';
 import { get_task, list_tasks } from './db-admin-tasks.ts';
+import {
+	derive_subject_secret,
+	is_master_request,
+	master_secret,
+	request_gateway_secret,
+	secret_equals,
+} from './subject-secret.ts';
 
 /** Slug de la app que tiene permiso de llamar por el plano de gateway. */
 export const MANAGER_SLUG = 'database-manager';
@@ -100,18 +106,15 @@ async function authorize(
 		};
 	}
 
-	if (gateway_ok(req)) {
-		const caller =
-			req.headers.get('x-imperium-subject')?.trim() ??
-			req.headers.get('x-nox-kirlet-technical-id')?.trim() ??
-			'';
-		if (caller !== MANAGER_TECHNICAL_ID) {
-			return {
-				ok: false,
-				status: 403,
-				message: `El plano de apps solo acepta a ${MANAGER_TECHNICAL_ID} en el gestor.`,
-			};
-		}
+	const gateway = db_admin_gateway_access(req);
+	if (gateway === 'forbidden') {
+		return {
+			ok: false,
+			status: 403,
+			message: `El plano de apps solo acepta a ${MANAGER_TECHNICAL_ID} con su secreto.`,
+		};
+	}
+	if (gateway) {
 		const disabled = await disabled_subject_slugs(store, sql).catch(
 			() => new Set<string>([MANAGER_SLUG]),
 		);
@@ -123,31 +126,65 @@ async function authorize(
 					'La app Gestor de base de datos no está instalada; no hay nada que automatizar.',
 			};
 		}
-		return {
-			ok: true,
-			actor: {
-				id: MANAGER_TECHNICAL_ID,
-				label: 'Gestor de base de datos (programado)',
-				origin: 'app',
-				source_ip,
-			},
-		};
+		return { ok: true, actor: db_admin_gateway_actor(req, source_ip) };
 	}
 
 	return { ok: false, status: 401, message: 'No estás autenticado' };
 }
 
-function gateway_ok(req: Request): boolean {
-	const expected = process.env.CORE_SUBJECT_GATEWAY_SECRET ?? '';
-	if (!expected) return false;
-	const got =
-		req.headers.get('x-core-subject-gateway-secret') ??
-		req.headers.get('x-nox-kirlet-gateway-secret') ??
-		'';
-	const a = Buffer.from(got);
-	const b = Buffer.from(expected);
-	if (a.length !== b.length) return false;
-	return timingSafeEqual(a, b);
+function claimed_subject(req: Request): string {
+	return (
+		req.headers.get('x-imperium-subject')?.trim() ??
+		req.headers.get('x-nox-kirlet-technical-id')?.trim() ??
+		''
+	);
+}
+
+/**
+ * Quién queda en la auditoría por una credencial de gateway válida: el gestor
+ * solo si se presenta como tal (con su derivado o con el maestro); el
+ * maestro sin ese reclamo es una herramienta del host, no el gestor.
+ */
+export function db_admin_gateway_actor(
+	req: Request,
+	source_ip: string | null,
+): ConsoleActor {
+	if (claimed_subject(req) === MANAGER_TECHNICAL_ID) {
+		return {
+			id: MANAGER_TECHNICAL_ID,
+			label: 'Gestor de base de datos (programado)',
+			origin: 'app',
+			source_ip,
+		};
+	}
+	return {
+		id: 'gateway-master',
+		label: 'Herramienta del servidor (maestro)',
+		origin: 'app',
+		source_ip,
+	};
+}
+
+/**
+ * Credencial de gateway: `master` (cualquier modo), `manager` si el tid
+ * reclamado es el gestor y el secreto es el derivado de ese tid, `forbidden`
+ * si trae un secreto que no vale y `null` si no trae ninguno.
+ */
+export function db_admin_gateway_access(
+	req: Request,
+): 'master' | 'manager' | 'forbidden' | null {
+	const got = request_gateway_secret(req);
+	if (!got) return null;
+	if (is_master_request(req)) return 'master';
+	const master = master_secret();
+	if (
+		master &&
+		claimed_subject(req) === MANAGER_TECHNICAL_ID &&
+		secret_equals(got, derive_subject_secret(master, MANAGER_TECHNICAL_ID))
+	) {
+		return 'manager';
+	}
+	return 'forbidden';
 }
 
 export async function handle_db_admin(

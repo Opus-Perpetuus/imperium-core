@@ -13,9 +13,10 @@
  */
 import type { ImperiumStore } from './store.ts';
 import {
+	accept_subject_update,
 	list_subject_updates,
-	run_subject_update,
 	subject_image_tag,
+	SubjectLifecycleError,
 } from './subjects-admin.ts';
 import { print_console_log } from './debug-request-log.ts';
 
@@ -101,11 +102,15 @@ export type AutoUpdatePass = {
 	checked: number;
 	updated: string[];
 	failed: Array<{ slug: string; error: string }>;
+	/** Ocupadas (ellas o una dependencia) con otro trabajo: otra pasada las verá. */
+	skipped: string[];
 };
 
 /**
  * Una pasada. Secuencial a propósito: cada actualización es un `docker pull`
  * y hacerlas a la vez satura la red del host y deja varias apps a medias.
+ * Entra por la misma admisión que el botón: registra el trabajo, salta las
+ * apps ocupadas e instala antes las dependencias que falten.
  */
 export async function run_subject_auto_update_pass(
 	store: ImperiumStore,
@@ -113,7 +118,7 @@ export async function run_subject_auto_update_pass(
 ): Promise<AutoUpdatePass> {
 	const enabled = await read_subject_auto_update_enabled(store);
 	if (!enabled) {
-		return { enabled: false, checked: 0, updated: [], failed: [] };
+		return { enabled: false, checked: 0, updated: [], failed: [], skipped: [] };
 	}
 	const pending = await list_subject_updates(store, sql);
 	const out: AutoUpdatePass = {
@@ -121,27 +126,49 @@ export async function run_subject_auto_update_pass(
 		checked: pending.length,
 		updated: [],
 		failed: [],
+		skipped: [],
 	};
 	for (const item of pending) {
-		const sub = store.subjects.find(
-			(s) => s.technical_id === item.technical_id,
-		);
-		if (!sub) continue;
+		let error: string | null;
 		try {
-			await run_subject_update(store, sql, sub, null);
-			out.updated.push(`${item.slug}→${item.available_tag}`);
-			print_console_log(
-				'info',
-				`auto-update: ${item.slug} ${subject_image_tag(item.installed_image)} → ${item.available_tag}`,
+			const accepted = await accept_subject_update(
+				store,
+				sql,
+				item.technical_id,
+				null,
 			);
+			if (!accepted) continue;
+			if (accepted.already_running) {
+				out.skipped.push(item.slug);
+				print_console_log(
+					'info',
+					`auto-update: ${item.slug} ocupada, se deja para la próxima pasada`,
+				);
+				continue;
+			}
+			error = await accepted.done;
 		} catch (err) {
-			// Una app que falla no detiene a las demás.
-			out.failed.push({ slug: item.slug, error: String(err) });
-			print_console_log(
-				'error',
-				`auto-update: ${item.slug} falló: ${String(err)}`,
-			);
+			if (err instanceof SubjectLifecycleError && err.code === 'dependency_busy') {
+				out.skipped.push(item.slug);
+				print_console_log(
+					'info',
+					`auto-update: ${item.slug} se deja para la próxima pasada: ${err.message}`,
+				);
+				continue;
+			}
+			error = err instanceof Error ? err.message : String(err);
 		}
+		if (error) {
+			// Una app que falla no detiene a las demás.
+			out.failed.push({ slug: item.slug, error });
+			print_console_log('error', `auto-update: ${item.slug} falló: ${error}`);
+			continue;
+		}
+		out.updated.push(`${item.slug}→${item.available_tag}`);
+		print_console_log(
+			'info',
+			`auto-update: ${item.slug} ${subject_image_tag(item.installed_image)} → ${item.available_tag}`,
+		);
 	}
 	return out;
 }

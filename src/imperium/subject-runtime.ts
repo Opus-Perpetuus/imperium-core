@@ -6,6 +6,8 @@
  * Si no, intenta `docker compose` en el host (dev). Tests no setean
  * SUBJECT_COMPOSE_DIR → se omite Docker.
  */
+import { is_master_request, master_secret } from './subject-secret.ts';
+
 export const BASE_SUBJECT_SLUGS = new Set([
 	'configuracion',
 	'configuraciones-de-vista',
@@ -370,7 +372,7 @@ async function call_operator(
 					: 'Deteniendo y borrando la imagen Docker…',
 		level: 'info',
 	});
-	const secret = env('CORE_SUBJECT_GATEWAY_SECRET');
+	const secret = master_secret();
 	try {
 		const res = await fetch(`${base}/runtime/${input.slug}/${op}`, {
 			method: 'POST',
@@ -580,9 +582,7 @@ export async function resolve_running_subject_image(
 	try {
 		const res = await fetch(`${remote}/runtime/${clean}/image`, {
 			headers: {
-				'x-core-subject-gateway-secret': env(
-					'CORE_SUBJECT_GATEWAY_SECRET',
-				),
+				'x-core-subject-gateway-secret': master_secret(),
 			},
 			signal: AbortSignal.timeout(30 * 1000),
 		});
@@ -595,14 +595,9 @@ export async function resolve_running_subject_image(
 	}
 }
 
+/** Solo el núcleo (maestro): el derivado de una app no instala ni borra otras. */
 function operator_secret_ok(req: Request): boolean {
-	const expected = env('CORE_SUBJECT_GATEWAY_SECRET');
-	if (!expected) return false;
-	const got =
-		req.headers.get('x-core-subject-gateway-secret') ??
-		req.headers.get('x-nox-kirlet-gateway-secret') ??
-		'';
-	return got === expected;
+	return is_master_request(req);
 }
 
 export async function handle_operator_http(req: Request): Promise<Response> {

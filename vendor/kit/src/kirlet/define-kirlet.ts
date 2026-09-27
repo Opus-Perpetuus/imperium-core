@@ -388,14 +388,11 @@ export function define_kirlet(def: KirletDefinitionInput): KirletDefinition {
         `Invalid derived manifest: ${validated.issues.map((i) => `${i.path}: ${i.message}`).join("; ")}`,
       );
     }
-    // Preserve resources + dependsOn (validator may strip extension fields)
+    // Preserve resources (validator may strip extension fields)
     const out = {
       ...validated.manifest,
       resources: resources_map(),
     } as KirletManifest & { resources: Record<string, string> };
-    if (def.dependsOn?.length) {
-      out.dependsOn = [...def.dependsOn];
-    }
     return out;
   };
 
