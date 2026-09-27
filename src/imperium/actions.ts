@@ -10,7 +10,7 @@ import { apply_missing_configuration_seeds } from './configuration-seed-sync.ts'
 import { plan_documentation_sync } from './documentation-sync.ts';
 import { serve_attachment_bytes } from './media.ts';
 import { query_list, read_imperium_body } from './body.ts';
-import { qident, type ImperiumStore } from './store.ts';
+import { is_unique_violation, qident, type ImperiumStore } from './store.ts';
 import { SearchEngine, search_text_from_doc } from './search-engine.ts';
 import { assert_pos_pin, verify_user_pin } from './user-pin.ts';
 import { pac_provider, stamp_with_pac } from './pac.ts';
@@ -123,6 +123,7 @@ import {
 	is_seed_admin,
 } from './group-access.ts';
 import { emit_pedidos_updated, prepare_pedido_create } from './pedidos-flow.ts';
+import { decidir_sync_offline } from './pedidos-sync-offline.ts';
 import {
 	compute_picking_route,
 	generate_replenishment_for_order,
@@ -4052,7 +4053,7 @@ const PEDIDO_ESTADOS = new Set([
 /**
  * Sync-back de pedidos capturados offline. Mismo contrato que
  * `POST /pedidos/offline/sincronizar` del backend original: `{ ok, total, resultados }`
- * con dedupe por `offline_uuid`.
+ * con dedupe por `offline_uuid` y por el folio local (`folio_offline`).
  */
 async function pedidos_sync_offline(ctx: Ctx) {
 	const incoming = as_array(ctx.body.pedidos);
@@ -4061,8 +4062,10 @@ async function pedidos_sync_offline(ctx: Ctx) {
 		_id?: string;
 		folio_interno?: unknown;
 		status: 'creado' | 'duplicado' | 'error';
+		motivo?: 'uuid' | 'folio';
 		error?: string;
 	}> = [];
+	const folios_del_lote = new Set<string>();
 	for (const raw of incoming) {
 		const pedido = as_object(raw);
 		const offline_uuid = String(pedido.offline_uuid ?? pedido._id ?? '').trim();
@@ -4074,15 +4077,35 @@ async function pedidos_sync_offline(ctx: Ctx) {
 			});
 			continue;
 		}
+		const folio_cliente = String(pedido.folio ?? '').trim();
 		try {
 			const existing = await ctx.store.find_where('pedidos', { offline_uuid });
-			if (existing) {
-				resultados.push({
-					offline_uuid,
-					_id: String(existing._id),
-					folio_interno: existing.folio_interno,
-					status: 'duplicado',
-				});
+			const por_folio = folio_cliente
+				? await ctx.store.find_where('pedidos', { folio_offline: folio_cliente })
+				: null;
+			const decision = decidir_sync_offline({
+				ya_existe_uuid: Boolean(existing),
+				ya_existe_folio: Boolean(por_folio),
+				folio_visto_en_lote: folio_cliente ? folios_del_lote.has(folio_cliente) : false,
+				folio: folio_cliente,
+			});
+			if (decision.decision === 'duplicado') {
+				if (decision.motivo === 'uuid') {
+					resultados.push({
+						offline_uuid,
+						_id: existing?._id ? String(existing._id) : undefined,
+						folio_interno: existing?.folio_interno,
+						status: 'duplicado',
+						motivo: 'uuid',
+					});
+				} else {
+					resultados.push({
+						offline_uuid,
+						status: 'duplicado',
+						motivo: 'folio',
+					});
+				}
+				if (folio_cliente) folios_del_lote.add(folio_cliente);
 				continue;
 			}
 			const estado = PEDIDO_ESTADOS.has(String(pedido.estado))
@@ -4102,18 +4125,30 @@ async function pedidos_sync_offline(ctx: Ctx) {
 				},
 				ctx.actor,
 			);
-			const created = await ctx.store.insert('pedidos', {
-				...prepared,
-				sincronizado: true,
-				offline_uuid,
-				is_active: true,
-			});
-			resultados.push({
-				offline_uuid,
-				_id: String(created._id),
-				folio_interno: created.folio_interno,
-				status: 'creado',
-			});
+			try {
+				const created = await ctx.store.insert('pedidos', {
+					...prepared,
+					sincronizado: true,
+					offline_uuid,
+					folio_offline: folio_cliente || undefined,
+					is_active: true,
+				});
+				if (folio_cliente) folios_del_lote.add(folio_cliente);
+				resultados.push({
+					offline_uuid,
+					_id: String(created._id),
+					folio_interno: created.folio_interno,
+					status: 'creado',
+				});
+			} catch (insert_error) {
+				if (!is_unique_violation(insert_error)) throw insert_error;
+				if (folio_cliente) folios_del_lote.add(folio_cliente);
+				resultados.push({
+					offline_uuid,
+					status: 'duplicado',
+					motivo: 'folio',
+				});
+			}
 		} catch (item_error) {
 			resultados.push({
 				offline_uuid,

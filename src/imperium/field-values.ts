@@ -310,17 +310,29 @@ export async function filter_pedido_estado_options(
 		refs.includes(GROUP_REF_ALMACEN) ||
 		refs.includes(GROUP_REF_SURTIDORES);
 	if (!in_flow) return options;
-	return options.filter((option) => {
-		switch (option.value) {
-			case 'por_surtir':
-				return refs.includes(GROUP_REF_VENTAS);
-			case 'surtiendo':
-			case 'surtido':
-				return refs.includes(GROUP_REF_ALMACEN) || refs.includes(GROUP_REF_SURTIDORES);
-			default:
-				return true;
-		}
-	});
+	return options.filter((option) =>
+		pedido_estado_visible_para_grupos(option.value, refs),
+	);
+}
+
+/** Por surtir lo ven ventas, almacén y surtidores. Un vendedor no. */
+export function pedido_estado_visible_para_grupos(
+	value: string,
+	refs: string[],
+): boolean {
+	switch (value) {
+		case 'por_surtir':
+			return (
+				refs.includes(GROUP_REF_VENTAS) ||
+				refs.includes(GROUP_REF_ALMACEN) ||
+				refs.includes(GROUP_REF_SURTIDORES)
+			);
+		case 'surtiendo':
+		case 'surtido':
+			return refs.includes(GROUP_REF_ALMACEN) || refs.includes(GROUP_REF_SURTIDORES);
+		default:
+			return true;
+	}
 }
 
 export function field_values_limit(raw: string | null) {

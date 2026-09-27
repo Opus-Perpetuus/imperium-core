@@ -22,6 +22,7 @@ import { products_inventory_cost } from './products-flow.ts';
 import { vehicle_by_status } from './vehicle-flow.ts';
 import { delivery_package_by_status } from './delivery-package-flow.ts';
 import { pedidos_sales_stats } from './pedidos-flow.ts';
+import { pedido_order_sql } from './pedidos-list-order.ts';
 import { purchase_order_stats } from './purchase-order-flow.ts';
 import { planeacion_statistics } from './planeacion-flow.ts';
 import { invoice_request_stats } from './invoice-request-flow.ts';
@@ -153,7 +154,7 @@ const UNIQUE_FIELDS: Record<string, string[]> = {
 	products: ['codigo'],
 	'physical-device': ['install_uuid'],
 	'cfdi-document': ['uuid'],
-	pedidos: ['offline_uuid'],
+	pedidos: ['offline_uuid', 'folio_offline'],
 	patient: ['numero_expediente'],
 	'payroll-concept': ['clave_interna'],
 	sku: ['codigo'],
@@ -2050,7 +2051,11 @@ export class ImperiumStore {
 			const dir = (m?.[2] ?? 'asc').toLowerCase() === 'desc' ? 'DESC' : 'ASC';
 			if (campo && cols.has(campo === 'ref' ? 'ref' : campo)) {
 				const col = campo === '_ref' ? 'ref' : campo;
-				order = ` ORDER BY ${qident(col)} ${dir} NULLS LAST`;
+				if (resource === 'pedidos' && (col === 'folio' || col === 'folio_interno')) {
+					order = pedido_order_sql(qident(col), dir, col);
+				} else {
+					order = ` ORDER BY ${qident(col)} ${dir} NULLS LAST`;
+				}
 				if (col === 'fecha_entrada' && cols.has('created_at')) {
 					order += `, created_at ${dir}, id ${dir}`;
 				} else if (col === 'created_at') {

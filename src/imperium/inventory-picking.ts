@@ -29,6 +29,8 @@ export type PickingRoute = {
 	renglones: PickingRenglon[];
 	faltante: number;
 	cubierto: boolean;
+	/** Existencia del producto antes de surtir. Null si el catálogo no la trae. */
+	existencia: number | null;
 };
 
 export function build_picking_renglones(
@@ -141,7 +143,19 @@ export async function compute_picking_route(
 		renglones,
 		faltante,
 		cubierto: faltante <= 0,
+		existencia: await existencia_de_producto(store, producto),
 	};
+}
+
+async function existencia_de_producto(
+	store: ImperiumStore,
+	producto: string,
+): Promise<number | null> {
+	if (!producto || !store.has('products')) return null;
+	const product = await store.find_id('products', producto);
+	if (!product || product.existencia == null || product.existencia === '') return null;
+	const existencia = Number(product.existencia);
+	return Number.isFinite(existencia) ? existencia : null;
 }
 
 async function compute_weighted_consumption(
