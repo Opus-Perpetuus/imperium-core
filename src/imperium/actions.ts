@@ -1638,8 +1638,7 @@ async function read_chofer_queue(ctx: Ctx) {
 	if (!vehicle_ids.size) {
 		return ok([], 'No hay vehículos con este chofer asignado. Configura vehicle.chofer.');
 	}
-	const estados =
-		mode === 'delivery' ? ['cargado', 'en_ruta'] : mode === 'depart' ? ['cargado'] : ['asignado'];
+	const estados = mode === 'delivery' ? ['cargado', 'en_ruta'] : ['asignado'];
 	const { rows } = await ctx.store.find_many('delivery-package', {
 		where: {
 			vehicle: { in: [...vehicle_ids] },
@@ -1651,11 +1650,7 @@ async function read_chofer_queue(ctx: Ctx) {
 	});
 	return ok(
 		rows,
-		mode === 'delivery'
-			? 'Cola de entrega del chofer'
-			: mode === 'depart'
-				? 'Cola de salida a ruta del chofer'
-				: 'Cola de carga del chofer',
+		mode === 'delivery' ? 'Cola de entrega del chofer' : 'Cola de carga del chofer',
 		rows.length,
 	);
 }
@@ -1918,19 +1913,6 @@ async function logistics_event(ctx: Ctx) {
 				ctx.body.delivery_within_geofence === true ||
 				ctx.body.delivery_within_geofence === 'true';
 		}
-	} else if (event_type === 'depart') {
-		if (st === 'entregado') throw new Error('Este bulto ya fue entregado');
-		if (st === 'incidencia') {
-			throw new Error(
-				'No puedes marcar salida a ruta sobre un bulto marcado como incidencia',
-			);
-		}
-		if (st !== 'cargado' && st !== 'en_ruta') {
-			throw new Error(
-				'Solo puedes marcar salida a ruta de un bulto cargado. Registra la carga primero.',
-			);
-		}
-		if (st === 'cargado') patch.estado = 'en_ruta';
 	} else {
 		throw new Error('El tipo de evento logístico no es válido');
 	}
@@ -1961,11 +1943,7 @@ async function logistics_event(ctx: Ctx) {
 	await after_delivery_package_mutate(ctx.store, ref_id(saved.pedido) || ref_id(doc.pedido));
 	return ok(
 		[saved],
-		event_type === 'load'
-			? 'Bulto cargado correctamente'
-			: event_type === 'depart'
-				? 'Bulto marcado en ruta'
-				: 'Entrega confirmada correctamente',
+		event_type === 'load' ? 'Bulto cargado correctamente' : 'Entrega confirmada correctamente',
 	);
 }
 
