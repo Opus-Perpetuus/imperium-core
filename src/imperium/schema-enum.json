@@ -323,6 +323,7 @@
       "logistics_events.event_type": {
         "values": [
           "load",
+          "depart",
           "delivery"
         ],
         "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
@@ -330,6 +331,7 @@
       "last_logistics_event_type": {
         "values": [
           "load",
+          "depart",
           "delivery"
         ],
         "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."

@@ -644,6 +644,12 @@
   {
     "resource": "pedidos",
     "method": "post",
+    "path": "/:id/asignar-empleado",
+    "action": "asignar_empleado"
+  },
+  {
+    "resource": "pedidos",
+    "method": "post",
     "path": "/offline/sincronizar",
     "action": "sync_offline"
   },

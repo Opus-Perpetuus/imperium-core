@@ -119,6 +119,7 @@ import {
 	GROUP_REF_ALMACEN,
 	GROUP_REF_SURTIDORES,
 	actor_group_refs,
+	assert_state_transition_allowed,
 	is_seed_admin,
 } from './group-access.ts';
 import { emit_pedidos_updated, prepare_pedido_create } from './pedidos-flow.ts';
@@ -509,6 +510,8 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return delete_notification(ctx);
 		case 'pedidos:reclamar_surtir':
 			return reclamar_surtir(ctx);
+		case 'pedidos:asignar_empleado':
+			return asignar_empleado(ctx);
 		case 'pedidos:sync_offline':
 			return pedidos_sync_offline(ctx);
 		case 'lista-de-precios:sync_offline':
@@ -1634,7 +1637,8 @@ async function read_chofer_queue(ctx: Ctx) {
 	if (!vehicle_ids.size) {
 		return ok([], 'No hay vehículos con este chofer asignado. Configura vehicle.chofer.');
 	}
-	const estados = mode === 'delivery' ? ['cargado', 'en_ruta'] : ['asignado'];
+	const estados =
+		mode === 'delivery' ? ['cargado', 'en_ruta'] : mode === 'depart' ? ['cargado'] : ['asignado'];
 	const { rows } = await ctx.store.find_many('delivery-package', {
 		where: {
 			vehicle: { in: [...vehicle_ids] },
@@ -1646,7 +1650,11 @@ async function read_chofer_queue(ctx: Ctx) {
 	});
 	return ok(
 		rows,
-		mode === 'delivery' ? 'Cola de entrega del chofer' : 'Cola de carga del chofer',
+		mode === 'delivery'
+			? 'Cola de entrega del chofer'
+			: mode === 'depart'
+				? 'Cola de salida a ruta del chofer'
+				: 'Cola de carga del chofer',
 		rows.length,
 	);
 }
@@ -1909,6 +1917,19 @@ async function logistics_event(ctx: Ctx) {
 				ctx.body.delivery_within_geofence === true ||
 				ctx.body.delivery_within_geofence === 'true';
 		}
+	} else if (event_type === 'depart') {
+		if (st === 'entregado') throw new Error('Este bulto ya fue entregado');
+		if (st === 'incidencia') {
+			throw new Error(
+				'No puedes marcar salida a ruta sobre un bulto marcado como incidencia',
+			);
+		}
+		if (st !== 'cargado' && st !== 'en_ruta') {
+			throw new Error(
+				'Solo puedes marcar salida a ruta de un bulto cargado. Registra la carga primero.',
+			);
+		}
+		if (st === 'cargado') patch.estado = 'en_ruta';
 	} else {
 		throw new Error('El tipo de evento logístico no es válido');
 	}
@@ -1939,7 +1960,11 @@ async function logistics_event(ctx: Ctx) {
 	await after_delivery_package_mutate(ctx.store, ref_id(saved.pedido) || ref_id(doc.pedido));
 	return ok(
 		[saved],
-		event_type === 'load' ? 'Bulto cargado correctamente' : 'Entrega confirmada correctamente',
+		event_type === 'load'
+			? 'Bulto cargado correctamente'
+			: event_type === 'depart'
+				? 'Bulto marcado en ruta'
+				: 'Entrega confirmada correctamente',
 	);
 }
 
@@ -4227,6 +4252,87 @@ async function reclamar_surtir(ctx: Ctx) {
 	});
 	emit_pedidos_updated();
 	return ok([updated ?? pedido], 'Pedido reclamado para surtir');
+}
+
+function is_object_id(value: string): boolean {
+	return /^[a-f0-9]{24}$/i.test(value);
+}
+
+function assign_employee_id(body: Record<string, unknown>): string {
+	const raw = body.employee_id ?? body.assigned_employee;
+	if (raw == null || raw === '') return '';
+	if (typeof raw === 'object') return ref_id(raw);
+	return String(raw).trim();
+}
+
+async function with_employee_name(
+	ctx: Ctx,
+	pedido: ImperiumDoc,
+	employee_id: string,
+): Promise<ImperiumDoc> {
+	const employee = employee_id ? await ctx.store.find_id('employee', employee_id) : null;
+	return {
+		...pedido,
+		assigned_employee: {
+			_id: String(employee?._id ?? employee_id),
+			name: String(employee?.name ?? ''),
+		},
+	};
+}
+
+async function asignar_empleado(ctx: Ctx) {
+	if (!is_seed_admin(ctx.actor)) {
+		const refs = await actor_group_refs(ctx.store, ctx.actor);
+		if (!refs.includes(GROUP_REF_ALMACEN)) {
+			throw new Error('No tienes permiso para asignar pedidos a un empleado.');
+		}
+	}
+	const employee_id = assign_employee_id(ctx.body);
+	if (!employee_id || !is_object_id(employee_id)) {
+		throw new Error('Empleado no válido.');
+	}
+	const id = String(ctx.params.id ?? '').trim();
+	if (!id || !is_object_id(id)) {
+		throw new Error('Identificador de pedido no válido.');
+	}
+	const pedido = await ctx.store.find_id('pedidos', id);
+	if (!pedido) throw new Error('Pedido no encontrado.');
+	const assigned = ref_id(pedido.assigned_employee);
+	const estado = String(pedido.estado ?? '');
+	if (estado === 'surtiendo') {
+		if (assigned && assigned !== employee_id) {
+			throw new Error('Este pedido ya lo está surtiendo otro empleado.');
+		}
+		if (!assigned) {
+			const updated = await ctx.store.update('pedidos', id, {
+				assigned_employee: employee_id,
+				init_time: pedido.init_time ?? now(),
+			});
+			emit_pedidos_updated();
+			return ok(
+				[await with_employee_name(ctx, updated ?? pedido, employee_id)],
+				'Pedido ya asignado',
+			);
+		}
+		return ok([await with_employee_name(ctx, pedido, employee_id)], 'Pedido ya asignado');
+	}
+	if (estado !== 'por_surtir') {
+		throw new Error(`Este pedido no está disponible para asignar (estado: ${estado}).`);
+	}
+	if (assigned && assigned !== employee_id) {
+		throw new Error('Este pedido ya está asignado a otro empleado.');
+	}
+	await assert_state_transition_allowed(ctx.store, ctx.actor, estado, 'surtiendo');
+	const updated = await ctx.store.update('pedidos', id, {
+		estado: 'surtiendo',
+		assigned_employee: employee_id,
+		init_time: now(),
+	});
+	emit_pedidos_updated();
+	return ok(
+		[await with_employee_name(ctx, updated ?? pedido, employee_id)],
+		'Pedido asignado para surtir',
+	);
 }
 
 async function pos_next_consecutive(ctx: Ctx) {

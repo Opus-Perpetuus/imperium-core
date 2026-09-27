@@ -875,6 +875,7 @@ const SESSION_SCOPED_EXTRAS = new Set([
 	'delivery-package:cancel_package',
 	'pedidos:sync_offline',
 	'pedidos:reclamar_surtir',
+	'pedidos:asignar_empleado',
 	'physical-device:report',
 	'pos-session:get_next_consecutive',
 	'pos-session:get_last_closure_reference',
