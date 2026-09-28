@@ -4,7 +4,7 @@
   "kit": "@opus-perpetuus/imperium-core-kit",
   "core": "ghcr.io/opus-perpetuus/imperium-core:13.54.5",
   "forked_from": "@opus-perpetuus/kirel-nox-kit@0.5.18",
-  "count": 21,
+  "count": 22,
   "subjects": [
     {
       "slug": "almacen",
@@ -15381,6 +15381,1985 @@
           "path": "/database-manager/audit",
           "icon": "fa-clipboard-list",
           "parent_ref": "database-manager-menu-root"
+        }
+      ]
+    },
+    {
+      "slug": "herramientas",
+      "name": "Herramientas",
+      "path": "/herr-inicio",
+      "kind": "module",
+      "menu_ref": "herramientas-menu-root",
+      "catalog_id": "SUBJECT-herramientas",
+      "technical_id": "subject-herramientas",
+      "depends_on": [
+        "subject-vehiculos"
+      ],
+      "image": "ghcr.io/opus-perpetuus/subject-herramientas:0.1.1",
+      "repo": "Opus-Perpetuus/imperium-subject-herramientas",
+      "dir": "workspace/imperium-subject-herramientas",
+      "modules": [
+        {
+          "resource": "herr-tablas",
+          "table": "herr_tablas",
+          "name": "Tablas personalizadas",
+          "path": "/herr-tablas",
+          "collection": "herr-tablas",
+          "model_file": "subjects/herramientas/herr-tablas",
+          "menu_ref": "herramientas-herr-tablas",
+          "icon": "fa-table-list",
+          "columns": [
+            {
+              "name": "icono",
+              "mongo": "icono",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "icono"
+            },
+            {
+              "name": "campos",
+              "mongo": "campos",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "campos"
+            },
+            {
+              "name": "constantes",
+              "mongo": "constantes",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "constantes"
+            },
+            {
+              "name": "resumenes",
+              "mongo": "resumenes",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "resumenes"
+            },
+            {
+              "name": "plantilla_id",
+              "mongo": "plantilla_id",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "plantilla id"
+            },
+            {
+              "name": "orden_campo",
+              "mongo": "orden_campo",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "orden campo"
+            },
+            {
+              "name": "orden_desc",
+              "mongo": "orden_desc",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
+              "label": "orden desc"
+            },
+            {
+              "name": "cerrable",
+              "mongo": "cerrable",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
+              "label": "cerrable"
+            },
+            {
+              "name": "version_esquema",
+              "mongo": "version_esquema",
+              "pg": "integer",
+              "crud": "number",
+              "component": "input-number",
+              "label": "version esquema"
+            }
+          ]
+        },
+        {
+          "resource": "herr-registros",
+          "table": "herr_registros",
+          "name": "Registros",
+          "path": "/herr-registros",
+          "collection": "herr-registros",
+          "model_file": "subjects/herramientas/herr-registros",
+          "menu_ref": "herramientas-herr-registros",
+          "icon": "fa-list-ol",
+          "columns": [
+            {
+              "name": "tabla_id",
+              "mongo": "tabla_id",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "tabla id"
+            },
+            {
+              "name": "valores",
+              "mongo": "valores",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "valores"
+            },
+            {
+              "name": "calculados",
+              "mongo": "calculados",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "calculados"
+            }
+          ]
+        },
+        {
+          "resource": "herr-cierres",
+          "table": "herr_cierres",
+          "name": "Cierres",
+          "path": "/herr-cierres",
+          "collection": "herr-cierres",
+          "model_file": "subjects/herramientas/herr-cierres",
+          "menu_ref": "herramientas-herr-cierres",
+          "icon": "fa-box-archive",
+          "columns": [
+            {
+              "name": "tabla_id",
+              "mongo": "tabla_id",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "tabla id"
+            },
+            {
+              "name": "cierre_id",
+              "mongo": "cierre_id",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "cierre id"
+            },
+            {
+              "name": "cerrado_at",
+              "mongo": "cerrado_at",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "cerrado at"
+            },
+            {
+              "name": "valores",
+              "mongo": "valores",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "valores"
+            }
+          ]
+        },
+        {
+          "resource": "herr-jornadas",
+          "table": "herr_jornadas",
+          "name": "Jornadas",
+          "path": "/herr-jornadas",
+          "collection": "herr-jornadas",
+          "model_file": "subjects/herramientas/herr-jornadas",
+          "menu_ref": "herramientas-herr-jornadas",
+          "icon": "fa-calendar-day",
+          "columns": [
+            {
+              "name": "fecha",
+              "mongo": "fecha",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "fecha"
+            },
+            {
+              "name": "hora_inicio",
+              "mongo": "hora_inicio",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "hora inicio"
+            },
+            {
+              "name": "hora_fin",
+              "mongo": "hora_fin",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "hora fin"
+            },
+            {
+              "name": "vehiculo_id",
+              "mongo": "vehiculo_id",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "vehiculo id"
+            },
+            {
+              "name": "vehiculo_nombre",
+              "mongo": "vehiculo_nombre",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "vehiculo nombre"
+            },
+            {
+              "name": "estado",
+              "mongo": "estado",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "estado"
+            },
+            {
+              "name": "km_inicial",
+              "mongo": "km_inicial",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "km inicial"
+            },
+            {
+              "name": "km_final",
+              "mongo": "km_final",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "km final"
+            },
+            {
+              "name": "km_gps",
+              "mongo": "km_gps",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "km gps"
+            },
+            {
+              "name": "gasolina_inicial",
+              "mongo": "gasolina_inicial",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "gasolina inicial"
+            },
+            {
+              "name": "gasolina_final",
+              "mongo": "gasolina_final",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "gasolina final"
+            },
+            {
+              "name": "km_recorridos",
+              "mongo": "km_recorridos",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "km recorridos"
+            },
+            {
+              "name": "gasolina_usada",
+              "mongo": "gasolina_usada",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "gasolina usada"
+            },
+            {
+              "name": "rendimiento",
+              "mongo": "rendimiento",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "rendimiento"
+            },
+            {
+              "name": "entregas",
+              "mongo": "entregas",
+              "pg": "integer",
+              "crud": "number",
+              "component": "input-number",
+              "label": "entregas"
+            },
+            {
+              "name": "ingreso",
+              "mongo": "ingreso",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "ingreso"
+            },
+            {
+              "name": "gasto_gasolina",
+              "mongo": "gasto_gasolina",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "gasto gasolina"
+            },
+            {
+              "name": "ganancia_neta",
+              "mongo": "ganancia_neta",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "ganancia neta"
+            },
+            {
+              "name": "por_entrega",
+              "mongo": "por_entrega",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "por entrega"
+            },
+            {
+              "name": "ruta_id",
+              "mongo": "ruta_id",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "ruta id"
+            },
+            {
+              "name": "solo_gps",
+              "mongo": "solo_gps",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
+              "label": "solo gps"
+            },
+            {
+              "name": "fin_programado",
+              "mongo": "fin_programado",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "fin programado"
+            },
+            {
+              "name": "tramos",
+              "mongo": "tramos",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "tramos"
+            },
+            {
+              "name": "notas",
+              "mongo": "notas",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "notas"
+            }
+          ]
+        },
+        {
+          "resource": "herr-pedidos",
+          "table": "herr_pedidos",
+          "name": "Pedidos",
+          "path": "/herr-pedidos",
+          "collection": "herr-pedidos",
+          "model_file": "subjects/herramientas/herr-pedidos",
+          "menu_ref": "herramientas-herr-pedidos",
+          "icon": "fa-receipt",
+          "columns": [
+            {
+              "name": "fecha",
+              "mongo": "fecha",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "fecha"
+            },
+            {
+              "name": "hora",
+              "mongo": "hora",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "hora"
+            },
+            {
+              "name": "orden",
+              "mongo": "orden",
+              "pg": "integer",
+              "crud": "number",
+              "component": "input-number",
+              "label": "orden"
+            },
+            {
+              "name": "cobrar",
+              "mongo": "cobrar",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "cobrar"
+            },
+            {
+              "name": "recibido",
+              "mongo": "recibido",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "recibido"
+            },
+            {
+              "name": "propina",
+              "mongo": "propina",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "propina"
+            },
+            {
+              "name": "domicilio_texto",
+              "mongo": "domicilio_texto",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "domicilio texto"
+            },
+            {
+              "name": "domicilio_id",
+              "mongo": "domicilio_id",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "domicilio id"
+            },
+            {
+              "name": "contacto_nombre",
+              "mongo": "contacto_nombre",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "contacto nombre"
+            },
+            {
+              "name": "telefono",
+              "mongo": "telefono",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "telefono"
+            },
+            {
+              "name": "detalle",
+              "mongo": "detalle",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "detalle"
+            },
+            {
+              "name": "productos",
+              "mongo": "productos",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "productos"
+            },
+            {
+              "name": "productos_json",
+              "mongo": "productos_json",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "productos json"
+            },
+            {
+              "name": "papelito",
+              "mongo": "papelito",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "papelito"
+            },
+            {
+              "name": "jornada_id",
+              "mongo": "jornada_id",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "jornada id"
+            },
+            {
+              "name": "cobrado",
+              "mongo": "cobrado",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
+              "label": "cobrado"
+            },
+            {
+              "name": "estado",
+              "mongo": "estado",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "estado"
+            },
+            {
+              "name": "hora_surtido",
+              "mongo": "hora_surtido",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "hora surtido"
+            },
+            {
+              "name": "hora_entrega",
+              "mongo": "hora_entrega",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "hora entrega"
+            },
+            {
+              "name": "liquidacion",
+              "mongo": "liquidacion",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "liquidacion"
+            }
+          ]
+        },
+        {
+          "resource": "herr-gastos",
+          "table": "herr_gastos",
+          "name": "Gastos",
+          "path": "/herr-gastos",
+          "collection": "herr-gastos",
+          "model_file": "subjects/herramientas/herr-gastos",
+          "menu_ref": "herramientas-herr-gastos",
+          "icon": "fa-money-bill-wave",
+          "columns": [
+            {
+              "name": "fecha",
+              "mongo": "fecha",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "fecha"
+            },
+            {
+              "name": "hora",
+              "mongo": "hora",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "hora"
+            },
+            {
+              "name": "motivo",
+              "mongo": "motivo",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "motivo"
+            },
+            {
+              "name": "cantidad",
+              "mongo": "cantidad",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "cantidad"
+            },
+            {
+              "name": "fuente",
+              "mongo": "fuente",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "fuente"
+            },
+            {
+              "name": "ticket",
+              "mongo": "ticket",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "ticket"
+            },
+            {
+              "name": "jornada_id",
+              "mongo": "jornada_id",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "jornada id"
+            },
+            {
+              "name": "descontado",
+              "mongo": "descontado",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
+              "label": "descontado"
+            },
+            {
+              "name": "liquidacion",
+              "mongo": "liquidacion",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "liquidacion"
+            },
+            {
+              "name": "recarga_id",
+              "mongo": "recarga_id",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "recarga id"
+            }
+          ]
+        },
+        {
+          "resource": "herr-caja",
+          "table": "herr_caja",
+          "name": "Movimientos de caja",
+          "path": "/herr-caja",
+          "collection": "herr-caja",
+          "model_file": "subjects/herramientas/herr-caja",
+          "menu_ref": "herramientas-herr-caja",
+          "icon": "fa-cash-register",
+          "columns": [
+            {
+              "name": "fecha",
+              "mongo": "fecha",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "fecha"
+            },
+            {
+              "name": "hora",
+              "mongo": "hora",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "hora"
+            },
+            {
+              "name": "tipo",
+              "mongo": "tipo",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "tipo"
+            },
+            {
+              "name": "cantidad",
+              "mongo": "cantidad",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "cantidad"
+            },
+            {
+              "name": "motivo",
+              "mongo": "motivo",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "motivo"
+            },
+            {
+              "name": "foto",
+              "mongo": "foto",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "foto"
+            },
+            {
+              "name": "jornada_id",
+              "mongo": "jornada_id",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "jornada id"
+            },
+            {
+              "name": "saldado",
+              "mongo": "saldado",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
+              "label": "saldado"
+            },
+            {
+              "name": "liquidacion",
+              "mongo": "liquidacion",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "liquidacion"
+            }
+          ]
+        },
+        {
+          "resource": "herr-menu-categorias",
+          "table": "herr_menu_categorias",
+          "name": "Categorías de precio",
+          "path": "/herr-menu-categorias",
+          "collection": "herr-menu-categorias",
+          "model_file": "subjects/herramientas/herr-menu-categorias",
+          "menu_ref": "herramientas-herr-menu-categorias",
+          "icon": "fa-layer-group",
+          "columns": [
+            {
+              "name": "columna_precio",
+              "mongo": "columna_precio",
+              "pg": "integer",
+              "crud": "number",
+              "component": "input-number",
+              "label": "columna precio"
+            }
+          ]
+        },
+        {
+          "resource": "herr-menu-tamanos",
+          "table": "herr_menu_tamanos",
+          "name": "Tamaños",
+          "path": "/herr-menu-tamanos",
+          "collection": "herr-menu-tamanos",
+          "model_file": "subjects/herramientas/herr-menu-tamanos",
+          "menu_ref": "herramientas-herr-menu-tamanos",
+          "icon": "fa-ruler",
+          "columns": [
+            {
+              "name": "precio_1",
+              "mongo": "precio_1",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "precio 1"
+            },
+            {
+              "name": "precio_2",
+              "mongo": "precio_2",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "precio 2"
+            },
+            {
+              "name": "precio_3",
+              "mongo": "precio_3",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "precio 3"
+            },
+            {
+              "name": "divisible",
+              "mongo": "divisible",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "divisible"
+            },
+            {
+              "name": "orden",
+              "mongo": "orden",
+              "pg": "integer",
+              "crud": "number",
+              "component": "input-number",
+              "label": "orden"
+            }
+          ]
+        },
+        {
+          "resource": "herr-menu-productos",
+          "table": "herr_menu_productos",
+          "name": "Productos",
+          "path": "/herr-menu-productos",
+          "collection": "herr-menu-productos",
+          "model_file": "subjects/herramientas/herr-menu-productos",
+          "menu_ref": "herramientas-herr-menu-productos",
+          "icon": "fa-utensils",
+          "columns": [
+            {
+              "name": "categoria_id",
+              "mongo": "categoria_id",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "categoria id"
+            },
+            {
+              "name": "ingredientes",
+              "mongo": "ingredientes",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "ingredientes"
+            },
+            {
+              "name": "activo",
+              "mongo": "activo",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
+              "label": "activo"
+            }
+          ]
+        },
+        {
+          "resource": "herr-menu-extras",
+          "table": "herr_menu_extras",
+          "name": "Extras",
+          "path": "/herr-menu-extras",
+          "collection": "herr-menu-extras",
+          "model_file": "subjects/herramientas/herr-menu-extras",
+          "menu_ref": "herramientas-herr-menu-extras",
+          "icon": "fa-plus-circle",
+          "columns": [
+            {
+              "name": "precio",
+              "mongo": "precio",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "precio"
+            },
+            {
+              "name": "activo",
+              "mongo": "activo",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
+              "label": "activo"
+            }
+          ]
+        },
+        {
+          "resource": "herr-menu-complementos",
+          "table": "herr_menu_complementos",
+          "name": "Complementos",
+          "path": "/herr-menu-complementos",
+          "collection": "herr-menu-complementos",
+          "model_file": "subjects/herramientas/herr-menu-complementos",
+          "menu_ref": "herramientas-herr-menu-complementos",
+          "icon": "fa-drumstick-bite",
+          "columns": [
+            {
+              "name": "variante",
+              "mongo": "variante",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "variante"
+            },
+            {
+              "name": "precio",
+              "mongo": "precio",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "precio"
+            },
+            {
+              "name": "activo",
+              "mongo": "activo",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
+              "label": "activo"
+            }
+          ]
+        },
+        {
+          "resource": "herr-menu-promos",
+          "table": "herr_menu_promos",
+          "name": "Promociones",
+          "path": "/herr-menu-promos",
+          "collection": "herr-menu-promos",
+          "model_file": "subjects/herramientas/herr-menu-promos",
+          "menu_ref": "herramientas-herr-menu-promos",
+          "icon": "fa-tags",
+          "columns": [
+            {
+              "name": "descuento_pesos",
+              "mongo": "descuento_pesos",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "descuento pesos"
+            },
+            {
+              "name": "descuento_pct",
+              "mongo": "descuento_pct",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "descuento pct"
+            },
+            {
+              "name": "activa",
+              "mongo": "activa",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
+              "label": "activa"
+            }
+          ]
+        },
+        {
+          "resource": "herr-vehiculos",
+          "table": "herr_vehiculos",
+          "name": "Ajustes de reparto por vehículo",
+          "path": "/herr-vehiculos",
+          "collection": "herr-vehiculos",
+          "model_file": "subjects/herramientas/herr-vehiculos",
+          "menu_ref": "herramientas-herr-vehiculos",
+          "icon": "fa-motorcycle",
+          "columns": [
+            {
+              "name": "vehiculo_id",
+              "mongo": "vehiculo_id",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "vehiculo id"
+            },
+            {
+              "name": "placa",
+              "mongo": "placa",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "placa"
+            },
+            {
+              "name": "tanque_litros",
+              "mongo": "tanque_litros",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "tanque litros"
+            },
+            {
+              "name": "velocimetro",
+              "mongo": "velocimetro",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
+              "label": "velocimetro"
+            },
+            {
+              "name": "medidor",
+              "mongo": "medidor",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "medidor"
+            },
+            {
+              "name": "marcas",
+              "mongo": "marcas",
+              "pg": "integer",
+              "crud": "number",
+              "component": "input-number",
+              "label": "marcas"
+            },
+            {
+              "name": "divisiones",
+              "mongo": "divisiones",
+              "pg": "integer",
+              "crud": "number",
+              "component": "input-number",
+              "label": "divisiones"
+            },
+            {
+              "name": "aguja_fuera",
+              "mongo": "aguja_fuera",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
+              "label": "aguja fuera"
+            },
+            {
+              "name": "solo_gps",
+              "mongo": "solo_gps",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
+              "label": "solo gps"
+            },
+            {
+              "name": "catalogo_tanque_id",
+              "mongo": "catalogo_tanque_id",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "catalogo tanque id"
+            },
+            {
+              "name": "litros_por_paso",
+              "mongo": "litros_por_paso",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "litros por paso"
+            },
+            {
+              "name": "notas",
+              "mongo": "notas",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "notas"
+            }
+          ]
+        },
+        {
+          "resource": "herr-domicilios",
+          "table": "herr_domicilios",
+          "name": "Domicilios",
+          "path": "/herr-domicilios",
+          "collection": "herr-domicilios",
+          "model_file": "subjects/herramientas/herr-domicilios",
+          "menu_ref": "herramientas-herr-domicilios",
+          "icon": "fa-location-dot",
+          "columns": [
+            {
+              "name": "lat",
+              "mongo": "lat",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "lat"
+            },
+            {
+              "name": "lon",
+              "mongo": "lon",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "lon"
+            },
+            {
+              "name": "calle",
+              "mongo": "calle",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "calle"
+            },
+            {
+              "name": "numero",
+              "mongo": "numero",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "numero"
+            },
+            {
+              "name": "colonia",
+              "mongo": "colonia",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "colonia"
+            },
+            {
+              "name": "referencia",
+              "mongo": "referencia",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "referencia"
+            },
+            {
+              "name": "contacto_nombre",
+              "mongo": "contacto_nombre",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "contacto nombre"
+            },
+            {
+              "name": "telefono",
+              "mongo": "telefono",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "telefono"
+            },
+            {
+              "name": "etiquetas",
+              "mongo": "etiquetas",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "etiquetas"
+            },
+            {
+              "name": "veces",
+              "mongo": "veces",
+              "pg": "integer",
+              "crud": "number",
+              "component": "input-number",
+              "label": "veces"
+            },
+            {
+              "name": "ultima_entrega",
+              "mongo": "ultima_entrega",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "ultima entrega"
+            },
+            {
+              "name": "notas",
+              "mongo": "notas",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "notas"
+            }
+          ]
+        },
+        {
+          "resource": "herr-etiquetas",
+          "table": "herr_etiquetas",
+          "name": "Etiquetas",
+          "path": "/herr-etiquetas",
+          "collection": "herr-etiquetas",
+          "model_file": "subjects/herramientas/herr-etiquetas",
+          "menu_ref": "herramientas-herr-etiquetas",
+          "icon": "fa-tags",
+          "columns": [
+            {
+              "name": "color",
+              "mongo": "color",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "color"
+            },
+            {
+              "name": "notas",
+              "mongo": "notas",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "notas"
+            }
+          ]
+        },
+        {
+          "resource": "herr-recargas",
+          "table": "herr_recargas",
+          "name": "Recargas de combustible",
+          "path": "/herr-recargas",
+          "collection": "herr-recargas",
+          "model_file": "subjects/herramientas/herr-recargas",
+          "menu_ref": "herramientas-herr-recargas",
+          "icon": "fa-gas-pump",
+          "columns": [
+            {
+              "name": "vehiculo_id",
+              "mongo": "vehiculo_id",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "vehiculo id"
+            },
+            {
+              "name": "fecha_hora",
+              "mongo": "fecha_hora",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "fecha hora"
+            },
+            {
+              "name": "km",
+              "mongo": "km",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "km"
+            },
+            {
+              "name": "pesos",
+              "mongo": "pesos",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "pesos"
+            },
+            {
+              "name": "precio_litro",
+              "mongo": "precio_litro",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "precio litro"
+            },
+            {
+              "name": "litros",
+              "mongo": "litros",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "litros"
+            },
+            {
+              "name": "nivel_antes",
+              "mongo": "nivel_antes",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "nivel antes"
+            },
+            {
+              "name": "nivel_despues",
+              "mongo": "nivel_despues",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "nivel despues"
+            },
+            {
+              "name": "tanque_lleno",
+              "mongo": "tanque_lleno",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
+              "label": "tanque lleno"
+            },
+            {
+              "name": "jornada_id",
+              "mongo": "jornada_id",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "jornada id"
+            },
+            {
+              "name": "litros_efectivos",
+              "mongo": "litros_efectivos",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "litros efectivos"
+            },
+            {
+              "name": "aproximado",
+              "mongo": "aproximado",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
+              "label": "aproximado"
+            }
+          ]
+        },
+        {
+          "resource": "herr-rutas",
+          "table": "herr_rutas",
+          "name": "Rutas GPS",
+          "path": "/herr-rutas",
+          "collection": "herr-rutas",
+          "model_file": "subjects/herramientas/herr-rutas",
+          "menu_ref": "herramientas-herr-rutas",
+          "icon": "fa-route",
+          "columns": [
+            {
+              "name": "jornada_id",
+              "mongo": "jornada_id",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "jornada id"
+            },
+            {
+              "name": "iniciada",
+              "mongo": "iniciada",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "iniciada"
+            },
+            {
+              "name": "terminada",
+              "mongo": "terminada",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "terminada"
+            },
+            {
+              "name": "puntos",
+              "mongo": "puntos",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "puntos"
+            },
+            {
+              "name": "distancia_m",
+              "mongo": "distancia_m",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "distancia m"
+            },
+            {
+              "name": "informe",
+              "mongo": "informe",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "informe"
+            }
+          ]
+        },
+        {
+          "resource": "herr-telefono",
+          "table": "herr_telefono",
+          "name": "Teléfono",
+          "path": "/herr-telefono",
+          "collection": "herr-telefono",
+          "model_file": "subjects/herramientas/herr-telefono",
+          "menu_ref": "herramientas-herr-telefono",
+          "icon": "fa-toolbox",
+          "columns": [
+            {
+              "name": "activo",
+              "mongo": "activo",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
+              "label": "activo"
+            },
+            {
+              "name": "ambito",
+              "mongo": "ambito",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "ambito"
+            },
+            {
+              "name": "accion_desconocidos",
+              "mongo": "accion_desconocidos",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "accion desconocidos"
+            },
+            {
+              "name": "retardo_s",
+              "mongo": "retardo_s",
+              "pg": "integer",
+              "crud": "number",
+              "component": "input-number",
+              "label": "retardo s"
+            },
+            {
+              "name": "anuncio_activo",
+              "mongo": "anuncio_activo",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
+              "label": "anuncio activo"
+            },
+            {
+              "name": "anuncio_plantilla",
+              "mongo": "anuncio_plantilla",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "anuncio plantilla"
+            },
+            {
+              "name": "anuncio_repeticiones",
+              "mongo": "anuncio_repeticiones",
+              "pg": "integer",
+              "crud": "number",
+              "component": "input-number",
+              "label": "anuncio repeticiones"
+            },
+            {
+              "name": "anunciar_desconocidos",
+              "mongo": "anunciar_desconocidos",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
+              "label": "anunciar desconocidos"
+            },
+            {
+              "name": "anuncio_idioma",
+              "mongo": "anuncio_idioma",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "anuncio idioma"
+            },
+            {
+              "name": "whatsapp_activo",
+              "mongo": "whatsapp_activo",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
+              "label": "whatsapp activo"
+            },
+            {
+              "name": "whatsapp_plantilla",
+              "mongo": "whatsapp_plantilla",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "whatsapp plantilla"
+            },
+            {
+              "name": "conduciendo_activo",
+              "mongo": "conduciendo_activo",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
+              "label": "conduciendo activo"
+            },
+            {
+              "name": "es_activa",
+              "mongo": "es_activa",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
+              "label": "es activa"
+            }
+          ]
+        },
+        {
+          "resource": "herr-voz",
+          "table": "herr_voz",
+          "name": "Asistente de voz",
+          "path": "/herr-voz",
+          "collection": "herr-voz",
+          "model_file": "subjects/herramientas/herr-voz",
+          "menu_ref": "herramientas-herr-voz",
+          "icon": "fa-sliders",
+          "columns": [
+            {
+              "name": "frases_activacion",
+              "mongo": "frases_activacion",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "frases activacion"
+            },
+            {
+              "name": "umbral",
+              "mongo": "umbral",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "umbral"
+            },
+            {
+              "name": "intenciones_activas",
+              "mongo": "intenciones_activas",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "intenciones activas"
+            },
+            {
+              "name": "confirmar_antes",
+              "mongo": "confirmar_antes",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
+              "label": "confirmar antes"
+            },
+            {
+              "name": "idioma",
+              "mongo": "idioma",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "idioma"
+            },
+            {
+              "name": "es_activa",
+              "mongo": "es_activa",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
+              "label": "es activa"
+            }
+          ]
+        },
+        {
+          "resource": "herr-agenda",
+          "table": "herr_agenda",
+          "name": "Agenda",
+          "path": "/herr-agenda",
+          "collection": "herr-agenda",
+          "model_file": "subjects/herramientas/herr-agenda",
+          "menu_ref": "herramientas-herr-agenda",
+          "icon": "fa-toolbox",
+          "columns": [
+            {
+              "name": "fecha",
+              "mongo": "fecha",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "fecha"
+            },
+            {
+              "name": "inicio_minuto",
+              "mongo": "inicio_minuto",
+              "pg": "integer",
+              "crud": "number",
+              "component": "input-number",
+              "label": "inicio minuto"
+            },
+            {
+              "name": "duracion_min",
+              "mongo": "duracion_min",
+              "pg": "integer",
+              "crud": "number",
+              "component": "input-number",
+              "label": "duracion min"
+            },
+            {
+              "name": "recordatorio_min",
+              "mongo": "recordatorio_min",
+              "pg": "integer",
+              "crud": "number",
+              "component": "input-number",
+              "label": "recordatorio min"
+            },
+            {
+              "name": "alarma",
+              "mongo": "alarma",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
+              "label": "alarma"
+            },
+            {
+              "name": "nota",
+              "mongo": "nota",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "nota"
+            },
+            {
+              "name": "hecho",
+              "mongo": "hecho",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
+              "label": "hecho"
+            },
+            {
+              "name": "proveedor_evento_id",
+              "mongo": "proveedor_evento_id",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "proveedor evento id"
+            },
+            {
+              "name": "recordatorio_en",
+              "mongo": "recordatorio_en",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "recordatorio en"
+            }
+          ]
+        }
+      ],
+      "menus": [
+        {
+          "name": "Inicio",
+          "menu_ref": "herramientas-herr-inicio",
+          "path": "/herr-inicio",
+          "icon": "fa-toolbox",
+          "parent_ref": "herramientas-menu-root",
+          "resources": [
+            "herr-inicio"
+          ]
+        },
+        {
+          "name": "Tablas personalizadas",
+          "menu_ref": "herramientas-nav-tablas",
+          "path": "",
+          "icon": "fa-database",
+          "parent_ref": "herramientas-menu-root"
+        },
+        {
+          "name": "Ver tabla",
+          "menu_ref": "herramientas-herr-tabla",
+          "path": "/herr-tabla",
+          "icon": "fa-table",
+          "parent_ref": "herramientas-nav-tablas",
+          "resources": [
+            "herr-tablas",
+            "herr-registros"
+          ]
+        },
+        {
+          "name": "Capturar registro",
+          "menu_ref": "herramientas-herr-registro",
+          "path": "/herr-registro",
+          "icon": "fa-pen-to-square",
+          "parent_ref": "herramientas-nav-tablas",
+          "resources": [
+            "herr-tablas:read",
+            "herr-registros"
+          ]
+        },
+        {
+          "name": "Tablas",
+          "menu_ref": "herramientas-herr-tablas",
+          "path": "/herr-tablas",
+          "icon": "fa-table-list",
+          "parent_ref": "herramientas-nav-tablas"
+        },
+        {
+          "name": "Registros",
+          "menu_ref": "herramientas-herr-registros",
+          "path": "/herr-registros",
+          "icon": "fa-list-ol",
+          "parent_ref": "herramientas-nav-tablas"
+        },
+        {
+          "name": "Cierres",
+          "menu_ref": "herramientas-herr-cierres",
+          "path": "/herr-cierres",
+          "icon": "fa-box-archive",
+          "parent_ref": "herramientas-nav-tablas"
+        },
+        {
+          "name": "Reparto a domicilio",
+          "menu_ref": "herramientas-nav-reparto",
+          "path": "",
+          "icon": "fa-truck-fast",
+          "parent_ref": "herramientas-menu-root"
+        },
+        {
+          "name": "Jornada en curso",
+          "menu_ref": "herramientas-herr-jornada",
+          "path": "/herr-jornada",
+          "icon": "fa-motorcycle",
+          "parent_ref": "herramientas-nav-reparto",
+          "resources": [
+            "herr-jornadas",
+            "herr-pedidos",
+            "herr-vehiculos:read"
+          ]
+        },
+        {
+          "name": "Liquidación",
+          "menu_ref": "herramientas-herr-liquidacion",
+          "path": "/herr-liquidacion",
+          "icon": "fa-hand-holding-dollar",
+          "parent_ref": "herramientas-nav-reparto",
+          "resources": [
+            "herr-jornadas",
+            "herr-pedidos",
+            "herr-gastos",
+            "herr-caja"
+          ]
+        },
+        {
+          "name": "Jornadas",
+          "menu_ref": "herramientas-herr-jornadas",
+          "path": "/herr-jornadas",
+          "icon": "fa-flag-checkered",
+          "parent_ref": "herramientas-nav-reparto"
+        },
+        {
+          "name": "Pedidos",
+          "menu_ref": "herramientas-herr-pedidos",
+          "path": "/herr-pedidos",
+          "icon": "fa-clipboard-check",
+          "parent_ref": "herramientas-nav-reparto"
+        },
+        {
+          "name": "Gastos",
+          "menu_ref": "herramientas-herr-gastos",
+          "path": "/herr-gastos",
+          "icon": "fa-money-bill-wave",
+          "parent_ref": "herramientas-nav-reparto"
+        },
+        {
+          "name": "Caja",
+          "menu_ref": "herramientas-herr-caja",
+          "path": "/herr-caja",
+          "icon": "fa-cash-register",
+          "parent_ref": "herramientas-nav-reparto"
+        },
+        {
+          "name": "Domicilios",
+          "menu_ref": "herramientas-herr-domicilios",
+          "path": "/herr-domicilios",
+          "icon": "fa-map-location-dot",
+          "parent_ref": "herramientas-nav-reparto"
+        },
+        {
+          "name": "Etiquetas",
+          "menu_ref": "herramientas-herr-etiquetas",
+          "path": "/herr-etiquetas",
+          "icon": "fa-hashtag",
+          "parent_ref": "herramientas-nav-reparto"
+        },
+        {
+          "name": "Ajustes de vehículo",
+          "menu_ref": "herramientas-herr-vehiculos",
+          "path": "/herr-vehiculos",
+          "icon": "fa-car",
+          "parent_ref": "herramientas-nav-reparto"
+        },
+        {
+          "name": "Combustible",
+          "menu_ref": "herramientas-herr-recargas",
+          "path": "/herr-recargas",
+          "icon": "fa-gas-pump",
+          "parent_ref": "herramientas-nav-reparto"
+        },
+        {
+          "name": "Rutas GPS",
+          "menu_ref": "herramientas-herr-rutas",
+          "path": "/herr-rutas",
+          "icon": "fa-route",
+          "parent_ref": "herramientas-nav-reparto"
+        },
+        {
+          "name": "Catálogo de precios",
+          "menu_ref": "herramientas-nav-menu",
+          "path": "",
+          "icon": "fa-utensils",
+          "parent_ref": "herramientas-nav-reparto"
+        },
+        {
+          "name": "Categorías",
+          "menu_ref": "herramientas-herr-menu-categorias",
+          "path": "/herr-menu-categorias",
+          "icon": "fa-layer-group",
+          "parent_ref": "herramientas-nav-menu"
+        },
+        {
+          "name": "Tamaños",
+          "menu_ref": "herramientas-herr-menu-tamanos",
+          "path": "/herr-menu-tamanos",
+          "icon": "fa-ruler",
+          "parent_ref": "herramientas-nav-menu"
+        },
+        {
+          "name": "Productos",
+          "menu_ref": "herramientas-herr-menu-productos",
+          "path": "/herr-menu-productos",
+          "icon": "fa-box-open",
+          "parent_ref": "herramientas-nav-menu"
+        },
+        {
+          "name": "Extras",
+          "menu_ref": "herramientas-herr-menu-extras",
+          "path": "/herr-menu-extras",
+          "icon": "fa-circle-plus",
+          "parent_ref": "herramientas-nav-menu"
+        },
+        {
+          "name": "Complementos",
+          "menu_ref": "herramientas-herr-menu-complementos",
+          "path": "/herr-menu-complementos",
+          "icon": "fa-bowl-food",
+          "parent_ref": "herramientas-nav-menu"
+        },
+        {
+          "name": "Promociones",
+          "menu_ref": "herramientas-herr-menu-promos",
+          "path": "/herr-menu-promos",
+          "icon": "fa-percent",
+          "parent_ref": "herramientas-nav-menu"
+        },
+        {
+          "name": "Teléfono",
+          "menu_ref": "herramientas-nav-telefono",
+          "path": "",
+          "icon": "fa-phone",
+          "parent_ref": "herramientas-menu-root"
+        },
+        {
+          "name": "Contestador",
+          "menu_ref": "herramientas-herr-telefono",
+          "path": "/herr-telefono",
+          "icon": "fa-phone-volume",
+          "parent_ref": "herramientas-nav-telefono"
+        },
+        {
+          "name": "Contactos",
+          "menu_ref": "herramientas-herr-telefono-contactos",
+          "path": "/herr-telefono-contactos",
+          "icon": "fa-address-book",
+          "parent_ref": "herramientas-nav-telefono",
+          "resources": [
+            "herr-telefono"
+          ]
+        },
+        {
+          "name": "Llamadas",
+          "menu_ref": "herramientas-herr-telefono-llamadas",
+          "path": "/herr-telefono-llamadas",
+          "icon": "fa-phone-slash",
+          "parent_ref": "herramientas-nav-telefono",
+          "resources": [
+            "herr-telefono:read"
+          ]
+        },
+        {
+          "name": "Asistente de voz",
+          "menu_ref": "herramientas-nav-voz",
+          "path": "",
+          "icon": "fa-comment-dots",
+          "parent_ref": "herramientas-menu-root"
+        },
+        {
+          "name": "Asistente",
+          "menu_ref": "herramientas-herr-asistente",
+          "path": "/herr-asistente",
+          "icon": "fa-microphone-lines",
+          "parent_ref": "herramientas-nav-voz",
+          "resources": [
+            "herr-voz",
+            "herr-jornadas",
+            "herr-pedidos",
+            "herr-gastos",
+            "herr-caja",
+            "herr-recargas"
+          ]
+        },
+        {
+          "name": "Ajustes",
+          "menu_ref": "herramientas-herr-voz",
+          "path": "/herr-voz",
+          "icon": "fa-sliders",
+          "parent_ref": "herramientas-nav-voz"
+        },
+        {
+          "name": "Bitácora",
+          "menu_ref": "herramientas-herr-voz-bitacora",
+          "path": "/herr-voz-bitacora",
+          "icon": "fa-scroll",
+          "parent_ref": "herramientas-nav-voz",
+          "resources": [
+            "herr-voz:read"
+          ]
+        },
+        {
+          "name": "Agenda",
+          "menu_ref": "herramientas-nav-agenda",
+          "path": "",
+          "icon": "fa-calendar",
+          "parent_ref": "herramientas-menu-root"
+        },
+        {
+          "name": "Hoy",
+          "menu_ref": "herramientas-herr-agenda-dia",
+          "path": "/herr-agenda-dia",
+          "icon": "fa-calendar-day",
+          "parent_ref": "herramientas-nav-agenda",
+          "resources": [
+            "herr-agenda"
+          ]
+        },
+        {
+          "name": "Eventos",
+          "menu_ref": "herramientas-herr-agenda",
+          "path": "/herr-agenda",
+          "icon": "fa-calendar-days",
+          "parent_ref": "herramientas-nav-agenda"
+        },
+        {
+          "name": "En este teléfono",
+          "menu_ref": "herramientas-nav-telefono-movil",
+          "path": "",
+          "icon": "fa-mobile-screen",
+          "parent_ref": "herramientas-menu-root"
+        },
+        {
+          "name": "Contestador del teléfono",
+          "menu_ref": "herramientas-movil-telefono",
+          "path": "/herramientas/telefono",
+          "icon": "fa-phone-flip",
+          "parent_ref": "herramientas-nav-telefono-movil",
+          "resources": [
+            "herr-telefono"
+          ]
+        },
+        {
+          "name": "Voz en el teléfono",
+          "menu_ref": "herramientas-movil-voz",
+          "path": "/herramientas/voz",
+          "icon": "fa-microphone",
+          "parent_ref": "herramientas-nav-telefono-movil",
+          "resources": [
+            "herr-voz",
+            "herr-jornadas",
+            "herr-pedidos",
+            "herr-gastos",
+            "herr-caja",
+            "herr-recargas"
+          ]
+        },
+        {
+          "name": "Ruta GPS",
+          "menu_ref": "herramientas-movil-ruta",
+          "path": "/herramientas/ruta",
+          "icon": "fa-location-crosshairs",
+          "parent_ref": "herramientas-nav-telefono-movil",
+          "resources": [
+            "herr-rutas",
+            "herr-jornadas:read"
+          ]
+        },
+        {
+          "name": "Avisos de la agenda",
+          "menu_ref": "herramientas-movil-avisos",
+          "path": "/herramientas/avisos",
+          "icon": "fa-bell",
+          "parent_ref": "herramientas-nav-telefono-movil",
+          "resources": [
+            "herr-agenda:read"
+          ]
+        },
+        {
+          "name": "Utilidades",
+          "menu_ref": "herramientas-herr-utilidades",
+          "path": "/herr-utilidades",
+          "icon": "fa-screwdriver-wrench",
+          "parent_ref": "herramientas-menu-root",
+          "resources": [
+            "herr-utilidades"
+          ]
         }
       ]
     }

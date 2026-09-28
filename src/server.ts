@@ -50,12 +50,17 @@ import {
 } from './imperium/email.ts';
 import {
 	resolve_subject_identity,
+	service_subject_identity,
 	subject_grant_refs,
 	subject_proxy_headers,
 	subject_proxy_response,
 	type SubjectIdentityRealm,
 	type SubjectModuleRef,
 } from './imperium/subject-identity.ts';
+import {
+	resolve_subject_caller,
+	SUBJECT_CALL_PROXY_TIMEOUT_MS,
+} from './imperium/subject-caller.ts';
 import {
 	authorize_subject_plane,
 	dev_attach_enabled,
@@ -344,11 +349,15 @@ async function data_plane_with_retry(
 	}
 }
 
+/** Plazo del salto núcleo → app para una petición del navegador. */
+const SUBJECT_PROXY_TIMEOUT_MS = 4000;
+
 async function proxy_subject(
 	technical_id: string,
 	req: Request,
 	rest: string,
 	identity: Parameters<typeof subject_proxy_headers>[2],
+	timeout_ms = SUBJECT_PROXY_TIMEOUT_MS,
 ): Promise<Response> {
 	// Sin maestro no hay firma, y una app en `SUBJECT_AUTH=off` trataría la
 	// petición sin firmar como su admin sintético.
@@ -389,13 +398,17 @@ async function proxy_subject(
 		return subject_proxy_response(
 			await fetch(target, {
 				...init,
-				signal: AbortSignal.timeout(4000),
+				signal: AbortSignal.timeout(timeout_ms),
 			}),
 		);
 	} catch (err) {
 		return Response.json(
 			{
 				error: `subject unreachable: ${technical_id}`,
+				code:
+					err instanceof Error && err.name === 'TimeoutError'
+						? 'subject_timeout'
+						: 'subject_unreachable',
 				detail: String(err),
 			},
 			{ status: 502 },
@@ -510,6 +523,7 @@ function log_api(
 	path: string,
 	status: number,
 	started_ms: number,
+	caller: string | null,
 ) {
 	if (is_noisy_path(path)) return;
 	// persist_request_log ya imprime el tráfico /api de Imperium (CRUD, auth).
@@ -525,7 +539,7 @@ function log_api(
 		status >= 400 ? 'error' : status >= 300 ? 'warning' : 'success';
 	print_console_log(
 		level,
-		`${req.method} ${path} ${status} ${Date.now() - started_ms}ms`,
+		`${req.method} ${path} ${status} ${Date.now() - started_ms}ms${caller ? ` caller=${caller}` : ''}`,
 	);
 }
 
@@ -540,6 +554,8 @@ const server = Bun.serve({
 		const started_ms = Date.now();
 		const url = new URL(req.url);
 		const path = url.pathname;
+		/** Remitente app → app, solo si el gateway lo aceptó. */
+		let accepted_caller: string | null = null;
 		const res = await (async () => {
 			if (
 				(req.method === 'GET' || req.method === 'HEAD') &&
@@ -732,6 +748,36 @@ const server = Bun.serve({
 						),
 					)!;
 				}
+				// Otra app llamando en servidor: sin sesión, con su secreto y
+				// una identidad de servicio hacia el destino.
+				const call = await resolve_subject_caller(req, technical_id, realm, {
+					master_configured: () => Boolean(master_secret()),
+					catalog_tids: CATALOG_TIDS,
+					is_subject_request,
+					installed: (caller) =>
+						technical_id_is_installed(imperium.store, sql, caller),
+				});
+				if (call) {
+					if (!call.ok) return add_cors(req, call.response)!;
+					accepted_caller = call.caller;
+					const sub = subject_of(technical_id);
+					return add_cors(
+						req,
+						await proxy_subject(
+							technical_id,
+							req,
+							rest,
+							service_subject_identity({
+								caller: call.caller,
+								target: sub ?? {
+									technical_id,
+									slug: technical_id.replace(/^subject-/, ''),
+								},
+							}),
+							SUBJECT_CALL_PROXY_TIMEOUT_MS,
+						),
+					)!;
+				}
 				const gate = await gateway_identity(technical_id, req, realm);
 				if (!gate.ok) return add_cors(req, gate.response)!;
 				const proxied = await proxy_subject(
@@ -840,7 +886,7 @@ const server = Bun.serve({
 
 			return Response.json({ error: 'not found' }, { status: 404 });
 		})();
-		log_api(req, path, res.status, started_ms);
+		log_api(req, path, res.status, started_ms, accepted_caller);
 		return res;
 	},
 });

@@ -5,6 +5,7 @@ import { define_kirlet } from "./define-kirlet.js";
 import { create_kirlet_test_context } from "./serve.js";
 import { sign_kirlet_identity, type KirletIdentity } from "./identity.js";
 import { MemoryNoxServices } from "./memory-nox-services.js";
+import { KirletHttpError } from "./errors.js";
 
 const notes_table = {
   name: "notes",
@@ -388,5 +389,133 @@ describe("define_crud json fields", () => {
     expect(await post("no es json")).toBe("no es json");
 
     server.stop();
+  });
+});
+
+describe("define_crud alias Imperium", () => {
+  function build(soft_delete: boolean) {
+    const calls: string[] = [];
+    const routes = define_crud({
+      resource: "notes",
+      table: "notes",
+      soft_delete,
+      history: true,
+      fields: {
+        title: {
+          type: "string",
+          required: true,
+          validate: (v) => (v === "prohibido" ? "título no permitido" : null),
+        },
+        body: { type: "string" },
+        active: { type: "boolean" },
+      },
+      hooks: {
+        before_update: (_ctx, id, patch) => {
+          calls.push(`before_update:${id}`);
+          if (patch.body === "rechazar") {
+            throw new KirletHttpError(400, "validation_error", "rechazado por el hook");
+          }
+          return { ...patch, body: `${patch.body ?? ""}!` };
+        },
+        after_update: (_ctx, row) => {
+          calls.push(`after_update:${row.id}`);
+        },
+        before_delete: (_ctx, row) => {
+          calls.push(`before_delete:${row.id}`);
+        },
+        after_delete: (_ctx, row) => {
+          calls.push(`after_delete:${row.id}`);
+        },
+      },
+    });
+    const def = define_kirlet({
+      id: "KIRLET-demo",
+      name: "Demo",
+      version: "0.2.0",
+      compat: { nox: ">=0.5.0", kit: "^0.5.0" },
+      modules: [
+        define_module({
+          resource: "notes",
+          labels: { singular: "Note", plural: "Notes" },
+          routes,
+          tables: [notes_table],
+        }),
+      ],
+    });
+    const nox = new MemoryNoxServices();
+    const server = create_kirlet_test_context(def, { nox, auth_disabled: true });
+    const send = async (method: string, path: string, body?: unknown) => {
+      const res = await server.fetch(
+        new Request(`http://t${path}`, {
+          method,
+          headers: { "content-type": "application/json" },
+          body: body === undefined ? undefined : JSON.stringify(body),
+        }),
+      );
+      return { status: res.status, json: (await res.json().catch(() => null)) as any };
+    };
+    const create = async (title: string) =>
+      (await send("POST", "/notes", { title })).json.data.id as string;
+    return { calls, nox, server, send, create };
+  }
+
+  test("PUT / y PUT /batch pasan por validación y hooks de actualización", async () => {
+    const { calls, nox, server, send, create } = build(true);
+    const a = await create("A");
+    const b = await create("B");
+
+    const put = await send("PUT", "/notes", { _id: a, body: "uno" });
+    expect(put.status).toBe(200);
+    expect(put.json).toEqual({ data: null, total_elementos: 1, message: "Actualizado correctamente" });
+    expect((await send("GET", `/notes/${a}`)).json.data.body).toBe("uno!");
+    expect(calls).toEqual([`before_update:${a}`, `after_update:${a}`]);
+
+    expect((await send("PUT", "/notes", { _id: a, title: "prohibido" })).status).toBe(400);
+    expect((await send("PUT", "/notes", { _id: a, body: "rechazar" })).status).toBe(400);
+    expect((await send("GET", `/notes/${a}`)).json.data.title).toBe("A");
+
+    calls.length = 0;
+    const batch = await send("PUT", "/notes/batch", [
+      { _id: a, body: "dos" },
+      { id: b, body: "tres" },
+      { _id: "no-existe", body: "x" },
+      { body: "sin id" },
+    ]);
+    expect(batch.status).toBe(200);
+    expect(batch.json.total_elementos).toBe(2);
+    expect(batch.json.data.map((r: { body: string }) => r.body)).toEqual(["dos!", "tres!"]);
+    expect(calls).toEqual([
+      `before_update:${a}`,
+      `after_update:${a}`,
+      `before_update:${b}`,
+      `after_update:${b}`,
+    ]);
+    expect((await send("PUT", "/notes/batch", [{ _id: a, title: "prohibido" }])).status).toBe(400);
+
+    const hist = await nox.history.list({ resource_prefix: "" });
+    expect(hist.filter((h) => h.action === "update").length).toBe(3);
+
+    server.stop();
+  });
+
+  test("DELETE /id/:id pasa por los hooks de baja (soft y hard)", async () => {
+    for (const soft of [true, false]) {
+      const { calls, nox, server, send, create } = build(soft);
+      const a = await create("A");
+
+      const del = await send("DELETE", `/notes/id/${a}`);
+      expect(del.status).toBe(200);
+      expect(del.json.total_elementos).toBe(1);
+      expect(del.json.message).toBe("Eliminado correctamente");
+      expect(del.json.data.id).toBe(a);
+      expect(calls).toEqual([`before_delete:${a}`, `after_delete:${a}`]);
+      expect((await send("GET", `/notes/${a}`)).status).toBe(404);
+
+      const hist = await nox.history.list({ resource_prefix: "" });
+      expect(hist.some((h) => h.action === "delete" && h.entity_id === a)).toBe(true);
+      expect((await send("DELETE", `/notes/id/${a}`)).status).toBe(soft ? 200 : 404);
+
+      server.stop();
+    }
   });
 });

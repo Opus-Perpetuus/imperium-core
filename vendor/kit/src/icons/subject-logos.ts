@@ -32,6 +32,7 @@ export const SUBJECT_SLUGS = [
 	'ventas',
 	'tienda',
 	'database-manager',
+	'herramientas',
 ] as const;
 
 export type SubjectSlug = (typeof SUBJECT_SLUGS)[number];

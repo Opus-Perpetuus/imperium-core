@@ -244,6 +244,53 @@ export function define_crud(opts: DefineCrudOptions): KirletRouteTable {
     });
   }
 
+  /** Actualización con hooks e historia: la usan `PATCH /:id` y los alias Imperium. */
+  async function update_row(
+    ctx: KirletCtx,
+    id: string,
+    existing: DomainRow,
+    body: Record<string, unknown>,
+  ): Promise<DomainRow> {
+    let patch = pick_body(fields, body, "update", unknown_to_payload);
+    patch = { ...patch, updated_at: now_iso() };
+    if (opts.hooks?.before_update) {
+      patch = await opts.hooks.before_update(ctx, id, patch, existing);
+    }
+    const updated = await ctx.data.update(table, { id }, patch);
+    if (!updated) throw new KirletHttpError(404, "not_found", "not found");
+    if (opts.hooks?.after_update) {
+      await opts.hooks.after_update(ctx, updated, existing);
+    }
+    await append_history(ctx, "update", id, { before: existing, after: updated });
+    return updated;
+  }
+
+  /** Baja con hooks e historia: la usan `DELETE /:id` y `DELETE /id/:id`. */
+  async function delete_row(
+    ctx: KirletCtx,
+    id: string,
+  ): Promise<{ existing: DomainRow; updated: DomainRow | null }> {
+    const existing = await ctx.data.findOne(table, { id });
+    if (!existing) throw new KirletHttpError(404, "not_found", "not found");
+    if (opts.hooks?.before_delete) await opts.hooks.before_delete(ctx, existing);
+    if (soft) {
+      const updated = await ctx.data.update(
+        table,
+        { id },
+        { [soft_field]: inactive_val, updated_at: now_iso() },
+      );
+      if (opts.hooks?.after_delete) {
+        await opts.hooks.after_delete(ctx, updated ?? existing);
+      }
+      await append_history(ctx, "delete", id, { before: existing, after: updated });
+      return { existing, updated };
+    }
+    await ctx.data.delete(table, { id });
+    if (opts.hooks?.after_delete) await opts.hooks.after_delete(ctx, existing);
+    await append_history(ctx, "delete", id, { before: existing, after: null });
+    return { existing, updated: null };
+  }
+
   return define_routes({
     [`GET /${resource}`]: async (ctx) => {
       const lq = ctx.list_query();
@@ -326,9 +373,7 @@ export function define_crud(opts: DefineCrudOptions): KirletRouteTable {
             if (!id) throw new KirletHttpError(400, "validation_error", "Se necesita un id para actualizar");
             const existing = await ctx.data.findOne(table, { id });
             if (!existing) throw new KirletHttpError(404, "not_found", "not found");
-            let patch = pick_body(fields, body, "update", unknown_to_payload);
-            patch = { ...patch, updated_at: now_iso() };
-            await ctx.data.update(table, { id }, patch);
+            await update_row(ctx, id, existing, body);
             return { data: null, total_elementos: 1, message: "Actualizado correctamente" };
           },
           [`PUT /${resource}/batch`]: async (ctx: KirletCtx) => {
@@ -338,31 +383,15 @@ export function define_crud(opts: DefineCrudOptions): KirletRouteTable {
             for (const raw of items) {
               const row = raw as Record<string, unknown>;
               const id = String(row._id ?? row.id ?? "");
-              if (id) {
-                const existing = await ctx.data.findOne(table, { id });
-                if (existing) {
-                  const patch = pick_body(fields, row, "update", unknown_to_payload);
-                  const updated = await ctx.data.update(table, { id }, { ...patch, updated_at: now_iso() });
-                  if (updated) data.push(updated);
-                  continue;
-                }
-              }
+              if (!id) continue;
+              const existing = await ctx.data.findOne(table, { id });
+              if (existing) data.push(await update_row(ctx, id, existing, row));
             }
             return { data, total_elementos: data.length, message: "Lote aplicado" };
           },
           [`DELETE /${resource}/id/:id`]: async (ctx: KirletCtx) => {
-            const existing = await ctx.data.findOne(table, { id: ctx.params.id });
-            if (!existing) throw new KirletHttpError(404, "not_found", "not found");
-            if (soft) {
-              const updated = await ctx.data.update(
-                table,
-                { id: ctx.params.id },
-                { [soft_field]: inactive_val, updated_at: now_iso() },
-              );
-              return { data: updated, total_elementos: 1, message: "Eliminado correctamente" };
-            }
-            await ctx.data.delete(table, { id: ctx.params.id });
-            return { data: existing, total_elementos: 1, message: "Eliminado correctamente" };
+            const { existing, updated } = await delete_row(ctx, ctx.params.id);
+            return { data: updated ?? existing, total_elementos: 1, message: "Eliminado correctamente" };
           },
         }
       : {}),
@@ -416,58 +445,12 @@ export function define_crud(opts: DefineCrudOptions): KirletRouteTable {
       const existing = await ctx.data.findOne(table, { id: ctx.params.id });
       if (!existing) throw new KirletHttpError(404, "not_found", "not found");
       const body = (await ctx.body<Record<string, unknown>>()) ?? {};
-      let patch = pick_body(fields, body, "update", unknown_to_payload);
-      patch = { ...patch, updated_at: now_iso() };
-      if (opts.hooks?.before_update) {
-        patch = await opts.hooks.before_update(
-          ctx,
-          ctx.params.id,
-          patch,
-          existing,
-        );
-      }
-      const updated = await ctx.data.update(
-        table,
-        { id: ctx.params.id },
-        patch,
-      );
-      if (!updated) throw new KirletHttpError(404, "not_found", "not found");
-      if (opts.hooks?.after_update) {
-        await opts.hooks.after_update(ctx, updated, existing);
-      }
-      await append_history(ctx, "update", ctx.params.id, {
-        before: existing,
-        after: updated,
-      });
-      return { data: updated };
+      return { data: await update_row(ctx, ctx.params.id, existing, body) };
     },
 
     [`DELETE /${resource}/:id`]: async (ctx) => {
-      const existing = await ctx.data.findOne(table, { id: ctx.params.id });
-      if (!existing) throw new KirletHttpError(404, "not_found", "not found");
-      if (opts.hooks?.before_delete) await opts.hooks.before_delete(ctx, existing);
-      if (soft) {
-        const updated = await ctx.data.update(
-          table,
-          { id: ctx.params.id },
-          { [soft_field]: inactive_val, updated_at: now_iso() },
-        );
-        if (opts.hooks?.after_delete) {
-          await opts.hooks.after_delete(ctx, updated ?? existing);
-        }
-        await append_history(ctx, "delete", ctx.params.id, {
-          before: existing,
-          after: updated,
-        });
-        return { data: updated };
-      }
-      await ctx.data.delete(table, { id: ctx.params.id });
-      if (opts.hooks?.after_delete) await opts.hooks.after_delete(ctx, existing);
-      await append_history(ctx, "delete", ctx.params.id, {
-        before: existing,
-        after: null,
-      });
-      return null;
+      const { updated } = await delete_row(ctx, ctx.params.id);
+      return soft ? { data: updated } : null;
     },
   });
 }

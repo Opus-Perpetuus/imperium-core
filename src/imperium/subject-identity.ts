@@ -78,21 +78,26 @@ export const SUBJECT_IDENTITY_HEADERS = [
  * Tomarlos de la misma materialización que pinta el lanzador hace imposible que
  * las dos respuestas se separen: lo que se ve es lo que se puede llamar. Admin
  * efectivo no lleva grants — `is_admin` abre todo en el kit.
+ *
+ * `dependent_read` (ver `sees_dependent_of`) da además lectura sobre todos los
+ * recursos: una app que depende de esta la consulta desde el navegador.
  */
 export function subject_grants_from_menus(input: {
 	slug: string;
 	modules: SubjectModuleRef[];
 	has_full_access: boolean;
 	visible_menu_refs: string[];
+	dependent_read?: boolean;
 }): KirletGrant[] {
 	if (input.has_full_access) return [];
 	const visible = new Set(input.visible_menu_refs.map(String).filter(Boolean));
 	const grants = new Map<string, KirletGrant>();
 	for (const mod of input.modules) {
 		const ref = String(mod.menu_ref ?? '');
-		if (!ref || !visible.has(ref)) continue;
+		const own = !!ref && visible.has(ref);
+		if (!own && !input.dependent_read) continue;
 		const resource = `kirlet.${input.slug}.${mod.resource}`;
-		const write = !mod.read_only;
+		const write = own && !mod.read_only;
 		// Varios menús pueden dar el mismo recurso: gana el permiso más amplio.
 		const prev = grants.get(resource);
 		grants.set(resource, {
@@ -104,6 +109,27 @@ export function subject_grants_from_menus(input: {
 		});
 	}
 	return [...grants.values()];
+}
+
+/**
+ * True si el usuario ve algún menú de una app que declara `depends_on` hacia
+ * `technical_id`. Cada menú visible de una app conserva su raíz, marcada con
+ * `subject_slug`, y `build_menus` ya quitó las apps desinstaladas.
+ */
+export function sees_dependent_of(input: {
+	technical_id: string;
+	subjects: ReadonlyArray<{ slug: string; technical_id: string; depends_on?: string[] }>;
+	visible_menus: ReadonlyArray<{ subject_slug?: unknown }>;
+}): boolean {
+	const visible = new Set(
+		input.visible_menus.map((row) => String(row.subject_slug ?? '')).filter(Boolean),
+	);
+	return input.subjects.some(
+		(sub) =>
+			sub.technical_id !== input.technical_id &&
+			(sub.depends_on ?? []).includes(input.technical_id) &&
+			visible.has(sub.slug),
+	);
 }
 
 /**
@@ -130,6 +156,43 @@ export function anonymous_subject_identity(
 	};
 }
 
+/**
+ * Identidad de servicio con la que una app llama a otra por el gateway.
+ *
+ * No hay usuario: el principal es la app remitente (`subject:<caller>`), con un
+ * grant por recurso del destino —los `:read` de sus menús se respetan— y sin
+ * `is_admin`, así que `/seed` sigue cerrado en el kit.
+ */
+export function service_subject_identity(input: {
+	caller: string;
+	target: {
+		technical_id: string;
+		slug: string;
+		modules?: SubjectModuleRef[];
+		menus?: Array<{ menu_ref: string; resources?: string[] }>;
+	};
+}): KirletIdentity {
+	const grants = new Map<string, KirletGrant>();
+	const refs = subject_grant_refs({
+		modules: input.target.modules ?? [],
+		menus: input.target.menus,
+	});
+	for (const ref of refs) {
+		const resource = `kirlet.${input.target.slug}.${ref.resource}`;
+		const write = !ref.read_only || grants.get(resource)?.c === true;
+		grants.set(resource, { resource, c: write, r: true, u: write, d: write });
+	}
+	return {
+		user_id: `subject:${input.caller}`,
+		email: input.caller,
+		is_admin: false,
+		kirlet_id: input.target.technical_id,
+		grants: [...grants.values()],
+		user_type: 'internal',
+		realm: 'internal',
+	};
+}
+
 /** Tipo de principal de una sesión Imperium, en el vocabulario del kit. */
 export function principal_type_of(user: ImperiumDoc | null): KirletPrincipalType {
 	if (!user) return 'anonymous';
@@ -150,7 +213,7 @@ async function grants_for_user(
 	store: ImperiumStore,
 	sql: Bun.SQL,
 	user: ImperiumDoc,
-	subject: { slug: string; modules: SubjectModuleRef[] },
+	subject: { technical_id: string; slug: string; modules: SubjectModuleRef[] },
 ): Promise<{ grants: KirletGrant[]; is_admin: boolean }> {
 	const access = await build_access(store, user);
 	if (access.has_full_access === true) return { grants: [], is_admin: true };
@@ -161,6 +224,11 @@ async function grants_for_user(
 			modules: subject.modules,
 			has_full_access: false,
 			visible_menu_refs: menus.map((row) => String(row._ref ?? '')),
+			dependent_read: sees_dependent_of({
+				technical_id: subject.technical_id,
+				subjects: store.subjects,
+				visible_menus: menus,
+			}),
 		}),
 		is_admin: false,
 	};
@@ -211,6 +279,7 @@ export async function resolve_subject_identity(input: {
 			is_admin = hit.is_admin;
 		} else {
 			const built = await grants_for_user(input.store, input.sql, user, {
+				technical_id: input.technical_id,
 				slug: input.slug,
 				modules: input.modules,
 			});
