@@ -1697,7 +1697,7 @@
       "catalog_id": "SUBJECT-configuracion",
       "technical_id": "subject-configuracion",
       "depends_on": [],
-      "image": "ghcr.io/opus-perpetuus/subject-configuracion:0.2.2",
+      "image": "ghcr.io/opus-perpetuus/subject-configuracion:0.3.0",
       "repo": "Opus-Perpetuus/imperium-subject-configuracion",
       "dir": "workspace/imperium-subject-configuracion",
       "modules": [
