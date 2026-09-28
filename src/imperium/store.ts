@@ -91,6 +91,8 @@ export type SubjectInfo = {
 		path?: string;
 		icon: string;
 		parent_ref?: string;
+		/** Recursos de la app que habilita (`recurso` o `recurso:read`). */
+		resources?: string[];
 	}>;
 };
 
@@ -1191,6 +1193,7 @@ export class ImperiumStore {
 					path?: string;
 					icon: string;
 					parent_ref?: string;
+					resources?: string[];
 				}>;
 			}>;
 		};

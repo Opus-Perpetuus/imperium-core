@@ -5,6 +5,7 @@ import {
 	anonymous_subject_identity,
 	apply_subject_identity_headers,
 	principal_type_of,
+	subject_grant_refs,
 	subject_grants_from_menus,
 } from './subject-identity.ts';
 
@@ -46,6 +47,38 @@ describe('grants de app desde los menús que el lanzador pinta', () => {
 				visible_menu_refs: ['menu-de-otra-cosa'],
 			}),
 		).toEqual([]);
+	});
+
+	test('un menú declarado da los grants de sus resources; :read solo lectura', () => {
+		const refs = subject_grant_refs({
+			modules: [{ resource: 'grupo', menu_ref: 'grupo-menu' }],
+			menus: [
+				{ menu_ref: 'ce-tipos', resources: ['tipos-incidencia'] },
+				{ menu_ref: 'ce-examenes', resources: ['examenes', 'periodos-examen:read'] },
+				{ menu_ref: 'ce-periodos', resources: ['periodos-examen'] },
+				{ menu_ref: 'ce-carpeta' },
+			],
+		});
+		const solo_examenes = subject_grants_from_menus({
+			slug: 'ce',
+			modules: refs,
+			has_full_access: false,
+			visible_menu_refs: ['ce-examenes'],
+		});
+		expect(solo_examenes).toEqual([
+			{ resource: 'kirlet.ce.examenes', c: true, r: true, u: true, d: true },
+			{ resource: 'kirlet.ce.periodos-examen', c: false, r: true, u: false, d: false },
+		]);
+		// Dos menús que dan el mismo recurso se combinan: gana el permiso más amplio.
+		const ambos = subject_grants_from_menus({
+			slug: 'ce',
+			modules: refs,
+			has_full_access: false,
+			visible_menu_refs: ['ce-examenes', 'ce-periodos'],
+		});
+		expect(ambos.filter((g) => g.resource === 'kirlet.ce.periodos-examen')).toEqual([
+			{ resource: 'kirlet.ce.periodos-examen', c: true, r: true, u: true, d: true },
+		]);
 	});
 
 	/**

@@ -23,7 +23,33 @@ import type { ImperiumDoc } from './envelope.ts';
 import type { ImperiumStore } from './store.ts';
 import { GATEWAY_SECRET_HEADERS, signing_secret_for } from './subject-secret.ts';
 
-export type SubjectModuleRef = { resource: string; menu_ref?: string };
+export type SubjectModuleRef = {
+	resource: string;
+	menu_ref?: string;
+	/** Solo lectura: un menú declarado que consulta un recurso sin administrarlo. */
+	read_only?: boolean;
+};
+
+/**
+ * Qué menú habilita qué recurso de la app. Los `modules` del catálogo traen el
+ * suyo; un menú declarado (`menus[]`) lo dice con `resources` — así una pantalla
+ * de la app cuya tabla no está en el catálogo (tipos de incidencia, exámenes…)
+ * también se puede asignar a un grupo. `recurso:read` da solo lectura.
+ */
+export function subject_grant_refs(sub: {
+	modules: SubjectModuleRef[];
+	menus?: Array<{ menu_ref: string; resources?: string[] }>;
+}): SubjectModuleRef[] {
+	const refs: SubjectModuleRef[] = [...sub.modules];
+	for (const menu of sub.menus ?? []) {
+		for (const raw of menu.resources ?? []) {
+			const [resource, mode] = String(raw).split(':');
+			if (!resource) continue;
+			refs.push({ resource, menu_ref: menu.menu_ref, read_only: mode === 'read' });
+		}
+	}
+	return refs;
+}
 
 export type SubjectIdentityRealm = 'internal' | 'public';
 
@@ -61,19 +87,23 @@ export function subject_grants_from_menus(input: {
 }): KirletGrant[] {
 	if (input.has_full_access) return [];
 	const visible = new Set(input.visible_menu_refs.map(String).filter(Boolean));
-	const grants: KirletGrant[] = [];
+	const grants = new Map<string, KirletGrant>();
 	for (const mod of input.modules) {
 		const ref = String(mod.menu_ref ?? '');
 		if (!ref || !visible.has(ref)) continue;
-		grants.push({
-			resource: `kirlet.${input.slug}.${mod.resource}`,
-			c: true,
+		const resource = `kirlet.${input.slug}.${mod.resource}`;
+		const write = !mod.read_only;
+		// Varios menús pueden dar el mismo recurso: gana el permiso más amplio.
+		const prev = grants.get(resource);
+		grants.set(resource, {
+			resource,
+			c: write || prev?.c === true,
 			r: true,
-			u: true,
-			d: true,
+			u: write || prev?.u === true,
+			d: write || prev?.d === true,
 		});
 	}
-	return grants;
+	return [...grants.values()];
 }
 
 /**

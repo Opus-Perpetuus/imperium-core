@@ -6582,42 +6582,64 @@
           "menu_ref": "control-escolar-mi-grupo",
           "path": "/control-escolar/mi-grupo",
           "icon": "fa-chalkboard-user",
-          "parent_ref": "control-escolar-nav-aula"
+          "parent_ref": "control-escolar-nav-aula",
+          "resources": [
+            "grupo"
+          ]
         },
         {
           "name": "Pase de lista",
           "menu_ref": "control-escolar-pase-de-lista",
           "path": "/control-escolar/pase-de-lista",
           "icon": "fa-clipboard-check",
-          "parent_ref": "control-escolar-nav-aula"
+          "parent_ref": "control-escolar-nav-aula",
+          "resources": [
+            "grupo:read",
+            "registro-asistencias"
+          ]
         },
         {
           "name": "Registrar incidencias",
           "menu_ref": "control-escolar-captura-incidencias",
           "path": "/control-escolar/captura-incidencias",
           "icon": "fa-flag",
-          "parent_ref": "control-escolar-nav-aula"
+          "parent_ref": "control-escolar-nav-aula",
+          "resources": [
+            "grupo:read",
+            "registro-incidencias",
+            "enlaces-compartidos"
+          ]
         },
         {
           "name": "Reportes y enlaces",
           "menu_ref": "control-escolar-reportes",
           "path": "/control-escolar/reportes",
           "icon": "fa-share-nodes",
-          "parent_ref": "control-escolar-nav-aula"
+          "parent_ref": "control-escolar-nav-aula",
+          "resources": [
+            "grupo:read",
+            "enlaces-compartidos"
+          ]
         },
         {
           "name": "Periodos del ciclo",
           "menu_ref": "control-escolar-periodos-examen",
           "path": "/periodos-examen",
           "icon": "fa-calendar-week",
-          "parent_ref": "control-escolar-nav-aula"
+          "parent_ref": "control-escolar-nav-aula",
+          "resources": [
+            "periodos-examen"
+          ]
         },
         {
           "name": "Tipos de incidencia",
           "menu_ref": "control-escolar-tipos-incidencia",
           "path": "/tipos-incidencia",
           "icon": "fa-tags",
-          "parent_ref": "control-escolar-nav-aula"
+          "parent_ref": "control-escolar-nav-aula",
+          "resources": [
+            "tipos-incidencia"
+          ]
         },
         {
           "name": "Exámenes",
@@ -6631,7 +6653,13 @@
           "menu_ref": "control-escolar-examenes",
           "path": "/control-escolar/examenes",
           "icon": "fa-list-check",
-          "parent_ref": "control-escolar-nav-examenes"
+          "parent_ref": "control-escolar-nav-examenes",
+          "resources": [
+            "examenes",
+            "grupo:read",
+            "materias:read",
+            "periodos-examen:read"
+          ]
         }
       ]
     },

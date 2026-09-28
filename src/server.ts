@@ -50,6 +50,7 @@ import {
 } from './imperium/email.ts';
 import {
 	resolve_subject_identity,
+	subject_grant_refs,
 	subject_proxy_headers,
 	subject_proxy_response,
 	type SubjectIdentityRealm,
@@ -91,6 +92,7 @@ type Catalog = {
 		kind: string;
 		menu_ref?: string;
 		modules?: SubjectModuleRef[];
+		menus?: Array<{ menu_ref: string; resources?: string[] }>;
 	}>;
 };
 
@@ -483,7 +485,7 @@ async function gateway_identity(
 		req,
 		technical_id,
 		slug: sub?.slug ?? technical_id.replace(/^subject-/, ''),
-		modules: sub?.modules ?? [],
+		modules: sub ? subject_grant_refs({ modules: sub.modules ?? [], menus: sub.menus }) : [],
 		realm,
 		session_key: session_key_of(req),
 	});
