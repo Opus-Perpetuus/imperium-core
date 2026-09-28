@@ -2,8 +2,9 @@
   "unit": "subject",
   "unit_es": "app",
   "kit": "@opus-perpetuus/imperium-core-kit",
+  "core": "ghcr.io/opus-perpetuus/imperium-core:13.54.3",
   "forked_from": "@opus-perpetuus/kirel-nox-kit@0.5.18",
-  "count": 20,
+  "count": 21,
   "subjects": [
     {
       "slug": "almacen",
@@ -13,9 +14,10 @@
       "menu_ref": "menu-management-inventory",
       "catalog_id": "SUBJECT-almacen",
       "technical_id": "subject-almacen",
-      "image": "ghcr.io/opus-perpetuus/subject-almacen:0.1.0",
+      "depends_on": [],
+      "image": "ghcr.io/opus-perpetuus/subject-almacen:0.2.2",
       "repo": "Opus-Perpetuus/imperium-subject-almacen",
-      "dir": "modular/subjects/imperium-subject-almacen",
+      "dir": "workspace/imperium-subject-almacen",
       "modules": [
         {
           "resource": "unit-of-measure",
@@ -1612,9 +1614,10 @@
       "menu_ref": "view-config-preset-menu-management-0",
       "catalog_id": "SUBJECT-configuraciones-de-vista",
       "technical_id": "subject-configuraciones-de-vista",
-      "image": "ghcr.io/opus-perpetuus/subject-configuraciones-de-vista:0.1.0",
+      "depends_on": [],
+      "image": "ghcr.io/opus-perpetuus/subject-configuraciones-de-vista:0.2.2",
       "repo": "Opus-Perpetuus/imperium-subject-configuraciones-de-vista",
-      "dir": "modular/subjects/imperium-subject-configuraciones-de-vista",
+      "dir": "workspace/imperium-subject-configuraciones-de-vista",
       "modules": [
         {
           "resource": "view-config-preset",
@@ -1693,9 +1696,10 @@
       "menu_ref": "module-management-menu-root-settings",
       "catalog_id": "SUBJECT-configuracion",
       "technical_id": "subject-configuracion",
-      "image": "ghcr.io/opus-perpetuus/subject-configuracion:0.1.0",
+      "depends_on": [],
+      "image": "ghcr.io/opus-perpetuus/subject-configuracion:0.2.2",
       "repo": "Opus-Perpetuus/imperium-subject-configuracion",
-      "dir": "modular/subjects/imperium-subject-configuracion",
+      "dir": "workspace/imperium-subject-configuracion",
       "modules": [
         {
           "resource": "attachment-management",
@@ -3369,9 +3373,10 @@
       "menu_ref": "medical-file-menu-root",
       "catalog_id": "SUBJECT-control-hospitalario",
       "technical_id": "subject-control-hospitalario",
-      "image": "ghcr.io/opus-perpetuus/subject-control-hospitalario:0.1.0",
+      "depends_on": [],
+      "image": "ghcr.io/opus-perpetuus/subject-control-hospitalario:0.2.2",
       "repo": "Opus-Perpetuus/imperium-subject-control-hospitalario",
-      "dir": "modular/subjects/imperium-subject-control-hospitalario",
+      "dir": "workspace/imperium-subject-control-hospitalario",
       "modules": [
         {
           "resource": "medical-file",
@@ -4723,9 +4728,10 @@
       "menu_ref": "control-emergencias-menu-root",
       "catalog_id": "SUBJECT-control-emergencias",
       "technical_id": "subject-control-emergencias",
-      "image": "ghcr.io/opus-perpetuus/subject-control-emergencias:0.1.5",
+      "depends_on": [],
+      "image": "ghcr.io/opus-perpetuus/subject-control-emergencias:0.2.2",
       "repo": "Opus-Perpetuus/imperium-subject-control-emergencias",
-      "dir": "modular/subjects/imperium-subject-control-emergencias",
+      "dir": "workspace/imperium-subject-control-emergencias",
       "modules": [
         {
           "resource": "asociaciones",
@@ -5962,7 +5968,7 @@
               "label": "description"
             }
           ]
-        }        ,
+        },
         {
           "resource": "base-volcanica",
           "table": "base_volcanica",
@@ -5973,13 +5979,62 @@
           "menu_ref": "base-volcanica-menu-management-0",
           "icon": "fa-fire",
           "columns": [
-            {"name": "name", "mongo": "name", "pg": "text", "crud": "string", "component": "input-text", "label": "name"},
-            {"name": "categoria", "mongo": "categoria", "pg": "text", "crud": "string", "component": "input-menu", "label": "categoria"},
-            {"name": "municipio", "mongo": "municipio", "pg": "text", "crud": "string", "component": "input-text", "label": "municipio"},
-            {"name": "estado_volcan", "mongo": "estado_volcan", "pg": "text", "crud": "string", "component": "input-menu", "label": "estado volcan"},
-            {"name": "altura_msnm", "mongo": "altura_msnm", "pg": "real", "crud": "number", "component": "input-number", "label": "altura msnm"},
-            {"name": "ultima_erupcion", "mongo": "ultima_erupcion", "pg": "text", "crud": "string", "component": "input-date", "label": "ultima erupcion"},
-            {"name": "nivel_alerta", "mongo": "nivel_alerta", "pg": "text", "crud": "string", "component": "input-text", "label": "nivel alerta"}
+            {
+              "name": "name",
+              "mongo": "name",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "name"
+            },
+            {
+              "name": "categoria",
+              "mongo": "categoria",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-menu",
+              "label": "categoria"
+            },
+            {
+              "name": "municipio",
+              "mongo": "municipio",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "municipio"
+            },
+            {
+              "name": "estado_volcan",
+              "mongo": "estado_volcan",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-menu",
+              "label": "estado volcan"
+            },
+            {
+              "name": "altura_msnm",
+              "mongo": "altura_msnm",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "altura msnm"
+            },
+            {
+              "name": "ultima_erupcion",
+              "mongo": "ultima_erupcion",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-date",
+              "label": "ultima erupcion"
+            },
+            {
+              "name": "nivel_alerta",
+              "mongo": "nivel_alerta",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "nivel alerta"
+            }
           ]
         },
         {
@@ -5992,8 +6047,22 @@
           "menu_ref": "categoria-base-volcanica-menu-management-0",
           "icon": "fa-tags",
           "columns": [
-            {"name": "name", "mongo": "name", "pg": "text", "crud": "string", "component": "input-text", "label": "name"},
-            {"name": "description", "mongo": "description", "pg": "text", "crud": "string", "component": "input-text", "label": "description"}
+            {
+              "name": "name",
+              "mongo": "name",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "name"
+            },
+            {
+              "name": "description",
+              "mongo": "description",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "description"
+            }
           ]
         }
       ]
@@ -6006,9 +6075,10 @@
       "menu_ref": "control-escolar-menu-root",
       "catalog_id": "SUBJECT-control-escolar",
       "technical_id": "subject-control-escolar",
-      "image": "ghcr.io/opus-perpetuus/subject-control-escolar:0.1.0",
+      "depends_on": [],
+      "image": "ghcr.io/opus-perpetuus/subject-control-escolar:0.5.1",
       "repo": "Opus-Perpetuus/imperium-subject-control-escolar",
-      "dir": "modular/subjects/imperium-subject-control-escolar",
+      "dir": "workspace/imperium-subject-control-escolar",
       "modules": [
         {
           "resource": "registro-incidencias",
@@ -6498,6 +6568,71 @@
             }
           ]
         }
+      ],
+      "menus": [
+        {
+          "name": "Aula",
+          "menu_ref": "control-escolar-nav-aula",
+          "path": "",
+          "icon": "fa-chalkboard-user",
+          "parent_ref": "control-escolar-menu-root"
+        },
+        {
+          "name": "Mi grupo",
+          "menu_ref": "control-escolar-mi-grupo",
+          "path": "/control-escolar/mi-grupo",
+          "icon": "fa-chalkboard-user",
+          "parent_ref": "control-escolar-nav-aula"
+        },
+        {
+          "name": "Pase de lista",
+          "menu_ref": "control-escolar-pase-de-lista",
+          "path": "/control-escolar/pase-de-lista",
+          "icon": "fa-clipboard-check",
+          "parent_ref": "control-escolar-nav-aula"
+        },
+        {
+          "name": "Registrar incidencias",
+          "menu_ref": "control-escolar-captura-incidencias",
+          "path": "/control-escolar/captura-incidencias",
+          "icon": "fa-flag",
+          "parent_ref": "control-escolar-nav-aula"
+        },
+        {
+          "name": "Reportes y enlaces",
+          "menu_ref": "control-escolar-reportes",
+          "path": "/control-escolar/reportes",
+          "icon": "fa-share-nodes",
+          "parent_ref": "control-escolar-nav-aula"
+        },
+        {
+          "name": "Periodos del ciclo",
+          "menu_ref": "control-escolar-periodos-examen",
+          "path": "/periodos-examen",
+          "icon": "fa-calendar-week",
+          "parent_ref": "control-escolar-nav-aula"
+        },
+        {
+          "name": "Tipos de incidencia",
+          "menu_ref": "control-escolar-tipos-incidencia",
+          "path": "/tipos-incidencia",
+          "icon": "fa-tags",
+          "parent_ref": "control-escolar-nav-aula"
+        },
+        {
+          "name": "Exámenes",
+          "menu_ref": "control-escolar-nav-examenes",
+          "path": "",
+          "icon": "fa-file-pen",
+          "parent_ref": "control-escolar-menu-root"
+        },
+        {
+          "name": "Exámenes y calificaciones",
+          "menu_ref": "control-escolar-examenes",
+          "path": "/control-escolar/examenes",
+          "icon": "fa-list-check",
+          "parent_ref": "control-escolar-nav-examenes"
+        }
       ]
     },
     {
@@ -6508,9 +6643,10 @@
       "menu_ref": "control-municipal-menu-root",
       "catalog_id": "SUBJECT-control-municipal",
       "technical_id": "subject-control-municipal",
-      "image": "ghcr.io/opus-perpetuus/subject-control-municipal:0.1.0",
+      "depends_on": [],
+      "image": "ghcr.io/opus-perpetuus/subject-control-municipal:0.2.2",
       "repo": "Opus-Perpetuus/imperium-subject-control-municipal",
-      "dir": "modular/subjects/imperium-subject-control-municipal",
+      "dir": "workspace/imperium-subject-control-municipal",
       "modules": [
         {
           "resource": "agua",
@@ -8084,9 +8220,10 @@
       "menu_ref": "physical-device-menu-management-0",
       "catalog_id": "SUBJECT-dispositivos-fisicos",
       "technical_id": "subject-dispositivos-fisicos",
-      "image": "ghcr.io/opus-perpetuus/subject-dispositivos-fisicos:0.1.0",
+      "depends_on": [],
+      "image": "ghcr.io/opus-perpetuus/subject-dispositivos-fisicos:0.2.2",
       "repo": "Opus-Perpetuus/imperium-subject-dispositivos-fisicos",
-      "dir": "modular/subjects/imperium-subject-dispositivos-fisicos",
+      "dir": "workspace/imperium-subject-dispositivos-fisicos",
       "modules": [
         {
           "resource": "physical-device",
@@ -8277,9 +8414,10 @@
       "menu_ref": "cfdi-menu-management-0",
       "catalog_id": "SUBJECT-facturacion-electronica",
       "technical_id": "subject-facturacion-electronica",
-      "image": "ghcr.io/opus-perpetuus/subject-facturacion-electronica:0.1.0",
+      "depends_on": [],
+      "image": "ghcr.io/opus-perpetuus/subject-facturacion-electronica:0.2.2",
       "repo": "Opus-Perpetuus/imperium-subject-facturacion-electronica",
-      "dir": "modular/subjects/imperium-subject-facturacion-electronica",
+      "dir": "workspace/imperium-subject-facturacion-electronica",
       "modules": [
         {
           "resource": "cfdi",
@@ -8601,9 +8739,14 @@
       "menu_ref": "logistics_menu_root",
       "catalog_id": "SUBJECT-logistica",
       "technical_id": "subject-logistica",
-      "image": "ghcr.io/opus-perpetuus/subject-logistica:0.1.0",
+      "depends_on": [
+        "subject-ventas",
+        "subject-almacen",
+        "subject-vehiculos"
+      ],
+      "image": "ghcr.io/opus-perpetuus/subject-logistica:0.3.1",
       "repo": "Opus-Perpetuus/imperium-subject-logistica",
-      "dir": "modular/subjects/imperium-subject-logistica",
+      "dir": "workspace/imperium-subject-logistica",
       "modules": [
         {
           "resource": "delivery-return",
@@ -10648,9 +10791,13 @@
       "menu_ref": "pos_menu_root",
       "catalog_id": "SUBJECT-pos",
       "technical_id": "subject-pos",
-      "image": "ghcr.io/opus-perpetuus/subject-pos:0.1.0",
+      "depends_on": [
+        "subject-almacen",
+        "subject-rh"
+      ],
+      "image": "ghcr.io/opus-perpetuus/subject-pos:0.3.1",
       "repo": "Opus-Perpetuus/imperium-subject-pos",
-      "dir": "modular/subjects/imperium-subject-pos",
+      "dir": "workspace/imperium-subject-pos",
       "modules": [
         {
           "resource": "pos-session",
@@ -11179,9 +11326,10 @@
       "menu_ref": "payments-menu-management-0",
       "catalog_id": "SUBJECT-pagos",
       "technical_id": "subject-pagos",
-      "image": "ghcr.io/opus-perpetuus/subject-pagos:0.1.0",
+      "depends_on": [],
+      "image": "ghcr.io/opus-perpetuus/subject-pagos:0.2.2",
       "repo": "Opus-Perpetuus/imperium-subject-pagos",
-      "dir": "modular/subjects/imperium-subject-pagos",
+      "dir": "workspace/imperium-subject-pagos",
       "modules": [
         {
           "resource": "payments",
@@ -11292,9 +11440,10 @@
       "menu_ref": "employee_menu_root",
       "catalog_id": "SUBJECT-rh",
       "technical_id": "subject-rh",
-      "image": "ghcr.io/opus-perpetuus/subject-rh:0.1.0",
+      "depends_on": [],
+      "image": "ghcr.io/opus-perpetuus/subject-rh:0.2.2",
       "repo": "Opus-Perpetuus/imperium-subject-rh",
-      "dir": "modular/subjects/imperium-subject-rh",
+      "dir": "workspace/imperium-subject-rh",
       "modules": [
         {
           "resource": "departments",
@@ -12164,9 +12313,10 @@
       "menu_ref": "reporting-menu-root",
       "catalog_id": "SUBJECT-reportes",
       "technical_id": "subject-reportes",
-      "image": "ghcr.io/opus-perpetuus/subject-reportes:0.1.0",
+      "depends_on": [],
+      "image": "ghcr.io/opus-perpetuus/subject-reportes:0.3.4",
       "repo": "Opus-Perpetuus/imperium-subject-reportes",
-      "dir": "modular/subjects/imperium-subject-reportes",
+      "dir": "workspace/imperium-subject-reportes",
       "modules": [
         {
           "resource": "reports",
@@ -12362,9 +12512,10 @@
       "menu_ref": "planeacion-menu-root",
       "catalog_id": "SUBJECT-planeacion",
       "technical_id": "subject-planeacion",
-      "image": "ghcr.io/opus-perpetuus/subject-planeacion:0.1.0",
+      "depends_on": [],
+      "image": "ghcr.io/opus-perpetuus/subject-planeacion:0.2.2",
       "repo": "Opus-Perpetuus/imperium-subject-planeacion",
-      "dir": "modular/subjects/imperium-subject-planeacion",
+      "dir": "workspace/imperium-subject-planeacion",
       "modules": [
         {
           "resource": "tickets",
@@ -12546,9 +12697,10 @@
       "menu_ref": "dynamic-dashboard-menu-management-0",
       "catalog_id": "SUBJECT-tableros-dinamicos",
       "technical_id": "subject-tableros-dinamicos",
-      "image": "ghcr.io/opus-perpetuus/subject-tableros-dinamicos:0.1.0",
+      "depends_on": [],
+      "image": "ghcr.io/opus-perpetuus/subject-tableros-dinamicos:0.2.2",
       "repo": "Opus-Perpetuus/imperium-subject-tableros-dinamicos",
-      "dir": "modular/subjects/imperium-subject-tableros-dinamicos",
+      "dir": "workspace/imperium-subject-tableros-dinamicos",
       "modules": [
         {
           "resource": "dynamic-dashboard",
@@ -12763,9 +12915,10 @@
       "menu_ref": "ticketing-system-root-menu",
       "catalog_id": "SUBJECT-turnos",
       "technical_id": "subject-turnos",
-      "image": "ghcr.io/opus-perpetuus/subject-turnos:0.1.0",
+      "depends_on": [],
+      "image": "ghcr.io/opus-perpetuus/subject-turnos:0.2.2",
       "repo": "Opus-Perpetuus/imperium-subject-turnos",
-      "dir": "modular/subjects/imperium-subject-turnos",
+      "dir": "workspace/imperium-subject-turnos",
       "modules": [
         {
           "resource": "ticketing-system-turn",
@@ -13057,9 +13210,10 @@
       "menu_ref": "vehicle-menu-management-0",
       "catalog_id": "SUBJECT-vehiculos",
       "technical_id": "subject-vehiculos",
-      "image": "ghcr.io/opus-perpetuus/subject-vehiculos:0.1.0",
+      "depends_on": [],
+      "image": "ghcr.io/opus-perpetuus/subject-vehiculos:0.2.2",
       "repo": "Opus-Perpetuus/imperium-subject-vehiculos",
-      "dir": "modular/subjects/imperium-subject-vehiculos",
+      "dir": "workspace/imperium-subject-vehiculos",
       "modules": [
         {
           "resource": "vehicle",
@@ -13178,9 +13332,12 @@
       "menu_ref": "pedidos_menu_root",
       "catalog_id": "SUBJECT-ventas",
       "technical_id": "subject-ventas",
-      "image": "ghcr.io/opus-perpetuus/subject-ventas:0.1.1",
+      "depends_on": [
+        "subject-almacen"
+      ],
+      "image": "ghcr.io/opus-perpetuus/subject-ventas:0.3.1",
       "repo": "Opus-Perpetuus/imperium-subject-ventas",
-      "dir": "modular/subjects/imperium-subject-ventas",
+      "dir": "workspace/imperium-subject-ventas",
       "modules": [
         {
           "resource": "purchase-order",
@@ -14558,9 +14715,10 @@
       "menu_ref": "tienda-menu-root",
       "catalog_id": "SUBJECT-tienda",
       "technical_id": "subject-tienda",
-      "image": "ghcr.io/opus-perpetuus/subject-tienda:0.4.4",
+      "depends_on": [],
+      "image": "ghcr.io/opus-perpetuus/subject-tienda:0.10.3",
       "repo": "Opus-Perpetuus/imperium-subject-tienda",
-      "dir": "modular/subjects/imperium-subject-tienda",
+      "dir": "workspace/imperium-subject-tienda",
       "modules": [
         {
           "resource": "providers",
@@ -14890,6 +15048,311 @@
           "path": "/store-payment-methods",
           "icon": "fa-credit-card",
           "parent_ref": "tienda-nav-store"
+        }
+      ]
+    },
+    {
+      "slug": "database-manager",
+      "name": "Gestor de base de datos",
+      "path": "/database-manager/health",
+      "kind": "module",
+      "menu_ref": "database-manager-menu-root",
+      "catalog_id": "SUBJECT-database-manager",
+      "technical_id": "subject-database-manager",
+      "depends_on": [],
+      "image": "ghcr.io/opus-perpetuus/subject-database-manager:0.3.2",
+      "repo": "Opus-Perpetuus/imperium-subject-database-manager",
+      "dir": "workspace/imperium-subject-database-manager",
+      "modules": [
+        {
+          "resource": "destinations",
+          "table": "destinations",
+          "name": "Destinos de respaldo",
+          "path": "/dbm-destinations",
+          "collection": "destinations",
+          "model_file": "subjects/database-manager/destinations",
+          "menu_ref": "database-manager-destinations",
+          "icon": "fa-cloud-arrow-up",
+          "columns": [
+            {
+              "name": "kind",
+              "mongo": "kind",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "tipo"
+            },
+            {
+              "name": "is_active",
+              "mongo": "is_active",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
+              "label": "activo"
+            },
+            {
+              "name": "folder_path",
+              "mongo": "folder_path",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "carpeta"
+            },
+            {
+              "name": "last_check_ok",
+              "mongo": "last_check_ok",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
+              "label": "última prueba ok"
+            },
+            {
+              "name": "last_check_at",
+              "mongo": "last_check_at",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "última prueba"
+            }
+          ]
+        },
+        {
+          "resource": "policies",
+          "table": "policies",
+          "name": "Programación de respaldos",
+          "path": "/dbm-policies",
+          "collection": "policies",
+          "model_file": "subjects/database-manager/policies",
+          "menu_ref": "database-manager-policies",
+          "icon": "fa-calendar-check",
+          "columns": [
+            {
+              "name": "is_active",
+              "mongo": "is_active",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
+              "label": "activa"
+            },
+            {
+              "name": "frequency",
+              "mongo": "frequency",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "frecuencia"
+            },
+            {
+              "name": "hour",
+              "mongo": "hour",
+              "pg": "integer",
+              "crud": "number",
+              "component": "input-number",
+              "label": "hora"
+            },
+            {
+              "name": "minute",
+              "mongo": "minute",
+              "pg": "integer",
+              "crud": "number",
+              "component": "input-number",
+              "label": "minuto"
+            },
+            {
+              "name": "keep_count",
+              "mongo": "keep_count",
+              "pg": "integer",
+              "crud": "number",
+              "component": "input-number",
+              "label": "cuántos conservar"
+            },
+            {
+              "name": "include_attachments",
+              "mongo": "include_attachments",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
+              "label": "con adjuntos"
+            },
+            {
+              "name": "upload_automatically",
+              "mongo": "upload_automatically",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
+              "label": "subir sola"
+            },
+            {
+              "name": "next_run_at",
+              "mongo": "next_run_at",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "siguiente"
+            }
+          ]
+        },
+        {
+          "resource": "runs",
+          "table": "runs",
+          "name": "Historial de respaldos",
+          "path": "/dbm-runs",
+          "collection": "runs",
+          "model_file": "subjects/database-manager/runs",
+          "menu_ref": "database-manager-runs",
+          "icon": "fa-clock-rotate-left",
+          "columns": [
+            {
+              "name": "status",
+              "mongo": "status",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "estado"
+            },
+            {
+              "name": "trigger",
+              "mongo": "trigger",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "origen"
+            },
+            {
+              "name": "scheduled_for",
+              "mongo": "scheduled_for",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "programado para"
+            },
+            {
+              "name": "started_at",
+              "mongo": "started_at",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "inicio"
+            },
+            {
+              "name": "ended_at",
+              "mongo": "ended_at",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "fin"
+            },
+            {
+              "name": "backup_id",
+              "mongo": "backup_id",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "respaldo"
+            },
+            {
+              "name": "message",
+              "mongo": "message",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "detalle"
+            }
+          ]
+        },
+        {
+          "resource": "saved-queries",
+          "table": "saved_queries",
+          "name": "Consultas guardadas",
+          "path": "/dbm-saved-queries",
+          "collection": "saved_queries",
+          "model_file": "subjects/database-manager/saved-queries",
+          "menu_ref": "database-manager-saved-queries",
+          "icon": "fa-bookmark",
+          "columns": [
+            {
+              "name": "description",
+              "mongo": "description",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "descripción"
+            },
+            {
+              "name": "statement",
+              "mongo": "statement",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-textarea",
+              "label": "sentencia"
+            },
+            {
+              "name": "mode",
+              "mongo": "mode",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "modo"
+            }
+          ]
+        }
+      ],
+      "menus": [
+        {
+          "name": "Consola SQL",
+          "menu_ref": "database-manager-console",
+          "path": "/database-manager/console",
+          "icon": "fa-terminal",
+          "parent_ref": "database-manager-menu-root"
+        },
+        {
+          "name": "Salud y mantenimiento",
+          "menu_ref": "database-manager-health",
+          "path": "/database-manager/health",
+          "icon": "fa-heart-pulse",
+          "parent_ref": "database-manager-menu-root"
+        },
+        {
+          "name": "Respaldos",
+          "menu_ref": "database-manager-backups",
+          "path": "/database-manager/backups",
+          "icon": "fa-box-archive",
+          "parent_ref": "database-manager-menu-root"
+        },
+        {
+          "name": "Programación",
+          "menu_ref": "database-manager-policies",
+          "path": "/dbm-policies",
+          "icon": "fa-calendar-check",
+          "parent_ref": "database-manager-menu-root"
+        },
+        {
+          "name": "Destinos",
+          "menu_ref": "database-manager-destinations",
+          "path": "/dbm-destinations",
+          "icon": "fa-cloud-arrow-up",
+          "parent_ref": "database-manager-menu-root"
+        },
+        {
+          "name": "Historial",
+          "menu_ref": "database-manager-runs",
+          "path": "/dbm-runs",
+          "icon": "fa-clock-rotate-left",
+          "parent_ref": "database-manager-menu-root"
+        },
+        {
+          "name": "Consultas guardadas",
+          "menu_ref": "database-manager-saved-queries",
+          "path": "/dbm-saved-queries",
+          "icon": "fa-bookmark",
+          "parent_ref": "database-manager-menu-root"
+        },
+        {
+          "name": "Bitácora",
+          "menu_ref": "database-manager-audit",
+          "path": "/database-manager/audit",
+          "icon": "fa-clipboard-list",
+          "parent_ref": "database-manager-menu-root"
         }
       ]
     }
