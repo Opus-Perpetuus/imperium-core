@@ -2,7 +2,7 @@
   "unit": "subject",
   "unit_es": "app",
   "kit": "@opus-perpetuus/imperium-core-kit",
-  "core": "ghcr.io/opus-perpetuus/imperium-core:13.54.4",
+  "core": "ghcr.io/opus-perpetuus/imperium-core:13.54.5",
   "forked_from": "@opus-perpetuus/kirel-nox-kit@0.5.18",
   "count": 21,
   "subjects": [
