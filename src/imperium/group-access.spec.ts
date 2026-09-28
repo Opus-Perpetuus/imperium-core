@@ -3,6 +3,7 @@ import {
 	access_has_full_admin_scope,
 	can_manage_user_groups,
 	collect_group_menu_ids,
+	drop_menus_of_disabled_modules,
 	filter_menus_for_access,
 	keep_reshaped_menus_for_access,
 } from './group-access.ts';
@@ -94,5 +95,19 @@ describe('group-access menus and admin scope', () => {
 			'leaf-contrato',
 			'root-cm',
 		]);
+	});
+
+	test('un módulo deshabilitado no esconde los menús de una app instalada', () => {
+		const rows = [
+			{ _id: 'menu-grupo', model: 'Grupo' },
+			{ _id: 'menu-tickets', model: 'Tickets' },
+			{ _id: 'folder', model: '' },
+		];
+		const shown = drop_menus_of_disabled_modules(
+			rows,
+			new Set(['Grupo', 'Tickets']),
+			(model) => model === 'Grupo',
+		);
+		expect(shown.map((row) => row._id)).toEqual(['menu-grupo', 'folder']);
 	});
 });

@@ -100,6 +100,24 @@ export function filter_menus_for_access<
 }
 
 /**
+ * Quita los menús cuyo modelo está deshabilitado en Módulos. Un modelo de una
+ * app instalada no cuenta: en v13 lo que manda es la instalación, y las filas de
+ * Módulos de esas apps llegan deshabilitadas (alta por defecto o migración de
+ * Mongo), así que el filtro escondía todos sus menús —y con ellos los grants de
+ * la app— a cualquiera que no fuera admin.
+ */
+export function drop_menus_of_disabled_modules<T extends { model?: unknown }>(
+	rows: T[],
+	disabled_models: Set<string>,
+	is_app_model: (model: string) => boolean,
+): T[] {
+	return rows.filter((row) => {
+		const model = String(row.model ?? '');
+		return !model || !disabled_models.has(model) || is_app_model(model);
+	});
+}
+
+/**
  * `reshape_subject_menus` materializa apps instaladas del catálogo.
  * Tras el ACL, solo quedan las filas permitidas y las carpetas padre
  * que las agrupan — no las raíces sintéticas del resto de subjects.

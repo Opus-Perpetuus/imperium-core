@@ -49,9 +49,11 @@ import { report_archived_login_attempt } from './archived-login-alert.ts';
 import {
 	access_has_full_admin_scope,
 	collect_group_menu_ids,
+	drop_menus_of_disabled_modules,
 	filter_menus_for_access,
 	keep_reshaped_menus_for_access,
 } from './group-access.ts';
+import { is_base_subject_slug } from './subject-runtime.ts';
 
 const COOKIE = 'connect.sid';
 const SECRET = process.env.SESSION_SECRET ?? 'imperium-modular-dev-session';
@@ -1160,9 +1162,9 @@ export async function build_menus(
 				.filter((m) => m.is_enable === false || m.is_enable === 'false')
 				.map((m) => String(m.model_id ?? m._id)),
 		);
-		filtered = filtered.filter((m) => {
-			const model = String(m.model ?? '');
-			return !model || !disabled.has(model);
+		filtered = drop_menus_of_disabled_modules(filtered, disabled, (model) => {
+			const resource = store.resource_for_model(model);
+			return !!resource && !is_base_subject_slug(store.loc(resource).slug);
 		});
 	}
 	return keep_reshaped_menus_for_access(

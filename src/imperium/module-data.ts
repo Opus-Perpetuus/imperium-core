@@ -809,3 +809,55 @@ export async function recreate_indexes(ctx: ModuleCtx) {
 	if (!saw_module) throw new Error('No hay módulos para recrear índices.');
 	return ok([], 'Índices de búsqueda recreados exitosamente para todos los modelos.');
 }
+
+type DefaultSeedStep = { module: string; run: () => Promise<number> };
+
+/** Corre cada paso aislado: uno que falla queda en `errors` y el resto sigue. */
+export async function run_default_seed_steps(steps: DefaultSeedStep[]) {
+	let documents_created = 0;
+	const errors: { module: string; message: string }[] = [];
+	for (const step of steps) {
+		try {
+			documents_created += await step.run();
+		} catch (err) {
+			errors.push({
+				module: step.module,
+				message: err instanceof Error ? err.message : String(err),
+			});
+		}
+	}
+	const base = documents_created
+		? `Se crearon ${documents_created} documento(s) por defecto.`
+		: 'No faltaba ningún documento por defecto.';
+	const message = errors.length ? `${base} ${errors.length} módulo(s) con error.` : base;
+	return ok([{ modules_reviewed: steps.length, documents_created, errors }], message);
+}
+
+/**
+ * "Sembrar opciones por defecto" de Módulos: crea lo que falte sin pisar nada.
+ * En v13 eso son los parámetros de configuración y los menús y permisos de las
+ * apps instaladas —los mismos sembradores idempotentes del arranque—, no los
+ * `module.data` del árbol Express.
+ */
+export async function seed_default_data(ctx: ModuleCtx) {
+	const { apply_missing_configuration_seeds } = await import('./configuration-seed-sync.ts');
+	const { ensure_installed_subject_menus } = await import('./subject-menu-seed.ts');
+	const { disabled_subject_slugs } = await import('./subjects-admin.ts');
+	return run_default_seed_steps([
+		{
+			module: 'Configuración',
+			run: async () => (await apply_missing_configuration_seeds(ctx.store)).created.length,
+		},
+		{
+			module: 'Menús de apps',
+			run: async () => {
+				const disabled = await disabled_subject_slugs(ctx.store, ctx.sql);
+				const created = await ensure_installed_subject_menus(
+					ctx.store,
+					ctx.store.subjects.filter((sub) => !disabled.has(sub.slug)),
+				);
+				return created.menus.length + created.rights.length;
+			},
+		},
+	]);
+}

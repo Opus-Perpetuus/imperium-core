@@ -101,6 +101,7 @@ import {
 	generate_mock_data,
 	install_module_data,
 	migrate_legacy_modules,
+	seed_default_data,
 	recreate_indexes,
 } from './module-data.ts';
 import { is_upload, persist_upload_as_attachment } from './uploads.ts';
@@ -489,6 +490,8 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return delete_mock_data(ctx);
 		case 'module-management:migrate_legacy_modules':
 			return migrate_legacy_modules(ctx);
+		case 'module-management:seed_default_data':
+			return seed_default_data(ctx);
 		case 'payroll-period:generate_drafts':
 			return payroll_drafts(ctx);
 		case 'payroll-receipt:prepare_stamp':

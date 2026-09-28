@@ -564,6 +564,12 @@
     "action": "migrate_legacy_modules"
   },
   {
+    "resource": "module-management",
+    "method": "post",
+    "path": "/seed-default-data",
+    "action": "seed_default_data"
+  },
+  {
     "resource": "payroll-period",
     "method": "post",
     "path": "/:id/generate-drafts",
