@@ -5,6 +5,7 @@
  * Empaque pre-surtido: aparta existencia y la descuenta al confirmar entrega.
  */
 import { as_array, as_object, type ImperiumDoc } from './envelope.ts';
+import { consume_exit_quants } from './inventory-exit.ts';
 import type { ImperiumStore } from './store.ts';
 
 const WAREHOUSE_REF = 'inventory-internal-location-warehouse';
@@ -261,6 +262,7 @@ export async function register_package_delivery_exit(
 			existencia: stock_total_resultante,
 			existenciaApartada: stock_apartado_resultante,
 		});
+		await consume_exit_quants(store, product, quantity);
 		await insert_movement(store, {
 			producto: product_id,
 			producto_id: product_id,

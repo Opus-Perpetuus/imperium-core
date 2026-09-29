@@ -24,7 +24,8 @@
       "articulos.product": "Products"
     },
     "user": {
-      "employee": "Employee"
+      "employee": "Employee",
+      "listaDePrecios": "ListaDePrecios"
     },
     "vehicle": {
       "chofer": "Employee"
@@ -186,6 +187,15 @@
     },
     "purchase-order": {
       "recepcion_pendiente": "InventoryReception",
+      "proveedor": "Contacto"
+    },
+    "supplier-invoice": {
+      "purchase_order": "PurchaseOrder",
+      "proveedor": "Contacto"
+    },
+    "supplier-payment": {
+      "supplier_invoice": "SupplierInvoice",
+      "purchase_order": "PurchaseOrder",
       "proveedor": "Contacto"
     },
     "invoice-request": {

@@ -161,7 +161,9 @@ export async function prepare_physical_count_create(
 	for (const quant of await quants_at_location(store, ubicacion_id)) {
 		const pid = ref_id(quant.producto ?? quant.producto_id);
 		if (!pid) continue;
-		const sistema = round_qty(quant.cantidad);
+		const sistema = round_qty(
+			Number(lineas.get(pid)?.cantidad_sistema ?? 0) + Number(quant.cantidad ?? 0),
+		);
 		lineas.set(
 			pid,
 			count_line({

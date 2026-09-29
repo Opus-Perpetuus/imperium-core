@@ -208,61 +208,82 @@ async function register_return_receipt(
 	}
 }
 
+/** Filas de existencia del producto en la ubicación (por id o por código), más viejas primero. */
+async function quants_for_pair(
+	store: ImperiumStore,
+	producto: string,
+	ubicacion: string,
+	ubicacion_codigo?: string,
+): Promise<ImperiumDoc[]> {
+	if (!store.has('inventory-stock-quant') || !producto) return [];
+	const codigo = String(ubicacion_codigo ?? '').trim().toUpperCase();
+	for (const where of [
+		ubicacion ? { producto, ubicacion } : null,
+		codigo ? { producto, ubicacion_codigo: codigo } : null,
+	]) {
+		if (!where) continue;
+		const { rows } = await store.find_many('inventory-stock-quant', {
+			where,
+			take: 500,
+			sort: 'id:asc',
+			include_inactive: true,
+			populate: false,
+		});
+		if (rows.length) return rows;
+	}
+	return [];
+}
+
+/** Fila del lote `lote` en la ubicación; sin lote = la existencia que no tiene lote. */
 export async function find_quant_for_pair(
 	store: ImperiumStore,
 	producto: string,
 	ubicacion: string,
 	ubicacion_codigo?: string,
+	lote = '',
 ): Promise<ImperiumDoc | null> {
-	if (!store.has('inventory-stock-quant') || !producto) return null;
-	const codigo = String(ubicacion_codigo ?? '').trim().toUpperCase();
-	if (ubicacion) {
-		const { rows } = await store.find_many('inventory-stock-quant', {
-			where: { producto, ubicacion },
-			take: 1,
-			sort: 'id:asc',
-			include_inactive: true,
-			populate: false,
-		});
-		if (rows[0]) return rows[0];
-	}
-	if (codigo) {
-		const { rows } = await store.find_many('inventory-stock-quant', {
-			where: { producto, ubicacion_codigo: codigo },
-			take: 1,
-			sort: 'id:asc',
-			include_inactive: true,
-			populate: false,
-		});
-		if (rows[0]) return rows[0];
-	}
-	return null;
+	const rows = await quants_for_pair(store, producto, ubicacion, ubicacion_codigo);
+	return rows.find((row) => text(row.lote) === lote) ?? null;
 }
 
-export async function apply_quant_delta(
+/** Existencia total del producto en la ubicación, sumando todos sus lotes. */
+export async function quant_total_for_pair(
 	store: ImperiumStore,
-	params: {
-		producto: string;
-		producto_nombre: string;
-		producto_codigo: string;
-		ubicacion: string;
-		ubicacion_codigo: string;
-		delta: number;
-	},
+	producto: string,
+	ubicacion: string,
+	ubicacion_codigo?: string,
+): Promise<number> {
+	const rows = await quants_for_pair(store, producto, ubicacion, ubicacion_codigo);
+	return round_qty(rows.reduce((sum, row) => sum + Number(row.cantidad ?? 0), 0));
+}
+
+export type QuantLot = { lote: string; lote_codigo: string; fecha_caducidad: string };
+
+type QuantDeltaParams = {
+	producto: string;
+	producto_nombre: string;
+	producto_codigo: string;
+	ubicacion: string;
+	ubicacion_codigo: string;
+	delta: number;
+	lote?: string;
+	lote_codigo?: string;
+	fecha_caducidad?: string;
+};
+
+async function apply_quant_row_delta(
+	store: ImperiumStore,
+	params: QuantDeltaParams,
+	current: ImperiumDoc | null,
+	lot: QuantLot,
+	delta: number,
 ) {
-	if (!store.has('inventory-stock-quant')) return;
-	const current = await find_quant_for_pair(
-		store,
-		params.producto,
-		params.ubicacion,
-		params.ubicacion_codigo,
-	);
-	const cantidad = round_qty(Number(current?.cantidad ?? 0) + params.delta);
+	const cantidad = round_qty(Number(current?.cantidad ?? 0) + delta);
 	const apartada = round_qty(Number(current?.cantidad_apartada ?? 0));
 	const disponible = round_qty(cantidad - apartada);
-	const name = `${params.producto_codigo || params.producto_nombre} @ ${params.ubicacion_codigo}`;
-	const patch = {
-		name,
+	const base = `${params.producto_codigo || params.producto_nombre} @ ${params.ubicacion_codigo}`;
+	const patch: ImperiumDoc = {
+		name: lot.lote ? `${base} [${lot.lote_codigo || lot.lote}]` : base,
 		producto: params.producto,
 		producto_id: params.producto,
 		producto_nombre: params.producto_nombre,
@@ -275,8 +296,74 @@ export async function apply_quant_delta(
 		cantidad_disponible: disponible,
 		is_active: true,
 	};
+	if (lot.lote) {
+		patch.lote = lot.lote;
+		patch.lote_codigo = lot.lote_codigo;
+		patch.fecha_caducidad = lot.fecha_caducidad;
+	}
 	if (current?._id) await store.update('inventory-stock-quant', String(current._id), patch);
 	else await store.insert('inventory-stock-quant', patch);
+}
+
+/**
+ * Suma o resta existencia del producto en la ubicación y devuelve qué lotes
+ * tocó. Con `lote` (o una entrada) va a la fila de ese lote o a la de sin
+ * lote. Una salida sin lote consume primero lo que no tiene lote y luego los
+ * lotes por fecha de caducidad; lo que falte deja negativa la fila sin lote.
+ */
+export async function apply_quant_delta(
+	store: ImperiumStore,
+	params: QuantDeltaParams,
+): Promise<Array<QuantLot & { cantidad: number }>> {
+	if (!store.has('inventory-stock-quant')) return [];
+	const rows = await quants_for_pair(store, params.producto, params.ubicacion, params.ubicacion_codigo);
+	const requested = text(params.lote);
+	if (params.delta >= 0 || requested) {
+		const lot: QuantLot = {
+			lote: requested,
+			lote_codigo: text(params.lote_codigo),
+			fecha_caducidad: text(params.fecha_caducidad),
+		};
+		const current = rows.find((row) => text(row.lote) === requested) ?? null;
+		if (current && requested) {
+			lot.lote_codigo ||= text(current.lote_codigo);
+			lot.fecha_caducidad ||= text(current.fecha_caducidad);
+		}
+		await apply_quant_row_delta(store, params, current, lot, params.delta);
+		return [{ ...lot, cantidad: Math.abs(params.delta) }];
+	}
+	const lot_of = (row: ImperiumDoc): QuantLot => ({
+		lote: text(row.lote),
+		lote_codigo: text(row.lote_codigo),
+		fecha_caducidad: text(row.fecha_caducidad),
+	});
+	const sin_lote = rows.find((row) => !text(row.lote)) ?? null;
+	const con_lote = rows
+		.filter((row) => text(row.lote))
+		.sort(
+			(a, b) =>
+				(text(a.fecha_caducidad) || '9999').localeCompare(text(b.fecha_caducidad) || '9999') ||
+				text(a.lote_codigo).localeCompare(text(b.lote_codigo)),
+		);
+	const portions: Array<QuantLot & { cantidad: number }> = [];
+	let restante = round_qty(-params.delta);
+	for (const row of [...(sin_lote ? [sin_lote] : []), ...con_lote]) {
+		const tomar = round_qty(Math.min(Number(row.cantidad ?? 0), restante));
+		if (tomar <= 0) continue;
+		await apply_quant_row_delta(store, params, row, lot_of(row), -tomar);
+		portions.push({ ...lot_of(row), cantidad: tomar });
+		restante = round_qty(restante - tomar);
+		if (restante <= 0) break;
+	}
+	if (restante > 0) {
+		const fresh = sin_lote
+			? await store.find_id('inventory-stock-quant', String(sin_lote._id))
+			: null;
+		const empty: QuantLot = { lote: '', lote_codigo: '', fecha_caducidad: '' };
+		await apply_quant_row_delta(store, params, fresh, empty, -restante);
+		portions.push({ ...empty, cantidad: restante });
+	}
+	return portions;
 }
 
 export async function recompute_product_existencia(store: ImperiumStore, product_id: string) {

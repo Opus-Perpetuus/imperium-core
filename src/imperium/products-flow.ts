@@ -3,6 +3,7 @@
  * (`existenciaDisponible`, ubicación preferida hoja, costo de inventario).
  */
 import { type ImperiumDoc } from './envelope.ts';
+import { assert_tracking_flags } from './inventory-lot-flow.ts';
 import type { ImperiumStore } from './store.ts';
 
 function ref_id(value: unknown): string {
@@ -31,6 +32,7 @@ export async function prepare_product_write(
 	store: ImperiumStore,
 	incoming: ImperiumDoc,
 ): Promise<ImperiumDoc> {
+	assert_tracking_flags(incoming);
 	const doc = { ...incoming };
 	if (!('ubicacion_preferida' in incoming)) return doc;
 	const raw = incoming.ubicacion_preferida;

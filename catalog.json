@@ -246,6 +246,30 @@
               "crud": "string",
               "component": "input-text",
               "label": "proveedor nombre"
+            },
+            {
+              "name": "maneja_lote",
+              "mongo": "maneja_lote",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
+              "label": "maneja lote"
+            },
+            {
+              "name": "maneja_serial",
+              "mongo": "maneja_serial",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
+              "label": "maneja serial"
+            },
+            {
+              "name": "tiene_caducidad",
+              "mongo": "tiene_caducidad",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
+              "label": "tiene caducidad"
             }
           ]
         },
@@ -338,6 +362,30 @@
               "crud": "string",
               "component": "input-text",
               "label": "ubicacion"
+            },
+            {
+              "name": "lote",
+              "mongo": "lote",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "lote"
+            },
+            {
+              "name": "lote_codigo",
+              "mongo": "lote_codigo",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "lote codigo"
+            },
+            {
+              "name": "fecha_caducidad",
+              "mongo": "fecha_caducidad",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "fecha caducidad"
             }
           ]
         },
@@ -708,6 +756,22 @@
               "crud": "string",
               "component": "input-text",
               "label": "proveedor rfc"
+            },
+            {
+              "name": "lote",
+              "mongo": "lote",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "lote"
+            },
+            {
+              "name": "lote_codigo",
+              "mongo": "lote_codigo",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "lote codigo"
             }
           ]
         },
@@ -1601,6 +1665,129 @@
               "crud": "string",
               "component": "input-text",
               "label": "dedupe key"
+            },
+            {
+              "name": "lote",
+              "mongo": "lote",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "lote"
+            },
+            {
+              "name": "lote_codigo",
+              "mongo": "lote_codigo",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "lote codigo"
+            },
+            {
+              "name": "fecha_caducidad",
+              "mongo": "fecha_caducidad",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "fecha caducidad"
+            }
+          ]
+        },
+        {
+          "resource": "inventory-lot",
+          "table": "inventory_lot",
+          "name": "Lotes y series",
+          "path": "/inventory-lot",
+          "collection": "inventory-lot",
+          "model_file": "",
+          "menu_ref": "inventory-lot-menu-management-0",
+          "columns": [
+            {
+              "name": "producto",
+              "mongo": "producto",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "producto"
+            },
+            {
+              "name": "producto_codigo",
+              "mongo": "producto_codigo",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "producto codigo"
+            },
+            {
+              "name": "producto_nombre",
+              "mongo": "producto_nombre",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "producto nombre"
+            },
+            {
+              "name": "tipo",
+              "mongo": "tipo",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "tipo"
+            },
+            {
+              "name": "fecha_caducidad",
+              "mongo": "fecha_caducidad",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "fecha caducidad"
+            },
+            {
+              "name": "fecha_recepcion",
+              "mongo": "fecha_recepcion",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "fecha recepcion"
+            },
+            {
+              "name": "proveedor",
+              "mongo": "proveedor",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "proveedor"
+            },
+            {
+              "name": "proveedor_nombre",
+              "mongo": "proveedor_nombre",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "proveedor nombre"
+            },
+            {
+              "name": "orden_compra",
+              "mongo": "orden_compra",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "orden compra"
+            },
+            {
+              "name": "recepcion",
+              "mongo": "recepcion",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "recepcion"
+            },
+            {
+              "name": "cantidad_recibida",
+              "mongo": "cantidad_recibida",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "cantidad recibida"
             }
           ]
         }
@@ -1912,6 +2099,14 @@
               "crud": "string",
               "component": "input-text",
               "label": "reset password kind"
+            },
+            {
+              "name": "listaDePrecios",
+              "mongo": "listaDePrecios",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "listaDePrecios"
             }
           ]
         },
@@ -13727,6 +13922,14 @@
               "crud": "json",
               "component": "input-json",
               "label": "facturas proveedor"
+            },
+            {
+              "name": "solicitudes_origen",
+              "mongo": "solicitudes_origen",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "solicitudes origen"
             }
           ]
         },
@@ -14730,6 +14933,439 @@
               "crud": "string",
               "component": "input-text",
               "label": "etiquetas"
+            }
+          ]
+        },
+        {
+          "resource": "purchase-request",
+          "table": "purchase_request",
+          "name": "Solicitudes de compra",
+          "path": "/purchase-request",
+          "collection": "purchase-request",
+          "model_file": "",
+          "menu_ref": "purchase-request-menu-management-0",
+          "columns": [
+            {
+              "name": "folio",
+              "mongo": "folio",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "folio"
+            },
+            {
+              "name": "solicitante",
+              "mongo": "solicitante",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "solicitante"
+            },
+            {
+              "name": "solicitante_nombre",
+              "mongo": "solicitante_nombre",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "solicitante nombre"
+            },
+            {
+              "name": "departamento",
+              "mongo": "departamento",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "departamento"
+            },
+            {
+              "name": "fecha_requerida",
+              "mongo": "fecha_requerida",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "fecha requerida"
+            },
+            {
+              "name": "estado",
+              "mongo": "estado",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "estado"
+            },
+            {
+              "name": "total_estimado",
+              "mongo": "total_estimado",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "total estimado"
+            },
+            {
+              "name": "aprobado_por",
+              "mongo": "aprobado_por",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "aprobado por"
+            },
+            {
+              "name": "aprobado_por_nombre",
+              "mongo": "aprobado_por_nombre",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "aprobado por nombre"
+            },
+            {
+              "name": "fecha_aprobacion",
+              "mongo": "fecha_aprobacion",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "fecha aprobacion"
+            },
+            {
+              "name": "motivo_rechazo",
+              "mongo": "motivo_rechazo",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "motivo rechazo"
+            },
+            {
+              "name": "ordenes_compra",
+              "mongo": "ordenes_compra",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "ordenes compra"
+            },
+            {
+              "name": "articulos",
+              "mongo": "articulos",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "articulos"
+            }
+          ]
+        },
+        {
+          "resource": "supplier-invoice",
+          "table": "supplier_invoice",
+          "name": "Facturas de proveedor",
+          "path": "/supplier-invoice",
+          "collection": "supplier-invoice",
+          "model_file": "",
+          "menu_ref": "supplier-invoice-menu-management-0",
+          "columns": [
+            {
+              "name": "folio",
+              "mongo": "folio",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "folio"
+            },
+            {
+              "name": "purchase_order",
+              "mongo": "purchase_order",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "purchase order"
+            },
+            {
+              "name": "purchase_order_folio",
+              "mongo": "purchase_order_folio",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "purchase order folio"
+            },
+            {
+              "name": "proveedor",
+              "mongo": "proveedor",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "proveedor"
+            },
+            {
+              "name": "proveedor_nombre",
+              "mongo": "proveedor_nombre",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "proveedor nombre"
+            },
+            {
+              "name": "proveedor_rfc",
+              "mongo": "proveedor_rfc",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "proveedor rfc"
+            },
+            {
+              "name": "emisor_rfc",
+              "mongo": "emisor_rfc",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "emisor rfc"
+            },
+            {
+              "name": "numero_factura",
+              "mongo": "numero_factura",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "numero factura"
+            },
+            {
+              "name": "uuid",
+              "mongo": "uuid",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "uuid"
+            },
+            {
+              "name": "fecha_factura",
+              "mongo": "fecha_factura",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "fecha factura"
+            },
+            {
+              "name": "fecha_vencimiento",
+              "mongo": "fecha_vencimiento",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "fecha vencimiento"
+            },
+            {
+              "name": "subtotal",
+              "mongo": "subtotal",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "subtotal"
+            },
+            {
+              "name": "impuestos",
+              "mongo": "impuestos",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "impuestos"
+            },
+            {
+              "name": "total",
+              "mongo": "total",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "total"
+            },
+            {
+              "name": "origen",
+              "mongo": "origen",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "origen"
+            },
+            {
+              "name": "articulos",
+              "mongo": "articulos",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "articulos"
+            },
+            {
+              "name": "estado",
+              "mongo": "estado",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "estado"
+            },
+            {
+              "name": "estado_match",
+              "mongo": "estado_match",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "estado match"
+            },
+            {
+              "name": "match_detalle",
+              "mongo": "match_detalle",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "match detalle"
+            },
+            {
+              "name": "autorizado_por",
+              "mongo": "autorizado_por",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "autorizado por"
+            },
+            {
+              "name": "motivo_autorizacion",
+              "mongo": "motivo_autorizacion",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "motivo autorizacion"
+            },
+            {
+              "name": "estado_pago",
+              "mongo": "estado_pago",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "estado pago"
+            },
+            {
+              "name": "monto_pagado",
+              "mongo": "monto_pagado",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "monto pagado"
+            },
+            {
+              "name": "saldo",
+              "mongo": "saldo",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "saldo"
+            }
+          ]
+        },
+        {
+          "resource": "supplier-payment",
+          "table": "supplier_payment",
+          "name": "Pagos a proveedor",
+          "path": "/supplier-payment",
+          "collection": "supplier-payment",
+          "model_file": "",
+          "menu_ref": "supplier-payment-menu-management-0",
+          "columns": [
+            {
+              "name": "folio",
+              "mongo": "folio",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "folio"
+            },
+            {
+              "name": "supplier_invoice",
+              "mongo": "supplier_invoice",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "supplier invoice"
+            },
+            {
+              "name": "numero_factura",
+              "mongo": "numero_factura",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "numero factura"
+            },
+            {
+              "name": "purchase_order",
+              "mongo": "purchase_order",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "purchase order"
+            },
+            {
+              "name": "proveedor",
+              "mongo": "proveedor",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "proveedor"
+            },
+            {
+              "name": "proveedor_nombre",
+              "mongo": "proveedor_nombre",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "proveedor nombre"
+            },
+            {
+              "name": "fecha_pago",
+              "mongo": "fecha_pago",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "fecha pago"
+            },
+            {
+              "name": "metodo_pago",
+              "mongo": "metodo_pago",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "metodo pago"
+            },
+            {
+              "name": "referencia",
+              "mongo": "referencia",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "referencia"
+            },
+            {
+              "name": "monto",
+              "mongo": "monto",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "monto"
+            },
+            {
+              "name": "status",
+              "mongo": "status",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "status"
+            },
+            {
+              "name": "motivo_cancelacion",
+              "mongo": "motivo_cancelacion",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "motivo cancelacion"
+            },
+            {
+              "name": "notas",
+              "mongo": "notas",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "notas"
             }
           ]
         }

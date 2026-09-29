@@ -37,6 +37,9 @@ function memory_store(seed: Record<string, Row[]>) {
 			if (model === 'CitizenReport') return 'citizen-report';
 			if (model === 'DemoDoc') return 'demo-doc';
 			if (model === 'Departments') return 'departments';
+			if (model === 'ServiciosRealizados') return 'servicios-realizados';
+			if (model === 'RegistroEmergencias') return 'registro-emergencias';
+			if (model === 'RescateAnimal') return 'rescate-animal';
 			return null;
 		},
 		async *scan(resource: string, opts: { where?: Record<string, unknown> } = {}) {
@@ -151,6 +154,71 @@ describe('assign_document_increments', () => {
 		expect(String(second.name)).not.toBe(String(first.name));
 		expect(first.name).toBe(`CR-${first.sequence}`);
 		expect(second.name).toBe(`CR-${second.sequence}`);
+	});
+
+	test('folio automático sin contador en la BD: crea el del esquema original y numera', async () => {
+		const cases = [
+			{ resource: 'servicios-realizados', model: 'ServiciosRealizados', folios: ['SRV-000001', 'SRV-000002'] },
+			{ resource: 'registro-emergencias', model: 'RegistroEmergencias', folios: ['AVISO-00001', 'AVISO-00002'] },
+			{ resource: 'rescate-animal', model: 'RescateAnimal', folios: ['INT-000001', 'INT-000002'] },
+		];
+		for (const { resource, model, folios } of cases) {
+			const store = memory_store({ 'auto-increment-control': [], [resource]: [] });
+			const first = await assign_document_increments(store as never, resource, { name: '' });
+			const second = await assign_document_increments(store as never, resource, {});
+			expect([first.name, second.name]).toEqual(folios);
+			const globals = store.data['auto-increment-control'].filter(
+				(row) => row.model_name === model && row.increment_field === 'name' && row.ref_value == null,
+			);
+			expect(globals.length).toBe(1);
+			expect(globals[0]._unique_string_reference).toBe(
+				`${resource}::${model}::name::${globals[0].index_name}::null`,
+			);
+		}
+	});
+
+	test('un contador global ya existente (aunque esté desactivado) no se duplica', async () => {
+		const configured: Row = {
+			_id: 'srv-propio',
+			model_name: 'ServiciosRealizados',
+			increment_field: 'name',
+			type: 'custom',
+			custom_pattern: 'SERV-[seq;ceros=3]',
+			ref_value: null,
+			is_active: true,
+			current_sequence: 7,
+		};
+		const store = memory_store({
+			'auto-increment-control': [configured],
+			'servicios-realizados': [],
+		});
+		const out = await assign_document_increments(store as never, 'servicios-realizados', { name: '' });
+		expect(out.name).toBe('SERV-008');
+		expect(store.data['auto-increment-control'].length).toBe(1);
+
+		const disabled = memory_store({
+			'auto-increment-control': [{ ...configured, is_active: false }],
+			'servicios-realizados': [],
+		});
+		const untouched = await assign_document_increments(disabled as never, 'servicios-realizados', {
+			name: '',
+		});
+		expect(untouched.name).toBe('');
+		expect(disabled.data['auto-increment-control'].length).toBe(1);
+	});
+
+	test('si otra alta crea el contador a la vez, se reutiliza en vez de fallar', async () => {
+		const store = memory_store({ 'auto-increment-control': [], 'servicios-realizados': [] });
+		const insert = store.insert;
+		store.insert = async (resource: string, doc: Row) => {
+			if (resource === 'auto-increment-control' && doc.ref_value == null) {
+				await insert(resource, { ...doc, _id: 'ganador' });
+			}
+			return insert(resource, doc);
+		};
+		const out = await assign_document_increments(store as never, 'servicios-realizados', { name: '' });
+		expect(out.name).toBe('SRV-000001');
+		expect(store.data['auto-increment-control'].map((row) => row._id)).toEqual(['ganador']);
 	});
 });
 

@@ -190,6 +190,7 @@ const UNIQUE_COMPOSITES: Record<string, string[][]> = {
 	'cfdi-catalog': [['catalog', 'code']],
 	'custom-user-themes': [['user_id', 'theme_name']],
 	'documentation-page': [['slug', 'folder_path']],
+	'inventory-lot': [['producto', 'name']],
 };
 
 /** Unique compuesto solo entre activos. */

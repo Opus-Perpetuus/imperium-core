@@ -7,6 +7,7 @@ import {
 	assert_pedido_create_estado,
 	assert_state_transition_allowed,
 } from './group-access.ts';
+import { consume_exit_quants } from './inventory-exit.ts';
 import { broadcast_event } from './socket-stub.ts';
 import type { ImperiumStore } from './store.ts';
 
@@ -192,6 +193,7 @@ export async function register_order_fulfillment_exit(
 		const stock_apartado_previo = round_qty(Number(product.existenciaApartada ?? 0));
 		const stock_total_resultante = round_qty(stock_total_previo - quantity);
 		await store.update('products', product_id, { existencia: stock_total_resultante });
+		await consume_exit_quants(store, product, quantity);
 		if (!store.has('inventory-movement')) continue;
 		await store.insert('inventory-movement', {
 			name: `Salida ${product.name ?? product_id}`,

@@ -432,7 +432,8 @@
       "template_key": {
         "values": [
           "POS_SALE",
-          "OFFLINE_ORDER"
+          "OFFLINE_ORDER",
+          "DELIVERY_RECEIPT"
         ],
         "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
       }
@@ -736,7 +737,8 @@
         "values": [
           "manual",
           "xml",
-          "reabasto"
+          "reabasto",
+          "solicitud"
         ],
         "message": "El tipo de origen \"{VALUE}\" para la orden de compra no existe"
       }

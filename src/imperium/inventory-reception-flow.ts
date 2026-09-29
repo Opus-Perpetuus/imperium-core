@@ -293,21 +293,35 @@ async function location_by_codigo(store: ImperiumStore, codigo: string) {
 	return null;
 }
 
-async function quant_disponible(store: ImperiumStore, producto: string, ubicacion: string) {
+/** Disponible del producto en la ubicación: de un lote o de todos sus lotes. */
+async function quant_disponible(
+	store: ImperiumStore,
+	producto: string,
+	ubicacion: string,
+	lote?: string,
+) {
 	if (!store.has('inventory-stock-quant')) return 0;
 	const { rows } = await store.find_many('inventory-stock-quant', {
 		where: { producto, ubicacion },
-		take: 1,
+		take: 500,
 		sort: 'id:asc',
 		include_inactive: true,
 		populate: false,
 	});
-	const current = rows[0];
-	if (!current) return 0;
-	if (current.cantidad_disponible != null) return round_qty(Number(current.cantidad_disponible));
-	return round_qty(Number(current.cantidad ?? 0) - Number(current.cantidad_apartada ?? 0));
+	const selected = lote === undefined ? rows : rows.filter((row) => text(row.lote) === lote);
+	return round_qty(
+		selected.reduce((sum, row) => {
+			if (row.cantidad_disponible != null) return sum + Number(row.cantidad_disponible);
+			return sum + Number(row.cantidad ?? 0) - Number(row.cantidad_apartada ?? 0);
+		}, 0),
+	);
 }
 
+/**
+ * Traslado entre ubicaciones. Con `lote` mueve ese lote; sin él toma lo que
+ * no tiene lote y luego los lotes por caducidad, y cada lote llega igual al
+ * destino (un movimiento por lote).
+ */
 export async function register_internal_transfer(
 	store: ImperiumStore,
 	params: {
@@ -315,6 +329,7 @@ export async function register_internal_transfer(
 		ubicacion_origen: string;
 		ubicacion_destino: string;
 		cantidad: number;
+		lote?: string;
 	},
 ): Promise<void> {
 	const cantidad = round_qty(params.cantidad);
@@ -334,21 +349,47 @@ export async function register_internal_transfer(
 	}
 	const product = await store.find_id('products', producto_id);
 	if (!product) throw new Error('No se encontró el producto indicado');
-	const disponible = await quant_disponible(store, producto_id, String(origen._id));
+	const lote = text(params.lote) || undefined;
+	const disponible = await quant_disponible(store, producto_id, String(origen._id), lote);
 	if (cantidad > disponible) {
 		throw new Error(
 			`No hay existencia disponible suficiente en ${text(origen.codigo)} (disponible ${disponible})`,
 		);
 	}
+	const base = {
+		producto: producto_id,
+		producto_nombre: text(product.name),
+		producto_codigo: text(product.codigo),
+	};
+	const portions = await apply_quant_delta(store, {
+		...base,
+		ubicacion: String(origen._id),
+		ubicacion_codigo: text(origen.codigo),
+		delta: -cantidad,
+		lote,
+	});
 	const stock_total = round_qty(Number(product.existencia ?? 0));
 	const stock_apartado = round_qty(Number(product.existenciaApartada ?? 0));
-	if (store.has('inventory-movement')) {
+	for (const portion of portions) {
+		const lote_fields = portion.lote
+			? {
+					lote: portion.lote,
+					lote_codigo: portion.lote_codigo,
+					fecha_caducidad: portion.fecha_caducidad,
+				}
+			: {};
+		await apply_quant_delta(store, {
+			...base,
+			ubicacion: String(destino._id),
+			ubicacion_codigo: text(destino.codigo),
+			delta: portion.cantidad,
+			...lote_fields,
+		});
+		if (!store.has('inventory-movement')) continue;
 		await store.insert('inventory-movement', {
 			name: `Traslado ${text(product.name)}`,
-			producto: producto_id,
+			...base,
 			producto_id,
-			producto_nombre: text(product.name),
-			producto_codigo: text(product.codigo),
 			tipo_movimiento: 'transferencia_interna',
 			ubicacion_origen: String(origen._id),
 			ubicacion_origen_id: String(origen._id),
@@ -358,31 +399,16 @@ export async function register_internal_transfer(
 			ubicacion_destino_nombre: text(destino.name),
 			documento_tipo: 'traslado',
 			description: `Traslado interno ${text(origen.codigo)} → ${text(destino.codigo)}`,
-			cantidad,
+			cantidad: portion.cantidad,
 			stock_total_previo: stock_total,
 			stock_total_resultante: stock_total,
 			stock_apartado_previo: stock_apartado,
 			stock_apartado_resultante: stock_apartado,
 			stock_disponible_resultante: round_qty(stock_total - stock_apartado),
 			fecha_movimiento: new Date().toISOString(),
+			...lote_fields,
 		});
 	}
-	await apply_quant_delta(store, {
-		producto: producto_id,
-		producto_nombre: text(product.name),
-		producto_codigo: text(product.codigo),
-		ubicacion: String(origen._id),
-		ubicacion_codigo: text(origen.codigo),
-		delta: -cantidad,
-	});
-	await apply_quant_delta(store, {
-		producto: producto_id,
-		producto_nombre: text(product.name),
-		producto_codigo: text(product.codigo),
-		ubicacion: String(destino._id),
-		ubicacion_codigo: text(destino.codigo),
-		delta: cantidad,
-	});
 	await recompute_product_existencia(store, producto_id);
 }
 

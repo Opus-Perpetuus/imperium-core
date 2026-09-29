@@ -122,6 +122,14 @@ const PLANNING = [
 	v('cancelado', 'black', 'Cancelado'),
 ];
 
+/** Estado calculado de existencias (despensa solidaria, inventario sanitario). */
+const STOCK_STATES = [
+	v('ok', 'success', 'OK', { icon: 'fas fa-check' }),
+	v('stock_bajo', 'warning', 'Stock bajo', { icon: 'fas fa-triangle-exclamation' }),
+	v('por_caducar', 'danger', 'Por caducar', { icon: 'fas fa-clock' }),
+	v('caducado', 'danger', 'Caducado', { icon: 'fas fa-ban' }),
+];
+
 const RAW_DEFAULTS: Record<
 	string,
 	Array<{ field_name: string; enabled: boolean; read_only?: boolean; values: RawValue[] }>
@@ -250,6 +258,67 @@ const RAW_DEFAULTS: Record<
 			v('transito', 'warning', 'Tránsito'),
 			v('cliente', 'primary', 'Cliente'),
 			v('ajuste', 'danger', 'Ajuste'),
+		]),
+	],
+	'registro-emergencias': [
+		field('prioridad', [
+			v('alta', 'danger', 'Alta', { icon: 'fas fa-triangle-exclamation' }),
+			v('media', 'warning', 'Media', { icon: 'fas fa-circle-exclamation' }),
+			v('baja', 'success', 'Baja', { icon: 'fas fa-circle-check' }),
+		]),
+		field('resultado', [
+			v('activa', 'primary', 'Aún activa', { icon: 'fas fa-satellite-dish' }),
+			v('pendiente', 'warning', 'Pendiente', { icon: 'fas fa-clock' }),
+			v('resuelta', 'success', 'Resuelta', { icon: 'fas fa-check' }),
+			v('derivada', 'primary', 'Derivada', { icon: 'fas fa-share' }),
+			v('falsa_alarma', 'secondary', 'Falsa alarma', { icon: 'fas fa-ban' }),
+			v('informacion', 'secondary', 'Información', { icon: 'fas fa-circle-info' }),
+		]),
+	],
+	'rescate-animal': [
+		field('estado', [
+			v('rescatado', 'success', 'Rescatado', { icon: 'fas fa-hand-holding-heart' }),
+			v('desaparecido', 'warning', 'Desaparecido', { icon: 'fas fa-magnifying-glass' }),
+			v('en_acogida', 'primary', 'En acogida', { icon: 'fas fa-house' }),
+			v('adoptado', 'success', 'Adoptado', { icon: 'fas fa-heart' }),
+			v('fallecido', 'danger', 'Fallecido', { icon: 'fas fa-xmark' }),
+		]),
+	],
+	'purchase-request': [
+		field('estado', [
+			v('borrador', 'warning', 'Borrador'),
+			v('enviada', 'info', 'Enviada'),
+			v('aprobada', 'primary', 'Aprobada'),
+			v('rechazada', 'danger', 'Rechazada'),
+			v('convertida', 'success', 'Convertida en orden'),
+			v('cancelada', 'black', 'Cancelada'),
+		]),
+	],
+	'supplier-invoice': [
+		field('estado_pago', [
+			v('pendiente', 'warning', 'Pendiente de pago'),
+			v('parcial', 'info', 'Pago parcial'),
+			v('pagada', 'success', 'Pagada'),
+		], { read_only: true }),
+		field('estado_match', [
+			v('conciliada', 'success', 'Conciliada'),
+			v('con_diferencias', 'danger', 'Con diferencias'),
+			v('autorizada', 'primary', 'Diferencias autorizadas'),
+		], { read_only: true }),
+	],
+	'supplier-payment': [
+		field('status', [
+			v('APLICADO', 'success', 'Aplicado'),
+			v('CANCELADO', 'danger', 'Cancelado'),
+		], { read_only: true }),
+	],
+	'despensa-solidaria': [field('estado', STOCK_STATES)],
+	'inventario-sanitario': [field('estado', STOCK_STATES)],
+	voluntariado: [
+		field('estado', [
+			v('alta', 'success', 'Alta', { icon: 'fas fa-check' }),
+			v('ausencia', 'warning', 'Ausencia', { icon: 'fas fa-user-clock' }),
+			v('baja', 'danger', 'Baja', { icon: 'fas fa-user-slash' }),
 		]),
 	],
 };

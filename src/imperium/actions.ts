@@ -79,7 +79,7 @@ import {
 	register_comment_mentions,
 	resolve_comment_mentioned_users,
 } from './notifications.ts';
-import { assert_target_model_read, build_access } from './auth.ts';
+import { assert_http_access, assert_target_model_read, build_access } from './auth.ts';
 import { SubjectNotInstalledError } from './subjects-admin.ts';
 import {
 	enrich_history_row,
@@ -139,10 +139,32 @@ import {
 	list_packages_by_pedido,
 } from './delivery-package-flow.ts';
 import { decorate_delivery_routes } from './delivery-route-flow.ts';
+import { resolve_delivery_gps } from './delivery-gps.ts';
+import {
+	assert_new_serials,
+	ensure_inventory_lot,
+	split_receipt_lots,
+} from './inventory-lot-flow.ts';
+import {
+	approve_purchase_request,
+	cancel_purchase_request,
+	create_purchase_orders_from_requests,
+	reject_purchase_request,
+	submit_purchase_request,
+} from './purchase-request-flow.ts';
+import {
+	authorize_supplier_invoice,
+	cancel_supplier_invoice,
+	draft_supplier_invoice_lines,
+	prepare_supplier_invoice_create,
+	revalidate_po_invoices,
+	revalidate_supplier_invoice,
+} from './supplier-invoice-flow.ts';
+import { cancel_supplier_payment } from './supplier-payment-flow.ts';
 import { register_package_delivery_exit } from './inventory-logistics-flow.ts';
 import {
 	apply_quant_delta,
-	find_quant_for_pair,
+	quant_total_for_pair,
 	recibir_delivery_return,
 	recompute_product_existencia,
 } from './delivery-return-flow.ts';
@@ -547,6 +569,27 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return po_receive(ctx, ctx.action === 'confirm');
 		case 'purchase-order:register_invoice':
 			return po_register_invoice(ctx);
+		case 'purchase-request:submit':
+			return submit_purchase_request(ctx.store, ctx.params.id);
+		case 'purchase-request:approve':
+			return approve_purchase_request(ctx.store, ctx.params.id, ctx.actor);
+		case 'purchase-request:reject':
+			return reject_purchase_request(ctx.store, ctx.params.id, ctx.body.motivo);
+		case 'purchase-request:cancel_request':
+			return cancel_purchase_request(ctx.store, ctx.params.id);
+		case 'purchase-request:create_purchase_orders':
+			await assert_http_access(ctx.store, ctx.actor, 'purchase-order', 'POST');
+			return create_purchase_orders_from_requests(ctx.store, ctx.body.ids);
+		case 'supplier-invoice:draft_lines':
+			return draft_supplier_invoice_lines(ctx.store, ctx.params.po_id);
+		case 'supplier-invoice:revalidate':
+			return revalidate_supplier_invoice(ctx.store, ctx.params.id);
+		case 'supplier-invoice:authorize_differences':
+			return authorize_supplier_invoice(ctx.store, ctx.params.id, ctx.actor, ctx.body.motivo);
+		case 'supplier-invoice:cancel_invoice':
+			return cancel_supplier_invoice(ctx.store, ctx.params.id);
+		case 'supplier-payment:cancel_payment':
+			return cancel_supplier_payment(ctx.store, ctx.params.id, ctx.body.motivo);
 		case 'purchase-order:replenish_from_order':
 			return po_replenish(ctx);
 		case 'purchase-order:parse_document':
@@ -1908,15 +1951,17 @@ async function logistics_event(ctx: Ctx) {
 				'No se pudo identificar al usuario autenticado para guardar la firma',
 			);
 		}
+		const gps = resolve_delivery_gps(ctx.body);
 		const attachment_id = await save_delivery_signature(ctx, String(doc._id));
 		patch.estado = 'entregado';
 		patch.delivered_at = occurred_at;
 		patch.loaded_at = doc.loaded_at ?? occurred_at;
 		patch.delivery_ticket_reference = ticket;
 		patch.delivery_signature_attachment_id = attachment_id;
-		if (ctx.body.delivery_coordinates) {
-			patch.delivery_coordinates = ctx.body.delivery_coordinates;
-		}
+		if (gps.coordinates) patch.delivery_coordinates = gps.coordinates;
+		patch.delivery_gps_status = gps.status;
+		if (gps.reason) patch.delivery_gps_missing_reason = gps.reason;
+		if (gps.accuracy_m != null) patch.delivery_gps_accuracy_m = gps.accuracy_m;
 		if (ctx.body.delivery_distance_m != null) {
 			patch.delivery_distance_m = Number(ctx.body.delivery_distance_m);
 		}
@@ -1934,6 +1979,7 @@ async function logistics_event(ctx: Ctx) {
 		created_at: occurred_at,
 		source,
 		actor: actor_name(ctx),
+		...(patch.delivery_gps_status ? { gps_status: patch.delivery_gps_status } : {}),
 	});
 	const saved = await ctx.store.update('delivery-package', String(doc._id), {
 		...patch,
@@ -2786,6 +2832,7 @@ async function register_transfer(ctx: Ctx) {
 		ubicacion_origen: String(ctx.body.ubicacion_origen ?? ctx.body.origen ?? ''),
 		ubicacion_destino: String(ctx.body.ubicacion_destino ?? ctx.body.destino ?? ''),
 		cantidad: Number(ctx.body.cantidad ?? 0),
+		lote: String(ctx.body.lote ?? '') || undefined,
 	});
 	return {
 		data: null,
@@ -2928,13 +2975,14 @@ async function import_apertura(ctx: Ctx) {
 	const preview: ImperiumDoc[] = [];
 	const adjustments: ImperiumDoc[] = [];
 	for (const line of aggregated.values()) {
-		const current = await find_quant_for_pair(
-			ctx.store,
-			String(line.producto_id),
-			String(line.ubicacion_id),
-			String(line.ubicacion_codigo),
+		const cantidad_actual = opening_qty(
+			await quant_total_for_pair(
+				ctx.store,
+				String(line.producto_id),
+				String(line.ubicacion_id),
+				String(line.ubicacion_codigo),
+			),
 		);
-		const cantidad_actual = opening_qty(current?.cantidad ?? 0);
 		const diferencia =
 			modo === 'delta'
 				? opening_qty(line.cantidad)
@@ -3083,7 +3131,7 @@ async function confirm_reception(ctx: Ctx) {
 		if (cantidad > pending) {
 			throw new Error(`La cantidad recibida de ${item.producto_nombre} excede lo pendiente`);
 		}
-		return { producto, cantidad, item };
+		return { producto, cantidad, item, lotes: line.lotes };
 	});
 	for (const line of lines) {
 		line.item.cantidad_recibida = Number(line.item.cantidad_recibida ?? 0) + line.cantidad;
@@ -3099,6 +3147,7 @@ async function confirm_reception(ctx: Ctx) {
 				producto: l.producto,
 				cantidad: l.cantidad,
 				costo_unitario: Number(l.item.costo_unitario ?? 0),
+				lotes: l.lotes,
 			})),
 			false,
 			`reception-${rec._id}-${Date.now()}`,
@@ -4521,6 +4570,7 @@ async function po_receive(ctx: Ctx, confirm_all: boolean) {
 			costo_unitario: Number(l.costo_unitario ?? 0),
 			ubicacion_destino: String(l.ubicacion_destino ?? ''),
 			ubicacion_destino_nombre: String(l.ubicacion_destino_nombre ?? ''),
+			lotes: l.lotes,
 		})),
 		confirm_all,
 		receipt_key,
@@ -4541,6 +4591,8 @@ async function po_apply_receipt(
 		costo_unitario: number;
 		ubicacion_destino?: string;
 		ubicacion_destino_nombre?: string;
+		/** Lotes o series de lo recibido (obligatorios si el producto los maneja). */
+		lotes?: unknown;
 	}>,
 	force_confirm: boolean,
 	receipt_key = `receipt-${po_id}-${Date.now()}`,
@@ -4548,6 +4600,9 @@ async function po_apply_receipt(
 ): Promise<ImperiumDoc> {
 	const po = await need(ctx, 'purchase-order', po_id, 'No se encontró la orden de compra indicada');
 	const articulos = as_array(po.articulos).map(as_object);
+	// Todo se valida (pendiente y lotes) antes de mover existencias: el store
+	// no tiene transacciones y una línea inválida dejaría la recepción a medias.
+	const planned = [];
 	for (const line of lines) {
 		const item = articulos.find((a) => String(a.producto ?? a.product_id) === line.producto);
 		if (!item) throw new Error('El producto de la recepción no existe en la orden');
@@ -4556,23 +4611,42 @@ async function po_apply_receipt(
 			throw new Error(`La recepción de ${item.producto_nombre ?? line.producto} excede la cantidad pendiente`);
 		}
 		item.cantidad_recibida = Number(item.cantidad_recibida ?? 0) + line.cantidad;
-		await apply_purchase_receipt_stock(ctx.store, {
-			producto: line.producto,
-			cantidad: line.cantidad,
-			costo_unitario: line.costo_unitario || Number(item.costo_unitario ?? 0),
-			source: po,
-			receipt_key,
-			ubicacion_destino: line.ubicacion_destino,
-			ubicacion_destino_nombre: line.ubicacion_destino_nombre,
-			referencia,
-		});
+		const product = await ctx.store.find_id('products', line.producto);
+		const lots = product ? split_receipt_lots(product, line.cantidad, line.lotes) : [];
+		if (product) await assert_new_serials(ctx.store, product, lots);
+		planned.push({ line, item, product, lots });
+	}
+	for (const { line, item, product, lots } of planned) {
+		for (const lot of lots.length ? lots : [null]) {
+			const lot_doc =
+				lot && product
+					? await ensure_inventory_lot(ctx.store, { product, lot, source: po })
+					: null;
+			await apply_purchase_receipt_stock(ctx.store, {
+				producto: line.producto,
+				cantidad: lot ? lot.cantidad : line.cantidad,
+				costo_unitario: line.costo_unitario || Number(item.costo_unitario ?? 0),
+				source: po,
+				receipt_key,
+				ubicacion_destino: line.ubicacion_destino,
+				ubicacion_destino_nombre: line.ubicacion_destino_nombre,
+				referencia,
+				...(lot_doc && lot
+					? {
+							lote: String(lot_doc._id),
+							lote_codigo: lot.lote_codigo,
+							fecha_caducidad: lot.fecha_caducidad,
+						}
+					: {}),
+			});
+		}
 	}
 	const total = articulos.reduce((s, a) => s + Number(a.cantidad ?? 0), 0);
 	const rec = articulos.reduce((s, a) => s + Number(a.cantidad_recibida ?? 0), 0);
 	const estado = rec >= total || force_confirm ? 'confirmada' : rec > 0 ? 'parcialmente_recibida' : String(po.estado ?? 'aprobada');
 	const recepciones = as_array(po.recepciones);
 	recepciones.push({ fecha: now(), articulos: lines, usuario: actor_name(ctx) });
-	return (await ctx.store.update('purchase-order', po_id, {
+	const saved = (await ctx.store.update('purchase-order', po_id, {
 		articulos,
 		recepciones,
 		estado,
@@ -4580,9 +4654,20 @@ async function po_apply_receipt(
 		total_recibido: rec,
 		fecha_confirmacion: estado === 'confirmada' ? now() : po.fecha_confirmacion,
 	}))!;
+	await revalidate_po_invoices(ctx.store, po_id);
+	return saved;
 }
 
 async function po_register_invoice(ctx: Ctx) {
+	if (ctx.store.has('supplier-invoice')) {
+		const doc = await prepare_supplier_invoice_create(ctx.store, {
+			...ctx.body,
+			purchase_order: ctx.params.id,
+			created_by: actor_id(ctx) || undefined,
+		});
+		const created = await ctx.store.insert('supplier-invoice', doc);
+		return ok([created], 'Factura de proveedor registrada correctamente');
+	}
 	const po = await need(
 		ctx,
 		'purchase-order',

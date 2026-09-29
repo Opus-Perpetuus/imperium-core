@@ -210,8 +210,15 @@ export async function apply_purchase_receipt_stock(
 		ubicacion_destino?: string;
 		ubicacion_destino_nombre?: string;
 		referencia?: string;
+		lote?: string;
+		lote_codigo?: string;
+		fecha_caducidad?: string;
 	},
 ): Promise<void> {
+	const lote = text(params.lote);
+	const lote_fields = lote
+		? { lote, lote_codigo: text(params.lote_codigo), fecha_caducidad: text(params.fecha_caducidad) }
+		: {};
 	const product = await store.find_id('products', params.producto);
 	if (!product) {
 		throw new Error('No fue posible cargar uno de los productos de la recepción');
@@ -263,6 +270,7 @@ export async function apply_purchase_receipt_stock(
 			stock_resultante,
 			costo_promedio_resultante: costo_promedio,
 			fecha_entrada: fecha,
+			...(lote ? { lote, lote_codigo: text(params.lote_codigo) } : {}),
 		});
 	}
 	if (store.has('inventory-movement')) {
@@ -293,7 +301,10 @@ export async function apply_purchase_receipt_stock(
 			stock_apartado_resultante: stock_apartado,
 			stock_disponible_resultante: round_qty(stock_resultante - stock_apartado),
 			fecha_movimiento: fecha,
-			dedupe_key: `purchase-receipt:${params.source._id}:${params.receipt_key}:${params.producto}`,
+			dedupe_key: `purchase-receipt:${params.source._id}:${params.receipt_key}:${params.producto}${
+				lote ? `:${text(params.lote_codigo) || lote}` : ''
+			}`,
+			...lote_fields,
 		});
 	}
 	if (destination) {
@@ -304,6 +315,7 @@ export async function apply_purchase_receipt_stock(
 			ubicacion: destination.id,
 			ubicacion_codigo: destination.codigo || destination.name,
 			delta: cantidad,
+			...lote_fields,
 		});
 		await recompute_product_existencia(store, params.producto);
 		await store.update('products', params.producto, {

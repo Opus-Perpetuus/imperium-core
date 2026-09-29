@@ -1216,5 +1216,65 @@
     "method": "post",
     "path": "/reindex/:model_name",
     "action": "trigger_reindex"
+  },
+  {
+    "resource": "purchase-request",
+    "method": "post",
+    "path": "/:id/submit",
+    "action": "submit"
+  },
+  {
+    "resource": "purchase-request",
+    "method": "post",
+    "path": "/:id/approve",
+    "action": "approve"
+  },
+  {
+    "resource": "purchase-request",
+    "method": "post",
+    "path": "/:id/reject",
+    "action": "reject"
+  },
+  {
+    "resource": "purchase-request",
+    "method": "post",
+    "path": "/:id/cancel",
+    "action": "cancel_request"
+  },
+  {
+    "resource": "purchase-request",
+    "method": "post",
+    "path": "/create-purchase-orders",
+    "action": "create_purchase_orders"
+  },
+  {
+    "resource": "supplier-invoice",
+    "method": "get",
+    "path": "/draft-lines/:po_id",
+    "action": "draft_lines"
+  },
+  {
+    "resource": "supplier-invoice",
+    "method": "post",
+    "path": "/:id/revalidate",
+    "action": "revalidate"
+  },
+  {
+    "resource": "supplier-invoice",
+    "method": "post",
+    "path": "/:id/authorize-differences",
+    "action": "authorize_differences"
+  },
+  {
+    "resource": "supplier-invoice",
+    "method": "post",
+    "path": "/:id/cancel",
+    "action": "cancel_invoice"
+  },
+  {
+    "resource": "supplier-payment",
+    "method": "post",
+    "path": "/cancel/:id",
+    "action": "cancel_payment"
   }
 ]

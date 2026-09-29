@@ -54,6 +54,7 @@ import {
 	decorate_inventory_reception_list,
 	ensure_pending_reception_from_purchase_order,
 } from './inventory-reception-flow.ts';
+import { register_pos_ticket_exit } from './inventory-exit.ts';
 import {
 	notify_ticketing_rooms,
 	prepare_ticketing_turn_create,
@@ -74,6 +75,15 @@ import {
 	prepare_physical_count_update,
 } from './inventory-physical-count-flow.ts';
 import { apply_cobranza_payment } from './cobranza-payment-flow.ts';
+import {
+	prepare_purchase_request_create,
+	prepare_purchase_request_update,
+} from './purchase-request-flow.ts';
+import {
+	prepare_supplier_invoice_create,
+	prepare_supplier_invoice_update,
+} from './supplier-invoice-flow.ts';
+import { apply_supplier_payment } from './supplier-payment-flow.ts';
 import { is_citizen_report_resource, prepare_citizen_report_write } from './citizen-report-flow.ts';
 import { apply_report_list_where, assert_report_template_write } from './reports-flow.ts';
 import { is_asociacion_resource, prepare_asociacion_write } from './asociaciones-flow.ts';
@@ -351,6 +361,18 @@ export async function handle_crud(
 			throw new Error('Los pagos no se editan; usa cancelar para revertir un abono.');
 		}
 		if (method === 'DELETE') throw new Error('Método no implementado.');
+	}
+
+	if (resource === 'supplier-payment') {
+		if (method === 'POST' && segs.length === 0) {
+			return json(resource, await apply_supplier_payment(store, await body()), 201);
+		}
+		if (method === 'PUT' || method === 'PATCH' || method === 'DELETE') {
+			throw new Error('Los pagos no se editan ni se borran; usa cancelar para revertirlos.');
+		}
+	}
+	if (resource === 'supplier-invoice' && method === 'DELETE') {
+		throw new Error('Las facturas no se borran; usa cancelar.');
 	}
 
 	if (method === 'GET' && segs[0] === 'statistics' && segs.length === 1) {
@@ -661,6 +683,12 @@ export async function handle_crud(
 		if (resource === 'purchase-order') {
 			incoming = await prepare_purchase_order_create(store, incoming);
 		}
+		if (resource === 'purchase-request') {
+			incoming = await prepare_purchase_request_create(store, incoming, actor);
+		}
+		if (resource === 'supplier-invoice') {
+			incoming = await prepare_supplier_invoice_create(store, incoming);
+		}
 		if (resource === 'ticketing-system-turn') {
 			incoming = await prepare_ticketing_turn_create(store, incoming);
 		}
@@ -895,6 +923,12 @@ export async function handle_crud(
 		if (resource === 'purchase-order') {
 			b = await prepare_purchase_order_update(b, previous);
 		}
+		if (resource === 'purchase-request') {
+			b = await prepare_purchase_request_update(store, b, previous);
+		}
+		if (resource === 'supplier-invoice') {
+			b = await prepare_supplier_invoice_update(store, b, previous);
+		}
 		if (resource === 'pos-session') {
 			b = await prepare_pos_session_update(store, b, previous, actor);
 		}
@@ -1073,6 +1107,12 @@ export async function handle_crud(
 		}
 		if (resource === 'purchase-order') {
 			patched = await prepare_purchase_order_update(patched, previous);
+		}
+		if (resource === 'purchase-request') {
+			patched = await prepare_purchase_request_update(store, patched, previous);
+		}
+		if (resource === 'supplier-invoice') {
+			patched = await prepare_supplier_invoice_update(store, patched, previous);
 		}
 		if (resource === 'products') {
 			patched = await prepare_product_write(store, patched);
@@ -1721,16 +1761,6 @@ async function after_create(
 		return null;
 	}
 	if (resource !== 'pos-tickets') return null;
-	if (String(created.ticket_type ?? 'VENTA').toUpperCase() !== 'VENTA') return;
-	const items = as_array(created.items).map(as_object);
-	for (const item of items) {
-		const pid = String(item.item_id ?? item.producto ?? item.product_id ?? '');
-		const qty = Number(item.quantity ?? item.cantidad ?? 0);
-		if (!pid || !qty || !store.has('products')) continue;
-		const product = await store.find_id('products', pid);
-		if (!product) continue;
-		const next = Number(product.existencia ?? 0) - qty;
-		await store.update('products', pid, { existencia: next < 0 ? 0 : next });
-	}
+	await register_pos_ticket_exit(store, created);
 }
 

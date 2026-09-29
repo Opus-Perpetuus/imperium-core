@@ -904,6 +904,75 @@ export async function format_increment_real_value(
 	);
 }
 
+/**
+ * Folios "automáticos" que el original creaba en el primer alta
+ * (`auto_increment_options` del esquema o el folio del service). Sin su fila
+ * global el campo llega vacío y el `required` de `name` rechaza el alta.
+ */
+const SCHEMA_INCREMENTS = [
+	{
+		model_name: 'RegistroEmergencias',
+		increment_field: 'name',
+		index_name: 'registro_emergencias_name',
+		custom_pattern: 'AVISO-[seq;ceros=5]',
+	},
+	{
+		model_name: 'RescateAnimal',
+		increment_field: 'name',
+		index_name: 'rescate_animal_name',
+		custom_pattern: 'INT-[seq;ceros=6]',
+	},
+	{
+		model_name: 'ServiciosRealizados',
+		increment_field: 'name',
+		index_name: 'servicios_realizados_name',
+		custom_pattern: 'SRV-[seq;ceros=6]',
+	},
+];
+
+/**
+ * Crea la fila global de cada folio de `SCHEMA_INCREMENTS` del recurso que aún
+ * no tenga ninguna (activa o desactivada: una desactivada es decisión del
+ * admin). Agrega las filas creadas a `rows`.
+ */
+async function ensure_schema_increments(
+	store: ImperiumStore,
+	resource: string,
+	rows: ImperiumDoc[],
+): Promise<void> {
+	for (const declared of SCHEMA_INCREMENTS) {
+		if (store.resource_for_model(declared.model_name) !== resource) continue;
+		const exists = rows.some(
+			(row) =>
+				String(row.model_name ?? '') === declared.model_name &&
+				field_matches(row, declared.increment_field) &&
+				is_global_ref(row.ref_value),
+		);
+		if (exists) continue;
+		const control = { ...declared, collection: resource, type: 'custom' };
+		const unique = tracker_unique_ref(control, null);
+		try {
+			rows.push(
+				await store.insert('auto-increment-control', {
+					name: `${declared.model_name}.${declared.increment_field}`,
+					...control,
+					current_sequence: 0,
+					ref_value: null,
+					_unique_string_reference: unique,
+					is_active: true,
+				}),
+			);
+		} catch (err) {
+			// Otra alta simultánea ya lo creó: se usa esa fila.
+			const raced = await store.find_where('auto-increment-control', {
+				_unique_string_reference: unique,
+			});
+			if (!raced) throw err;
+			rows.push(raced);
+		}
+	}
+}
+
 export async function assign_document_increments(
 	store: ImperiumStore,
 	resource: string,
@@ -916,6 +985,7 @@ export async function assign_document_increments(
 		include_inactive: true,
 		fields: INCREMENT_LOOKUP_FIELDS,
 	});
+	await ensure_schema_increments(store, resource, rows);
 	const seen = new Set<string>();
 	const configs = rows
 		.filter((row) => {
