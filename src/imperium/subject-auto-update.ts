@@ -3,8 +3,11 @@
  *
  * Apagada por defecto: el interruptor es el parámetro de sistema
  * `configuration-subject-auto-update-enabled`. Cuando está en SI, cada pasada
- * busca apps instaladas cuya imagen no coincide con el pin del catálogo y las
- * actualiza de una en una.
+ * busca apps instaladas con una versión más nueva y las actualiza de una en
+ * una, dependencias primero. La versión es el pin del catálogo o, si
+ * `configuration-subject-auto-update-discovered` también está en SI, la que el
+ * núcleo descubrió en el registro, pero solo cuando lleva construida al menos
+ * `configuration-subject-auto-update-min-age-hours` (24 por defecto).
  *
  * Vive aquí y NO en el operador: `subject-operator.ts` solo monta el HTTP del
  * runtime, no tiene ni `Bun.SQL` ni `ImperiumStore`. Como el proceso del
@@ -14,11 +17,22 @@
 import type { ImperiumStore } from './store.ts';
 import {
 	accept_subject_update,
+	backfill_installed_images,
+	installed_image_of,
 	list_subject_updates,
 	subject_image_tag,
 	SubjectLifecycleError,
 } from './subjects-admin.ts';
 import { print_console_log } from './debug-request-log.ts';
+import { discover_subject_versions } from './subject-discovery.ts';
+import { plan_subject_install, type DependencyNode } from './subject-deps.ts';
+import {
+	coerce_flag,
+	coerce_hours,
+	read_config_value,
+	soaked,
+	SUBJECT_AUTO_UPDATE_MIN_AGE_REF,
+} from './subject-versions.ts';
 
 export const SUBJECT_AUTO_UPDATE_ENABLED_REF =
 	'configuration-subject-auto-update-enabled';
@@ -35,25 +49,7 @@ const DEFAULT_FIRST_DELAY_MS = 5 * 60 * 1000;
  * desenvuelve hasta el fondo y solo un SÍ explícito cuenta como SÍ.
  */
 export function coerce_auto_update_flag(value: unknown): boolean {
-	let current = value;
-	for (let i = 0; i < 5; i++) {
-		if (typeof current !== 'string') break;
-		const text = current.trim();
-		if (
-			text.length > 1 &&
-			((text.startsWith('"') && text.endsWith('"')) ||
-				(text.startsWith("'") && text.endsWith("'")))
-		) {
-			current = text.slice(1, -1);
-			continue;
-		}
-		break;
-	}
-	if (typeof current === 'boolean') return current;
-	if (typeof current === 'number') return current === 1;
-	if (typeof current !== 'string') return false;
-	const text = current.trim().toLowerCase();
-	return text === 'true' || text === 'si' || text === 'sí' || text === '1';
+	return coerce_flag(value);
 }
 
 /** Lee el interruptor. Cualquier problema = apagado: nunca se activa sola. */
@@ -104,7 +100,29 @@ export type AutoUpdatePass = {
 	failed: Array<{ slug: string; error: string }>;
 	/** Ocupadas (ellas o una dependencia) con otro trabajo: otra pasada las verá. */
 	skipped: string[];
+	/** `slug→X.Y.Z` encontradas en el registro, se instalen o no en esta pasada. */
+	discovered: string[];
 };
+
+/** Dependencias primero: una app que depende de otra se actualiza después de ella. */
+export function dependencies_first<T extends { technical_id: string }>(
+	items: readonly T[],
+	subjects: readonly DependencyNode[],
+): T[] {
+	const order: string[] = [];
+	for (const item of items) {
+		let plan: string[];
+		try {
+			plan = plan_subject_install(subjects, item.technical_id, () => false);
+		} catch {
+			plan = [item.technical_id];
+		}
+		for (const tid of plan) if (!order.includes(tid)) order.push(tid);
+	}
+	return [...items].sort(
+		(a, b) => order.indexOf(a.technical_id) - order.indexOf(b.technical_id),
+	);
+}
 
 /**
  * Una pasada. Secuencial a propósito: cada actualización es un `docker pull`
@@ -118,24 +136,46 @@ export async function run_subject_auto_update_pass(
 ): Promise<AutoUpdatePass> {
 	const enabled = await read_subject_auto_update_enabled(store);
 	if (!enabled) {
-		return { enabled: false, checked: 0, updated: [], failed: [], skipped: [] };
+		return { enabled: false, checked: 0, updated: [], failed: [], skipped: [], discovered: [] };
 	}
-	const pending = await list_subject_updates(store, sql);
+	// Sin la imagen que corre no hay con qué comparar: la pasada no esperaba a
+	// que alguien pulsara «Buscar» para averiguarla.
+	await backfill_installed_images(store, sql);
+	const discovery = await discover_subject_versions(store, sql).catch((err) => {
+		print_console_log('warning', `auto-update: no se pudo consultar el registro: ${err}`);
+		return null;
+	});
+	const min_age_hours = coerce_hours(
+		await read_config_value(store, SUBJECT_AUTO_UPDATE_MIN_AGE_REF),
+	);
+	const now = Date.now();
+	// Además del interruptor (que decide la política del servidor), la pasada
+	// exige la espera. La admisión vuelve a calcular el objetivo con esta misma
+	// regla y las filas del momento.
+	const accept_discovered = (created_at: string | null) =>
+		soaked(created_at, min_age_hours, now);
+	const pending = dependencies_first(
+		await list_subject_updates(store, sql, { accept_discovered }),
+		store.subjects,
+	);
 	const out: AutoUpdatePass = {
 		enabled: true,
 		checked: pending.length,
 		updated: [],
 		failed: [],
 		skipped: [],
+		discovered: discovery?.found ?? [],
 	};
 	for (const item of pending) {
 		let error: string | null;
+		let tag = item.available_tag;
 		try {
 			const accepted = await accept_subject_update(
 				store,
 				sql,
 				item.technical_id,
 				null,
+				{ accept_discovered, only_if_newer: true },
 			);
 			if (!accepted) continue;
 			if (accepted.already_running) {
@@ -146,7 +186,14 @@ export async function run_subject_auto_update_pass(
 				);
 				continue;
 			}
+			// La admisión recalcula el objetivo: puede no ser el de la lista.
+			tag = subject_image_tag(accepted.image) || tag;
 			error = await accepted.done;
+			// Y si la descubierta no pasó la revisión, se instaló el pin.
+			const now_running = await installed_image_of(sql, item.technical_id);
+			if (!error && now_running && now_running !== item.installed_image) {
+				tag = subject_image_tag(now_running);
+			}
 		} catch (err) {
 			if (err instanceof SubjectLifecycleError && err.code === 'dependency_busy') {
 				out.skipped.push(item.slug);
@@ -164,10 +211,10 @@ export async function run_subject_auto_update_pass(
 			print_console_log('error', `auto-update: ${item.slug} falló: ${error}`);
 			continue;
 		}
-		out.updated.push(`${item.slug}→${item.available_tag}`);
+		out.updated.push(`${item.slug}→${tag}`);
 		print_console_log(
 			'info',
-			`auto-update: ${item.slug} ${subject_image_tag(item.installed_image)} → ${item.available_tag}`,
+			`auto-update: ${item.slug} ${subject_image_tag(item.installed_image)} → ${tag}`,
 		);
 	}
 	return out;

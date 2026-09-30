@@ -2,7 +2,7 @@
   "unit": "subject",
   "unit_es": "app",
   "kit": "@opus-perpetuus/imperium-core-kit",
-  "core": "ghcr.io/opus-perpetuus/imperium-core:13.56.0",
+  "core": "ghcr.io/opus-perpetuus/imperium-core:13.57.0",
   "forked_from": "@opus-perpetuus/kirel-nox-kit@0.5.18",
   "count": 22,
   "subjects": [
@@ -16031,7 +16031,7 @@
       "depends_on": [
         "subject-vehiculos"
       ],
-      "image": "ghcr.io/opus-perpetuus/subject-herramientas:0.1.1",
+      "image": "ghcr.io/opus-perpetuus/subject-herramientas:0.2.0",
       "repo": "Opus-Perpetuus/imperium-subject-herramientas",
       "dir": "workspace/imperium-subject-herramientas",
       "modules": [

@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import {
 	BASE_SUBJECT_SLUGS,
@@ -6,6 +6,7 @@ import {
 	compose_project_args,
 	compose_rm_args,
 	compose_stop_args,
+	handle_operator_http,
 	is_base_subject_slug,
 	normalize_subject_slug,
 	subject_image_ref,
@@ -81,4 +82,42 @@ describe('subject-runtime', () => {
 		expect(missing).toEqual([]);
 		expect(compose).toContain('subject-tienda:');
 	});
+});
+
+describe('operador: leer el manifiesto de una imagen', () => {
+	const SECRET = process.env.CORE_SUBJECT_GATEWAY_SECRET;
+	afterEach(() => {
+		if (SECRET == null) delete process.env.CORE_SUBJECT_GATEWAY_SECRET;
+		else process.env.CORE_SUBJECT_GATEWAY_SECRET = SECRET;
+	});
+	const ask = (path: string, secret?: string) =>
+		handle_operator_http(
+			new Request(`http://operador${path}`, {
+				headers: secret ? { 'x-core-subject-gateway-secret': secret } : {},
+			}),
+		);
+
+	test('solo el núcleo (secreto maestro)', async () => {
+		process.env.CORE_SUBJECT_GATEWAY_SECRET = 'maestro';
+		const res = await ask('/runtime/pos/manifest?image=ghcr.io/opus-perpetuus/subject-pos:0.3.0');
+		expect(res.status).toBe(403);
+	});
+
+	test('no baja imágenes de otra app ni de otro registro', async () => {
+		process.env.CORE_SUBJECT_GATEWAY_SECRET = 'maestro';
+		for (const image of [
+			'ghcr.io/opus-perpetuus/subject-tienda:0.3.0',
+			'docker.io/library/alpine:3',
+			'',
+		]) {
+			const res = await ask(`/runtime/pos/manifest?image=${encodeURIComponent(image)}`, 'maestro');
+			expect([image, res.status]).toEqual([image, 400]);
+		}
+	});
+});
+
+test('el operador no corta a los 10 s una descarga del núcleo, y a nadie más le quita el corte', () => {
+	const src = readFileSync(new URL('../subject-operator.ts', import.meta.url), 'utf8');
+	expect(src).toContain('if (is_master_request(req)) srv.timeout(req, 0);');
+	expect(src).not.toContain('idleTimeout: 0');
 });

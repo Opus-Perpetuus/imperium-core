@@ -203,6 +203,16 @@ function record_reply(state: SupportState, reply: SupportReply) {
 	state.responseMessage = reply.text;
 }
 
+// 400 con error de contrato (unknown_ticket, invalid_status…): reenviarlo no lo
+// arregla. Un 400 sin ese cuerpo puede venir de un proxy y sí se reintenta.
+function refused(reply: SupportReply): boolean {
+	return reply.status === 400 && Boolean(text(reply.json.error));
+}
+
+function settled(reply: SupportReply): boolean {
+	return reply.ok || refused(reply);
+}
+
 async function flush_once(store: ImperiumStore, ticket_id: string): Promise<FlushResult> {
 	const ticket = await store.find_id('tickets', ticket_id);
 	const state = as_object(ticket?.interinstance) as SupportState;
@@ -235,14 +245,14 @@ async function flush_once(store: ImperiumStore, ticket_id: string): Promise<Flus
 		);
 		await patch_support_state(store, ticket_id, (s) => {
 			record_reply(s, reply);
-			if (!reply.ok) return;
+			if (!settled(reply)) return;
 			const pending = { ...as_object(s.pendingUpdate) };
 			for (const [field, value] of Object.entries(update)) {
 				if (JSON.stringify(pending[field]) === JSON.stringify(value)) delete pending[field];
 			}
 			s.pendingUpdate = Object.keys(pending).length ? pending : undefined;
 		});
-		if (!reply.ok) return 'retry';
+		if (!settled(reply)) return 'retry';
 	}
 	for (const history_id of as_array(state.pendingComments).map(String)) {
 		const row = await store.find_id('document-change-history', history_id);
@@ -258,7 +268,7 @@ async function flush_once(store: ImperiumStore, ticket_id: string): Promise<Flus
 				history_id,
 			);
 			await patch_support_state(store, ticket_id, (s) => record_reply(s, reply));
-			if (!reply.ok) return 'retry';
+			if (!settled(reply)) return 'retry';
 		}
 		await patch_support_state(store, ticket_id, (s) => {
 			s.pendingComments = as_array(s.pendingComments)

@@ -277,7 +277,7 @@ async function run_cmd(
 	argv: string[],
 	cwd?: string,
 	extra_env?: Record<string, string>,
-): Promise<{ ok: boolean; output: string }> {
+): Promise<{ ok: boolean; output: string; stdout: string }> {
 	const proc = Bun.spawn(argv, {
 		cwd: cwd || undefined,
 		// `env` sustituye el entorno entero, así que se parte de `process.env`:
@@ -295,7 +295,7 @@ async function run_cmd(
 		proc.exited,
 	]);
 	const output = `${stdout}\n${stderr}`.trim();
-	return { ok: code === 0, output };
+	return { ok: code === 0, output, stdout };
 }
 
 function file_args(): string[] {
@@ -595,6 +595,104 @@ export async function resolve_running_subject_image(
 	}
 }
 
+export type ImageManifestResult =
+	| { ok: true; skipped: false; manifest: Record<string, unknown>; created: string | null }
+	| { ok: true; skipped: true }
+	| { ok: false; skipped: false; error: string };
+
+/**
+ * `manifest.json` de una imagen de app, sin arrancarla: la baja y lo lee con
+ * `cat` en un contenedor desechable sin red. Todas las imágenes lo copian a
+ * `/app` (Dockerfile de cada app). Se lee de la imagen y no del repo porque hay
+ * repos privados y el operador sí tiene las credenciales del registro.
+ */
+export async function read_image_manifest_local(
+	image: string,
+): Promise<ImageManifestResult> {
+	try {
+		assert_image(image);
+	} catch (err) {
+		return { ok: false, skipped: false, error: String(err) };
+	}
+	const pull = await run_cmd(['docker', 'pull', '-q', image]);
+	if (!pull.ok) {
+		return { ok: false, skipped: false, error: pull.output || 'falló docker pull' };
+	}
+	const cat = await run_cmd([
+		'docker',
+		'run',
+		'--rm',
+		'--network',
+		'none',
+		'--entrypoint',
+		'cat',
+		image,
+		'/app/manifest.json',
+	]);
+	if (!cat.ok) {
+		return { ok: false, skipped: false, error: cat.output || 'la imagen no trae /app/manifest.json' };
+	}
+	let manifest: unknown;
+	try {
+		manifest = JSON.parse(cat.stdout);
+	} catch {
+		return { ok: false, skipped: false, error: 'manifest.json de la imagen no es JSON' };
+	}
+	if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
+		return { ok: false, skipped: false, error: 'manifest.json de la imagen no es un objeto' };
+	}
+	const inspect = await run_cmd(['docker', 'image', 'inspect', '-f', '{{ .Created }}', image]);
+	const created = inspect.ok ? inspect.stdout.trim() || null : null;
+	return {
+		ok: true,
+		skipped: false,
+		manifest: manifest as Record<string, unknown>,
+		created,
+	};
+}
+
+/** Pregunta al operador remoto; local si no hay sidecar; `skipped` sin Docker. */
+export async function read_subject_image_manifest(
+	slug: string,
+	image: string,
+): Promise<ImageManifestResult> {
+	const clean = normalize_subject_slug(slug);
+	if (!clean) return { ok: false, skipped: false, error: 'slug inválido' };
+	if (!docker_runtime_wanted()) return { ok: true, skipped: true };
+	const remote = operator_url();
+	if (!remote) return read_image_manifest_local(image);
+	try {
+		const res = await fetch(
+			`${remote}/runtime/${clean}/manifest?image=${encodeURIComponent(image)}`,
+			{
+				headers: { 'x-core-subject-gateway-secret': master_secret() },
+				// Incluye el pull de la imagen nueva: el mismo tope que actualizar.
+				signal: AbortSignal.timeout(10 * 60 * 1000),
+			},
+		);
+		const json = (await res.json().catch(() => ({}))) as {
+			manifest?: unknown;
+			created?: string | null;
+			error?: string;
+		};
+		if (!res.ok || !json.manifest || typeof json.manifest !== 'object') {
+			return {
+				ok: false,
+				skipped: false,
+				error: json.error || `operator http ${res.status}`,
+			};
+		}
+		return {
+			ok: true,
+			skipped: false,
+			manifest: json.manifest as Record<string, unknown>,
+			created: json.created ?? null,
+		};
+	} catch (err) {
+		return { ok: false, skipped: false, error: String(err) };
+	}
+}
+
 /** Solo el núcleo (maestro): el derivado de una app no instala ni borra otras. */
 function operator_secret_ok(req: Request): boolean {
 	return is_master_request(req);
@@ -615,6 +713,21 @@ export async function handle_operator_http(req: Request): Promise<Response> {
 			return Response.json({ error: 'invalid slug' }, { status: 400 });
 		}
 		return Response.json({ image: await inspect_subject_image(slug) });
+	}
+	const read = url.pathname.match(/^\/runtime\/([a-z0-9-]+)\/manifest\/?$/);
+	if (read && req.method === 'GET') {
+		const slug = normalize_subject_slug(read[1]!);
+		const image = String(url.searchParams.get('image') ?? '');
+		// Solo imágenes de esa misma app: la ruta no sirve para bajar cualquier cosa.
+		if (!slug || !image.startsWith(`ghcr.io/opus-perpetuus/subject-${slug}:`)) {
+			return Response.json({ error: 'invalid slug or image' }, { status: 400 });
+		}
+		const result = await read_image_manifest_local(image);
+		if (!result.ok) {
+			return Response.json({ error: result.error }, { status: 500 });
+		}
+		if (result.skipped) return Response.json({ error: 'skipped' }, { status: 500 });
+		return Response.json({ manifest: result.manifest, created: result.created });
 	}
 	const hit = url.pathname.match(
 		/^\/runtime\/([a-z0-9-]+)\/(install|uninstall|update)\/?$/,

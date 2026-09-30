@@ -121,6 +121,19 @@ describe('detección de actualización', () => {
 		expect(subject_update_available(false, A, B)).toBe(false);
 	});
 
+	test('un catálogo más viejo que lo que corre no la regresa (mismo major)', () => {
+		// Carrera: la app ya tomó una versión descubierta y un update de Odoo
+		// recrea el núcleo con una tarjeta anterior. Regresar es una versión fijada.
+		expect(subject_update_available(true, B, A)).toBe(false);
+		expect(subject_update_available(true, B, A, 'hold')).toBe(true);
+	});
+
+	test('entre majors distintos manda el pin, como antes', () => {
+		expect(
+			subject_update_available(true, 'ghcr.io/opus-perpetuus/subject-pos:13.26.0', A),
+		).toBe(true);
+	});
+
 	test('sin imagen instalada conocida no se inventa una actualización', () => {
 		// Instalada antes de que existiera la columna: no se sabe qué corre, y
 		// anunciar "actualizable" sería adivinar.

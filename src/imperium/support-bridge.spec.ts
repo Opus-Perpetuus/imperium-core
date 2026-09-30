@@ -380,6 +380,28 @@ describe('envío a Odoo', () => {
 		expect(as_state(store.data.tickets![0]!).pendingUpdate).toBeUndefined();
 	});
 
+	test('lo que Odoo rechaza por contrato se suelta; un 400 sin error de contrato se reintenta', async () => {
+		responder = (call) =>
+			call.url.includes('/92/')
+				? Response.json({ ok: false, error: 'unknown_ticket' }, { status: 400 })
+				: odoo_ok(call);
+		const store = memory_store({ tickets: [linked_ticket()], 'document-change-history': [comment_row()] });
+		const before = linked_ticket();
+		await queue_support_update(store, before, { ...before, status: 'closed' }, { name: 'Ana' });
+		await queue_support_comment(store, 'tk-1', 'h-1');
+		await settle();
+		expect(store.data.tickets![0]!.support_sync).toBe('synced');
+		expect(as_state(store.data.tickets![0]!).pendingUpdate).toBeUndefined();
+		expect(as_state(store.data.tickets![0]!).pendingComments).toEqual([]);
+
+		calls = [];
+		responder = (call) => (call.url.includes('/92/') ? new Response('Bad Request', { status: 400 }) : odoo_ok(call));
+		await queue_support_comment(store, 'tk-1', 'h-1');
+		await settle();
+		expect(calls).toHaveLength(1);
+		expect(store.data.tickets![0]!.support_sync).toBe('pending');
+	});
+
 	test('un ticket que no va a soporte no se toca', async () => {
 		const store = memory_store({
 			tickets: [linked_ticket({ interinstance: { forwarded: false }, support_sync: undefined })],

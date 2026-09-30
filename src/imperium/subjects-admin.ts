@@ -20,9 +20,24 @@ import {
 	resolve_running_subject_image,
 	docker_runtime_wanted,
 	is_base_subject_slug,
+	read_subject_image_manifest,
 	run_subject_docker,
 	type SubjectRuntimeResult,
 } from './subject-runtime.ts';
+import {
+	APPS_AL_PIN,
+	describe_hold,
+	image_with_tag,
+	manifest_fits_catalog,
+	NEEDS_CATALOG,
+	read_update_policy,
+	subject_update_target,
+	update_wanted,
+	type ImageSource,
+	type UpdatePolicy,
+	type UpdateSource,
+	type UpdateTarget,
+} from './subject-versions.ts';
 import {
 	blocking_dependents,
 	missing_dependencies,
@@ -187,6 +202,14 @@ export async function ensure_install_table(sql: Bun.SQL): Promise<void> {
     ALTER TABLE public.subject_installs
       ADD COLUMN IF NOT EXISTS installed_image TEXT
   `);
+	// Versión más nueva que el pin encontrada en el registro (subject-discovery.ts).
+	await sql.unsafe(`
+    ALTER TABLE public.subject_installs
+      ADD COLUMN IF NOT EXISTS discovered_image TEXT,
+      ADD COLUMN IF NOT EXISTS discovered_created_at TEXT,
+      ADD COLUMN IF NOT EXISTS discovered_note TEXT,
+      ADD COLUMN IF NOT EXISTS discovered_checked_at TIMESTAMPTZ
+  `);
 	await sql.unsafe(`
     UPDATE public.subject_installs
        SET status = 'installed'
@@ -281,12 +304,16 @@ type InstallRec = {
 	uninstalled_at: string | null;
 	version: number | null;
 	installed_image: string | null;
+	discovered_image: string | null;
+	discovered_created_at: string | null;
+	discovered_note: string | null;
 };
 
 async function install_records(sql: Bun.SQL): Promise<Map<string, InstallRec>> {
 	await ensure_install_table(sql);
 	const rows = (await sql.unsafe(
-		`SELECT technical_id, installed, status, installed_at, uninstalled_at, version, installed_image
+		`SELECT technical_id, installed, status, installed_at, uninstalled_at, version, installed_image,
+            discovered_image, discovered_created_at, discovered_note
      FROM public.subject_installs`,
 	)) as Array<{
 		technical_id: string;
@@ -296,6 +323,9 @@ async function install_records(sql: Bun.SQL): Promise<Map<string, InstallRec>> {
 		uninstalled_at: Date | string | null;
 		version: number | null;
 		installed_image: string | null;
+		discovered_image?: string | null;
+		discovered_created_at?: string | null;
+		discovered_note?: string | null;
 	}>;
 	const out = new Map<string, InstallRec>();
 	for (const row of rows) {
@@ -311,9 +341,114 @@ async function install_records(sql: Bun.SQL): Promise<Map<string, InstallRec>> {
 			installed_image: row.installed_image
 				? String(row.installed_image)
 				: null,
+			discovered_image: row.discovered_image ? String(row.discovered_image) : null,
+			discovered_created_at: row.discovered_created_at
+				? String(row.discovered_created_at)
+				: null,
+			discovered_note: row.discovered_note ? String(row.discovered_note) : null,
 		});
 	}
 	return out;
+}
+
+/** Imagen con la que quedó una app según `subject_installs`. */
+export async function installed_image_of(
+	sql: Bun.SQL,
+	technical_id: string,
+): Promise<string | null> {
+	return (await install_records(sql)).get(technical_id)?.installed_image ?? null;
+}
+
+/** Filas de `subject_installs` para el descubrimiento de versiones. */
+export async function discovered_versions(
+	sql: Bun.SQL,
+): Promise<Map<string, InstallRec>> {
+	return install_records(sql);
+}
+
+/**
+ * Guarda (o borra, con `image` nulo) la versión descubierta de una app. La
+ * nota se decide en SQL: si la candidata es la misma se conserva (un update
+ * pudo marcarla `needs_catalog` mientras el descubrimiento consultaba el
+ * registro); si cambia, se limpia.
+ */
+export async function record_discovered_version(
+	sql: Bun.SQL,
+	technical_id: string,
+	image: string | null,
+	created_at: string | null,
+): Promise<void> {
+	await ensure_install_table(sql);
+	await sql.unsafe(
+		`UPDATE public.subject_installs
+        SET discovered_note = CASE
+              WHEN discovered_image IS NOT DISTINCT FROM $2 THEN discovered_note
+              ELSE NULL
+            END,
+            discovered_image = $2, discovered_created_at = $3,
+            discovered_checked_at = NOW()
+      WHERE technical_id = $1`,
+		[technical_id, image, created_at],
+	);
+}
+
+/** Marca una imagen descubierta; si la candidata ya cambió, no toca nada. */
+async function mark_discovered_note(
+	sql: Bun.SQL,
+	technical_id: string,
+	image: string,
+	note: string,
+): Promise<void> {
+	await sql.unsafe(
+		`UPDATE public.subject_installs SET discovered_note = $3
+      WHERE technical_id = $1 AND discovered_image = $2`,
+		[technical_id, image, note],
+	);
+}
+
+/**
+ * Objetivo de actualización de una app con lo que hay en su fila y lo que
+ * decide el servidor. `accept_discovered` añade una condición (la espera de la
+ * pasada automática) a la del interruptor.
+ */
+export function target_for(
+	sub: SubjectInfo,
+	rec: InstallRec | undefined,
+	policy: UpdatePolicy,
+	accept_discovered: (created_at: string | null) => boolean = () => true,
+): UpdateTarget | null {
+	const al_pin = APPS_AL_PIN.has(sub.slug);
+	return subject_update_target({
+		pin: sub.image,
+		discovered:
+			rec && !al_pin
+				? {
+						image: rec.discovered_image,
+						created_at: rec.discovered_created_at,
+						note: rec.discovered_note,
+					}
+				: null,
+		hold: al_pin ? null : (policy.holds.get(sub.slug) ?? null),
+		accept_discovered: (created_at) =>
+			policy.take_discovered && accept_discovered(created_at),
+	});
+}
+
+/**
+ * Imagen al reinstalar una app que ya está instalada («Sincronizar» de Odoo
+ * pide instalar todas las deseadas): la que corre, salvo que el pin sea más
+ * nuevo o el servidor fije otra. Ir siempre al pin regresaba las apps que
+ * tomaron una versión descubierta o fijada.
+ */
+function reinstall_image(sub: SubjectInfo, rec: InstallRec | undefined, policy: UpdatePolicy): string {
+	if (APPS_AL_PIN.has(sub.slug)) return sub.image;
+	const hold = policy.holds.get(sub.slug);
+	if (hold && 'tag' in hold) return image_with_tag(sub.image, hold.tag) ?? sub.image;
+	const running = rec?.installed_image;
+	if (!running) return sub.image;
+	if (hold) return running;
+	const pin: UpdateTarget = { image: sub.image, source: 'catalog', created_at: null };
+	return update_wanted(running, pin) ? sub.image : running;
 }
 
 /** Misma regla que `technical_id_is_installed`, para todo el catálogo de una vez. */
@@ -413,20 +548,20 @@ export function subject_image_tag(image: string | null | undefined): string {
 
 /**
  * Hay actualización si la app está instalada, se sabe con qué imagen quedó y
- * el catálogo pide otra distinta. Sin `installed_image` no se compara nada:
- * una app instalada antes de que existiera la columna no debe salir como
+ * el objetivo es otra imagen más nueva (ver `update_wanted`: dentro del mismo
+ * major nunca se baja sola). Sin `installed_image` no se compara nada: una app
+ * instalada antes de que existiera la columna no debe salir como
  * "actualizable" solo porque no sepamos qué corre.
  */
 export function subject_update_available(
 	installed: boolean,
 	installed_image: string | null | undefined,
 	available_image: string | null | undefined,
+	source: UpdateSource = 'catalog',
 ): boolean {
 	if (!installed) return false;
-	const have = String(installed_image ?? '').trim();
 	const want = String(available_image ?? '').trim();
-	if (!have || !want) return false;
-	return have !== want;
+	return update_wanted(installed_image, want ? { image: want, source, created_at: null } : null);
 }
 
 /** Lo que una fila del catálogo necesita saber del resto para sus dependencias. */
@@ -460,6 +595,7 @@ export function catalog_row(
 	rec: InstallRec | undefined,
 	deps: DependencyView,
 	running: ReadonlySet<string> = new Set(),
+	policy: UpdatePolicy = { holds: new Map(), take_discovered: false },
 ) {
 	const is_ready = (tid: string) => deps.installed.has(tid);
 	const is_live = (tid: string) =>
@@ -472,7 +608,8 @@ export function catalog_row(
 		running.has(sub.technical_id) || in_flight.has(sub.technical_id),
 	);
 	const installed_image = rec?.installed_image ?? null;
-	const available_image = sub.image ?? null;
+	const target = target_for(sub, rec, policy);
+	const available_image = target?.image ?? sub.image ?? null;
 	return {
 		slug: sub.slug,
 		name: sub.name,
@@ -494,11 +631,13 @@ export function catalog_row(
 		available_image: available_image,
 		installed_tag: subject_image_tag(installed_image),
 		available_tag: subject_image_tag(available_image),
-		update_available: subject_update_available(
-			installed,
-			installed_image,
-			available_image,
-		),
+		update_available: installed && update_wanted(installed_image, target),
+		// De dónde sale `available_image`: el pin, el registro o la versión que fija el servidor.
+		available_source: target?.source ?? null,
+		version_hold: APPS_AL_PIN.has(sub.slug) ? null : describe_hold(policy.holds.get(sub.slug)),
+		// Lo más nuevo del registro, se tome o no (con el interruptor en NO solo se enseña).
+		discovered_tag: subject_image_tag(rec?.discovered_image),
+		discovered_note: rec?.discovered_note ?? null,
 		depends_on: [...(sub.depends_on ?? [])],
 		required_by: blocking_dependents(
 			deps.subjects,
@@ -590,11 +729,12 @@ export async function list_catalog_subjects(
 	const entries = new Map(
 		(await list_catalog_entries(sql)).map((entry) => [entry.technical_id, entry]),
 	);
+	const policy = await read_update_policy(store);
 	const out = [];
 	for (const sub of store.subjects) {
 		const rows = filter_module_rows(all_modules, sub);
 		const rec = recs.get(sub.technical_id);
-		const row = catalog_row(sub, subject_is_installed(rec, rows), rec, deps, running);
+		const row = catalog_row(sub, subject_is_installed(rec, rows), rec, deps, running, policy);
 		const entry = entries.get(sub.technical_id);
 		if (
 			!catalog_visible({
@@ -960,6 +1100,14 @@ export type InstallChainStep = {
 	technical_id: string;
 	/** `wait`: otro trabajo ya la está instalando; se espera, no se relanza. */
 	kind: 'install' | 'update' | 'wait';
+	/**
+	 * Solo en la actualización de la app pedida: la imagen elegida en la
+	 * admisión. Si se recalculara al correr, una versión recién descubierta
+	 * que aún no cumple su espera podría colarse entre admitir y ejecutar.
+	 */
+	image?: string;
+	/** De dónde salió `image`: decide si se revisa y si puede caer al pin. */
+	image_source?: ImageSource;
 };
 
 /**
@@ -996,6 +1144,21 @@ export function build_install_chain(
 		}
 		return { technical_id: tid, kind: busy ? 'wait' : 'install' };
 	});
+}
+
+/** Pone la imagen elegida en el paso que actualiza `target`. */
+function with_target_image(
+	steps: InstallChainStep[],
+	target: string,
+	image: string | null | undefined,
+	image_source: ImageSource,
+): InstallChainStep[] {
+	if (!image) return steps;
+	return steps.map((step) =>
+		step.technical_id === target && step.kind === 'update'
+			? { ...step, image, image_source }
+			: step,
+	);
 }
 
 export type InstallChainGroup = {
@@ -1224,9 +1387,37 @@ async function finish_subject_lifecycle(
 ) {
 	const technical_id = sub.technical_id;
 	const op = installed ? 'install' : 'uninstall';
+	// Desinstalar borra la imagen que corre (con versiones descubiertas ya no
+	// suele ser el pin) y reinstalar una app instalada no la regresa al pin.
+	const rec = (await install_records(sql)).get(technical_id);
+	let image = !installed
+		? (rec?.installed_image ?? sub.image)
+		: was_installed
+			? reinstall_image(sub, rec, await read_update_policy(store))
+			: sub.image;
+	if (installed && image !== sub.image && image !== rec?.installed_image) {
+		// Una versión fijada por «Sincronizar» pasa la misma revisión que por el botón.
+		const fits = await check_image_fits_catalog(sub, image, rec?.installed_image);
+		if (!fits.ok) {
+			image = rec?.installed_image ?? sub.image;
+			emit_subject_event(
+				{
+					technical_id,
+					slug: sub.slug,
+					name: sub.name,
+					installed: was_installed,
+					status: busy_status,
+					phase: 'check',
+					level: 'warning',
+					message: `${fits.message}; se conserva ${subject_image_tag(image)}`,
+				},
+				job,
+			);
+		}
+	}
 	const docker = await run_subject_docker(
 		op,
-		{ slug: sub.slug, image: sub.image },
+		{ slug: sub.slug, image },
 		(event) => {
 			emit_subject_event(
 				{
@@ -1422,6 +1613,9 @@ type ChainRun = {
 	/** Actualización ya marcada `updating` en la admisión: si se corta, vuelve a `installed`. */
 	queued_update?: boolean;
 	wait?: Promise<unknown>;
+	/** Imagen elegida en la admisión (`InstallChainStep.image`) y de dónde salió. */
+	image?: string;
+	image_source?: ImageSource;
 };
 
 type ChainRunGroup = { target: string; runs: ChainRun[]; needs: string[] };
@@ -1577,6 +1771,8 @@ async function open_chain(
 					continue;
 				}
 				const run = await open_run(store, sql, sub, step.kind, actor);
+				run.image = step.image;
+				run.image_source = step.image_source;
 				opened.push(run);
 				runs.push(run);
 			}
@@ -1612,7 +1808,7 @@ async function run_step(
 				: `${run.sub.name} no quedó instalada`;
 		}
 		if (run.kind === 'update') {
-			await run_subject_update(store, sql, run.sub, run.job);
+			await run_subject_update(store, sql, run.sub, run.job, run.image, run.image_source);
 			return null;
 		}
 		const started = run.started!;
@@ -1718,6 +1914,7 @@ async function catalog_rows(
 	const recs = await install_records(sql);
 	const installed = await installed_from(store, recs);
 	const deps: DependencyView = { subjects: store.subjects, installed };
+	const policy = await read_update_policy(store);
 	return technical_ids.map((tid) =>
 		catalog_row(
 			store.subjects.find((s) => s.technical_id === tid)!,
@@ -1725,6 +1922,7 @@ async function catalog_rows(
 			recs.get(tid),
 			deps,
 			running,
+			policy,
 		),
 	);
 }
@@ -1866,13 +2064,16 @@ export async function backfill_installed_images(
 }
 
 /**
- * Apps con actualización pendiente: instaladas, con imagen conocida y con el
- * catálogo pidiendo otra. Es la lista que alimenta "Actualizar todas" y el
- * trabajo automático.
+ * Apps con actualización pendiente: instaladas, con imagen conocida y con un
+ * objetivo más nuevo (pin, versión descubierta o fijada). Es la lista que
+ * alimenta "Actualizar todas" y el trabajo automático; este último pasa
+ * `accept_discovered` para exigir la espera de las descubiertas (sin ella, la
+ * app va al pin si el pin es más nuevo que lo instalado).
  */
 export async function list_subject_updates(
 	store: ImperiumStore,
 	sql: Bun.SQL,
+	options?: { accept_discovered?: (created_at: string | null) => boolean },
 ): Promise<
 	Array<{
 		technical_id: string;
@@ -1882,33 +2083,87 @@ export async function list_subject_updates(
 		available_image: string | null;
 		installed_tag: string;
 		available_tag: string;
+		available_source: UpdateSource;
+		available_created_at: string | null;
 	}>
 > {
 	const recs = await install_records(sql);
+	const policy = await read_update_policy(store);
 	const out = [];
 	for (const sub of store.subjects) {
 		const rec = recs.get(sub.technical_id);
-		if (!rec) continue;
-		if (
-			!subject_update_available(
-				rec.installed,
-				rec.installed_image,
-				sub.image,
-			)
-		) {
-			continue;
-		}
+		if (!rec?.installed) continue;
+		const target = target_for(sub, rec, policy, options?.accept_discovered);
+		if (!target || !update_wanted(rec.installed_image, target)) continue;
 		out.push({
 			technical_id: sub.technical_id,
 			slug: sub.slug,
 			name: sub.name,
 			installed_image: rec.installed_image,
-			available_image: sub.image ?? null,
+			available_image: target.image,
 			installed_tag: subject_image_tag(rec.installed_image),
-			available_tag: subject_image_tag(sub.image),
+			available_tag: subject_image_tag(target.image),
+			available_source: target.source,
+			available_created_at: target.created_at,
 		});
 	}
 	return out;
+}
+
+/**
+ * Antes de ir a una imagen que no es el pin, se lee su manifiesto (el
+ * operador la baja) y se comprueba que lo que agrega ya está en el catálogo de
+ * este servidor. Sin Docker no hay nada que comprobar ni que instalar.
+ */
+async function check_image_fits_catalog(
+	sub: SubjectInfo,
+	image: string,
+	running_image: string | null | undefined,
+): Promise<{ ok: true } | { ok: false; code: string; message: string }> {
+	const tag = subject_image_tag(image);
+	const next = await read_subject_image_manifest(sub.slug, image);
+	if (next.skipped) return { ok: true };
+	if (!next.ok) {
+		return {
+			ok: false,
+			code: 'manifest_unreadable',
+			message: `No se pudo revisar la versión ${tag} de ${sub.name}: ${next.error}`,
+		};
+	}
+	let current = await fetch(`${subject_base_url(sub.technical_id)}/manifest`, {
+		signal: AbortSignal.timeout(10_000),
+	})
+		.then((res) => (res.ok ? (res.json() as Promise<Record<string, unknown>>) : null))
+		.catch(() => null);
+	// Una app caída (justo cuando se la quiere regresar) no contesta: su
+	// manifiesto se lee entonces de la imagen que corre.
+	if (!current && running_image) {
+		const from_image = await read_subject_image_manifest(sub.slug, running_image);
+		if (from_image.ok && !from_image.skipped) current = from_image.manifest;
+	}
+	const fits = manifest_fits_catalog(sub, next.manifest, current, is_base_subject_slug);
+	if (fits.ok) return { ok: true };
+	if (!current) {
+		// Sin el manifiesto de lo que corre no se sabe qué AGREGA la versión
+		// nueva (tienda declara recursos que el catálogo nunca lista): un
+		// reinicio de la app no debe marcarla `needs_catalog` para siempre.
+		return {
+			ok: false,
+			code: 'live_manifest_unreadable',
+			message: `No se pudo leer el manifiesto de ${sub.name} en ejecución para revisar la versión ${tag}`,
+		};
+	}
+	const falta = [
+		fits.dependencies.length ? `dependencias ${fits.dependencies.join(', ')}` : '',
+		fits.resources.length ? `recursos ${fits.resources.join(', ')}` : '',
+	]
+		.filter(Boolean)
+		.join(' y ');
+	return {
+		ok: false,
+		code: NEEDS_CATALOG,
+		message: `La versión ${tag} de ${sub.name} necesita un catálogo más nuevo (${falta}); sigue en la actual`,
+	};
 }
 
 /**
@@ -1928,9 +2183,57 @@ export async function run_subject_update(
 	sql: Bun.SQL,
 	sub: SubjectInfo,
 	job?: JobCtx | null,
+	image?: string | null,
+	image_source: ImageSource = 'catalog',
 ): Promise<SubjectRuntimeResult> {
 	const technical_id = sub.technical_id;
+	let target_image = image || sub.image;
 	const ver = await schema_version(sql, technical_id);
+	const running = (await install_records(sql)).get(technical_id)?.installed_image;
+	// Regresar a una versión más vieja que la que corre no agrega nada que el
+	// catálogo no conociera: no se revisa (y la app rota puede estar caída).
+	const rollback =
+		image_source === 'hold' &&
+		Boolean(running) &&
+		update_wanted(target_image, { image: running!, source: 'catalog', created_at: null });
+	if (
+		target_image !== sub.image &&
+		(image_source === 'registry' || image_source === 'hold') &&
+		!rollback
+	) {
+		const fits = await check_image_fits_catalog(sub, target_image, running);
+		if (!fits.ok) {
+			if (fits.code === NEEDS_CATALOG) {
+				await mark_discovered_note(sql, technical_id, target_image, NEEDS_CATALOG);
+			}
+			// Una descubierta que no se pudo revisar no deja a la app sin el
+			// pin, si el pin es más nuevo (operador viejo, app reiniciándose).
+			// Una versión fijada no cae: se fijó a propósito.
+			const to_pin =
+				image_source === 'registry' &&
+				update_wanted(running, { image: sub.image, source: 'catalog', created_at: null });
+			emit_subject_event(
+				{
+					technical_id,
+					slug: sub.slug,
+					name: sub.name,
+					installed: true,
+					status: to_pin ? 'updating' : 'installed',
+					phase: to_pin ? 'check' : 'error',
+					level: 'warning',
+					message: to_pin
+						? `${fits.message}; se instala la del catálogo (${subject_image_tag(sub.image)})`
+						: fits.message,
+				},
+				job,
+			);
+			if (!to_pin) {
+				await write_install_row(sql, technical_id, true, ver.version, 'installed');
+				throw new SubjectLifecycleError(fits.message, 409, fits.code);
+			}
+			target_image = sub.image;
+		}
+	}
 	await write_install_row(sql, technical_id, true, ver.version, 'updating');
 	emit_subject_event(
 		{
@@ -1947,7 +2250,7 @@ export async function run_subject_update(
 	);
 	const docker = await run_subject_docker(
 		'update',
-		{ slug: sub.slug, image: sub.image },
+		{ slug: sub.slug, image: target_image },
 		(event) => {
 			emit_subject_event(
 				{
@@ -2070,6 +2373,16 @@ export async function accept_subject_update_all(
 			(tid) => ready.has(tid),
 			(tid) => busy.get(tid)?.op,
 		);
+		const targets = new Map(pending.map((item) => [item.technical_id, item]));
+		for (const group of plan.groups) {
+			const item = targets.get(group.target);
+			group.steps = with_target_image(
+				group.steps,
+				group.target,
+				item?.available_image,
+				item?.available_source ?? 'catalog',
+			);
+		}
 		const idle = {
 			accepted: true,
 			total: 0,
@@ -2113,6 +2426,12 @@ export async function accept_subject_update(
 	sql: Bun.SQL,
 	technical_id: string,
 	actor: ImperiumDoc | null,
+	options?: {
+		/** Condición extra para tomar una versión descubierta (la espera de la pasada). */
+		accept_discovered?: (created_at: string | null) => boolean;
+		/** La pasada automática: sin una versión más nueva no se hace nada (devuelve `null`). */
+		only_if_newer?: boolean;
+	},
 ) {
 	const sub = store.subjects.find((s) => s.technical_id === technical_id);
 	if (!sub) return null;
@@ -2134,15 +2453,45 @@ export async function accept_subject_update(
 				dependencies: [] as ReturnType<typeof subject_ref>[],
 				notification: null as ImperiumDoc | null,
 				done: Promise.resolve<string | null>(null),
+				image: null as string | null,
 			};
 		}
+		// El objetivo se calcula aquí, con las filas recién leídas: elegido
+		// antes (al listar) podía regresar una app que otro trabajo acababa de
+		// subir, o ignorar una versión fijada entre medias.
+		const rec = recs.get(technical_id);
+		const policy = await read_update_policy(store);
+		const hold = APPS_AL_PIN.has(sub.slug) ? undefined : policy.holds.get(sub.slug);
+		const target = target_for(sub, rec, policy, options?.accept_discovered);
+		const newer = Boolean(target && update_wanted(rec?.installed_image, target));
+		if (options?.only_if_newer && !newer) return null;
+		if (hold && 'freeze' in hold) {
+			throw new SubjectLifecycleError(
+				`${sub.name} está congelada en este servidor (configuration-subject-version-hold)`,
+				409,
+				'version_hold',
+			);
+		}
+		// Sin una versión más nueva, «Actualizar» vuelve a bajar lo que corre
+		// (un tag republicado), nunca un pin más viejo que lo instalado.
+		const running = APPS_AL_PIN.has(sub.slug) ? null : (rec?.installed_image ?? null);
+		// Una versión fijada se aplica aunque no se sepa qué corre (fila vieja).
+		const forced = !newer && target?.source === 'hold' && target.image !== running;
+		const image = newer || forced ? target!.image : (running ?? sub.image);
+		const image_source: ImageSource =
+			newer || forced ? target!.source : image === sub.image ? 'catalog' : 'running';
 		const ready = await installed_from(store, recs);
-		const steps = build_install_chain(
-			store.subjects,
+		const steps = with_target_image(
+			build_install_chain(
+				store.subjects,
+				technical_id,
+				'update',
+				(tid) => ready.has(tid),
+				(tid) => busy.get(tid)?.op,
+			),
 			technical_id,
-			'update',
-			(tid) => ready.has(tid),
-			(tid) => busy.get(tid)?.op,
+			image,
+			image_source,
 		);
 		const groups = await open_chain(
 			store,
@@ -2154,7 +2503,7 @@ export async function accept_subject_update(
 		const done = run_chain(store, sql, groups).then(
 			(results) => results.get(technical_id) ?? null,
 		);
-		return { ...(await chain_accepted(store, sql, groups[0]!)), done };
+		return { ...(await chain_accepted(store, sql, groups[0]!)), done, image };
 	});
 }
 
@@ -2241,7 +2590,7 @@ export async function get_subject_details(
 			? 'ok'
 			: health.health;
 	return {
-		...catalog_row(sub, installed, rec, deps, running),
+		...catalog_row(sub, installed, rec, deps, running, await read_update_policy(store)),
 		permissions,
 		menus,
 		collections,

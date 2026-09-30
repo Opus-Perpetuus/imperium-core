@@ -353,7 +353,9 @@ function fake_sql(initial: Array<[string, boolean, string?]>) {
 				writes.push({ technical_id, status });
 				const prev = rows.get(technical_id);
 				const installed = query.includes('VALUES ($1, TRUE');
+				// Como el ON CONFLICT real: las columnas que no escribe se quedan.
 				rows.set(technical_id, {
+					...prev,
 					technical_id,
 					installed,
 					status,
@@ -366,6 +368,11 @@ function fake_sql(initial: Array<[string, boolean, string?]>) {
 							? null
 							: (prev?.installed_image ?? null),
 				});
+				return [];
+			}
+			if (query.includes('SET discovered_note = $3')) {
+				const row = rows.get(String(params[0])) as (Row & { discovered_image?: string; discovered_note?: string }) | undefined;
+				if (row && row.discovered_image === params[1]) row.discovered_note = String(params[2]);
 				return [];
 			}
 			if (query.includes('SELECT') && query.includes('public.subject_installs')) {
@@ -788,5 +795,392 @@ describe('ciclo de vida con dependencias', () => {
 		hold.open();
 		await settled(db);
 		expect(state(db, 'subject-pos')).toBe('on:installed');
+	});
+});
+
+describe('auto-actualización con versiones descubiertas en el registro', () => {
+	const ORIGINAL_RUNTIME = process.env.SUBJECT_RUNTIME;
+	beforeAll(() => {
+		process.env.SUBJECT_RUNTIME = 'off';
+	});
+	afterAll(() => {
+		if (ORIGINAL_RUNTIME == null) delete process.env.SUBJECT_RUNTIME;
+		else process.env.SUBJECT_RUNTIME = ORIGINAL_RUNTIME;
+	});
+
+	const HOUR = 3_600_000;
+	const IMAGE_FOUND = 'ghcr.io/opus-perpetuus/subject-pos:0.3.0';
+
+	/** Parámetros del servidor por `_ref`; lo no dado no existe. */
+	function store_with(config: Record<string, unknown>) {
+		const store = fake_store(true);
+		(store as unknown as { find_where: unknown }).find_where = async (
+			_resource: string,
+			where: { _ref: string },
+		) => (where._ref in config ? { _id: where._ref, value: config[where._ref] } : null);
+		return store;
+	}
+
+	function db_with(pos: Record<string, unknown>) {
+		const db = fake_sql([
+			['subject-almacen', true],
+			['subject-rh', true],
+			['subject-pos', true, IMAGE_OLD],
+		]);
+		Object.assign(db.rows.get('subject-pos')!, pos);
+		return db;
+	}
+
+	const found = (hours_ago: number) => ({
+		discovered_image: IMAGE_FOUND,
+		discovered_created_at: new Date(Date.now() - hours_ago * HOUR).toISOString(),
+	});
+	const ON = {
+		'configuration-subject-auto-update-enabled': true,
+		'configuration-subject-auto-update-discovered': true,
+	};
+
+	test('toma la versión descubierta cuando ya cumplió su espera', async () => {
+		const db = db_with(found(30));
+		const pass = await run_subject_auto_update_pass(store_with(ON), db.sql);
+		expect(pass.updated).toEqual(['pos→0.3.0']);
+		await settled(db);
+	});
+
+	test('sin la espera cumplida, o con su interruptor apagado, va al pin', async () => {
+		for (const [config, hours] of [
+			[ON, 2],
+			[{ ...ON, 'configuration-subject-auto-update-min-age-hours': 48 }, 30],
+			[{ 'configuration-subject-auto-update-enabled': true }, 30],
+		] as const) {
+			const db = db_with(found(hours));
+			const pass = await run_subject_auto_update_pass(store_with(config), db.sql);
+			expect(pass.updated).toEqual(['pos→0.2.0']);
+			await settled(db);
+		}
+	});
+
+	test('una espera de 0 horas (servidor de prueba) la toma al momento', async () => {
+		const db = db_with(found(0.01));
+		const config = { ...ON, 'configuration-subject-auto-update-min-age-hours': 0 };
+		expect((await run_subject_auto_update_pass(store_with(config), db.sql)).updated).toEqual(['pos→0.3.0']);
+		await settled(db);
+	});
+
+	test('un pin más viejo que lo que corre no regresa la app', async () => {
+		const db = db_with({ installed_image: IMAGE_FOUND });
+		const pass = await run_subject_auto_update_pass(store_with(ON), db.sql);
+		expect(pass.checked).toBe(0);
+		expect(pass.updated).toEqual([]);
+	});
+
+	test('congelada no se toca; con versión fijada va a esa, aunque sea más vieja', async () => {
+		const frozen = db_with(found(30));
+		const hold = { ...ON, 'configuration-subject-version-hold': 'pos' };
+		expect((await run_subject_auto_update_pass(store_with(hold), frozen.sql)).updated).toEqual([]);
+		await expect(
+			accept_subject_update(store_with(hold), frozen.sql, 'subject-pos', null),
+		).rejects.toMatchObject({ code: 'version_hold' });
+
+		const pinned = db_with({ installed_image: IMAGE_FOUND });
+		const back = { ...ON, 'configuration-subject-version-hold': 'pos=0.1.0' };
+		expect((await run_subject_auto_update_pass(store_with(back), pinned.sql)).updated).toEqual(['pos→0.1.0']);
+		await settled(pinned);
+	});
+
+	test('la fila del catálogo dice de dónde sale la versión', async () => {
+		const db = db_with(found(30));
+		const store = store_with({ ...ON, 'configuration-subject-version-hold': 'rh; configuracion=0.0.1' });
+		const rows = await list_catalog_subjects(store, db.sql);
+		const pos = rows.find((r) => r.slug === 'pos')!;
+		expect([pos.available_tag, pos.available_source, pos.update_available]).toEqual(['0.3.0', 'registry', true]);
+		expect(rows.find((r) => r.slug === 'rh')!.version_hold).toBe('congelada');
+		// Las que el deploy recrea al pin no aceptan versiones fijadas.
+		expect(rows.find((r) => r.slug === 'configuracion')?.version_hold ?? null).toBeNull();
+	});
+
+	test('con su interruptor en NO la descubierta solo se enseña: el botón va al pin', async () => {
+		const db = db_with(found(30));
+		const store = store_with({ 'configuration-subject-auto-update-enabled': true });
+		const pos = (await list_catalog_subjects(store, db.sql)).find((r) => r.slug === 'pos')!;
+		expect([pos.available_tag, pos.available_source, pos.discovered_tag]).toEqual(['0.2.0', 'catalog', '0.3.0']);
+		const manual = (await accept_subject_update(store, db.sql, 'subject-pos', null))!;
+		expect(manual.image).toBe(IMAGE_NEW);
+		await manual.done;
+		await settled(db);
+	});
+
+	test('«Actualizar» sin nada más nuevo vuelve a bajar lo que corre, no un pin más viejo', async () => {
+		const db = db_with({ installed_image: IMAGE_FOUND });
+		const manual = (await accept_subject_update(store_with(ON), db.sql, 'subject-pos', null))!;
+		expect(manual.image).toBe(IMAGE_FOUND);
+		await manual.done;
+		await settled(db);
+	});
+
+	test('la pasada calcula el objetivo al admitir: nada que hacer si otro ya la subió', async () => {
+		const db = db_with({ installed_image: IMAGE_FOUND });
+		expect(
+			await accept_subject_update(store_with(ON), db.sql, 'subject-pos', null, { only_if_newer: true }),
+		).toBeNull();
+	});
+});
+
+describe('actualizar a una versión descubierta pasa por el operador con esa imagen', () => {
+	const KEYS = [
+		'SUBJECT_RUNTIME',
+		'SUBJECT_OPERATOR_URL',
+		'CORE_SUBJECT_GATEWAY_SECRET',
+		'SUBJECT_URL_pos',
+		'SUBJECT_REGISTRY_URL',
+	] as const;
+	const saved: Partial<Record<(typeof KEYS)[number], string | undefined>> = {};
+	const IMAGE_FOUND = 'ghcr.io/opus-perpetuus/subject-pos:0.3.0';
+	let next_manifest: Record<string, unknown> = {};
+	let live_manifest_status = 200;
+	let old_operator = false;
+	/** Imagen cuyo manifiesto el operador no puede leer. */
+	let unreadable_image = '';
+	const seen: Array<{ path: string; image: string | null }> = [];
+	let server: ReturnType<typeof Bun.serve>;
+
+	beforeAll(() => {
+		for (const key of KEYS) saved[key] = process.env[key];
+		// Hace de operador, de la app que corre y de registro (que no responde).
+		server = Bun.serve({
+			port: 0,
+			async fetch(req) {
+				const url = new URL(req.url);
+				if (url.pathname.startsWith('/runtime/')) {
+					if (req.headers.get('x-core-subject-gateway-secret') !== 'maestro') {
+						return Response.json({ error: 'forbidden' }, { status: 403 });
+					}
+					const body = req.method === 'POST' ? ((await req.json()) as { image?: string }) : {};
+					const image = url.searchParams.get('image') ?? body.image ?? null;
+					seen.push({ path: url.pathname, image });
+					if (url.pathname.endsWith('/image')) return Response.json({ image: '' });
+					if (url.pathname.endsWith('/manifest')) {
+						if (old_operator) return Response.json({ error: 'not found' }, { status: 404 });
+						if (image === unreadable_image) return Response.json({ error: 'pull falló' }, { status: 500 });
+						return Response.json({ manifest: next_manifest, created: '2026-09-01T00:00:00Z' });
+					}
+					const op = url.pathname.split('/').pop();
+					return Response.json({ ok: true, skipped: false, op, slug: 'pos', service: 'subject-pos', image, steps: [] });
+				}
+				if (url.pathname === '/manifest') {
+					if (live_manifest_status !== 200) return new Response('{}', { status: live_manifest_status });
+					return Response.json({ dependsOn: ['subject-almacen', 'subject-rh'], resources: { pos: {} } });
+				}
+				// Esquema de otra app: el núcleo lo descarta al momento en vez de reintentar.
+				if (url.pathname === '/schema') return Response.json({ technicalId: 'subject-otra' });
+				return new Response('{}', { status: 404 });
+			},
+		});
+		const base = `http://127.0.0.1:${server.port}`;
+		Object.assign(process.env, {
+			SUBJECT_RUNTIME: 'docker',
+			SUBJECT_OPERATOR_URL: base,
+			CORE_SUBJECT_GATEWAY_SECRET: 'maestro',
+			SUBJECT_URL_pos: base,
+			SUBJECT_REGISTRY_URL: base,
+		});
+	});
+	afterAll(() => {
+		server.stop(true);
+		for (const key of KEYS) {
+			if (saved[key] == null) delete process.env[key];
+			else process.env[key] = saved[key];
+		}
+	});
+
+	function store_on() {
+		const store = fake_store(true);
+		(store as unknown as { find_where: unknown }).find_where = async () => ({ _id: 'x', value: true });
+		return store;
+	}
+
+	function db_found() {
+		const db = fake_sql([
+			['subject-almacen', true, 'ghcr.io/opus-perpetuus/subject-almacen:0.1.0'],
+			['subject-rh', true, 'ghcr.io/opus-perpetuus/subject-rh:0.1.0'],
+			['subject-pos', true, IMAGE_OLD],
+		]);
+		Object.assign(db.rows.get('subject-pos')!, {
+			discovered_image: IMAGE_FOUND,
+			discovered_created_at: '2026-09-01T00:00:00Z',
+		});
+		return db;
+	}
+
+	test('lee el manifiesto de la imagen elegida y actualiza a esa misma', async () => {
+		seen.length = 0;
+		next_manifest = { dependsOn: ['subject-almacen', 'subject-rh'], resources: { pos: {} } };
+		const db = db_found();
+		const pass = await run_subject_auto_update_pass(store_on(), db.sql);
+		expect(pass.failed).toEqual([]);
+		expect(pass.updated).toEqual(['pos→0.3.0']);
+		await settled(db);
+		expect(seen.filter((s) => !s.path.endsWith('/image'))).toEqual([
+			{ path: '/runtime/pos/manifest', image: IMAGE_FOUND },
+			{ path: '/runtime/pos/update', image: IMAGE_FOUND },
+		]);
+		expect(db.rows.get('subject-pos')!.installed_image).toBe(IMAGE_FOUND);
+	});
+
+	test('si la versión agrega una dependencia que el catálogo no conoce, se marca y va al pin', async () => {
+		seen.length = 0;
+		next_manifest = { dependsOn: ['subject-almacen', 'subject-rh', 'subject-pagos'], resources: { pos: {} } };
+		const db = db_found();
+		const pass = await run_subject_auto_update_pass(store_on(), db.sql);
+		expect(pass.failed).toEqual([]);
+		expect(pass.updated).toEqual(['pos→0.2.0']);
+		await settled(db);
+		expect(seen.filter((s) => s.path.endsWith('/update'))).toEqual([
+			{ path: '/runtime/pos/update', image: IMAGE_NEW },
+		]);
+		const row = db.rows.get('subject-pos') as unknown as Record<string, unknown>;
+		expect([row.installed_image, row.discovered_note]).toEqual([IMAGE_NEW, 'needs_catalog']);
+	});
+
+	test('una versión fijada que no pasa la revisión no cae al pin: la app se queda', async () => {
+		seen.length = 0;
+		next_manifest = { dependsOn: ['subject-pagos'], resources: { pos: {} } };
+		const db = db_found();
+		const store = fake_store(true);
+		(store as unknown as { find_where: unknown }).find_where = async (_r: string, where: { _ref: string }) =>
+			where._ref === 'configuration-subject-version-hold'
+				? { _id: 'h', value: 'pos=0.3.0' }
+				: { _id: 'x', value: true };
+		const pass = await run_subject_auto_update_pass(store, db.sql);
+		expect(pass.updated).toEqual([]);
+		expect(pass.failed[0]!.error).toContain('necesita un catálogo más nuevo');
+		await settled(db);
+		expect(seen.some((s) => s.path.endsWith('/update'))).toBe(false);
+		expect(db.rows.get('subject-pos')!.installed_image).toBe(IMAGE_OLD);
+	});
+
+	test('sin leer el manifiesto de lo que corre no se marca needs_catalog', async () => {
+		seen.length = 0;
+		live_manifest_status = 503;
+		unreadable_image = IMAGE_OLD;
+		// Los recursos del escaparate de tienda: solo se saben nuevos comparando con lo que corre.
+		next_manifest = { dependsOn: ['subject-almacen', 'subject-rh'], resources: { pos: {}, store: {} } };
+		const db = db_found();
+		const pass = await run_subject_auto_update_pass(store_on(), db.sql);
+		live_manifest_status = 200;
+		unreadable_image = '';
+		expect(pass.updated).toEqual(['pos→0.2.0']);
+		await settled(db);
+		const row = db.rows.get('subject-pos') as unknown as Record<string, unknown>;
+		expect(row.discovered_note ?? null).toBeNull();
+	});
+
+	test('con un operador viejo (sin la ruta del manifiesto) va al pin', async () => {
+		seen.length = 0;
+		old_operator = true;
+		const db = db_found();
+		const pass = await run_subject_auto_update_pass(store_on(), db.sql);
+		old_operator = false;
+		expect(pass.updated).toEqual(['pos→0.2.0']);
+		await settled(db);
+		expect(db.rows.get('subject-pos')!.installed_image).toBe(IMAGE_NEW);
+	});
+
+	function store_hold(hold: string) {
+		const store = fake_store(true);
+		(store as unknown as { find_where: unknown }).find_where = async (_r: string, where: { _ref: string }) =>
+			where._ref === 'configuration-subject-version-hold' ? { _id: 'h', value: hold } : { _id: 'x', value: true };
+		return store;
+	}
+
+	test('las apps que siguen al pin van al pin al actualizar y al reinstalar', async () => {
+		seen.length = 0;
+		const PIN = 'ghcr.io/opus-perpetuus/subject-configuracion:0.3.0';
+		const db = db_found();
+		db.rows.set('subject-configuracion', {
+			technical_id: 'subject-configuracion',
+			installed: true,
+			status: 'installed',
+			installed_at: null,
+			uninstalled_at: null,
+			version: null,
+			installed_image: 'ghcr.io/opus-perpetuus/subject-configuracion:0.3.1',
+		});
+		const store = store_hold('configuracion=0.3.1');
+		store.subjects.find((s) => s.slug === 'configuracion')!.image = PIN;
+		process.env.SUBJECT_URL_configuracion = process.env.SUBJECT_URL_pos;
+		const manual = (await accept_subject_update(store, db.sql, 'subject-configuracion', null))!;
+		expect(manual.image).toBe(PIN);
+		await manual.done;
+		await settled(db);
+		await accept_subject_lifecycle(store, db.sql, 'subject-configuracion', true, null);
+		await settled(db);
+		delete process.env.SUBJECT_URL_configuracion;
+		expect(seen.filter((s) => s.path.startsWith('/runtime/configuracion/') && !s.path.endsWith('/image'))).toEqual([
+			{ path: '/runtime/configuracion/update', image: PIN },
+			{ path: '/runtime/configuracion/install', image: PIN },
+		]);
+	});
+
+	test('una versión fijada se aplica aunque no se sepa qué corre', async () => {
+		const db = db_found();
+		db.rows.get('subject-pos')!.installed_image = null;
+		const manual = (await accept_subject_update(store_hold('pos=0.3.0'), db.sql, 'subject-pos', null))!;
+		expect(manual.image).toBe(IMAGE_FOUND);
+		await manual.done;
+		await settled(db);
+	});
+
+	test('regresar a una versión más vieja no se revisa (la app rota puede estar caída)', async () => {
+		seen.length = 0;
+		live_manifest_status = 503;
+		next_manifest = { dependsOn: [], resources: { pos: {}, store: {} } };
+		const db = db_found();
+		db.rows.get('subject-pos')!.installed_image = IMAGE_FOUND;
+		const back = (await accept_subject_update(store_hold('pos=0.1.0'), db.sql, 'subject-pos', null))!;
+		expect(await back.done).toBeNull();
+		live_manifest_status = 200;
+		await settled(db);
+		expect(seen.filter((s) => !s.path.endsWith('/image'))).toEqual([
+			{ path: '/runtime/pos/update', image: IMAGE_OLD },
+		]);
+	});
+
+	test('sin respuesta de la app, lo que corre se lee de su imagen', async () => {
+		seen.length = 0;
+		live_manifest_status = 503;
+		// Igual que lo que corre (imagen de la versión instalada): no agrega nada.
+		next_manifest = { dependsOn: ['subject-almacen', 'subject-rh'], resources: { pos: {}, store: {} } };
+		const db = db_found();
+		const pass = await run_subject_auto_update_pass(store_on(), db.sql);
+		live_manifest_status = 200;
+		expect(pass.updated).toEqual(['pos→0.3.0']);
+		await settled(db);
+		expect(seen.filter((s) => s.path.endsWith('/manifest')).map((s) => s.image)).toEqual([IMAGE_FOUND, IMAGE_OLD]);
+	});
+
+	test('«Sincronizar» a una versión fijada que no pasa la revisión conserva lo que corre', async () => {
+		seen.length = 0;
+		next_manifest = { dependsOn: ['subject-pagos'], resources: { pos: {} } };
+		const db = db_found();
+		await accept_subject_lifecycle(store_hold('pos=0.3.0'), db.sql, 'subject-pos', true, null);
+		await settled(db);
+		expect(seen.filter((s) => s.path.endsWith('/install'))).toEqual([
+			{ path: '/runtime/pos/install', image: IMAGE_OLD },
+		]);
+	});
+
+	test('reinstalar una app instalada conserva lo que corre; desinstalar borra esa imagen', async () => {
+		seen.length = 0;
+		const db = db_found();
+		db.rows.get('subject-pos')!.installed_image = IMAGE_FOUND;
+		await accept_subject_lifecycle(store_on(), db.sql, 'subject-pos', true, null);
+		await settled(db);
+		await accept_subject_lifecycle(store_on(), db.sql, 'subject-pos', false, null);
+		await settled(db);
+		expect(seen.filter((s) => /\/(install|uninstall)$/.test(s.path))).toEqual([
+			{ path: '/runtime/pos/install', image: IMAGE_FOUND },
+			{ path: '/runtime/pos/uninstall', image: IMAGE_FOUND },
+		]);
 	});
 });

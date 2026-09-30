@@ -126,6 +126,33 @@
 		"value": false
 	},
 	{
+		"_ref": "configuration-subject-auto-update-discovered",
+		"description": "Si está en SI, las apps se actualizan también a la versión más nueva publicada en el registro aunque el catálogo del servidor aún no la pida: con el botón al momento y solas (si la actualización automática está en SI) tras la espera. Si está en NO, esas versiones solo se muestran y las apps van a la versión del catálogo.",
+		"is_system": true,
+		"module_id": "NA",
+		"name": "Actualizar apps a versiones nuevas del registro",
+		"type": "switch",
+		"value": false
+	},
+	{
+		"_ref": "configuration-subject-auto-update-min-age-hours",
+		"description": "Horas que debe tener publicada una versión nueva del registro antes de instalarse sola. Da margen para retirarla si sale con fallas. En un servidor de prueba puede ser 0.",
+		"is_system": true,
+		"module_id": "NA",
+		"name": "Espera antes de instalar versiones nuevas (horas)",
+		"type": "number",
+		"value": 24
+	},
+	{
+		"_ref": "configuration-subject-version-hold",
+		"description": "Versiones que este servidor fija por app. «tienda» la deja como está (ni sola ni con el botón); «pos=0.3.1» la lleva a esa versión exacta, aunque sea más vieja (así se regresa una app). Varias separadas por punto y coma. Vacío: ninguna.",
+		"is_system": true,
+		"module_id": "NA",
+		"name": "Versiones fijadas de apps",
+		"type": "text",
+		"value": ""
+	},
+	{
 		"_ref": "configuration-public-landing-enabled",
 		"description": "Si está en SI, la raíz del sitio muestra la landing. Si está en NO, redirige al inicio de sesión.",
 		"is_system": true,

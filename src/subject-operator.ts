@@ -3,7 +3,7 @@
  */
 import { print_console_log } from './imperium/debug-request-log.ts';
 import { handle_operator_http } from './imperium/subject-runtime.ts';
-import { master_secret } from './imperium/subject-secret.ts';
+import { is_master_request, master_secret } from './imperium/subject-secret.ts';
 
 const PORT = Number(process.env.SUBJECT_OPERATOR_PORT ?? 3200);
 
@@ -19,7 +19,15 @@ if (!master_secret()) {
 
 const server = Bun.serve({
 	port: PORT,
-	fetch: handle_operator_http,
+	fetch(req, srv) {
+		// Un pull de una versión nueva tarda más que los 10 s por defecto de
+		// Bun, que cortaba la conexión con el núcleo a media descarga. Solo las
+		// peticiones del núcleo (maestro) esperan lo que dure; el tope lo pone
+		// él (10 min). Las demás conservan el corte: sin secreto, nadie puede
+		// dejar conexiones abiertas para siempre.
+		if (is_master_request(req)) srv.timeout(req, 0);
+		return handle_operator_http(req);
+	},
 });
 
 console.log(`subject-operator listening on :${server.port}`);

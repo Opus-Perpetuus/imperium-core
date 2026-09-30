@@ -63,6 +63,7 @@ import {
 	read_subject_auto_update_enabled,
 	write_subject_auto_update_enabled,
 } from './subject-auto-update.ts';
+import { discover_subject_versions } from './subject-discovery.ts';
 import {
 	create_postgres_portal_store,
 	handle_portal_request,
@@ -435,14 +436,18 @@ async function handle_subjects(
 			path === '/subjects/updates/refresh/')
 	) {
 		// "Buscar actualizaciones": antes de comparar, se averigua qué corre
-		// de verdad en las apps que se instalaron cuando aún no se anotaba.
+		// de verdad en las apps que se instalaron cuando aún no se anotaba, y
+		// qué versiones nuevas hay en el registro aunque el catálogo no las pida.
 		const filled = await backfill_installed_images(store, sql);
+		const discovery = await discover_subject_versions(store, sql).catch(() => null);
 		const data = await list_subject_updates(store, sql);
 		return Response.json({
 			data,
 			total_elementos: data.length,
 			filled: filled.filled,
 			unknown: filled.unknown,
+			discovered: discovery?.found ?? [],
+			registry_errors: discovery?.errors ?? [],
 			message: 'Actualizaciones disponibles',
 		});
 	}
