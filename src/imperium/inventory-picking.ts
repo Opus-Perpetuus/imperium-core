@@ -216,7 +216,7 @@ async function upsert_draft_replenishment_item(
 		include_inactive: false,
 		populate: false,
 	});
-	let order = rows[0] ?? null;
+	const order = rows[0] ?? null;
 	const articulos = as_array(order?.articulos).map(as_object);
 	const existing = articulos.find((item) => ref_id(item.producto) === params.producto);
 	if (existing) {

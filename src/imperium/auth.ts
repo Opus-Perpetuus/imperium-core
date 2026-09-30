@@ -108,7 +108,7 @@ export function ensure_session_table(sql: Bun.SQL): Promise<void> {
 
 function auth_pathname(req: Request): string {
 	const url = new URL(req.url);
-	let path = url.pathname;
+	const path = url.pathname;
 	if (path === '/api') return '/';
 	if (path.startsWith('/api/')) return path.slice(4) || '/';
 	return path;
