@@ -1,6 +1,4 @@
-// (o==================================================================o)
 //   #region KIRTEXTO — NORMALIZE (cosmetic, never a security boundary)
-// (o-----------------------------------------------------------\/-----o)
 
 /**
  * Cosmetic clean-up of supplier HTML.
@@ -165,6 +163,4 @@ export function normalize_provider_html(input: string | null | undefined): strin
   return html;
 }
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion KIRTEXTO — NORMALIZE
-// (o==================================================================o)

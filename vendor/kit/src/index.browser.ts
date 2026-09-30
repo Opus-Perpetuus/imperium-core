@@ -1,6 +1,4 @@
-// (o==================================================================o)
 //   #region PUBLIC API (browser-safe)
-// (o-----------------------------------------------------------\/-----o)
 
 /**
  * Browser / Angular UI surface of the kit.
@@ -34,6 +32,4 @@ export { kirlet_identity_can } from './kirlet/identity.types.js';
 export * from './platform/realms.js';
 export * from './tags/types.js';
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion PUBLIC API (browser-safe)
-// (o==================================================================o)

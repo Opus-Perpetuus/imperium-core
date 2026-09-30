@@ -44,11 +44,21 @@ import {
 	installed_technical_ids,
 	seed_missing_install_rows,
 	subject_lifecycle_body,
+	technical_id_is_installed,
 	subjects_access_denied,
 	SubjectLifecycleError,
 	SubjectNotInstalledError,
 } from './subjects-admin.ts';
 import { is_master_request } from './subject-secret.ts';
+import {
+	add_manual_entry,
+	is_catalog_authorized,
+	list_catalog_entries,
+	remove_manual_entry,
+	set_odoo_authorized,
+	SubjectCatalogError,
+} from './subject-catalog.ts';
+import { is_base_subject_slug } from './subject-runtime.ts';
 import {
 	read_subject_auto_update_enabled,
 	write_subject_auto_update_enabled,
@@ -376,6 +386,19 @@ async function handle_subjects(
 		const data = await list_catalog_subjects(store, sql);
 		return Response.json({ data, total_elementos: data.length, message: 'Apps' });
 	}
+	if (path === '/subjects/catalog' || path.startsWith('/subjects/catalog/')) {
+		try {
+			return await handle_subject_catalog(store, sql, req, path);
+		} catch (err) {
+			if (err instanceof SubjectCatalogError) {
+				return Response.json(
+					{ error: err.code, code: err.code, message: err.message },
+					{ status: err.status },
+				);
+			}
+			throw err;
+		}
+	}
 	if (
 		path === '/subjects/auto-update' ||
 		path === '/subjects/auto-update/'
@@ -502,6 +525,10 @@ async function handle_subjects(
 	if (m && req.method === 'POST') {
 		const technical_id = m[1]!;
 		const installed = m[2] === 'install';
+		if (installed && !is_master_request(req)) {
+			const refused = await install_refused(store, sql, technical_id);
+			if (refused) return refused;
+		}
 		try {
 			const accepted = await accept_subject_lifecycle(
 				store,
@@ -551,6 +578,97 @@ async function handle_subjects(
 			);
 		}
 		return Response.json({ data: row, message: 'App' });
+	}
+	return Response.json({ error: 'not found' }, { status: 404 });
+}
+
+/**
+ * Desde Módulos solo se instala lo que está en el catálogo del tenant. El
+ * maestro (Odoo por el host) no pasa por aquí: `subjects-sync` autoriza antes
+ * de instalar.
+ */
+async function install_refused(
+	store: ImperiumStore,
+	sql: Bun.SQL,
+	technical_id: string,
+): Promise<Response | null> {
+	const sub = store.subjects.find((item) => item.technical_id === technical_id);
+	const authorized = await is_catalog_authorized(sql, technical_id);
+	if (!sub) {
+		if (!authorized) return null;
+		return Response.json(
+			{
+				error: 'subject_not_registered',
+				code: 'subject_not_registered',
+				message:
+					'La app está en el catálogo, pero este servidor todavía no la tiene registrada para correrla',
+			},
+			{ status: 409 },
+		);
+	}
+	if (
+		authorized ||
+		is_base_subject_slug(sub.slug) ||
+		(await technical_id_is_installed(store, sql, technical_id))
+	) {
+		return null;
+	}
+	return Response.json(
+		{
+			error: 'subject_not_authorized',
+			code: 'subject_not_authorized',
+			message: `${sub.name} no está autorizada para este servidor: se autoriza desde Odoo o se agrega al catálogo`,
+		},
+		{ status: 403 },
+	);
+}
+
+/**
+ * `GET` lista las filas del catálogo; `POST` da de alta una app a mano y
+ * `DELETE /<technical_id>` la quita (solo el superadministrador: lo exige el
+ * candado de `/subjects`). `PUT /authorized` lo usa Odoo, solo con el maestro.
+ */
+async function handle_subject_catalog(
+	store: ImperiumStore,
+	sql: Bun.SQL,
+	req: Request,
+	path: string,
+): Promise<Response> {
+	const rest = path.replace(/^\/subjects\/catalog\/?/, '').replace(/\/$/, '');
+	if (!rest && req.method === 'GET') {
+		const data = await list_catalog_entries(sql);
+		return Response.json({ data, total_elementos: data.length, message: 'Catálogo' });
+	}
+	if (!rest && req.method === 'POST') {
+		const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+		const entry = await add_manual_entry(store.subjects, sql, body);
+		return Response.json(
+			{ data: entry, message: `${entry.name} quedó en el catálogo` },
+			{ status: 201 },
+		);
+	}
+	if (rest === 'authorized' && (req.method === 'PUT' || req.method === 'POST')) {
+		if (!is_master_request(req)) {
+			return Response.json(
+				{
+					error: 'master_required',
+					code: 'master_required',
+					message: 'Las apps autorizadas las fija Odoo',
+				},
+				{ status: 403 },
+			);
+		}
+		const body = (await req.json().catch(() => ({}))) as { slugs?: unknown };
+		const result = await set_odoo_authorized(store.subjects, sql, body.slugs);
+		return Response.json({ data: result, message: 'Apps autorizadas' });
+	}
+	const one = rest.match(/^(subject-[a-z0-9-]+)$/);
+	if (one && req.method === 'DELETE') {
+		const removed = await remove_manual_entry(sql, one[1]!);
+		if (!removed) {
+			return Response.json({ error: `unknown entry ${one[1]}` }, { status: 404 });
+		}
+		return Response.json({ data: { technical_id: one[1] }, message: 'Se quitó del catálogo' });
 	}
 	return Response.json({ error: 'not found' }, { status: 404 });
 }

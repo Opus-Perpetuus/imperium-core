@@ -8,9 +8,7 @@ import { normalize_provider_html } from "./normalize-html.js";
 const purifier = DOMPurify as unknown as NoxHtmlPurifier;
 const clean = (html: string) => sanitize_nox_html(html, purifier);
 
-// (o==================================================================o)
 //   #region HOSTILE INPUT
-// (o-----------------------------------------------------------\/-----o)
 
 describe("sanitize_nox_html — hostile input", () => {
   const attacks: Array<[string, string]> = [
@@ -75,13 +73,9 @@ describe("sanitize_nox_html — hostile input", () => {
   });
 });
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion HOSTILE INPUT
-// (o==================================================================o)
 
-// (o==================================================================o)
 //   #region CONTENT PRESERVATION
-// (o-----------------------------------------------------------\/-----o)
 
 describe("sanitize_nox_html — keeps real content", () => {
   test("preserves structure suppliers actually use", () => {
@@ -132,13 +126,9 @@ describe("sanitize_nox_html — keeps real content", () => {
   });
 });
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion CONTENT PRESERVATION
-// (o==================================================================o)
 
-// (o==================================================================o)
 //   #region MESSY SUPPLIER MARKUP
-// (o-----------------------------------------------------------\/-----o)
 
 describe("sanitize_nox_html — messy supplier markup", () => {
   test("unwraps font/center and strips bgcolor", () => {
@@ -197,13 +187,9 @@ describe("sanitize_nox_html — messy supplier markup", () => {
   });
 });
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion MESSY SUPPLIER MARKUP
-// (o==================================================================o)
 
-// (o==================================================================o)
 //   #region NORMALIZE + TEXT PROJECTION
-// (o-----------------------------------------------------------\/-----o)
 
 describe("normalize_provider_html", () => {
   test("is idempotent on its own", () => {
@@ -247,6 +233,4 @@ describe("html_to_text", () => {
   });
 });
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion NORMALIZE + TEXT PROJECTION
-// (o==================================================================o)

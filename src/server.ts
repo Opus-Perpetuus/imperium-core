@@ -13,6 +13,9 @@ import { handle_service_plane, service_plane_match } from './service-plane.ts';
 import { add_cors, create_imperium_layer } from './imperium/router.ts';
 import { current_user, ensure_session_table } from './imperium/auth.ts';
 import { start_subject_auto_update } from './imperium/subject-auto-update.ts';
+import { start_support_sync } from './imperium/support-bridge.ts';
+import { seed_new_install } from './imperium/module-data.ts';
+import { superadmin_exists } from './imperium/superadmin-seed.ts';
 import {
 	handle_socket_io,
 	SOCKET_IO_IDLE_TIMEOUT_SECONDS,
@@ -878,7 +881,25 @@ const server = Bun.serve({
 						});
 					}
 				}
-				return Response.json({ data: results });
+				// Sin superadministrador la base es de una instalación nueva: se
+				// siembra aquí, con las tablas ya puestas. Una actualización ya lo
+				// tiene y no se toca.
+				let seeded = false;
+				if (
+					results.some((r) => r.ok) &&
+					!(await superadmin_exists(imperium.store, sql).catch(() => true))
+				) {
+					try {
+						await seed_new_install(imperium.store, sql);
+						seeded = true;
+					} catch (err) {
+						print_console_log(
+							'error',
+							`install-schemas: no se sembró la instalación nueva: ${failure_text(err)}`,
+						);
+					}
+				}
+				return Response.json({ data: results, seeded });
 			}
 
 			const compat = await imperium.handle(req);
@@ -905,3 +926,6 @@ for (const warning of gateway_secret_warnings()) {
 // sistema esté en NO, que es como nace. Solo corre en el proceso del núcleo:
 // el operador arranca por `subject-operator.ts` y no pasa por aquí.
 start_subject_auto_update(imperium.store, sql);
+
+// Reintentos hacia el soporte en Odoo. Solo con TKSUPPORT en el entorno.
+start_support_sync(imperium.store);

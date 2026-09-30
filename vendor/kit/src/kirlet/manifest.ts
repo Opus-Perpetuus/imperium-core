@@ -1,6 +1,4 @@
-// (o==================================================================o)
 //   #region KIRLET MANIFEST
-// (o-----------------------------------------------------------\/-----o)
 
 import type { KirletManifestWidget } from "./widgets.js";
 
@@ -168,6 +166,4 @@ export function kirlet_slug_from_id(id: string): string | null {
 
 export const subject_slug_from_id = kirlet_slug_from_id;
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion KIRLET MANIFEST
-// (o==================================================================o)

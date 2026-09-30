@@ -12,9 +12,7 @@ import {
   walk_ui_tree,
 } from "./ui-descriptor";
 
-// (o==================================================================o)
 //   #region TESTS
-// (o-----------------------------------------------------------\/-----o)
 
 describe("is_allowed_ui_component", () => {
   test("accepts catalog ids and rejects unknown", () => {
@@ -196,9 +194,7 @@ describe("walk / plan_ui_node", () => {
   });
 });
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion TESTS
-// (o==================================================================o)
 
 describe("storefront mvp components", () => {
   test("catalog-grid / markdown-view / search / paginator / carousel are MVP-bound", () => {
@@ -217,9 +213,7 @@ describe("storefront mvp components", () => {
   });
 });
 
-// (o==================================================================o)
 //   #region LOADING OVERLAY CONTRACT
-// (o-----------------------------------------------------------\/-----o)
 
 describe("nox.loading-overlay", () => {
   test("is allowlisted and MVP-bound so kirlets can drive the overlay", () => {
@@ -313,6 +307,4 @@ describe("validate_page_descriptor — preloader passthrough", () => {
   });
 });
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion LOADING OVERLAY CONTRACT
-// (o==================================================================o)

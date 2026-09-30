@@ -7,9 +7,7 @@ import {
 	CalcScheduleDay,
 } from './payroll-calc.types.ts';
 
-// (o==================================================================o)
 //   #region CONSTANTS
-// (o-----------------------------------------------------------\/-----o)
 
 /** Average month length used to annualize / de-annualize ISR. */
 const DAYS_PER_MONTH = 30.4;
@@ -51,13 +49,9 @@ const FIRST_BRACKET_CEILING = 746.04;
 /** Flat subsidio stub when ISR is zero and income is low. */
 const SUBSIDIO_STUB_AMOUNT = 200;
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion CONSTANTS
-// (o==================================================================o)
 
-// (o==================================================================o)
 //   #region HELPERS
-// (o-----------------------------------------------------------\/-----o)
 
 /**
  * Rounds a money amount to 2 decimal places (half-up via Number.EPSILON).
@@ -161,13 +155,9 @@ function is_valid_perception_amounts(
   return g > 0 || e > 0;
 }
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion HELPERS
-// (o==================================================================o)
 
-// (o==================================================================o)
 //   #region ENGINE
-// (o-----------------------------------------------------------\/-----o)
 
 /**
  * Pure payroll receipt calculation.
@@ -443,9 +433,7 @@ function empty_result(
   };
 }
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion ENGINE
-// (o==================================================================o)
 
 export {
   calculate_payroll_receipt,

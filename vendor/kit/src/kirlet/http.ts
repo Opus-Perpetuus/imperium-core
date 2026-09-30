@@ -1,6 +1,4 @@
-// (o==================================================================o)
 //   #region KIRLET HTTP HELPERS
-// (o-----------------------------------------------------------\/-----o)
 
 /** JSON response with application/json charset. */
 export function json_response(data: unknown, status = 200): Response {
@@ -90,6 +88,4 @@ export function today_iso(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion KIRLET HTTP HELPERS
-// (o==================================================================o)

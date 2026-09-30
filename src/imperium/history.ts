@@ -66,6 +66,11 @@ export function run_with_history_context<T>(
 	return als.run(ctx, fn);
 }
 
+/** Escrituras de sistema (sincronización con soporte) que no son cambios del usuario. */
+export function outside_history_context<T>(fn: () => T): T {
+	return als.exit(fn);
+}
+
 export function collapse_history_key(value: string): string {
 	return value.replace(/[^A-Za-z0-9]/g, '').toLowerCase();
 }

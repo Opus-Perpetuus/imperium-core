@@ -1,6 +1,4 @@
-// (o==================================================================o)
 //   #region HTTP DATA CLIENT TIMEOUT
-// (o-----------------------------------------------------------\/-----o)
 
 import { describe, expect, test } from "bun:test";
 import { HttpKirletDataClient } from "./http-data-client.js";
@@ -40,6 +38,4 @@ describe("HttpKirletDataClient AbortSignal (H3)", () => {
   });
 });
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion HTTP DATA CLIENT TIMEOUT
-// (o==================================================================o)

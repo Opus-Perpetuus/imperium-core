@@ -1,6 +1,4 @@
-// (o==================================================================o)
 //   #region DEFINE MODULE / ROUTES (typed authorship)
-// (o-----------------------------------------------------------\/-----o)
 
 import type { NoxPageDescriptor } from "../descriptors/ui-descriptor.js";
 import type { KirletIdentity } from "./identity.types.js";
@@ -352,6 +350,4 @@ export function match_module_routes(
 /** Helper for typed handlers when inference is weak. */
 export type ParamsOf<P extends string> = ParamsOfPattern<P>;
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion DEFINE MODULE / ROUTES
-// (o==================================================================o)

@@ -1,6 +1,4 @@
-// (o==================================================================o)
 //   #region KIRLET RUNTIME AUTH
-// (o-----------------------------------------------------------\/-----o)
 
 import {
   verify_kirlet_identity,
@@ -231,6 +229,4 @@ export function _reset_auth_off_warned_for_tests(): void {
   auth_off_warned = false;
 }
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion KIRLET RUNTIME AUTH
-// (o==================================================================o)

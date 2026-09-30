@@ -233,6 +233,7 @@ import {
 	tickets_public_metadata,
 	update_ticket,
 } from './tickets-flow.ts';
+import { queue_support_comment, receive_support_comment } from './support-bridge.ts';
 
 type Ctx = {
 	store: ImperiumStore;
@@ -645,6 +646,8 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return receive_interinstance_ticket(ctx);
 		case 'tickets:read_received_interinstance_tickets':
 			return read_received_interinstance_tickets(ctx);
+		case 'tickets:receive_support_comment':
+			return receive_support_comment(ctx);
 		case 'tickets:update_ticket':
 			return update_ticket(ctx);
 		case 'tickets:read_my_tickets':
@@ -2189,6 +2192,11 @@ async function create_history_comment(ctx: Ctx) {
 		route: String(ctx.body.source_route ?? ctx.body.sourceRoute ?? ''),
 		entity_label: String(ctx.body.source_entity_label ?? ctx.body.sourceEntityLabel ?? ''),
 	});
+	// El panel manda model_name = model_id del módulo ('Ticket'), que no resuelve
+	// al recurso; la colección sí.
+	if (canonical === 'tickets' || resolve_history_model(ctx.store, collection_name) === 'tickets') {
+		await queue_support_comment(ctx.store, document_id, String(created._id));
+	}
 	return ok([created], 'Comentario registrado correctamente');
 }
 

@@ -291,17 +291,27 @@ describe('front-used Imperium contract via shipped create_imperium_layer', () =>
 			body: { email: EMAIL, password: PASSWORD },
 		});
 		const cookie = sid_from(login.set_cookie);
+		// Desde Módulos solo se reinstala lo que está en el catálogo del tenant.
+		const added = await call('POST', '/subjects/catalog', {
+			cookie,
+			body: { slug: 'turnos' },
+		});
+		expect([201, 409]).toContain(added.status);
 		const listed = await call('GET', '/subjects', { cookie });
 		expect(listed.status).toBe(200);
 		const subjects = (listed.json?.data as Record<string, unknown>[]) ?? [];
-		// Contra el catálogo, no contra un número: cada app nueva rompía esta
-		// prueba sin que nada estuviera mal.
+		// Nadie ve el catálogo entero del núcleo: base, instaladas y autorizadas.
 		const catalog_size = (
 			JSON.parse(
 				readFileSync(load_catalog_path(), 'utf8'),
 			) as { subjects: unknown[] }
 		).subjects.length;
-		expect(subjects.length).toBe(catalog_size);
+		expect(subjects.length).toBeLessThanOrEqual(catalog_size);
+		for (const row of subjects) {
+			expect(
+				Boolean(row.base || row.installed || row.busy || row.catalog_source),
+			).toBe(true);
+		}
 		const turnos = subjects.find(
 			(s) => s.technical_id === 'subject-turnos',
 		);
@@ -401,6 +411,12 @@ describe('front-used Imperium contract via shipped create_imperium_layer', () =>
 			cookie,
 		});
 		expect(allowed.status).not.toBe(404);
+		if (added.status === 201) {
+			const removed = await call('DELETE', '/subjects/catalog/subject-turnos', {
+				cookie,
+			});
+			expect(removed.status).toBe(200);
+		}
 	});
 
 	test('una referencia acepta ids de app, no solo ObjectId de Mongo', async () => {

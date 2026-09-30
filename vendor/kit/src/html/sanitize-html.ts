@@ -1,6 +1,4 @@
-// (o==================================================================o)
 //   #region KIRTEXTO — SANITIZE (the security boundary)
-// (o-----------------------------------------------------------\/-----o)
 
 import { NOX_HTML_PURIFY_CONFIG } from "./html-profile.js";
 import { normalize_provider_html } from "./normalize-html.js";
@@ -67,6 +65,4 @@ export function html_to_text(
   return `${text.slice(0, max_length).replace(/\s+\S*$/, "")}…`;
 }
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion KIRTEXTO — SANITIZE
-// (o==================================================================o)

@@ -1,6 +1,4 @@
-// (o==================================================================o)
 //   #region SUBJECT CLIENT (llamadas app → app por el gateway del núcleo)
-// (o-----------------------------------------------------------\/-----o)
 
 import { KirletHttpError } from "./errors.js";
 import { is_subject_technical_id } from "./manifest.js";
@@ -143,6 +141,4 @@ export async function call_subject<T = unknown>(
   return json as T;
 }
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion SUBJECT CLIENT
-// (o==================================================================o)

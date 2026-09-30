@@ -907,6 +907,12 @@
   },
   {
     "resource": "tickets",
+    "method": "post",
+    "path": "/bridge/comment",
+    "action": "receive_support_comment"
+  },
+  {
+    "resource": "tickets",
     "method": "patch",
     "path": "/:id",
     "action": "update_ticket"

@@ -1,9 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { MemoryNoxServices } from "./memory-nox-services.js";
 
-// (o==================================================================o)
 //   #region NOX FILES (platform attachments)
-// (o-----------------------------------------------------------\/-----o)
 
 const bytes = (s: string) => new TextEncoder().encode(s);
 
@@ -87,6 +85,4 @@ describe("NoxServices.files", () => {
   });
 });
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion NOX FILES
-// (o==================================================================o)

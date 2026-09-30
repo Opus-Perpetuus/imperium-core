@@ -1,6 +1,4 @@
-// (o==================================================================o)
 //   #region KIRLET DOMAIN SCHEMA (declarative, NOX-applied)
-// (o-----------------------------------------------------------\/-----o)
 
 /**
  * Column types for kirlet domain tables stored in the shared NOX Postgres.
@@ -264,6 +262,4 @@ END $fk$`,
   }
 }
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion KIRLET DOMAIN SCHEMA
-// (o==================================================================o)

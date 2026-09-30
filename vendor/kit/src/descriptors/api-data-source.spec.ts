@@ -7,9 +7,7 @@ import {
   resolve_api_data_source,
 } from "./api-data-source";
 
-// (o==================================================================o)
 //   #region TESTS
-// (o-----------------------------------------------------------\/-----o)
 
 describe("parse_api_data_source", () => {
   test("parses path and query into http_path under /api", () => {
@@ -81,6 +79,4 @@ describe("bind_api_payload_to_props", () => {
   });
 });
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion TESTS
-// (o==================================================================o)

@@ -15,6 +15,12 @@ import {
 } from './interinstance.ts';
 import { status_options_for_model_field } from './status-options.ts';
 import type { ImperiumStore } from './store.ts';
+import {
+	queue_support_ticket,
+	queue_support_update,
+	support_enabled,
+	support_initial_state,
+} from './support-bridge.ts';
 
 export type TicketCtx = {
 	store: ImperiumStore;
@@ -377,7 +383,11 @@ type CreateTicketInput = {
 
 async function persist_ticket(store: ImperiumStore, input: CreateTicketInput, actor: ImperiumDoc | null) {
 	const settings = await messaging_settings(store);
+	// Con llave de soporte, la interinstancia de tickets va a Odoo y el ticket se
+	// queda también aquí: las respuestas de soporte regresan a esta fila.
+	const to_support = input.should_forward_interinstance === true && support_enabled();
 	const should_forward =
+		!to_support &&
 		input.should_forward_interinstance === true &&
 		settings.interinstance_enabled &&
 		Boolean(settings.interinstance_endpoint) &&
@@ -391,7 +401,7 @@ async function persist_ticket(store: ImperiumStore, input: CreateTicketInput, ac
 	const assigned_project_ids = input.assigned_project_ids ?? [];
 	const is_locked = Boolean(assigned_personal_task_ids.length || assigned_project_ids.length);
 	const assigned_user_id = is_locked ? undefined : input.assigned_user_id;
-	return store.insert('tickets', {
+	const ticket = await store.insert('tickets', {
 		name: input.title,
 		title: input.title,
 		description: input.description,
@@ -409,9 +419,13 @@ async function persist_ticket(store: ImperiumStore, input: CreateTicketInput, ac
 		interinstance: {
 			forwarded: false,
 			...(input.interinstance ?? {}),
+			...(to_support ? support_initial_state() : {}),
 		},
+		...(to_support ? { support_sync: 'pending' } : {}),
 		created_by: actor_id(actor) || undefined,
 	});
+	if (to_support) queue_support_ticket(store, ticket);
+	return ticket;
 }
 
 async function forward_created_ticket(
@@ -498,6 +512,7 @@ export async function tickets_public_metadata(ctx: TicketCtx) {
 						settings.interinstance_enabled &&
 						Boolean(endpoint) &&
 						Boolean(settings.interinstance_api_key),
+					support_outbound_ready: support_enabled(),
 				},
 			},
 		],
@@ -627,7 +642,7 @@ export async function create_internal_ticket(ctx: TicketCtx) {
 
 export async function create_error_ticket(ctx: TicketCtx) {
 	const should_forward = bool_flag(ctx.body.should_forward_interinstance);
-	if (should_forward) await assert_interinstance_outbound(ctx.store, 'tickets');
+	if (should_forward && !support_enabled()) await assert_interinstance_outbound(ctx.store, 'tickets');
 	const title = optional_text(ctx.body.title) || 'Error reportado desde interfaz';
 	const description =
 		text(ctx.body.description) || 'Se generó un ticket automático a partir de un error de ejecución.';
@@ -666,7 +681,7 @@ export async function create_error_ticket(ctx: TicketCtx) {
 export async function create_log_ticket(ctx: TicketCtx) {
 	const log_payload = optional_object(ctx.body.log);
 	const should_forward = bool_flag(ctx.body.should_forward_interinstance);
-	if (should_forward) await assert_interinstance_outbound(ctx.store, 'tickets');
+	if (should_forward && !support_enabled()) await assert_interinstance_outbound(ctx.store, 'tickets');
 	const title =
 		optional_text(ctx.body.title) ||
 		optional_text(log_payload?.label) ||
@@ -713,10 +728,12 @@ export async function create_log_ticket(ctx: TicketCtx) {
 
 export async function create_interinstance_ticket(ctx: TicketCtx) {
 	const settings = await messaging_settings(ctx.store);
-	if (!settings.interinstance_enabled) {
-		return deny_interinstance('La recepción interinstancia no está habilitada.', 403);
+	if (!support_enabled()) {
+		if (!settings.interinstance_enabled) {
+			return deny_interinstance('La recepción interinstancia no está habilitada.', 403);
+		}
+		await assert_interinstance_outbound(ctx.store, 'tickets');
 	}
-	await assert_interinstance_outbound(ctx.store, 'tickets');
 	const title = text(ctx.body.title);
 	const description = text(ctx.body.description);
 	if (!title || !description) {
@@ -932,6 +949,7 @@ export async function update_ticket(ctx: TicketCtx) {
 
 	const updated = await ctx.store.update('tickets', ticket_id, patch);
 	if (!updated) throw new Error('No se pudo actualizar el ticket solicitado.');
+	await queue_support_update(ctx.store, existing, updated, ctx.actor);
 	return ok([updated], 'Ticket actualizado.');
 }
 

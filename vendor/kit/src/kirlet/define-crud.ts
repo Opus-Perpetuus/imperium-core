@@ -1,6 +1,4 @@
-// (o==================================================================o)
 //   #region DEFINE CRUD (standard resource routes)
-// (o-----------------------------------------------------------\/-----o)
 
 import { new_id, now_iso } from "./http.js";
 import { KirletHttpError } from "./errors.js";
@@ -455,6 +453,4 @@ export function define_crud(opts: DefineCrudOptions): KirletRouteTable {
   });
 }
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion DEFINE CRUD
-// (o==================================================================o)

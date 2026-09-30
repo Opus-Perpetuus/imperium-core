@@ -1,6 +1,4 @@
-// (o==================================================================o)
 //   #region DEFINE KIRLET (single source of truth → manifest)
-// (o-----------------------------------------------------------\/-----o)
 
 import type { KirletManifest, KirletManifestIcon, KirletManifestMenuItem, KirletPublicAccess } from "./manifest.js";
 import { kirlet_slug_from_id, is_kirlet_catalog_id } from "./manifest.js";
@@ -423,6 +421,4 @@ export function qualify_history_resource(
 // silence unused DomainRow in case of future seed typing
 export type { DomainRow };
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion DEFINE KIRLET
-// (o==================================================================o)

@@ -1,6 +1,4 @@
-// (o==================================================================o)
 //   #region UI ACTION (botón que escribe)
-// (o-----------------------------------------------------------\/-----o)
 
 import { parse_api_data_source } from "./api-data-source.js";
 
@@ -86,6 +84,4 @@ export function ui_action_http_path(
   return `${base}/${action.path}${action.query ? `?${action.query}` : ""}`;
 }
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion UI ACTION
-// (o==================================================================o)

@@ -1,6 +1,4 @@
-// (o==================================================================o)
 //   #region PUBLIC API
-// (o-----------------------------------------------------------\/-----o)
 
 /**
  * Full kit surface for Node (API, Imperium apps, tests).
@@ -69,6 +67,4 @@ export * from './kirlet/widgets.js';
 export * from './platform/realms.js';
 export * from './tags/types.js';
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion PUBLIC API
-// (o==================================================================o)

@@ -1,6 +1,4 @@
-// (o==================================================================o)
 //   #region KIRLET ROUTE MATCHER (typed params, no deps)
-// (o-----------------------------------------------------------\/-----o)
 
 /**
  * Route pattern: `"METHOD /path/:param"` or `"METHOD /path/*"` (wildcard only final).
@@ -200,6 +198,4 @@ export function match_route_table(
   return { ok: false, reason: "miss" };
 }
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion KIRLET ROUTE MATCHER
-// (o==================================================================o)

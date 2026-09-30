@@ -1,6 +1,4 @@
-// (o==================================================================o)
 //   #region KIRLET RUNTIME CONFIG (env)
-// (o-----------------------------------------------------------\/-----o)
 
 export type KirletRuntimeConfig = {
   port: number;
@@ -91,6 +89,4 @@ export function resolve_data_mode(
   return resolve_kirlet_config({ env }).data_mode;
 }
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion KIRLET RUNTIME CONFIG
-// (o==================================================================o)

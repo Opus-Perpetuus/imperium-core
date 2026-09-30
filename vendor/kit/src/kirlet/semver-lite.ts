@@ -1,6 +1,4 @@
-// (o==================================================================o)
 //   #region SEMVER LITE
-// (o-----------------------------------------------------------\/-----o)
 
 /**
  * Minimal semver helpers for kirlet compat gates.
@@ -88,6 +86,4 @@ export function semver_satisfies(version: string, range: string): boolean {
   return cmp(v, exact) === 0;
 }
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion SEMVER LITE
-// (o==================================================================o)

@@ -1,6 +1,4 @@
-// (o==================================================================o)
 //   #region KIRLET IDENTITY TYPES (browser-safe)
-// (o-----------------------------------------------------------\/-----o)
 
 /**
  * Pure types + grant check — no Node crypto.
@@ -58,6 +56,4 @@ export function kirlet_identity_can(
   }
 }
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion KIRLET IDENTITY TYPES (browser-safe)
-// (o==================================================================o)

@@ -1,6 +1,4 @@
-// (o==================================================================o)
 //   #region KIRLET DATA CLIENT (kit-mediated, no direct DB in kirlets)
-// (o-----------------------------------------------------------\/-----o)
 
 /**
  * Filter DSL for domain table access. Kirlet authors use this instead of SQL.
@@ -157,6 +155,4 @@ export class KirletRepository<T extends DomainRow = DomainRow> {
   }
 }
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion KIRLET DATA CLIENT
-// (o==================================================================o)

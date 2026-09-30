@@ -1,6 +1,4 @@
-// (o==================================================================o)
 //   #region KIRLET CONFORMANCE ASSERTIONS
-// (o-----------------------------------------------------------\/-----o)
 
 import { readdirSync, statSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -136,6 +134,4 @@ export function assert_kirlet_conformance(opts: ConformanceOptions): void {
   }
 }
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion KIRLET CONFORMANCE
-// (o==================================================================o)

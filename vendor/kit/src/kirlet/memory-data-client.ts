@@ -1,6 +1,4 @@
-// (o==================================================================o)
 //   #region MEMORY KIRLET DATA CLIENT
-// (o-----------------------------------------------------------\/-----o)
 
 import type { KirletSchemaBundle } from "./schema.js";
 import {
@@ -253,6 +251,4 @@ export class MemoryKirletDataClient extends KirletDataClient {
   }
 }
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion MEMORY KIRLET DATA CLIENT
-// (o==================================================================o)

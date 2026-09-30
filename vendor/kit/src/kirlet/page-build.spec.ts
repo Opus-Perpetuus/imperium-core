@@ -4,9 +4,7 @@ import { define_kirlet } from "./define-kirlet.js";
 import { create_kirlet_test_context } from "./serve.js";
 import type { KirletTableDecl } from "./schema.js";
 
-// (o==================================================================o)
 //   #region FIXTURE
-// (o-----------------------------------------------------------\/-----o)
 
 const ITEMS_TABLE: KirletTableDecl = {
   name: "items",
@@ -76,13 +74,9 @@ function build_definition() {
   });
 }
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion FIXTURE
-// (o==================================================================o)
 
-// (o==================================================================o)
 //   #region ASYNC PAGE BUILD
-// (o-----------------------------------------------------------\/-----o)
 
 describe("page build", () => {
   test("synchronous build still serves (backwards compatible)", async () => {
@@ -153,6 +147,4 @@ describe("page build", () => {
   });
 });
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion ASYNC PAGE BUILD
-// (o==================================================================o)

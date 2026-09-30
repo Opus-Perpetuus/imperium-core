@@ -1,6 +1,4 @@
-// (o==================================================================o)
 //   #region HTTP KIRLET DATA CLIENT (NOX-mediated)
-// (o-----------------------------------------------------------\/-----o)
 
 import {
   KirletDataClient,
@@ -194,6 +192,4 @@ export class HttpKirletDataClient extends KirletDataClient {
   }
 }
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion HTTP KIRLET DATA CLIENT
-// (o==================================================================o)

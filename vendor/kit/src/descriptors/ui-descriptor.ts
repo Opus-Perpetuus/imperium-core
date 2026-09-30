@@ -1,6 +1,4 @@
-// (o==================================================================o)
 //   #region UI DESCRIPTOR TYPES
-// (o-----------------------------------------------------------\/-----o)
 
 /** Canonical catalog: docs/contracts/ui-components.md */
 export type NoxUiComponentId =
@@ -396,13 +394,9 @@ export type NoxUiRenderPlan =
       message: string;
     };
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion UI DESCRIPTOR TYPES
-// (o==================================================================o)
 
-// (o==================================================================o)
 //   #region ALLOWLIST / VALIDATION
-// (o-----------------------------------------------------------\/-----o)
 
 export function is_allowed_ui_component(id: string): id is NoxUiComponentId {
   return (NOX_UI_COMPONENT_ALLOWLIST as readonly string[]).includes(id);
@@ -615,13 +609,9 @@ export function normalize_page_preloader(
   return Object.keys(out).length > 0 ? out : null;
 }
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion ALLOWLIST / VALIDATION
-// (o==================================================================o)
 
-// (o==================================================================o)
 //   #region WALK / RENDER PLAN
-// (o-----------------------------------------------------------\/-----o)
 
 /** Depth-first walk; visitor may short-circuit by returning false. */
 export function walk_ui_tree(
@@ -706,6 +696,4 @@ export function plan_ui_node(input: unknown, path = "$"): NoxUiRenderPlan {
   };
 }
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion WALK / RENDER PLAN
-// (o==================================================================o)

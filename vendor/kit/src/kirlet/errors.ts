@@ -1,6 +1,4 @@
-// (o==================================================================o)
 //   #region KIRLET HTTP ERRORS
-// (o-----------------------------------------------------------\/-----o)
 
 import { error_response } from "./http.js";
 
@@ -39,6 +37,4 @@ export function to_error_response(err: unknown): Response {
   return error_response("internal_error", "internal error", 500);
 }
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion KIRLET HTTP ERRORS
-// (o==================================================================o)

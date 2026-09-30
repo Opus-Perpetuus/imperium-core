@@ -1,6 +1,4 @@
-// (o==================================================================o)
 //   #region SERVE KIRLET (runtime shell)
-// (o-----------------------------------------------------------\/-----o)
 
 import type { KirletDefinition } from "./define-kirlet.js";
 import { qualify_history_resource } from "./define-kirlet.js";
@@ -571,6 +569,4 @@ export function create_kirlet_test_context(
 
 export { KirletHttpError };
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion SERVE KIRLET
-// (o==================================================================o)

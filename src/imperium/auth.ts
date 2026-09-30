@@ -786,6 +786,8 @@ const PUBLIC_EXTRA_ACTIONS = new Set([
 	'tickets:read_public_metadata',
 	'tickets:create_public_ticket',
 	'tickets:receive_interinstance_ticket',
+	// Aviso firmado de Odoo; el handler exige la firma con TKSUPPORT.
+	'tickets:receive_support_comment',
 	'payments:public_catalog',
 	'payments:public_checkout',
 	'payments:public_session',

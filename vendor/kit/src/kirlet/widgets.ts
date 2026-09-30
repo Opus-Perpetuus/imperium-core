@@ -1,6 +1,4 @@
-// (o==================================================================o)
 //   #region KIRLET / NOX MOBILE WIDGETS
-// (o-----------------------------------------------------------\/-----o)
 
 /** In-app grid span. Launcher Glance maps sm→2×1, md→2×2, lg→4×2. */
 export type KirletWidgetSize = "sm" | "md" | "lg";
@@ -123,6 +121,4 @@ export function parse_runtime_mode(value: unknown): NoxRuntimeMode | null {
   return null;
 }
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion KIRLET / NOX MOBILE WIDGETS
-// (o==================================================================o)

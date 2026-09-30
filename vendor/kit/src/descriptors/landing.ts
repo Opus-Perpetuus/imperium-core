@@ -1,6 +1,4 @@
-// (o==================================================================o)
 //   #region LANDING DOCUMENT (pure default / apply / sanitize)
-// (o-----------------------------------------------------------\/-----o)
 
 import { PUBLIC_SESSION_START_PATH } from "../auth/principal.js";
 import {
@@ -579,6 +577,4 @@ export function plan_landing_document(
   };
 }
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion LANDING DOCUMENT
-// (o==================================================================o)

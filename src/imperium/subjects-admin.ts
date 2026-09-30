@@ -32,6 +32,11 @@ import {
 } from './subject-deps.ts';
 import type { ImperiumDoc } from './envelope.ts';
 import { is_seed_admin } from './group-access.ts';
+import {
+	catalog_visible,
+	list_catalog_entries,
+	type CatalogEntry,
+} from './subject-catalog.ts';
 import { PREFER_OWNER, type ImperiumStore, type SubjectInfo } from './store.ts';
 
 type JobCtx = {
@@ -582,13 +587,65 @@ export async function list_catalog_subjects(
 	const all_modules = await collect_resource(store, 'module-management');
 	const installed = await installed_from(store, recs, all_modules);
 	const deps: DependencyView = { subjects: store.subjects, installed };
+	const entries = new Map(
+		(await list_catalog_entries(sql)).map((entry) => [entry.technical_id, entry]),
+	);
 	const out = [];
 	for (const sub of store.subjects) {
 		const rows = filter_module_rows(all_modules, sub);
 		const rec = recs.get(sub.technical_id);
-		out.push(catalog_row(sub, subject_is_installed(rec, rows), rec, deps, running));
+		const row = catalog_row(sub, subject_is_installed(rec, rows), rec, deps, running);
+		const entry = entries.get(sub.technical_id);
+		if (
+			!catalog_visible({
+				slug: sub.slug,
+				installed: row.installed,
+				busy: row.busy,
+				status: row.status,
+				authorized: Boolean(entry),
+			})
+		) {
+			continue;
+		}
+		out.push({ ...row, external: false, catalog_source: entry?.source ?? null });
+	}
+	for (const entry of entries.values()) {
+		if (store.subjects.some((sub) => sub.technical_id === entry.technical_id)) continue;
+		out.push(external_catalog_row(entry));
 	}
 	return out;
+}
+
+/**
+ * Fila de `GET /subjects` para una app del catálogo que este núcleo no conoce
+ * (externa): se ve, pero no se puede instalar desde aquí.
+ */
+function external_catalog_row(entry: CatalogEntry) {
+	return {
+		slug: entry.slug,
+		name: entry.name,
+		path: '',
+		menu_ref: '',
+		technical_id: entry.technical_id,
+		image: entry.image ?? '',
+		icon: `subject:${entry.slug}`,
+		installed: false,
+		status: 'not_installed',
+		busy: false,
+		base: false,
+		installed_at: null,
+		installed_image: null,
+		available_image: entry.image,
+		installed_tag: '',
+		available_tag: subject_image_tag(entry.image),
+		update_available: false,
+		depends_on: [] as string[],
+		required_by: [] as string[],
+		missing_dependencies: [] as string[],
+		modules: [] as Array<{ resource: string; path: string; name: string }>,
+		external: true,
+		catalog_source: entry.source,
+	};
 }
 
 async function upsert_subject_marker(

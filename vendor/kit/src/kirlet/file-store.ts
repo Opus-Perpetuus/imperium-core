@@ -1,6 +1,4 @@
-// (o==================================================================o)
 //   #region KIRLET FILE STORE (blobs under DATA_DIR/files)
-// (o-----------------------------------------------------------\/-----o)
 
 import { mkdir, writeFile, readFile, unlink, access } from "node:fs/promises";
 import { join, dirname } from "node:path";
@@ -134,6 +132,4 @@ export class MemoryKirletFileStore implements KirletFileStore {
   }
 }
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion KIRLET FILE STORE
-// (o==================================================================o)

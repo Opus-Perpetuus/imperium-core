@@ -29,6 +29,7 @@ type ModuleCtx = {
 	sql: Bun.SQL;
 	params: Record<string, string>;
 	body: Record<string, unknown>;
+	actor?: ImperiumDoc | null;
 };
 
 async function resolve_module(store: ImperiumStore, identifier: string) {
@@ -837,13 +838,26 @@ export async function run_default_seed_steps(steps: DefaultSeedStep[]) {
  * "Sembrar opciones por defecto" de Módulos: crea lo que falte sin pisar nada.
  * En v13 eso son los parámetros de configuración y los menús y permisos de las
  * apps instaladas —los mismos sembradores idempotentes del arranque—, no los
- * `module.data` del árbol Express.
+ * `module.data` del árbol Express. Lo único que sí pisa es el superadministrador
+ * (correo, contraseña e imagen), y por eso solo lo corre él.
  */
 export async function seed_default_data(ctx: ModuleCtx) {
+	const { is_seed_admin } = await import('./group-access.ts');
+	if (!is_seed_admin(ctx.actor ?? null)) {
+		throw Object.assign(
+			new Error('Solo el superadministrador puede sembrar las opciones por defecto.'),
+			{ status: 403, code: 'admin_required' },
+		);
+	}
 	const { apply_missing_configuration_seeds } = await import('./configuration-seed-sync.ts');
 	const { ensure_installed_subject_menus } = await import('./subject-menu-seed.ts');
 	const { disabled_subject_slugs } = await import('./subjects-admin.ts');
+	const { seed_superadmin } = await import('./superadmin-seed.ts');
 	return run_default_seed_steps([
+		{
+			module: 'Superadministrador',
+			run: () => seed_superadmin(ctx.store),
+		},
 		{
 			module: 'Configuración',
 			run: async () => (await apply_missing_configuration_seeds(ctx.store)).created.length,
@@ -860,4 +874,25 @@ export async function seed_default_data(ctx: ModuleCtx) {
 			},
 		},
 	]);
+}
+
+/**
+ * Siembra de una instalación nueva. El arranque ya crea lo que falte, pero en
+ * una base virgen corre antes de que `install-schemas` cree las tablas y no
+ * tiene dónde escribir: esto repite esa pasada con las tablas puestas y da de
+ * alta al superadministrador. Las filas de `subject_installs` van antes: sin
+ * ellas las apps base cuentan como desinstaladas y no se siembran sus menús.
+ */
+export async function seed_new_install(
+	store: ImperiumStore,
+	sql: Bun.SQL,
+): Promise<void> {
+	const { installed_technical_ids, seed_missing_install_rows } = await import(
+		'./subjects-admin.ts'
+	);
+	const { seed_superadmin } = await import('./superadmin-seed.ts');
+	await seed_missing_install_rows(store, sql);
+	store.set_installed_subjects(await installed_technical_ids(store, sql));
+	await store.ensure_defaults();
+	await seed_superadmin(store);
 }

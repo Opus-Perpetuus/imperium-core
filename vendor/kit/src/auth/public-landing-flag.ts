@@ -1,6 +1,4 @@
-// (o==================================================================o)
 //   #region PUBLIC LANDING SWITCH
-// (o-----------------------------------------------------------\/-----o)
 
 /** Configuration `_ref` for the SI/NO switch that shows or hides `/`. */
 export const PUBLIC_LANDING_ENABLED_REF =
@@ -73,6 +71,4 @@ export function public_landing_configuration_seed(): {
   };
 }
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion PUBLIC LANDING SWITCH
-// (o==================================================================o)

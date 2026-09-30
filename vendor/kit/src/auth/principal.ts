@@ -1,6 +1,4 @@
-// (o==================================================================o)
 //   #region PRINCIPAL TYPE (staff vs public)
-// (o-----------------------------------------------------------\/-----o)
 
 /** Same copy staff login uses for unknown users — never leak “wrong type”. */
 export const GENERIC_CREDENTIALS_MESSAGE =
@@ -91,6 +89,4 @@ export function apply_public_user_create<T extends Record<string, unknown>>(
   return { ...doc, type: "external", is_admin: false };
 }
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion PRINCIPAL TYPE
-// (o==================================================================o)

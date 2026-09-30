@@ -1,6 +1,4 @@
-// (o==================================================================o)
 //   #region KIRTEXTO — HTML PROFILE (single source of policy)
-// (o-----------------------------------------------------------\/-----o)
 
 /**
  * Kirtexto is NOX's HTML pipeline for untrusted rich text — chiefly product
@@ -98,6 +96,4 @@ export const NOX_HTML_PURIFY_CONFIG = {
   SANITIZE_DOM: true,
 } as const;
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion KIRTEXTO — HTML PROFILE
-// (o==================================================================o)

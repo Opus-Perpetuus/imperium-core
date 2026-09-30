@@ -32,6 +32,14 @@ export function process_array_fields(
 	return obj;
 }
 
+// Quien firma el cuerpo (HMAC del puente de soporte) necesita los bytes tal
+// cual llegaron: re-serializar el objeto no reproduce el orden ni el formato.
+const raw_json_bodies = new WeakMap<Request, string>();
+
+export function raw_json_body(req: Request): string {
+	return raw_json_bodies.get(req) ?? '';
+}
+
 export async function read_imperium_body(
 	req: Request,
 ): Promise<Record<string, unknown>> {
@@ -74,6 +82,7 @@ export async function read_imperium_body(
 		return process_array_fields(out);
 	}
 	const raw = await req.text();
+	raw_json_bodies.set(req, raw);
 	if (!raw.trim()) return {};
 	try {
 		const parsed = JSON.parse(raw);

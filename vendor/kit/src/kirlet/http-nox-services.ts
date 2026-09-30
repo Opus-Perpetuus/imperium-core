@@ -1,6 +1,4 @@
-// (o==================================================================o)
 //   #region HTTP NOX SERVICES (service plane client)
-// (o-----------------------------------------------------------\/-----o)
 
 import type {
   CounterNextOptions,
@@ -261,6 +259,4 @@ export class HttpNoxServices implements NoxServices {
   }
 }
 
-// (o-----------------------------------------------------------/\-----o)
 //   #endregion HTTP NOX SERVICES
-// (o==================================================================o)

@@ -63,6 +63,7 @@ describe('extras públicos', () => {
 			'agua:public_contrato',
 			'messages:receive_interinstance_message',
 			'reports:get_image_base64',
+			'tickets:receive_support_comment',
 		];
 		for (const clave of publicas) expect(declaradas.has(clave)).toBe(true);
 	});
