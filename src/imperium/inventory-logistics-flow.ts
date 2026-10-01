@@ -93,44 +93,66 @@ async function insert_movement(store: ImperiumStore, record: ImperiumDoc) {
 	});
 }
 
-export async function sync_order_logistics_reservation(
+type PackageOverride = {
+	exclude_package_id?: string;
+	contenido?: unknown[];
+};
+
+/**
+ * Calcula el apartado que pide el pedido y lo valida para todos los productos
+ * sin escribir nada. `override` sustituye un bulto que aún no se guarda: así
+ * el alta/edición se rechaza antes de insertar en vez de dejar el bulto
+ * guardado con el error (el store no tiene transacciones).
+ */
+async function plan_order_logistics_reservation(
 	store: ImperiumStore,
 	pedido_id: string,
-): Promise<void> {
+	override?: PackageOverride,
+) {
 	const normalized_order_id = text(pedido_id);
-	if (!normalized_order_id || !is_id(normalized_order_id)) return;
-	if (!store.has('delivery-package') || !store.has('products')) return;
+	if (!normalized_order_id || !is_id(normalized_order_id)) return null;
+	if (!store.has('delivery-package') || !store.has('products')) return null;
 
 	const desired = new Map<string, number>();
+	const add_content = (contenido: unknown) => {
+		for (const raw of as_array(contenido)) {
+			const item = as_object(raw);
+			const product_id = ref_id(item.product) || text(item.product);
+			const quantity = round_qty(Number(item.quantity ?? 0));
+			if (!product_id || !is_id(product_id) || quantity <= 0) continue;
+			desired.set(product_id, round_qty((desired.get(product_id) ?? 0) + quantity));
+		}
+	};
+	const exclude_id = text(override?.exclude_package_id);
 	for await (const page of store.scan('delivery-package', {
 		where: { pedido: normalized_order_id },
 		include_inactive: false,
 	})) {
 		for (const pack of page) {
 			if (pack.is_active === false || text(pack.estado) === 'entregado') continue;
-			for (const raw of as_array(pack.contenido)) {
-				const item = as_object(raw);
-				const product_id = ref_id(item.product) || text(item.product);
-				const quantity = round_qty(Number(item.quantity ?? 0));
-				if (!product_id || !is_id(product_id) || quantity <= 0) continue;
-				desired.set(product_id, round_qty((desired.get(product_id) ?? 0) + quantity));
-			}
+			if (exclude_id && text(pack._id) === exclude_id) continue;
+			add_content(pack.contenido);
 		}
 	}
+	if (override?.contenido) add_content(override.contenido);
 
 	const current = await get_order_reserved_quantities(store, normalized_order_id);
 	const affected = [...new Set([...desired.keys(), ...current.keys()])];
-	if (!affected.length) return;
+	if (!affected.length) return null;
 
 	const pedido = await store.find_id('pedidos', normalized_order_id);
 	if (!pedido) throw new Error('No se encontró el pedido para sincronizar inventario');
 	const estado = text(pedido.estado);
-	if (estado === 'surtido' || estado === 'enviado') return;
+	if (estado === 'surtido' || estado === 'enviado') return null;
 
-	const warehouse = await location_by_ref(store, WAREHOUSE_REF);
-	const logistics = await location_by_ref(store, LOGISTICS_REF);
-	const folio_referencia = text(pedido.folio_interno ?? pedido.folio);
-
+	const steps: Array<{
+		product: ImperiumDoc;
+		product_id: string;
+		difference: number;
+		stock_total_previo: number;
+		stock_apartado_previo: number;
+		stock_apartado_resultante: number;
+	}> = [];
 	for (const product_id of affected) {
 		const product = await store.find_id('products', product_id);
 		if (!product || product.is_active === false) {
@@ -157,8 +179,52 @@ export async function sync_order_logistics_reservation(
 				`El apartado de ${product.name} quedaría negativo al sincronizar logística`,
 			);
 		}
+		steps.push({
+			product,
+			product_id,
+			difference,
+			stock_total_previo,
+			stock_apartado_previo,
+			stock_apartado_resultante,
+		});
+	}
+	return { pedido, normalized_order_id, steps };
+}
+
+/**
+ * Lanza el mismo error que `sync_order_logistics_reservation` lanzaría tras
+ * guardar el bulto. Los estados que el alta convierte en «surtido» no apartan.
+ */
+export async function assert_logistics_reservation_capacity(
+	store: ImperiumStore,
+	pedido: ImperiumDoc,
+	contenido: unknown[],
+	exclude_package_id?: string,
+): Promise<void> {
+	const estado = text(pedido.estado);
+	if (['por_surtir', 'surtiendo', 'surtido', 'enviado'].includes(estado)) return;
+	await plan_order_logistics_reservation(store, text(pedido._id), {
+		exclude_package_id,
+		contenido,
+	});
+}
+
+export async function sync_order_logistics_reservation(
+	store: ImperiumStore,
+	pedido_id: string,
+): Promise<void> {
+	const plan = await plan_order_logistics_reservation(store, pedido_id);
+	if (!plan) return;
+	const { pedido, normalized_order_id, steps } = plan;
+
+	const warehouse = await location_by_ref(store, WAREHOUSE_REF);
+	const logistics = await location_by_ref(store, LOGISTICS_REF);
+	const folio_referencia = text(pedido.folio_interno ?? pedido.folio);
+
+	for (const step of steps) {
+		const { product, product_id, difference } = step;
 		await store.update('products', product_id, {
-			existenciaApartada: stock_apartado_resultante,
+			existenciaApartada: step.stock_apartado_resultante,
 		});
 		await insert_movement(store, {
 			producto: product_id,
@@ -182,10 +248,10 @@ export async function sync_order_logistics_reservation(
 					? 'Apartado automático por empaque logístico'
 					: 'Liberación automática por ajuste de empaque logístico',
 			cantidad: Math.abs(difference),
-			stock_total_previo,
-			stock_total_resultante: stock_total_previo,
-			stock_apartado_previo,
-			stock_apartado_resultante,
+			stock_total_previo: step.stock_total_previo,
+			stock_total_resultante: step.stock_total_previo,
+			stock_apartado_previo: step.stock_apartado_previo,
+			stock_apartado_resultante: step.stock_apartado_resultante,
 			fecha_movimiento: new Date().toISOString(),
 		});
 	}

@@ -15637,6 +15637,13 @@
           "parent_ref": "tienda-nav-admin"
         },
         {
+          "name": "Datos de la tienda",
+          "menu_ref": "tienda-store-info",
+          "path": "/store-info",
+          "icon": "fa-address-card",
+          "parent_ref": "tienda-nav-admin"
+        },
+        {
           "name": "Cobros",
           "menu_ref": "tienda-payment-gateways",
           "path": "/payment-gateways",
@@ -15711,6 +15718,13 @@
           "menu_ref": "tienda-store-payment-methods",
           "path": "/store-payment-methods",
           "icon": "fa-credit-card",
+          "parent_ref": "tienda-nav-store"
+        },
+        {
+          "name": "Nosotros",
+          "menu_ref": "tienda-store-about",
+          "path": "/store-about",
+          "icon": "fa-circle-info",
           "parent_ref": "tienda-nav-store"
         }
       ]

@@ -4,7 +4,10 @@
  * y sincronización del estado del pedido (surtido / enviado).
  */
 import { as_array, as_object, type ImperiumDoc } from './envelope.ts';
-import { sync_order_logistics_reservation } from './inventory-logistics-flow.ts';
+import {
+	assert_logistics_reservation_capacity,
+	sync_order_logistics_reservation,
+} from './inventory-logistics-flow.ts';
 import type { ImperiumStore } from './store.ts';
 import { format_model_field_value } from './custom-pattern-render.ts';
 
@@ -351,6 +354,19 @@ async function normalize_payload(
 		vehicle = vehicle_snapshot.vehicle_id;
 		vehicle_nombre = vehicle_snapshot.vehicle_nombre;
 	}
+	const requested_estado = text(payload.estado);
+	const estado = PACKAGE_STATES.includes(requested_estado as (typeof PACKAGE_STATES)[number])
+		? requested_estado
+		: 'pendiente';
+	const contenido = normalize_content_items(payload.contenido, order_snapshot.articulos);
+	// Antes de consumir el folio y de insertar: si el apartado falla después,
+	// el bulto quedaba guardado con el error y cada reintento sumaba otro.
+	await assert_logistics_reservation_capacity(
+		store,
+		order_snapshot.pedido,
+		estado === 'entregado' || estado === 'cancelado' ? [] : contenido,
+		current_record_id,
+	);
 	const numero_bulto =
 		payload.numero_bulto && Number(payload.numero_bulto) > 0
 			? number_field(payload.numero_bulto, 'numero_bulto')
@@ -362,11 +378,6 @@ async function normalize_payload(
 			existing_record?.codigo_bulto ?? (is_create ? undefined : text(payload.codigo_bulto)),
 		context: payload,
 	});
-	const requested_estado = text(payload.estado);
-	const estado = PACKAGE_STATES.includes(requested_estado as (typeof PACKAGE_STATES)[number])
-		? requested_estado
-		: 'pendiente';
-	const contenido = normalize_content_items(payload.contenido, order_snapshot.articulos);
 	const contenido_resumen = text(payload.contenido_resumen) || build_content_summary(contenido);
 	return {
 		...payload,

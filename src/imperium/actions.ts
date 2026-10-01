@@ -10,7 +10,7 @@ import { apply_missing_configuration_seeds } from './configuration-seed-sync.ts'
 import { plan_documentation_sync } from './documentation-sync.ts';
 import { serve_attachment_bytes } from './media.ts';
 import { query_list, read_imperium_body } from './body.ts';
-import { is_unique_violation, qident, type ImperiumStore } from './store.ts';
+import { is_unique_violation, type ImperiumStore } from './store.ts';
 import { SearchEngine, search_text_from_doc } from './search-engine.ts';
 import { assert_pos_pin, verify_user_pin } from './user-pin.ts';
 import { pac_provider, stamp_with_pac } from './pac.ts';
@@ -107,7 +107,6 @@ import {
 import { is_upload, persist_upload_as_attachment } from './uploads.ts';
 import { emit_messages_refresh, last_driver_location } from './socket-stub.ts';
 import {
-	assert_report_template_write,
 	hydrate_loose_product_references,
 	hydrate_loose_product_references_many,
 	interpolate_report_records,

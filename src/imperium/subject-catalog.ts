@@ -9,7 +9,7 @@
  * externa. Una app externa se lista, pero este núcleo no la corre mientras su
  * definición no esté en el catálogo del servidor.
  */
-import type { ImperiumStore, SubjectInfo } from './store.ts';
+import type { SubjectInfo } from './store.ts';
 import {
 	is_base_subject_slug,
 	normalize_subject_slug,
