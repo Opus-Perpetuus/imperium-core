@@ -15380,7 +15380,7 @@
       "catalog_id": "SUBJECT-tienda",
       "technical_id": "subject-tienda",
       "depends_on": [],
-      "image": "ghcr.io/opus-perpetuus/subject-tienda:0.11.0",
+      "image": "ghcr.io/opus-perpetuus/subject-tienda:0.12.0",
       "repo": "Opus-Perpetuus/imperium-subject-tienda",
       "dir": "workspace/imperium-subject-tienda",
       "modules": [
