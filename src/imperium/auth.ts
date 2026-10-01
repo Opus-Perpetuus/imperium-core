@@ -860,6 +860,10 @@ const SESSION_SCOPED_EXTRAS = new Set([
 	'user-settings:create_custom_theme',
 	'user-settings:update_custom_theme',
 	'user-settings:delete_custom_theme',
+	'home-pin:list_mine',
+	'home-pin:create_mine',
+	'home-pin:update_mine',
+	'home-pin:delete_mine',
 	'reports:get_first_record',
 	'reports:get_model_fields',
 	'reports:get_model_fields_detailed',
@@ -958,6 +962,9 @@ const SESSION_SCOPED_EXTRAS = new Set([
 	'status-option-control:normalize_state_values',
 	'status-option-control:resolve_spurious_options',
 ]);
+
+/** Catálogos de referencia que todo el personal usa (el selector de íconos). */
+const SESSION_READABLE_RESOURCES = new Set(['font-awesome-icon-catalog']);
 
 function is_session_scoped_extra(resource?: string, action?: string) {
 	return Boolean(
@@ -1113,6 +1120,7 @@ export async function assert_http_access(
 		throw new HttpAccessDeniedError('Solo usuarios internos');
 	}
 	if (opts.extra && is_session_scoped_extra(resource, opts.action)) return;
+	if (!opts.extra && method === 'GET' && SESSION_READABLE_RESOURCES.has(resource)) return;
 	const access = await build_access(store, actor);
 	if (access.has_full_access) return;
 	const canonical = store.has(resource)

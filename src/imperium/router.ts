@@ -81,6 +81,16 @@ type ExtraRoute = {
 
 const EXTRAS = extra as ExtraRoute[];
 
+/**
+ * Cerrar sesión no pasa por el filtro de «solo personal»: un cliente del sitio
+ * público recibía 403 y su sesión seguía viva en el servidor.
+ */
+export function is_auth_logout(req: Request): boolean {
+	const path = new URL(req.url).pathname.replace(/^\/api(?=\/)/, '').replace(/\/$/, '');
+	const method = req.method.toUpperCase();
+	return (method === 'DELETE' && path === '/auth') || (method === 'POST' && path === '/auth/logout');
+}
+
 export function create_imperium_layer(sql: Bun.SQL) {
 	const store = new ImperiumStore(sql, load_catalog_path());
 	const portal_store = create_postgres_portal_store(sql);
@@ -166,7 +176,7 @@ export function create_imperium_layer(sql: Bun.SQL) {
 				});
 				return portal ? add_cors(req, portal) : portal;
 			}
-			if (is_auth_login_post(req) || is_public_auth_get(req)) {
+			if (is_auth_login_post(req) || is_public_auth_get(req) || is_auth_logout(req)) {
 				await ensure_session_table(sql);
 				const auth_url = new URL(req.url);
 				auth_url.pathname = strip_api_prefix(auth_url.pathname);

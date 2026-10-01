@@ -3557,6 +3557,42 @@
               "label": "Recurso"
             }
           ]
+        },
+        {
+          "resource": "home-pin",
+          "table": "home_pin",
+          "name": "Pines de inicio",
+          "path": "/home-pin",
+          "collection": "home-pin",
+          "model_file": "components/configuration/home-pin/home-pin.model.ts",
+          "menu_ref": "home-pin-menu-management-0",
+          "icon": "fa-thumbtack",
+          "columns": [
+            {
+              "name": "user_id",
+              "mongo": "user_id",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "Usuario"
+            },
+            {
+              "name": "path",
+              "mongo": "path",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "Ruta"
+            },
+            {
+              "name": "icon",
+              "mongo": "icon",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-icon",
+              "label": "Ícono"
+            }
+          ]
         }
       ]
     },
@@ -15704,6 +15740,13 @@
           "menu_ref": "tienda-store-orders",
           "path": "/store-orders",
           "icon": "fa-bag-shopping",
+          "parent_ref": "tienda-nav-store"
+        },
+        {
+          "name": "Mi cuenta",
+          "menu_ref": "tienda-store-account",
+          "path": "/store-account",
+          "icon": "fa-user",
           "parent_ref": "tienda-nav-store"
         },
         {

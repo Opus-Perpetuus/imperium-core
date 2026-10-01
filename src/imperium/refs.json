@@ -170,6 +170,9 @@
     "time-sheets": {
       "user_id": "User"
     },
+    "home-pin": {
+      "user_id": "User"
+    },
     "ticketing-system-turn": {
       "customer_type": "TicketingSystemCustomerType",
       "assigned_box": "TicketingSystemBoxConfig",
@@ -257,6 +260,8 @@
     "zplmanagement": "zpl-management",
     "user-pin": "user-pin",
     "userpin": "user-pin",
+    "home-pin": "home-pin",
+    "homepin": "home-pin",
     "epson-ticket-template": "epson-ticket-template",
     "epsontickettemplate": "epson-ticket-template",
     "country": "country",

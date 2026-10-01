@@ -3,7 +3,7 @@
  * Un recurso canónico (products, pedidos) aunque el menú lo repita.
  */
 import { existsSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import {
 	pg_schema_name,
 	PUBLIC_LANDING_ENABLED_REF,
@@ -48,6 +48,10 @@ import {
 } from './required-fields.ts';
 import { list_projection_keys } from './list-projection.ts';
 import { is_base_subject_slug } from './subject-runtime.ts';
+import { icon_search_terms_es } from './font-awesome-icon-search-es.ts';
+
+/** Subirla re-siembra el catálogo de íconos una vez en cada servidor. */
+const ICON_CATALOG_SEED_VERSION = 2;
 
 export type ExtraCol = {
 	name: string;
@@ -196,6 +200,7 @@ const UNIQUE_COMPOSITES: Record<string, string[][]> = {
 /** Unique compuesto solo entre activos. */
 const UNIQUE_COMPOSITES_ACTIVE: Record<string, string[][]> = {
 	'user-pin': [['document_model', 'document_id']],
+	'home-pin': [['user_id', 'path']],
 };
 
 function unique_fields_for(resource: string): string[] {
@@ -1578,14 +1583,8 @@ export class ImperiumStore {
 
 	async seed_font_awesome_catalog(): Promise<void> {
 		if (!this.has('font-awesome-icon-catalog')) return;
-		const catalog_env = process.env.CATALOG_PATH;
-		const backend_src = catalog_env
-			? join(dirname(catalog_env), '../backend/src')
-			: join(import.meta.dir, '../../../../backend/src');
-		const file = join(
-			backend_src,
-			'components/font-awesome-icon-catalog/data/font-awesome-icons.data.json',
-		);
+		// Copia propia: la imagen del núcleo no lleva `backend/src`.
+		const file = join(import.meta.dir, 'font-awesome-icons.data.json');
 		if (!existsSync(file)) return;
 		const catalog = JSON.parse(readFileSync(file, 'utf8')) as Array<{
 			slug: string;
@@ -1599,7 +1598,12 @@ export class ImperiumStore {
 			take: 1,
 			include_inactive: true,
 		});
-		if (existing.total === catalog.length && existing.rows[0]?.icon) return;
+		if (
+			existing.total === catalog.length &&
+			existing.rows[0]?.seed_version === ICON_CATALOG_SEED_VERSION
+		) {
+			return;
+		}
 		const qt = this.qt('font-awesome-icon-catalog');
 		await this.sql.unsafe(`DELETE FROM ${qt}`);
 		const now = new Date().toISOString();
@@ -1612,6 +1616,7 @@ export class ImperiumStore {
 					entry.slug,
 					entry.icon,
 					...(entry.search_terms ?? []),
+					...icon_search_terms_es(entry.slug),
 				]
 					.join(' ')
 					.toLowerCase();
@@ -1629,6 +1634,7 @@ export class ImperiumStore {
 						prefix: entry.prefix,
 						style: entry.style,
 						search_terms: entry.search_terms ?? [],
+						seed_version: ICON_CATALOG_SEED_VERSION,
 					},
 					now,
 					now,
@@ -1743,6 +1749,7 @@ export class ImperiumStore {
 			'proyectos-time-log',
 			'user-print-template',
 			'time-sheets',
+			'home-pin',
 		]) {
 			if (!this.locs.has(resource)) continue;
 			const qt = this.qt(resource);

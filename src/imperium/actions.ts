@@ -673,6 +673,14 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return custom_themes_update(ctx);
 		case 'user-settings:delete_custom_theme':
 			return custom_themes_delete(ctx);
+		case 'home-pin:list_mine':
+			return home_pins_list(ctx);
+		case 'home-pin:create_mine':
+			return home_pins_create(ctx);
+		case 'home-pin:update_mine':
+			return home_pins_update(ctx);
+		case 'home-pin:delete_mine':
+			return home_pins_delete(ctx);
 		case 'view-config-preset:available':
 			return view_available(ctx);
 		case 'view-config-preset:baseline':
@@ -5612,6 +5620,87 @@ async function custom_themes_delete(ctx: Ctx) {
 	const deleted = await ctx.store.remove('custom-user-themes', ctx.params.id);
 	if (!deleted) throw new Error('Tema no encontrado');
 	return ok([deleted], 'Tema eliminado');
+}
+
+const HOME_PINS_MAX = 60;
+
+function home_pin_fields(ctx: Ctx) {
+	const name = String(ctx.body.name ?? '').trim();
+	const path = String(ctx.body.path ?? '').trim();
+	if (!name) throw new Error('Ponle un nombre al pin.');
+	// Solo rutas de esta misma app: `//host` sería un salto a otro sitio.
+	if (!/^\/(?!\/)/.test(path)) throw new Error('Elige a qué pantalla lleva el pin.');
+	return { name: name.slice(0, 60), path, icon: String(ctx.body.icon ?? '').trim() };
+}
+
+async function home_pin_same_path(uid: string, path: string, ctx: Ctx) {
+	const { rows } = await ctx.store.find_many('home-pin', {
+		where: { user_id: uid, path },
+		take: 1,
+		include_inactive: false,
+		populate: false,
+	});
+	return rows[0] ?? null;
+}
+
+async function home_pins_list(ctx: Ctx) {
+	const uid = actor_id(ctx);
+	if (!uid) throw new Error('Se requiere autenticación');
+	const { rows } = await ctx.store.find_many('home-pin', {
+		where: { user_id: uid },
+		take: HOME_PINS_MAX,
+		sort: 'created_at:asc',
+		include_inactive: false,
+		populate: false,
+	});
+	return ok(rows, 'Tus pines');
+}
+
+async function home_pins_create(ctx: Ctx) {
+	const uid = actor_id(ctx);
+	if (!uid) throw new Error('Se requiere autenticación');
+	const fields = home_pin_fields(ctx);
+	const { total } = await ctx.store.find_many('home-pin', {
+		where: { user_id: uid },
+		take: 1,
+		include_inactive: false,
+		populate: false,
+	});
+	if (total >= HOME_PINS_MAX) {
+		throw new Error(`Puedes tener hasta ${HOME_PINS_MAX} pines; quita alguno para crear otro.`);
+	}
+	if (await home_pin_same_path(uid, fields.path, ctx)) {
+		throw new Error('Ya tienes un pin a esta pantalla.');
+	}
+	const created = await ctx.store.insert('home-pin', { ...fields, user_id: uid });
+	return ok([created], 'Pin creado');
+}
+
+async function home_pin_owned(ctx: Ctx): Promise<ImperiumDoc> {
+	const uid = actor_id(ctx);
+	if (!uid) throw new Error('Se requiere autenticación');
+	const pin = await ctx.store.find_id('home-pin', ctx.params.id);
+	if (!pin || pin.is_active === false || String(pin.user_id ?? '') !== uid) {
+		throw new Error('Pin no encontrado');
+	}
+	return pin;
+}
+
+async function home_pins_update(ctx: Ctx) {
+	const pin = await home_pin_owned(ctx);
+	const fields = home_pin_fields(ctx);
+	const same = await home_pin_same_path(String(pin.user_id), fields.path, ctx);
+	if (same && String(same._id) !== String(pin._id)) {
+		throw new Error('Ya tienes un pin a esta pantalla.');
+	}
+	return patch_doc(ctx, 'home-pin', ctx.params.id, fields, 'Pin actualizado');
+}
+
+async function home_pins_delete(ctx: Ctx) {
+	await home_pin_owned(ctx);
+	const deleted = await ctx.store.remove('home-pin', ctx.params.id);
+	if (!deleted) throw new Error('Pin no encontrado');
+	return ok([deleted], 'Pin quitado');
 }
 
 async function user_settings_upsert(ctx: Ctx) {

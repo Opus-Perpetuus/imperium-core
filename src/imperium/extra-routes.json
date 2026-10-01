@@ -990,6 +990,30 @@
     "action": "delete_custom_theme"
   },
   {
+    "resource": "home-pin",
+    "method": "get",
+    "path": "/mine",
+    "action": "list_mine"
+  },
+  {
+    "resource": "home-pin",
+    "method": "post",
+    "path": "/mine",
+    "action": "create_mine"
+  },
+  {
+    "resource": "home-pin",
+    "method": "put",
+    "path": "/mine/:id",
+    "action": "update_mine"
+  },
+  {
+    "resource": "home-pin",
+    "method": "delete",
+    "path": "/mine/:id",
+    "action": "delete_mine"
+  },
+  {
     "resource": "view-config-preset",
     "method": "get",
     "path": "/available",
