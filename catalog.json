@@ -16031,7 +16031,7 @@
       "depends_on": [
         "subject-vehiculos"
       ],
-      "image": "ghcr.io/opus-perpetuus/subject-herramientas:0.2.1",
+      "image": "ghcr.io/opus-perpetuus/subject-herramientas:0.3.0",
       "repo": "Opus-Perpetuus/imperium-subject-herramientas",
       "dir": "workspace/imperium-subject-herramientas",
       "modules": [
