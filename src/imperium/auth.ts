@@ -24,6 +24,7 @@ import {
 	send_subject_notification_email,
 } from './email.ts';
 import { read_public_registration } from './public-registration.ts';
+import { share_binding_of } from './share-binding.ts';
 import {
 	find_user_by_reset_token,
 	generate_password_reset,
@@ -322,7 +323,7 @@ export async function current_user(
 	return s?.user ?? null;
 }
 
-function public_user(user: ImperiumDoc): ImperiumDoc {
+export function public_user(user: ImperiumDoc): ImperiumDoc {
 	const {
 		password: _p,
 		reset_password_token_hash: _h,
@@ -590,6 +591,12 @@ async function load_session(
 	sql: Bun.SQL,
 	req: Request,
 ): Promise<Session | null> {
+	// Con un enlace público la petición es del dueño, aunque el visitante
+	// traiga su propia cookie.
+	const shared = share_binding_of(req);
+	if (shared) {
+		return { id: `share:${shared.share_id}`, user: shared.owner, expires: Number.MAX_SAFE_INTEGER };
+	}
 	const id = read_sid(req);
 	if (!id) return null;
 	const mem = memory.get(id);

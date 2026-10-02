@@ -5,6 +5,8 @@ import {
 	PORTAL_LANDING_PATH,
 	PUBLIC_APP_PAGES_MENU_REF,
 	PUBLIC_APP_PAGES_PATH,
+	PUBLIC_SHARES_MENU_REF,
+	PUBLIC_SHARES_PATH,
 } from './portal-menu-seed.ts';
 
 describe('menú de páginas públicas de apps', () => {
@@ -16,6 +18,7 @@ describe('menú de páginas públicas de apps', () => {
 		const paths = rows.map((r) => String(r['path']));
 		expect(paths).toContain(PORTAL_LANDING_PATH);
 		expect(paths).toContain(PUBLIC_APP_PAGES_PATH);
+		expect(paths).toContain(PUBLIC_SHARES_PATH);
 	});
 
 	test('lo ya sembrado no se repite', () => {
@@ -25,6 +28,7 @@ describe('menú de páginas públicas de apps', () => {
 		]);
 		expect(rows.map((r) => String(r['_ref']))).toEqual([
 			PUBLIC_APP_PAGES_MENU_REF,
+			PUBLIC_SHARES_MENU_REF,
 		]);
 	});
 
@@ -32,7 +36,7 @@ describe('menú de páginas públicas de apps', () => {
 		expect(plan_portal_menus([])).toEqual([]);
 	});
 
-	test('las dos cuelgan de Configuración', () => {
+	test('todas cuelgan de Configuración', () => {
 		for (const row of plan_portal_menus([root])) {
 			expect(row['parent_id']).toBe('root-1');
 			expect(row['is_active']).toBe(true);

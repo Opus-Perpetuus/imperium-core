@@ -17,6 +17,9 @@ export const PORTAL_LANDING_PATH = '/portal-landing';
 export const PUBLIC_APP_PAGES_MENU_REF = 'public-app-pages-menu-management-0';
 export const PUBLIC_APP_PAGES_PATH = '/paginas-publicas';
 
+export const PUBLIC_SHARES_MENU_REF = 'public-shares-menu-management-0';
+export const PUBLIC_SHARES_PATH = '/enlaces-publicos';
+
 /** Raíz «Configuración» del lanzador, donde cuelga el editor. */
 const SETTINGS_ROOT_REF = 'module-management-menu-root-settings';
 
@@ -59,6 +62,15 @@ const PORTAL_MENUS: Array<{
 		path: PUBLIC_APP_PAGES_PATH,
 		icon: 'fa-store',
 		order: 91,
+	},
+	{
+		ref: PUBLIC_SHARES_MENU_REF,
+		name: 'Enlaces públicos',
+		description:
+			'Enlaces que dejan ver una vista sin sesión, y lo que nunca se comparte.',
+		path: PUBLIC_SHARES_PATH,
+		icon: 'fa-link',
+		order: 92,
 	},
 ];
 

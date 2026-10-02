@@ -6,6 +6,7 @@
 import type { ImperiumDoc } from './envelope.ts';
 import type { ImperiumStore } from './store.ts';
 import { broadcast_event } from './socket-stub.ts';
+import { share_binding_of } from './share-binding.ts';
 
 export type AppLogLevel =
 	| 'error'
@@ -252,10 +253,12 @@ export async function persist_request_log(
 	const result_label = result.toUpperCase();
 	const status_group = status_group_of(status_code);
 	const user_name = String(actor?.name ?? '').trim();
+	// Por un enlace público lee un visitante, no el dueño cuya sesión se usa.
+	const shared = share_binding_of(req);
 	const message = [
 		stored_route,
 		`${result_label.padEnd(7, ' ')} ${status_code} ${duration_ms}ms | ${response_message || 'N/A'}`,
-		`${user_name || 'No autenticado'} | origin: ${req.headers.get('origin') || 'N/A'}`,
+		`${user_name || 'No autenticado'}${shared ? ' (enlace público)' : ''} | origin: ${req.headers.get('origin') || 'N/A'}`,
 	].join('\n');
 	print_console_log(result, message);
 	const request_context = {
@@ -266,6 +269,7 @@ export async function persist_request_log(
 		origin: req.headers.get('origin') || undefined,
 		ip: req.headers.get('x-forwarded-for') || undefined,
 		user_agent: req.headers.get('user-agent') || undefined,
+		compartido: shared?.share_id,
 		user: actor
 			? {
 					id: String(actor._id ?? actor.id ?? ''),

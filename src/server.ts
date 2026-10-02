@@ -41,6 +41,15 @@ import {
 	technical_id_is_installed,
 } from './imperium/subjects-admin.ts';
 import { portal_html_sanitize } from './imperium/portal-sanitize.ts';
+import { share_binding_of } from './imperium/share-binding.ts';
+import {
+	gate_share_request,
+	handle_public_share,
+	record_share_scope,
+	scope_entry_of,
+	share_deps,
+	type ShareGate,
+} from './imperium/shares.ts';
 import { remember_socket_ip } from './imperium/auth-rate-limit.ts';
 import { get_published } from './imperium/portal.ts';
 import {
@@ -129,6 +138,7 @@ process.on('unhandledRejection', (reason) => {
 
 const sql = new Bun.SQL(DATABASE_URL);
 const imperium = create_imperium_layer(sql);
+const shares = share_deps(imperium.store, sql);
 /** Overrides de desarrollo (`POST /api/subjects/dev-attach`). Gana a env/DNS. */
 const subject_url_overrides = new Map<string, string>();
 
@@ -477,6 +487,8 @@ async function dress_public_page(
  * suya sin tocar la de nadie más.
  */
 function session_key_of(req: Request): string {
+	const binding = share_binding_of(req);
+	if (binding) return `share:${binding.share_id}`;
 	const cookie = req.headers.get('cookie') ?? '';
 	const hit = cookie.match(/connect\.sid=([^;]+)/);
 	return hit?.[1] ?? 'anon';
@@ -560,6 +572,7 @@ const server = Bun.serve({
 		const path = url.pathname;
 		/** Remitente app → app, solo si el gateway lo aceptó. */
 		let accepted_caller: string | null = null;
+		let shared = { kind: 'none' } as ShareGate;
 		const res = await (async () => {
 			if (
 				(req.method === 'GET' || req.method === 'HEAD') &&
@@ -594,6 +607,12 @@ const server = Bun.serve({
 					}),
 				)!;
 			}
+
+			if (path.startsWith('/api/p/compartido/')) {
+				return add_cors(req, await handle_public_share(req, url, shares))!;
+			}
+			shared = await gate_share_request(req, url, shares);
+			if (shared.kind === 'response') return add_cors(req, shared.response)!;
 
 			if (path === '/api/subjects/dev-attach' && req.method === 'POST') {
 				// Repunta el tráfico de una app a cualquier URL: fuera de
@@ -909,6 +928,11 @@ const server = Bun.serve({
 
 			return Response.json({ error: 'not found' }, { status: 404 });
 		})();
+		// La vista previa del dueño enseña qué llamadas hace la vista: eso es
+		// lo único que el enlace podrá pedir después.
+		if (shared.kind === 'bound' && shared.record && res.status < 400) {
+			await record_share_scope(sql, shared.share.id, scope_entry_of(url));
+		}
 		log_api(req, path, res.status, started_ms, accepted_caller);
 		return res;
 	},

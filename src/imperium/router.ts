@@ -71,6 +71,8 @@ import {
 	portal_route_path,
 } from './portal.ts';
 import { portal_html_sanitize } from './portal-sanitize.ts';
+import { share_binding_of } from './share-binding.ts';
+import { handle_share_api, share_allows_media } from './shares.ts';
 
 type ExtraRoute = {
 	resource: string;
@@ -257,6 +259,25 @@ async function dispatch(
 						),
 					);
 				}
+				const shared = share_binding_of(req);
+				if (shared) {
+					const doc = store.has('attachment-management')
+						? await store.find_id('attachment-management', decodeURIComponent(id))
+						: null;
+					if (!doc || !share_allows_media(shared, String(doc.related_model ?? ''))) {
+						return add_cors(
+							req,
+							Response.json(
+								{
+									error: 'Esto no forma parte de la vista compartida.',
+									message: 'Esto no forma parte de la vista compartida.',
+									code: 'compartido_fuera_de_alcance',
+								},
+								{ status: 403 },
+							),
+						);
+					}
+				}
 				return add_cors(req, await serve_media(store, decodeURIComponent(id)));
 			}
 			if (path === '/subjects' || path.startsWith('/subjects/')) {
@@ -292,6 +313,9 @@ async function dispatch(
 			}
 			if (req.method === 'OPTIONS' && looks_imperium(path, store)) {
 				return add_cors(req, new Response(null, { status: 204 }));
+			}
+			if (path === '/compartir' || path.startsWith('/compartir/')) {
+				return add_cors(req, await handle_share_api(store, sql, req, url, path));
 			}
 			const hit = split_resource(path, store);
 			if (!hit) return null;
@@ -714,6 +738,7 @@ function looks_imperium(path: string, store: ImperiumStore): boolean {
 	if (p === '/media' || p.startsWith('/media/')) return true;
 	if (p === '/mcp-agent' || p.startsWith('/mcp-agent/')) return true;
 	if (p === '/subjects' || p.startsWith('/subjects/')) return true;
+	if (p === '/compartir' || p.startsWith('/compartir/')) return true;
 	if (portal_route_path(path)) return true;
 	return split_resource(p, store) != null;
 }

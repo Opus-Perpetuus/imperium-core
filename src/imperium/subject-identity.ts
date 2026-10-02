@@ -20,6 +20,8 @@ import {
 } from '@opus-perpetuus/imperium-core-kit';
 import { build_access, build_menus, current_user } from './auth.ts';
 import type { ImperiumDoc } from './envelope.ts';
+import { share_binding_of } from './share-binding.ts';
+import { share_grants } from './shares.ts';
 import type { ImperiumStore } from './store.ts';
 import { GATEWAY_SECRET_HEADERS, signing_secret_for } from './subject-secret.ts';
 
@@ -286,6 +288,10 @@ export async function resolve_subject_identity(input: {
 			grants = built.grants;
 			is_admin = built.is_admin;
 			grants_cache.set(key, { at: Date.now(), grants, is_admin });
+		}
+		if (share_binding_of(input.req)) {
+			grants = share_grants({ slug: input.slug, modules: input.modules, grants, is_admin });
+			is_admin = false;
 		}
 	}
 
