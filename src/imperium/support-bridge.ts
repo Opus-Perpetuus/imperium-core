@@ -19,7 +19,13 @@ const TIMEOUT_MS = 10_000;
 const MAX_LOG_CHARS = 20_000;
 const SYNC_INTERVAL_MS = 5 * 60_000;
 const SYNC_FIRST_DELAY_MS = 60_000;
-const STATUS_VALUES = new Set(['open', 'in_progress', 'resolved', 'closed']);
+// Mismas etiquetas que el estatus de `tickets` en state-fields.ts.
+const STATUS_LABELS = new Map([
+	['open', 'Abierto'],
+	['in_progress', 'En proceso'],
+	['resolved', 'Resuelto'],
+	['closed', 'Cerrado'],
+]);
 
 export const SUPPORT_SIGN_HEADER = 'x-imperium-sign';
 
@@ -473,8 +479,17 @@ export async function receive_support_comment(ctx: SupportCtx): Promise<Response
 	});
 	if (already) return Response.json(ok([{ _id: ticket_id }], 'Aviso de soporte ya recibido.'));
 	const sender = text(ctx.body.sender) || 'Soporte';
-	const body = decode_html_entities(text(ctx.body.text));
 	const author = { name: `${sender} (soporte)` };
+	const status = text(ctx.body.status);
+	const status_label = STATUS_LABELS.get(status);
+	const status_changes =
+		Boolean(status_label) && status !== text(ticket.status) && ticket.isLockedByAssignment !== true;
+	const body = [
+		decode_html_entities(text(ctx.body.text)),
+		status_changes ? `Soporte marcó el ticket como «${status_label}».` : '',
+	]
+		.filter(Boolean)
+		.join('\n\n');
 	if (body) {
 		await ctx.store.insert('document-change-history', {
 			name: 'comentario',
@@ -496,8 +511,7 @@ export async function receive_support_comment(ctx: SupportCtx): Promise<Response
 		});
 		await notify_ticket_people(ctx.store, ticket, sender, body);
 	}
-	const status = text(ctx.body.status);
-	if (STATUS_VALUES.has(status) && status !== text(ticket.status) && ticket.isLockedByAssignment !== true) {
+	if (status_changes) {
 		await run_with_history_context(
 			{ actor: author, method: ctx.req.method, path: ctx.url.pathname },
 			() => ctx.store.update('tickets', ticket_id, { status, estado: status }),

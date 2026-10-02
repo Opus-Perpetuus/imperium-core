@@ -222,21 +222,53 @@ describe('receive_support_comment', () => {
 		expect(store.data['document-change-history']).toHaveLength(0);
 	});
 
-	test('un aviso con status cambia el estatus del ticket sin comentario vacío', async () => {
+	test('un cierre desde Odoo cambia el estatus y deja un comentario que avisa a quien reportó', async () => {
 		const store = memory_store({ tickets: [linked_ticket()], 'document-change-history': [], notifications: [] });
-		const raw = JSON.stringify({
-			client_ref: 'tk-1',
-			message_id: '5300',
-			related_ticket_id: '92',
-			sender: 'Soporte',
-			status: 'resolved',
-			text: '',
-		});
+		const status_notice = (message_id: string, status: string) =>
+			JSON.stringify({
+				client_ref: 'tk-1',
+				message_id,
+				related_ticket_id: '92',
+				sender: 'Soporte',
+				status,
+				text: '',
+			});
+		const raw = status_notice('5300', 'resolved');
 		const res = await receive_support_comment({ store, ...(await notice(raw, sign(raw))) });
 		expect(res.status).toBe(200);
 		expect(store.data.tickets![0]).toMatchObject({ status: 'resolved', estado: 'resolved' });
-		expect(store.data['document-change-history']!.filter((row) => row.entryType === 'comment')).toHaveLength(0);
-		expect(store.data.notifications).toHaveLength(0);
+		const comments = store.data['document-change-history']!.filter((row) => row.entryType === 'comment');
+		expect(comments).toHaveLength(1);
+		expect(comments[0]).toMatchObject({
+			comment: 'Soporte marcó el ticket como «Resuelto».',
+			support_message_id: '5300',
+			actor: { name: 'Soporte (soporte)' },
+		});
+		expect(store.data.notifications!.map((row) => row.recipientId).sort()).toEqual(['u-asg', 'u-rep']);
+
+		// Un aviso con el estatus que ya tiene no dice nada.
+		const same = status_notice('5301', 'resolved');
+		await receive_support_comment({ store, ...(await notice(same, sign(same))) });
+		expect(store.data['document-change-history']!.filter((row) => row.entryType === 'comment')).toHaveLength(1);
+		expect(store.data.notifications).toHaveLength(2);
+	});
+
+	test('una respuesta que además cierra el ticket lo dice en el mismo comentario', async () => {
+		const store = memory_store({ tickets: [linked_ticket()], 'document-change-history': [], notifications: [] });
+		const raw = JSON.stringify({
+			client_ref: 'tk-1',
+			message_id: '5310',
+			related_ticket_id: '92',
+			sender: 'Rafael Ramírez',
+			status: 'closed',
+			text: 'Listo, ya imprime.',
+		});
+		await receive_support_comment({ store, ...(await notice(raw, sign(raw))) });
+		const comments = store.data['document-change-history']!.filter((row) => row.entryType === 'comment');
+		expect(comments.map((row) => row.comment)).toEqual([
+			'Listo, ya imprime.\n\nSoporte marcó el ticket como «Cerrado».',
+		]);
+		expect(store.data.notifications).toHaveLength(2);
 	});
 });
 
