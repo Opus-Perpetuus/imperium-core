@@ -9003,7 +9003,7 @@
         "subject-almacen",
         "subject-vehiculos"
       ],
-      "image": "ghcr.io/opus-perpetuus/subject-logistica:0.3.1",
+      "image": "ghcr.io/opus-perpetuus/subject-logistica:0.4.0",
       "repo": "Opus-Perpetuus/imperium-subject-logistica",
       "dir": "workspace/imperium-subject-logistica",
       "modules": [
