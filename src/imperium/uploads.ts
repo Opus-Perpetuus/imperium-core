@@ -578,7 +578,7 @@ function attachment_ids_of(value: unknown): string[] {
 	return [];
 }
 
-async function delete_attachments_of(store: ImperiumStore, value: unknown): Promise<void> {
+export async function delete_attachments_of(store: ImperiumStore, value: unknown): Promise<void> {
 	if (!store.has('attachment-management')) return;
 	for (const id of attachment_ids_of(value)) {
 		const att = await store.find_id('attachment-management', id);

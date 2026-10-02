@@ -3,6 +3,8 @@
  * (`/api/kirlets/svc/:tid/...`) para que HttpNoxServices del kit no cambie.
  * Las apps no abren Postgres: history/counters/params viven aquí.
  */
+import type { SubjectFiles } from "./imperium/subject-files.ts";
+
 export function service_plane_match(path: string): {
   tid: string;
   rest: string;
@@ -98,6 +100,7 @@ export type ServicePlaneDeps = {
     title: string;
     body?: string;
   }) => Promise<void>;
+  files?: SubjectFiles;
 };
 
 /** Decide si la petición trae el secreto de la app `tid` (ver `subject-secret.ts`). */
@@ -252,22 +255,33 @@ export async function handle_service_plane(
       data: { text: strip_tags(String(body.html ?? ""), Number(body.max_length) || undefined) },
     });
   }
-  if (path === "/files" && method === "POST") {
-    return Response.json({
-      data: {
-        id: nid("file"),
-        resource: body.resource ?? "",
-        record_id: body.record_id ?? "",
-        filename: body.filename ?? "file",
-      },
-    });
-  }
-  if (path === "/files" && method === "GET") {
-    return Response.json({ data: [] });
-  }
-  const del = path.match(/^\/files\/([^/]+)$/);
-  if (del && method === "DELETE") {
-    return Response.json({ data: { removed: true } });
+  if (path === "/files" || path.startsWith("/files/")) {
+    // Sin almacén se contesta error: un `ok` sin bytes dejaba a la app
+    // guardando una URL que nunca existió.
+    if (!deps.files) {
+      return Response.json({ error: "files no disponible" }, { status: 501 });
+    }
+    try {
+      if (path === "/files" && method === "POST") {
+        return Response.json({ data: await deps.files.save(tid, body) });
+      }
+      if (path === "/files" && method === "GET") {
+        const resource = url.searchParams.get("resource") ?? "";
+        const record_id = url.searchParams.get("record_id") ?? undefined;
+        return Response.json({ data: await deps.files.list(tid, { resource, record_id }) });
+      }
+      const del = path.match(/^\/files\/([^/]+)$/);
+      if (del && method === "DELETE") {
+        const removed = await deps.files.remove(tid, decodeURIComponent(del[1]!));
+        return Response.json({ data: { removed } });
+      }
+    } catch (err) {
+      const status = (err as { status?: number }).status ?? 500;
+      return Response.json(
+        { error: err instanceof Error ? err.message : String(err) },
+        { status },
+      );
+    }
   }
 
   return Response.json({ error: `svc not found ${method} ${path}` }, { status: 404 });

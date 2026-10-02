@@ -94,6 +94,74 @@ describe('html/sanitize limpia de verdad', () => {
 	});
 });
 
+describe('files guarda de verdad o falla', () => {
+	test('sin almacén responde error: la app no recibe una URL inventada', async () => {
+		const req = svc_request('/files', { resource: 'herr-registros', data_base64: 'aG9sYQ==' });
+		const res = await handle_service_plane(
+			sql,
+			() => true,
+			req,
+			'subject-tienda',
+			'/files',
+			new URL(req.url),
+		);
+		expect(res.status).toBe(501);
+		expect(((await res.json()) as { data?: unknown }).data).toBeUndefined();
+	});
+
+	test('con almacén entrega lo que guardó, a nombre de la app que llama', async () => {
+		const saved: Array<{ tid: string; resource: unknown }> = [];
+		const out = await call(
+			'/files',
+			{ resource: 'product-images', record_id: 'p1', data_base64: 'aG9sYQ==' },
+			{
+				files: {
+					save: async (tid, input) => {
+						saved.push({ tid, resource: input.resource });
+						return {
+							id: 'a1',
+							resource: String(input.resource),
+							record_id: String(input.record_id),
+							original_name: 'x',
+							content_type: 'image/png',
+							size_bytes: 4,
+							url: '/api/media/a1',
+							created_at: '',
+						};
+					},
+					list: async () => [],
+					remove: async () => false,
+				},
+			},
+		);
+		expect(saved).toEqual([{ tid: 'subject-tienda', resource: 'product-images' }]);
+		expect(out.data?.url).toBe('/api/media/a1');
+	});
+
+	test('un archivo rechazado vuelve como error con su motivo', async () => {
+		const req = svc_request('/files', { resource: 'r', data_base64: '' });
+		const res = await handle_service_plane(
+			sql,
+			() => true,
+			req,
+			'subject-tienda',
+			'/files',
+			new URL(req.url),
+			{
+				files: {
+					save: async () => {
+						throw Object.assign(new Error('El archivo no es una imagen válida'), { status: 400 });
+					},
+					list: async () => [],
+					remove: async () => false,
+				},
+			},
+		);
+		expect(res.status).toBe(400);
+		expect(((await res.json()) as { error?: string }).error).toBe('El archivo no es una imagen válida');
+	});
+});
+
 describe('verificador del secreto', () => {
 	test('si el verificador rechaza, 403 sin tocar la base', async () => {
 		let touched = false;

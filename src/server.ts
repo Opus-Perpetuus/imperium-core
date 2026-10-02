@@ -13,6 +13,7 @@ import { handle_service_plane, service_plane_match } from './service-plane.ts';
 import { add_cors, create_imperium_layer } from './imperium/router.ts';
 import { current_user, ensure_session_table } from './imperium/auth.ts';
 import { start_subject_auto_update } from './imperium/subject-auto-update.ts';
+import { subject_files } from './imperium/subject-files.ts';
 import { start_support_sync } from './imperium/support-bridge.ts';
 import { seed_new_install } from './imperium/module-data.ts';
 import { superadmin_exists } from './imperium/superadmin-seed.ts';
@@ -674,6 +675,7 @@ const server = Bun.serve({
 								),
 								...input,
 							}),
+						files: subject_files(imperium.store),
 					},
 				);
 			}
