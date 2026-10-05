@@ -195,6 +195,7 @@ import {
 	mark_invoice_request,
 	send_invoice_to_commercial,
 } from './invoice-request-flow.ts';
+import { detail_fields, plan_from_model, widgets_from_plan } from './ai-query-harness.ts';
 import { resolve_dashboard_catalog, resolve_widget_data } from './dashboard-flow.ts';
 import {
 	export_payroll_payload,
@@ -2582,12 +2583,40 @@ async function dashboard_catalog(ctx: Ctx) {
 
 const AI_QUERY_JSON_SCHEMA: Record<string, unknown> = {
 	type: 'object',
-	required: ['answer', 'widgets'],
+	required: [],
 	properties: {
 		answer: { type: 'string' },
 		widgets: { type: 'array' },
 	},
 };
+
+function coerce_ai_query(raw: Record<string, unknown>) {
+	const nested = as_object(raw.result ?? raw.data);
+	const source = Object.keys(nested).length ? { ...raw, ...nested } : raw;
+	let widgets: unknown = source.widgets ?? source.widget ?? source.items;
+	if (widgets && !Array.isArray(widgets)) widgets = [widgets];
+	if (!Array.isArray(widgets) && source.model_id) widgets = [source];
+	const answer = String(source.answer ?? source.text ?? source.message ?? '').trim();
+	return { ...source, answer, widgets: Array.isArray(widgets) ? widgets : [] };
+}
+
+function catalog_index(entries: unknown[]) {
+	return entries
+		.map((raw) => {
+			const entry = as_object(raw);
+			return `- ${entry.model_id}: ${entry.module_name}`;
+		})
+		.join('\n');
+}
+
+const AI_QUERY_INSTRUCTIONS = [
+	'Eres el asistente de reportes de un ERP.',
+	'Responde con `answer` en español y `steps`. Cada step abre una lista existente: { "model_id", "title", "search"?, "limit"?, "sort"?, "filters"?, "widget_type"?, "aggregation"? }.',
+	'filters es una lista corta { "field", "op", "value" }. op es eq, lt, lte, gt o gte. search es texto libre (descripcion de un producto, nombre o correo de un usuario), nunca un estado. Un estado va en filters sobre el campo estado, con el valor guardado: confirmado, cancelado, borrador, surtido, surtiendo, por_surtir. No uses confirmada ni cancelada.',
+	'Una lista es widget_type table. La fila más reciente es limit 1 y sort updated_at:desc. Una suma es widget_type kpi y aggregation { "op": "sum", "field": "total" }, o el campo numérico del modelo si no es el total. No uses chart salvo que pidan una gráfica.',
+	'Puedes devolver de 1 a 3 steps. No pidas el nombre del campo. Si te falta un campo numérico, devuelve steps vacío y `detail` con hasta 4 id.',
+	'Si lo pedido no está en la lista de modelos, explícalo en answer y devuelve steps vacío. No inventes un model_id.',
+].join('\n\n');
 
 async function dashboard_ai_query(ctx: Ctx) {
 	const question = String(ctx.body.question ?? '').trim();
@@ -2597,43 +2626,41 @@ async function dashboard_ai_query(ctx: Ctx) {
 	if (!entries.length) {
 		throw new Error('No tienes módulos consultables para el asistente.');
 	}
-	const catalog_text = entries
-		.map((raw) => {
-			const entry = as_object(raw);
-			const fields = as_array(entry.fields)
-				.map((field) => {
-					const f = as_object(field);
-					return `${f.path}:${f.type}`;
-				})
-				.join(', ');
-			return `- ${entry.model_id} (${entry.module_name}): ${fields}`;
-		})
-		.join('\n');
 	const history = as_array(ctx.body.history)
 		.map((turn) => {
 			const t = as_object(turn);
 			return `${t.role === 'user' ? 'Usuario' : 'Asistente'}: ${t.content ?? ''}`;
 		})
 		.filter((line) => line.includes(': ') && !line.endsWith(': '));
-	const raw = await extract_structured(ctx.store, {
-		instructions: [
-			'Eres el asistente de reportes de un ERP. El usuario pide información en lenguaje natural y tú respondes con `answer` (texto en español) y, cuando aplica, con `widgets`: especificaciones de consulta que el sistema ejecutará por ti.',
-			'Solo puedes usar los modelos y campos del catálogo. Si lo pedido no existe, explícalo en `answer` y devuelve `widgets` vacío.',
-			'CATÁLOGO DE MODELOS DISPONIBLES:',
-			catalog_text,
-		].join('\n\n'),
-		json_schema: AI_QUERY_JSON_SCHEMA,
-		text: [...history, `Usuario: ${question}`].join('\n\n'),
-	});
-	const answer = String(raw.answer ?? '');
-	const raw_widgets = Array.isArray(raw.widgets) ? raw.widgets : [];
+	const ask = async (instructions: string) =>
+		coerce_ai_query(
+			await extract_structured(ctx.store, {
+				instructions,
+				json_schema: AI_QUERY_JSON_SCHEMA,
+				text: [...history, `Usuario: ${question}`].join('\n\n'),
+			}),
+		);
+	let plan = plan_from_model(await ask(`${AI_QUERY_INSTRUCTIONS}\n\nMODELOS:\n${catalog_index(entries)}`));
+	if (!plan.steps.length && plan.detail.length) {
+		const fields = detail_fields(entries, plan.detail);
+		if (fields) {
+			plan = plan_from_model(
+				await ask(`${AI_QUERY_INSTRUCTIONS}\n\nCAMPOS:\n${fields}`),
+			);
+		}
+	}
+	const answer = plan.answer;
+	const raw_widgets = widgets_from_plan(plan);
 	const widgets = [];
 	for (const raw_widget of raw_widgets) {
-		const spec = as_object(raw_widget);
+		const spec = { ...as_object(raw_widget) };
+		if (!spec.widget_type && spec.model_id) spec.widget_type = 'table';
 		try {
 			const inner: Ctx = { ...ctx, body: { spec } };
 			const result = await widget_data(inner);
-			widgets.push({ spec, result: (result as { data?: unknown }).data ?? result });
+			const payload = (result as { data?: unknown }).data;
+			const data = Array.isArray(payload) ? payload[0] : payload ?? result;
+			widgets.push({ spec, result: data });
 		} catch (error) {
 			widgets.push({
 				spec,

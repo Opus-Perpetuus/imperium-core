@@ -151,10 +151,10 @@ export function query_list(url: URL): {
 	const where: Record<string, unknown> = {};
 	for (const [key, value] of url.searchParams.entries()) {
 		if (LIST_RESERVED.has(key) || value === '') continue;
-		const range = key.match(/^(.*)__(gte|lte)$/);
+		const range = key.match(/^(.*)__(gte|lte|gt|lt)$/);
 		if (range?.[1]) {
 			const field = range[1];
-			const op = range[2] as 'gte' | 'lte';
+			const op = range[2] as 'gte' | 'lte' | 'gt' | 'lt';
 			const current = where[field];
 			const bucket =
 				current && typeof current === 'object' && !Array.isArray(current) && !('in' in current)

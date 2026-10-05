@@ -457,7 +457,11 @@ export async function resolve_widget_data(
 		throw new Error(`Tipo de widget no soportado: '${widget_type}'.`);
 	}
 	const requested = as_array(spec.fields).map(String).filter(Boolean);
-	const fields = (requested.length ? requested : ['name']).filter((path) => !is_blocked_path(path));
+	const sample = rows[0] ?? {};
+	const preferred = requested.length ? requested : ['name', 'email', 'description'];
+	const fields = preferred.filter(
+		(path) => !is_blocked_path(path) && (requested.length > 0 || path in sample),
+	);
 	if (!fields.length) {
 		throw new Error("Los widgets de tabla requieren columnas en 'fields'.");
 	}

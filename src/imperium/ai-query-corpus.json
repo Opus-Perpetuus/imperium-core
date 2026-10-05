@@ -1,0 +1,927 @@
+{
+  "questions": [
+    {
+      "id": "plain_list-01",
+      "tier": 1,
+      "intent": "plain_list",
+      "prompt": "Lista los pedidos.",
+      "widgets": [
+        {
+          "model_id": "Pedidos",
+          "widget_type": "table"
+        }
+      ]
+    },
+    {
+      "id": "plain_list-02",
+      "tier": 1,
+      "intent": "plain_list",
+      "prompt": "Muéstrame los productos.",
+      "widgets": [
+        {
+          "model_id": "Products",
+          "widget_type": "table"
+        }
+      ]
+    },
+    {
+      "id": "plain_list-03",
+      "tier": 1,
+      "intent": "plain_list",
+      "prompt": "Quiero ver los usuarios.",
+      "widgets": [
+        {
+          "model_id": "User",
+          "widget_type": "table"
+        }
+      ]
+    },
+    {
+      "id": "plain_list-04",
+      "tier": 1,
+      "intent": "plain_list",
+      "prompt": "Enséñame los contactos.",
+      "widgets": [
+        {
+          "model_id": "Contacto",
+          "widget_type": "table"
+        }
+      ]
+    },
+    {
+      "id": "plain_list-05",
+      "tier": 1,
+      "intent": "plain_list",
+      "prompt": "Abre la lista de empleados.",
+      "widgets": [
+        {
+          "model_id": "Employee",
+          "widget_type": "table"
+        }
+      ]
+    },
+    {
+      "id": "plain_list-06",
+      "tier": 1,
+      "intent": "plain_list",
+      "prompt": "Dame los vehículos registrados.",
+      "widgets": [
+        {
+          "model_id": "Vehicle",
+          "widget_type": "table"
+        }
+      ]
+    },
+    {
+      "id": "free_text_search-01",
+      "tier": 2,
+      "intent": "free_text_search",
+      "prompt": "Busca productos que digan tornillo.",
+      "widgets": [
+        {
+          "model_id": "Products",
+          "widget_type": "table"
+        }
+      ]
+    },
+    {
+      "id": "free_text_search-02",
+      "tier": 2,
+      "intent": "free_text_search",
+      "prompt": "Encuentra productos con la palabra cable.",
+      "widgets": [
+        {
+          "model_id": "Products",
+          "widget_type": "table"
+        }
+      ]
+    },
+    {
+      "id": "free_text_search-03",
+      "tier": 2,
+      "intent": "free_text_search",
+      "prompt": "Busca usuarios llamados admin.",
+      "widgets": [
+        {
+          "model_id": "User",
+          "widget_type": "table"
+        }
+      ]
+    },
+    {
+      "id": "free_text_search-04",
+      "tier": 2,
+      "intent": "free_text_search",
+      "prompt": "Busca el correo admin@admin.com entre los usuarios.",
+      "widgets": [
+        {
+          "model_id": "User",
+          "widget_type": "table"
+        }
+      ]
+    },
+    {
+      "id": "free_text_search-05",
+      "tier": 2,
+      "intent": "free_text_search",
+      "prompt": "Encuentra contactos que mencionen ACME.",
+      "widgets": [
+        {
+          "model_id": "Contacto",
+          "widget_type": "table"
+        }
+      ]
+    },
+    {
+      "id": "free_text_search-06",
+      "tier": 2,
+      "intent": "free_text_search",
+      "prompt": "Busca empleados con el texto cajero.",
+      "widgets": [
+        {
+          "model_id": "Employee",
+          "widget_type": "table"
+        }
+      ]
+    },
+    {
+      "id": "numeric_limit-01",
+      "tier": 3,
+      "intent": "numeric_limit",
+      "prompt": "Muéstrame 5 pedidos.",
+      "widgets": [
+        {
+          "model_id": "Pedidos",
+          "widget_type": "table"
+        }
+      ]
+    },
+    {
+      "id": "numeric_limit-02",
+      "tier": 3,
+      "intent": "numeric_limit",
+      "prompt": "Lista solo 10 productos.",
+      "widgets": [
+        {
+          "model_id": "Products",
+          "widget_type": "table"
+        }
+      ]
+    },
+    {
+      "id": "numeric_limit-03",
+      "tier": 3,
+      "intent": "numeric_limit",
+      "prompt": "Dame 3 usuarios.",
+      "widgets": [
+        {
+          "model_id": "User",
+          "widget_type": "table"
+        }
+      ]
+    },
+    {
+      "id": "numeric_limit-04",
+      "tier": 3,
+      "intent": "numeric_limit",
+      "prompt": "Quiero ver 1 contacto.",
+      "widgets": [
+        {
+          "model_id": "Contacto",
+          "widget_type": "table"
+        }
+      ]
+    },
+    {
+      "id": "numeric_limit-05",
+      "tier": 3,
+      "intent": "numeric_limit",
+      "prompt": "Enséñame 20 empleados.",
+      "widgets": [
+        {
+          "model_id": "Employee",
+          "widget_type": "table"
+        }
+      ]
+    },
+    {
+      "id": "numeric_limit-06",
+      "tier": 3,
+      "intent": "numeric_limit",
+      "prompt": "Lista 100 vehículos.",
+      "widgets": [
+        {
+          "model_id": "Vehicle",
+          "widget_type": "table"
+        }
+      ]
+    },
+    {
+      "id": "status_filter-01",
+      "tier": 4,
+      "intent": "status_filter",
+      "prompt": "Pedidos confirmados.",
+      "widgets": [
+        {
+          "model_id": "Pedidos",
+          "widget_type": "table"
+        }
+      ]
+    },
+    {
+      "id": "status_filter-02",
+      "tier": 4,
+      "intent": "status_filter",
+      "prompt": "Muéstrame las ventas confirmadas.",
+      "widgets": [
+        {
+          "model_id": "Pedidos",
+          "widget_type": "table"
+        }
+      ]
+    },
+    {
+      "id": "status_filter-03",
+      "tier": 4,
+      "intent": "status_filter",
+      "prompt": "Lista los pedidos con estado confirmada.",
+      "widgets": [
+        {
+          "model_id": "Pedidos",
+          "widget_type": "table"
+        }
+      ]
+    },
+    {
+      "id": "status_filter-04",
+      "tier": 4,
+      "intent": "status_filter",
+      "prompt": "Quiero los pedidos en estado confirmado.",
+      "widgets": [
+        {
+          "model_id": "Pedidos",
+          "widget_type": "table"
+        }
+      ]
+    },
+    {
+      "id": "status_filter-05",
+      "tier": 4,
+      "intent": "status_filter",
+      "prompt": "Enséñame las ventas que ya están confirmadas.",
+      "widgets": [
+        {
+          "model_id": "Pedidos",
+          "widget_type": "table"
+        }
+      ]
+    },
+    {
+      "id": "status_filter-06",
+      "tier": 4,
+      "intent": "status_filter",
+      "prompt": "Filtra los pedidos confirmados.",
+      "widgets": [
+        {
+          "model_id": "Pedidos",
+          "widget_type": "table"
+        }
+      ]
+    },
+    {
+      "id": "latest_row-01",
+      "tier": 5,
+      "intent": "latest_row",
+      "prompt": "Cuál es el pedido más reciente.",
+      "widgets": [
+        {
+          "model_id": "Pedidos",
+          "widget_type": "table"
+        }
+      ]
+    },
+    {
+      "id": "latest_row-02",
+      "tier": 5,
+      "intent": "latest_row",
+      "prompt": "Muéstrame el producto actualizado más tarde.",
+      "widgets": [
+        {
+          "model_id": "Products",
+          "widget_type": "table"
+        }
+      ]
+    },
+    {
+      "id": "latest_row-03",
+      "tier": 5,
+      "intent": "latest_row",
+      "prompt": "Quién es el usuario más reciente.",
+      "widgets": [
+        {
+          "model_id": "User",
+          "widget_type": "table"
+        }
+      ]
+    },
+    {
+      "id": "latest_row-04",
+      "tier": 5,
+      "intent": "latest_row",
+      "prompt": "Cuál es la recepción más nueva.",
+      "widgets": [
+        {
+          "model_id": "InventoryReception",
+          "widget_type": "table"
+        }
+      ]
+    },
+    {
+      "id": "latest_row-05",
+      "tier": 5,
+      "intent": "latest_row",
+      "prompt": "Muéstrame el paquete de entrega más reciente.",
+      "widgets": [
+        {
+          "model_id": "DeliveryPackage",
+          "widget_type": "table"
+        }
+      ]
+    },
+    {
+      "id": "latest_row-06",
+      "tier": 5,
+      "intent": "latest_row",
+      "prompt": "Cuál es el ticket más nuevo.",
+      "widgets": [
+        {
+          "model_id": "Ticket",
+          "widget_type": "table"
+        }
+      ]
+    },
+    {
+      "id": "kpi_sum-01",
+      "tier": 6,
+      "intent": "kpi_sum",
+      "prompt": "Suma el total de los pedidos.",
+      "widgets": [
+        {
+          "model_id": "Pedidos",
+          "widget_type": "kpi"
+        }
+      ]
+    },
+    {
+      "id": "kpi_sum-02",
+      "tier": 6,
+      "intent": "kpi_sum",
+      "prompt": "Cuánto suman los pedidos.",
+      "widgets": [
+        {
+          "model_id": "Pedidos",
+          "widget_type": "kpi"
+        }
+      ]
+    },
+    {
+      "id": "kpi_sum-03",
+      "tier": 6,
+      "intent": "kpi_sum",
+      "prompt": "Dame el total acumulado de las ventas.",
+      "widgets": [
+        {
+          "model_id": "Pedidos",
+          "widget_type": "kpi"
+        }
+      ]
+    },
+    {
+      "id": "kpi_sum-04",
+      "tier": 6,
+      "intent": "kpi_sum",
+      "prompt": "Suma la existencia de los productos.",
+      "widgets": [
+        {
+          "model_id": "Products",
+          "widget_type": "kpi"
+        }
+      ]
+    },
+    {
+      "id": "kpi_sum-05",
+      "tier": 6,
+      "intent": "kpi_sum",
+      "prompt": "Cuánto suma la existencia de productos.",
+      "widgets": [
+        {
+          "model_id": "Products",
+          "widget_type": "kpi"
+        }
+      ]
+    },
+    {
+      "id": "kpi_sum-06",
+      "tier": 6,
+      "intent": "kpi_sum",
+      "prompt": "Suma el total recibido de las recepciones.",
+      "widgets": [
+        {
+          "model_id": "InventoryReception",
+          "widget_type": "kpi"
+        }
+      ]
+    },
+    {
+      "id": "multi_widget-01",
+      "tier": 7,
+      "intent": "multi_widget",
+      "prompt": "Lista los pedidos y los productos.",
+      "widgets": [
+        {
+          "model_id": "Pedidos",
+          "widget_type": "table"
+        },
+        {
+          "model_id": "Products",
+          "widget_type": "table"
+        }
+      ]
+    },
+    {
+      "id": "multi_widget-02",
+      "tier": 7,
+      "intent": "multi_widget",
+      "prompt": "Muéstrame usuarios y contactos.",
+      "widgets": [
+        {
+          "model_id": "User",
+          "widget_type": "table"
+        },
+        {
+          "model_id": "Contacto",
+          "widget_type": "table"
+        }
+      ]
+    },
+    {
+      "id": "multi_widget-03",
+      "tier": 7,
+      "intent": "multi_widget",
+      "prompt": "Enséñame empleados y vehículos.",
+      "widgets": [
+        {
+          "model_id": "Employee",
+          "widget_type": "table"
+        },
+        {
+          "model_id": "Vehicle",
+          "widget_type": "table"
+        }
+      ]
+    },
+    {
+      "id": "multi_widget-04",
+      "tier": 7,
+      "intent": "multi_widget",
+      "prompt": "Quiero ver los pedidos y los usuarios.",
+      "widgets": [
+        {
+          "model_id": "Pedidos",
+          "widget_type": "table"
+        },
+        {
+          "model_id": "User",
+          "widget_type": "table"
+        }
+      ]
+    },
+    {
+      "id": "multi_widget-05",
+      "tier": 7,
+      "intent": "multi_widget",
+      "prompt": "Lista productos, contactos y empleados.",
+      "widgets": [
+        {
+          "model_id": "Products",
+          "widget_type": "table"
+        },
+        {
+          "model_id": "Contacto",
+          "widget_type": "table"
+        },
+        {
+          "model_id": "Employee",
+          "widget_type": "table"
+        }
+      ]
+    },
+    {
+      "id": "multi_widget-06",
+      "tier": 7,
+      "intent": "multi_widget",
+      "prompt": "Suma los pedidos y lista los productos.",
+      "widgets": [
+        {
+          "model_id": "Pedidos",
+          "widget_type": "kpi"
+        },
+        {
+          "model_id": "Products",
+          "widget_type": "table"
+        }
+      ]
+    },
+    {
+      "id": "out_of_catalog-01",
+      "tier": 8,
+      "intent": "out_of_catalog",
+      "prompt": "Qué tiempo hará mañana en Guadalajara.",
+      "widgets": []
+    },
+    {
+      "id": "out_of_catalog-02",
+      "tier": 8,
+      "intent": "out_of_catalog",
+      "prompt": "Cuántos habitantes tiene París.",
+      "widgets": []
+    },
+    {
+      "id": "out_of_catalog-03",
+      "tier": 8,
+      "intent": "out_of_catalog",
+      "prompt": "Traduce hola al japonés.",
+      "widgets": []
+    },
+    {
+      "id": "out_of_catalog-04",
+      "tier": 8,
+      "intent": "out_of_catalog",
+      "prompt": "Cuál es la capital de Noruega.",
+      "widgets": []
+    },
+    {
+      "id": "out_of_catalog-05",
+      "tier": 8,
+      "intent": "out_of_catalog",
+      "prompt": "Dame una receta de pastel de chocolate.",
+      "widgets": []
+    },
+    {
+      "id": "out_of_catalog-06",
+      "tier": 8,
+      "intent": "out_of_catalog",
+      "prompt": "Quién ganó el mundial de futbol de 2014.",
+      "widgets": []
+    }
+  ],
+  "fixtures": [
+    {
+      "id": "bare-model-is-table",
+      "raw": {
+        "model_id": "Products"
+      },
+      "answer": "Mostrando Products.",
+      "steps": [
+        {
+          "model_id": "Products",
+          "title": "Products",
+          "search": "",
+          "limit": null,
+          "sort": "",
+          "widget_type": "table",
+          "aggregation": null,
+          "filters": []
+        }
+      ]
+    },
+    {
+      "id": "status-word-in-search",
+      "raw": {
+        "model_id": "Pedidos",
+        "search": "cliente confirmadas, norte",
+        "limit": 20
+      },
+      "answer": "Mostrando Pedidos.",
+      "steps": [
+        {
+          "model_id": "Pedidos",
+          "title": "Pedidos",
+          "search": "cliente norte",
+          "limit": 20,
+          "sort": "",
+          "widget_type": "table",
+          "aggregation": null,
+          "filters": [
+            {
+              "field": "estado",
+              "op": "eq",
+              "value": "confirmado"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "status-exact-confirmada",
+      "raw": {
+        "model_id": "Pedidos",
+        "search": "confirmada",
+        "limit": 1,
+        "sort": "updated_at:desc"
+      },
+      "answer": "Mostrando Pedidos.",
+      "steps": [
+        {
+          "model_id": "Pedidos",
+          "title": "Pedidos",
+          "search": "",
+          "limit": 1,
+          "sort": "updated_at:desc",
+          "widget_type": "table",
+          "aggregation": null,
+          "filters": [
+            {
+              "field": "estado",
+              "op": "eq",
+              "value": "confirmado"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sum-forces-kpi",
+      "raw": {
+        "answer": "suma",
+        "steps": [
+          {
+            "model_id": "Pedidos",
+            "widget_type": "table",
+            "aggregation": {
+              "op": "sum",
+              "field": "total"
+            }
+          }
+        ]
+      },
+      "answer": "suma",
+      "steps": [
+        {
+          "model_id": "Pedidos",
+          "title": "Pedidos",
+          "search": "",
+          "limit": null,
+          "sort": "",
+          "widget_type": "kpi",
+          "aggregation": {
+            "op": "sum",
+            "field": "total"
+          },
+          "filters": []
+        }
+      ]
+    },
+    {
+      "id": "sum-defaults-total",
+      "raw": {
+        "answer": "suma",
+        "model_id": "Pedidos",
+        "aggregation": {
+          "op": "sum"
+        }
+      },
+      "answer": "suma",
+      "steps": [
+        {
+          "model_id": "Pedidos",
+          "title": "Pedidos",
+          "search": "",
+          "limit": null,
+          "sort": "",
+          "widget_type": "kpi",
+          "aggregation": {
+            "op": "sum",
+            "field": "total"
+          },
+          "filters": []
+        }
+      ]
+    },
+    {
+      "id": "sum-keeps-existencia",
+      "raw": {
+        "answer": "existencia",
+        "model_id": "Products",
+        "widget_type": "table",
+        "aggregation": {
+          "op": "sum",
+          "field": "existencia"
+        }
+      },
+      "answer": "existencia",
+      "steps": [
+        {
+          "model_id": "Products",
+          "title": "Products",
+          "search": "",
+          "limit": null,
+          "sort": "",
+          "widget_type": "kpi",
+          "aggregation": {
+            "op": "sum",
+            "field": "existencia"
+          },
+          "filters": []
+        }
+      ]
+    },
+    {
+      "id": "limit-clamps-to-100",
+      "raw": {
+        "answer": "tope",
+        "model_id": "User",
+        "limit": 250
+      },
+      "answer": "tope",
+      "steps": [
+        {
+          "model_id": "User",
+          "title": "User",
+          "search": "",
+          "limit": 100,
+          "sort": "",
+          "widget_type": "table",
+          "aggregation": null,
+          "filters": []
+        }
+      ]
+    },
+    {
+      "id": "limit-keeps-one",
+      "raw": {
+        "answer": "uno",
+        "model_id": "Contacto",
+        "limit": 1
+      },
+      "answer": "uno",
+      "steps": [
+        {
+          "model_id": "Contacto",
+          "title": "Contacto",
+          "search": "",
+          "limit": 1,
+          "sort": "",
+          "widget_type": "table",
+          "aggregation": null,
+          "filters": []
+        }
+      ]
+    },
+    {
+      "id": "limit-zero-is-absent",
+      "raw": {
+        "answer": "cero",
+        "model_id": "User",
+        "limit": 0
+      },
+      "answer": "cero",
+      "steps": [
+        {
+          "model_id": "User",
+          "title": "User",
+          "search": "",
+          "limit": null,
+          "sort": "",
+          "widget_type": "table",
+          "aggregation": null,
+          "filters": []
+        }
+      ]
+    },
+    {
+      "id": "out-of-catalog-no-steps",
+      "raw": {
+        "answer": "París no está en los módulos.",
+        "steps": []
+      },
+      "answer": "París no está en los módulos.",
+      "steps": []
+    },
+    {
+      "id": "messy-sum-becomes-kpi",
+      "raw": "pensé { \"nota\": 1 } y luego {\"answer\":\"suma\",\"steps\":[{\"model_id\":\"Pedidos\",\"widget_type\":\"table\",\"aggregation\":{\"op\":\"sum\"}}]}",
+      "answer": "suma",
+      "steps": [
+        {
+          "model_id": "Pedidos",
+          "title": "Pedidos",
+          "search": "",
+          "limit": null,
+          "sort": "",
+          "widget_type": "kpi",
+          "aggregation": {
+            "op": "sum",
+            "field": "total"
+          },
+          "filters": []
+        }
+      ]
+    },
+    {
+      "id": "four-steps-cap-at-three",
+      "raw": {
+        "answer": "tres",
+        "steps": [
+          {
+            "model_id": "User"
+          },
+          {
+            "model_id": "Products"
+          },
+          {
+            "model_id": "Pedidos"
+          },
+          {
+            "model_id": "Contacto"
+          }
+        ]
+      },
+      "answer": "tres",
+      "steps": [
+        {
+          "model_id": "User",
+          "title": "User",
+          "search": "",
+          "limit": null,
+          "sort": "",
+          "widget_type": "table",
+          "aggregation": null,
+          "filters": []
+        },
+        {
+          "model_id": "Products",
+          "title": "Products",
+          "search": "",
+          "limit": null,
+          "sort": "",
+          "widget_type": "table",
+          "aggregation": null,
+          "filters": []
+        },
+        {
+          "model_id": "Pedidos",
+          "title": "Pedidos",
+          "search": "",
+          "limit": null,
+          "sort": "",
+          "widget_type": "table",
+          "aggregation": null,
+          "filters": []
+        }
+      ]
+    },
+    {
+      "id": "list-alias-is-table",
+      "raw": {
+        "answer": "lista",
+        "model_id": "Vehicle",
+        "widget_type": "list"
+      },
+      "answer": "lista",
+      "steps": [
+        {
+          "model_id": "Vehicle",
+          "title": "Vehicle",
+          "search": "",
+          "limit": null,
+          "sort": "",
+          "widget_type": "table",
+          "aggregation": null,
+          "filters": []
+        }
+      ]
+    },
+    {
+      "id": "explicit-chart-stays-chart",
+      "raw": {
+        "answer": "gráfica",
+        "model_id": "Pedidos",
+        "widget_type": "chart-bar"
+      },
+      "answer": "gráfica",
+      "steps": [
+        {
+          "model_id": "Pedidos",
+          "title": "Pedidos",
+          "search": "",
+          "limit": null,
+          "sort": "",
+          "widget_type": "chart-bar",
+          "aggregation": null,
+          "filters": []
+        }
+      ]
+    }
+  ]
+}

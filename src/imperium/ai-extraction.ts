@@ -2,6 +2,7 @@
  * Extracción / generación IA — mismo contrato que
  * backend/src/services/ai-extraction.
  */
+import { pick_model_object } from './ai-query-harness.ts';
 import type { ImperiumStore } from './store.ts';
 
 const OPENCODE_DEFAULT_BASE_URL = 'https://opencode.ai/zen/v1';
@@ -37,20 +38,9 @@ function parse_response(raw_text: string): Record<string, unknown> {
 	let text = raw_text.trim();
 	const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
 	if (fenced) text = fenced[1]!.trim();
-	const start = text.indexOf('{');
-	const end = text.lastIndexOf('}');
-	if (start === -1 || end === -1 || end <= start) {
-		throw new Error('La respuesta de la IA no contiene un JSON reconocible.');
-	}
-	try {
-		const parsed = JSON.parse(text.slice(start, end + 1));
-		if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-			throw new Error('no es un objeto');
-		}
-		return parsed as Record<string, unknown>;
-	} catch {
-		throw new Error('La respuesta de la IA no es un JSON válido; intenta de nuevo.');
-	}
+	const parsed = pick_model_object(text);
+	if (!parsed) throw new Error('La respuesta de la IA no es un JSON válido; intenta de nuevo.');
+	return parsed;
 }
 
 function validate_against_schema(data: Record<string, unknown>, json_schema: Record<string, unknown>) {
@@ -108,17 +98,24 @@ async function opencode_chat(
 		throw new Error(`opencode respondió ${response.status}: ${detail || response.statusText}`);
 	}
 	const data = (await response.json()) as {
-		choices?: Array<{ message?: { content?: string | Array<{ text?: string }> } }>;
+		choices?: Array<{
+			message?: {
+				content?: string | Array<{ text?: string }> | null;
+				reasoning_content?: string | null;
+				reasoning?: string | null;
+			};
+		}>;
 	};
-	const raw = data.choices?.[0]?.message?.content;
-	const text =
-		typeof raw === 'string'
-			? raw.trim()
-			: Array.isArray(raw)
-				? raw.map((part) => part.text ?? '').join('\n').trim()
-				: '';
+	const message = data.choices?.[0]?.message;
+	const text = message_text(message?.content) || message_text(message?.reasoning_content) || message_text(message?.reasoning);
 	if (!text) throw new Error('opencode no devolvió texto en la respuesta.');
 	return text;
+}
+
+function message_text(raw: string | Array<{ text?: string }> | null | undefined) {
+	if (typeof raw === 'string') return raw.trim();
+	if (Array.isArray(raw)) return raw.map((part) => part.text ?? '').join('\n').trim();
+	return '';
 }
 
 async function anthropic_message(
