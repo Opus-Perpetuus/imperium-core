@@ -3,6 +3,7 @@
  * Recibir en almacén reingresa líneas (`recepcion_devolucion` + quants)
  * y deja el manifiesto en `recibido_almacen`.
  */
+import { assign_capture_gps, resolve_capture_gps } from './delivery-gps.ts';
 import { as_array, as_object, type ImperiumDoc } from './envelope.ts';
 import type { ImperiumStore } from './store.ts';
 
@@ -77,6 +78,11 @@ export async function prepare_delivery_return_create(
 	out.name = text(out.name) || `Devolución ${folio}`.trim();
 	out.estado = text(out.firma_conformidad_attachment_id) ? STATE_SIGNED : STATE_DRAFT;
 	if (!out.fecha) out.fecha = new Date().toISOString();
+	assign_capture_gps(
+		out,
+		'return_pickup',
+		resolve_capture_gps(out, 'return_pickup', 'recolección'),
+	);
 	return out;
 }
 
@@ -419,6 +425,38 @@ async function post_return_received_comments(
 				: undefined,
 		});
 	}
+}
+
+export function return_pickup_gps_pdf_line(doc: Record<string, unknown>): string | null {
+	const status = text(doc.return_pickup_gps_status);
+	if (status === 'sin_gps') {
+		const reason = text(doc.return_pickup_gps_missing_reason);
+		return reason ? `Recolección sin GPS: ${reason}` : null;
+	}
+	if (status !== 'ok') return null;
+	const point = as_object(doc.return_pickup_coordinates);
+	const latitude = Number(point.latitude);
+	const longitude = Number(point.longitude);
+	if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+	const accuracy = Number(doc.return_pickup_gps_accuracy_m);
+	const precision =
+		doc.return_pickup_gps_accuracy_m != null && Number.isFinite(accuracy) && accuracy >= 0
+			? ` (±${accuracy} m)`
+			: '';
+	return `Ubicación de recolección: ${latitude}, ${longitude}${precision}`;
+}
+
+export function append_return_pickup_gps_line(
+	html: string,
+	doc: Record<string, unknown>,
+): string {
+	const line = return_pickup_gps_pdf_line(doc);
+	if (!line) return html;
+	const safe = line.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+	const snippet = `<p>${safe}</p>`;
+	const body = html.lastIndexOf('</body>');
+	if (body >= 0) return html.slice(0, body) + snippet + html.slice(body);
+	return `${html}${snippet}`;
 }
 
 function build_return_received_comment_text(devolucion: ImperiumDoc, ubicacion_codigo: string) {

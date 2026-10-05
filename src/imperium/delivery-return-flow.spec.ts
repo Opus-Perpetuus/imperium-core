@@ -3,9 +3,11 @@ import { readFileSync } from 'node:fs';
 import type { ImperiumDoc } from './envelope.ts';
 import type { ImperiumStore } from './store.ts';
 import {
+	append_return_pickup_gps_line,
 	prepare_delivery_return_create,
 	prepare_delivery_return_update,
 	recibir_delivery_return,
+	return_pickup_gps_pdf_line,
 } from './delivery-return-flow.ts';
 
 const PEDIDO = '507f1f77bcf86cd799439011';
@@ -167,6 +169,50 @@ describe('delivery-return recepción', () => {
 		expect(String(on_pedido?.commentText)).toContain(FOLIO);
 		expect(comments.some((row) => row.documentId === FACTURA)).toBe(true);
 		expect(comments.some((row) => row.documentId === DEVOLUCION)).toBe(true);
+	});
+});
+
+describe('GPS de recolección', () => {
+	test('sin estado queda legado y el PDF no agrega línea', async () => {
+		const store = memory_store({ pedidos: [] });
+		const saved = await prepare_delivery_return_create(store, {
+			pedido_folio: 'x',
+			lineas: [],
+		});
+		expect(saved.return_pickup_gps_status).toBe('legado');
+		expect(return_pickup_gps_pdf_line(saved)).toBeNull();
+		expect(append_return_pickup_gps_line('<p>Ticket</p>', saved)).toBe('<p>Ticket</p>');
+	});
+
+	test('sin motivo no se guarda', async () => {
+		const store = memory_store({ pedidos: [] });
+		await expect(
+			prepare_delivery_return_create(store, {
+				return_pickup_gps_status: 'sin_gps',
+				lineas: [],
+			}),
+		).rejects.toThrow('motivo');
+	});
+
+	test('el PDF dice el punto o el motivo', () => {
+		expect(
+			return_pickup_gps_pdf_line({
+				return_pickup_gps_status: 'ok',
+				return_pickup_coordinates: { latitude: 20.5, longitude: -103.3 },
+				return_pickup_gps_accuracy_m: 12,
+			}),
+		).toBe('Ubicación de recolección: 20.5, -103.3 (±12 m)');
+		expect(
+			return_pickup_gps_pdf_line({
+				return_pickup_gps_status: 'sin_gps',
+				return_pickup_gps_missing_reason: 'Sin señal',
+			}),
+		).toBe('Recolección sin GPS: Sin señal');
+		const html = append_return_pickup_gps_line('<html><body><p>Ticket</p></body></html>', {
+			return_pickup_gps_status: 'sin_gps',
+			return_pickup_gps_missing_reason: 'Sin señal <zona>',
+		});
+		expect(html).toContain('<p>Recolección sin GPS: Sin señal &lt;zona&gt;</p></body>');
 	});
 });
 

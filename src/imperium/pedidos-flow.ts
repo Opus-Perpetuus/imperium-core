@@ -2,6 +2,7 @@
  * Ciclo de vida de pedidos: create/update como el service original
  * (`folio`, `folio_interno`, totales, transiciones, salida de inventario).
  */
+import { assign_capture_gps, resolve_capture_gps } from './delivery-gps.ts';
 import { as_array, as_object, type ImperiumDoc } from './envelope.ts';
 import {
 	assert_pedido_create_estado,
@@ -113,6 +114,7 @@ export async function prepare_pedido_create(
 		context: out,
 	});
 	out.name = `PEDIDO-${out.folio}`;
+	assign_capture_gps(out, 'order', resolve_capture_gps(out, 'order', 'toma del pedido'));
 	return out;
 }
 
@@ -138,6 +140,9 @@ export async function prepare_pedido_update(
 	);
 	if (previous?.folio_interno != null && previous.folio_interno !== '') {
 		out.folio_interno = previous.folio_interno;
+	}
+	if (String(out.order_gps_status ?? '').trim()) {
+		assign_capture_gps(out, 'order', resolve_capture_gps(out, 'order', 'toma del pedido'));
 	}
 	return out;
 }

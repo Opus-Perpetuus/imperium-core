@@ -162,6 +162,7 @@ import {
 import { cancel_supplier_payment } from './supplier-payment-flow.ts';
 import { register_package_delivery_exit } from './inventory-logistics-flow.ts';
 import {
+	append_return_pickup_gps_line,
 	apply_quant_delta,
 	quant_total_for_pair,
 	recibir_delivery_return,
@@ -4176,6 +4177,10 @@ async function pedidos_sync_offline(ctx: Ctx) {
 					folio: pedido.folio ?? '',
 					ubicacion: pedido.ubicacion,
 					estado,
+					order_coordinates: pedido.order_coordinates,
+					order_gps_status: pedido.order_gps_status,
+					order_gps_missing_reason: pedido.order_gps_missing_reason,
+					order_gps_accuracy_m: pedido.order_gps_accuracy_m,
 				},
 				ctx.actor,
 			);
@@ -5216,12 +5221,16 @@ async function report_full_pdf(ctx: Ctx) {
 	if (!rendered.count || !rendered.first) {
 		throw new Error('No se encontraron registros para generar el reporte');
 	}
+	const html =
+		resource === 'delivery-return' && rendered.count === 1
+			? append_return_pickup_gps_line(rendered.html, rendered.first)
+			: rendered.html;
 	const gen_name = String(report.generated_report_name || '{{name}}_{{timestamp_actual}}');
 	const filename = `${(await interpolate_report_template(gen_name, rendered.first, user_name, now, opts)) || 'REPORTE_GENERADO'}${
 		rendered.count > 1 ? `_LOTE_${rendered.count}` : ''
 	}.pdf`;
 	return html_to_pdf_response(
-		rendered.html,
+		html,
 		filename,
 		await report_pdf_options(ctx, report, as_object(ctx.body.pdf_setting), 'stored'),
 	);

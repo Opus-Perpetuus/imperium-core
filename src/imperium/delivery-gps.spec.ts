@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { resolve_delivery_gps } from './delivery-gps.ts';
+import { resolve_capture_gps, resolve_delivery_gps } from './delivery-gps.ts';
 
 const PUNTO = { latitude: 20.5937, longitude: -103.1234 };
 
@@ -64,4 +64,49 @@ describe('resolve_delivery_gps', () => {
 			accuracy_m: null,
 		});
 	});
+});
+
+describe('resolve_capture_gps', () => {
+	for (const prefix of ['departure', 'return_pickup', 'order'] as const) {
+		const label = prefix === 'order' ? 'toma del pedido' : prefix === 'return_pickup' ? 'recolección' : 'salida';
+
+		test(`${prefix}: coordenadas válidas quedan ok`, () => {
+			expect(
+				resolve_capture_gps(
+					{
+						[`${prefix}_gps_status`]: 'ok',
+						[`${prefix}_coordinates`]: PUNTO,
+						[`${prefix}_gps_accuracy_m`]: 9,
+					},
+					prefix,
+					label,
+				),
+			).toEqual({ coordinates: PUNTO, status: 'ok', reason: null, accuracy_m: 9 });
+		});
+
+		test(`${prefix}: sin_gps sin motivo es error`, () => {
+			expect(() =>
+				resolve_capture_gps({ [`${prefix}_gps_status`]: 'sin_gps' }, prefix, label),
+			).toThrow('motivo');
+		});
+
+		test(`${prefix}: sin estado queda legado`, () => {
+			expect(resolve_capture_gps({}, prefix, label)).toEqual({
+				coordinates: null,
+				status: 'legado',
+				reason: null,
+				accuracy_m: null,
+			});
+		});
+
+		test(`${prefix}: (0,0) no es una ubicación`, () => {
+			expect(
+				resolve_capture_gps(
+					{ [`${prefix}_coordinates`]: { latitude: 0, longitude: 0 } },
+					prefix,
+					label,
+				).coordinates,
+			).toBeNull();
+		});
+	}
 });

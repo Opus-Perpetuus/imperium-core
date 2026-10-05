@@ -7556,6 +7556,14 @@
               "crud": "number",
               "component": "input-number",
               "label": "longitud"
+            },
+            {
+              "name": "periodo_id",
+              "mongo": "periodo_id",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "periodo id"
             }
           ]
         },
