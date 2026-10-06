@@ -337,6 +337,12 @@
   },
   {
     "resource": "dynamic-dashboard",
+    "method": "get",
+    "path": "/:id/widget-data",
+    "action": "saved_widget_data"
+  },
+  {
+    "resource": "dynamic-dashboard",
     "method": "post",
     "path": "/ai-query",
     "action": "ai_query"

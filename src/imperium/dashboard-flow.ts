@@ -291,6 +291,30 @@ function date_bucket(value: unknown, granularity: string) {
 	return `${y}-${m}-${d}`;
 }
 
+/**
+ * Datos de un widget de un tablero guardado (`GET /:id/widget-data?widget=`).
+ * La especificación sale del tablero y no del cliente: un enlace público solo
+ * deja pasar GET, y así no abre consultas arbitrarias.
+ */
+export async function resolve_saved_widget_data(
+	store: ImperiumStore,
+	actor: ImperiumDoc | null,
+	dashboard_id: string,
+	query: URLSearchParams,
+) {
+	const index = query.get('widget') ?? '';
+	const doc = /^\d+$/.test(index) ? await store.find_id('dynamic-dashboard', dashboard_id) : null;
+	if (!doc || !dashboard_is_visible(doc, await dashboard_access(store, actor))) return null;
+	const spec = as_array(doc.widgets)[Number(index)];
+	if (!spec || typeof spec !== 'object') return null;
+	const pagination: Record<string, string> = {};
+	for (const key of ['desde', 'limite', 'sort', 'campoSort']) {
+		const value = query.get(key);
+		if (value) pagination[key] = value;
+	}
+	return resolve_widget_data(store, actor, { spec, pagination });
+}
+
 export async function resolve_widget_data(
 	store: ImperiumStore,
 	actor: ImperiumDoc | null,

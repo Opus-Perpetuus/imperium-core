@@ -380,6 +380,23 @@ describe('flujos entre apps', () => {
 		expect(calls).toEqual([]);
 	});
 
+	test('un widget guardado se lee con la especificación del tablero, no con la del cliente', async () => {
+		const { resolve_saved_widget_data } = await import('./dashboard-flow.ts');
+		const { store } = recording_store('almacen');
+		(store as unknown as { find_id: unknown }).find_id = async (resource: string, id: string) =>
+			resource === 'dynamic-dashboard' && id === 'd1'
+				? { _id: 'd1', widgets: [{ widget_type: 'kpi', model_id: 'Employee' }] }
+				: null;
+		const admin = { _id: 'a', _ref: 'user-menu-management-0' };
+		const leer = (id: string, query: string) =>
+			resolve_saved_widget_data(store, admin, id, new URLSearchParams(query));
+		expect(await leer('d1', 'widget=1')).toBeNull();
+		expect(await leer('d1', '')).toBeNull();
+		expect(await leer('d2', 'widget=0')).toBeNull();
+		const err = await leer('d1', 'widget=0&model_id=Product').catch((e) => e);
+		expect(err?.message).toBe("El módulo del modelo 'Employee' no está instalado.");
+	});
+
 	describe('catálogo de tableros', () => {
 		const ADMIN = { _id: 'a', _ref: 'user-menu-management-0' };
 

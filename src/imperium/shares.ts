@@ -45,6 +45,19 @@ const DENIED_PREFIXES = [
 	'/api/user-pin',
 ];
 
+/**
+ * Vistas que un enlace no puede enseñar aunque nadie las bloquee: leen de
+ * `DENIED_PREFIXES` (el visitante las vería vacías y la vista previa del dueño,
+ * llena por su cookie) o son puestos de captura con estado del dispositivo.
+ */
+const BUILTIN_BLOCKS: ShareBlock[] = [
+	'/internal/database-manager',
+	'/internal/module-management',
+	'/internal/user-pin',
+	'/internal/pos',
+	'/internal/kiosk',
+].map((key): ShareBlock => ({ kind: 'ruta', key, label: 'Esta vista no se puede compartir en un enlace público.' }));
+
 const DRAFT_TTL_MS = 60 * 60 * 1000;
 const MAX_SCOPE = 200;
 const MAX_HIDDEN = 500;
@@ -103,9 +116,55 @@ export function scope_entry_of(url: URL): ShareScopeEntry {
 }
 
 /** Los fijos tienen que ir tal cual (y ausentes si no estaban); los libres, como quieran. */
-export function scope_allows(scope: ShareScopeEntry[], url: URL): boolean {
+export function scope_allows(
+	scope: ShareScopeEntry[],
+	url: URL,
+	clock: { now: number; recorded_at: number } | null = null,
+): boolean {
 	const asked = scope_entry_of(url);
-	return scope.some((entry) => entry.key === asked.key);
+	return scope.some((entry) => entry.key === asked.key || (clock !== null && same_window_later(entry, asked, clock)));
+}
+
+const FECHA = /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/;
+const DIA_MS = 24 * 60 * 60 * 1000;
+// Misma forma que la grabada (solo cambian dígitos): otra zona, otro corte o
+// solo el día harían que el núcleo y la app leyeran fechas distintas.
+const forma = (valor: string) => valor.replace(/\d/g, '0');
+
+/**
+ * Una vista de «hoy» o «los últimos 3 meses» manda sus fechas calculadas al
+ * cargar: al día siguiente ya no son las que grabó la vista previa. Pasan si
+ * lo único distinto son fechas, todas corridas lo mismo hacia adelante y sin
+ * pasar de mañana: la misma ventana más tarde, nunca historia anterior. Solo
+ * se desliza una ventana que al grabarse llegaba a ese día (`recorded_at`, la
+ * vista previa dura una hora): el reporte de un día pasado no deja ver los
+ * días siguientes.
+ */
+function same_window_later(
+	recorded: ShareScopeEntry,
+	asked: ShareScopeEntry,
+	{ now, recorded_at }: { now: number; recorded_at: number },
+): boolean {
+	if (recorded.path !== asked.path) return false;
+	const keys = Object.keys(recorded.pinned).sort();
+	if (keys.join('&') !== Object.keys(asked.pinned).sort().join('&')) return false;
+	const fechas = keys.flatMap((key) => recorded.pinned[key]!.filter((value) => FECHA.test(value)).map(Date.parse));
+	if (!fechas.length || Math.max(...fechas) < recorded_at - 2 * DIA_MS) return false;
+	let shift: number | null = null;
+	for (const key of keys) {
+		const before = recorded.pinned[key]!;
+		const after = asked.pinned[key]!;
+		if (before.length !== after.length) return false;
+		for (let i = 0; i < before.length; i++) {
+			if (before[i] === after[i]) continue;
+			if (!FECHA.test(before[i]!) || forma(after[i]!) !== forma(before[i]!)) return false;
+			const delta = Date.parse(after[i]!) - Date.parse(before[i]!);
+			if (!Number.isFinite(delta) || delta < 0 || Date.parse(after[i]!) > now + DIA_MS) return false;
+			if (shift !== null && delta !== shift) return false;
+			shift = delta;
+		}
+	}
+	return shift !== null;
 }
 
 export function is_denied_path(path: string): boolean {
@@ -172,7 +231,7 @@ export function blocked_by(
 	},
 ): ShareBlock | null {
 	const target = new URL(input.target, 'http://imperium.local');
-	for (const block of blocks) {
+	for (const block of [...BUILTIN_BLOCKS, ...blocks]) {
 		if (block.kind === 'ruta' && route_blocked(block.key, target)) return block;
 		if (block.kind === 'app' && input.app && block.key === input.app) return block;
 	}
@@ -463,7 +522,7 @@ export async function gate_share_request(
 	});
 	if (block) return { kind: 'response', response: blocked_response() };
 	const recording = active.state === 'borrador';
-	if (!recording && !media && !scope_allows(active.scope, url)) {
+	if (!recording && !media && !scope_allows(active.scope, url, { now: Date.now(), recorded_at: active.created_at })) {
 		return { kind: 'response', response: out_of_scope() };
 	}
 	const owner = await deps.load_owner(active.owner_id);
@@ -685,7 +744,11 @@ export async function handle_share_api(
 		return json_response(200, {
 			data: {
 				permitido: !block,
-				motivo: block ? 'El administrador no permite compartir esta vista en público.' : '',
+				motivo: !block
+					? ''
+					: BUILTIN_BLOCKS.includes(block)
+						? block.label
+						: 'El administrador no permite compartir esta vista en público.',
 				es_admin: is_admin,
 			},
 		});

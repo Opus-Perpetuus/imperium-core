@@ -196,7 +196,11 @@ import {
 	send_invoice_to_commercial,
 } from './invoice-request-flow.ts';
 import { detail_fields, plan_from_model, widgets_from_plan } from './ai-query-harness.ts';
-import { resolve_dashboard_catalog, resolve_widget_data } from './dashboard-flow.ts';
+import {
+	resolve_dashboard_catalog,
+	resolve_saved_widget_data,
+	resolve_widget_data,
+} from './dashboard-flow.ts';
 import {
 	export_payroll_payload,
 	generate_payroll_drafts,
@@ -429,6 +433,11 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return dashboard_catalog(ctx);
 		case 'dynamic-dashboard:widget_data':
 			return widget_data(ctx);
+		case 'dynamic-dashboard:saved_widget_data':
+			return (
+				(await resolve_saved_widget_data(ctx.store, ctx.actor, ctx.params.id ?? '', ctx.url.searchParams)) ??
+				Response.json(fail('Widget no encontrado', 404).body, { status: 404 })
+			);
 		case 'dynamic-dashboard:ai_query':
 			return dashboard_ai_query(ctx);
 		case 'interactive-manual:board':

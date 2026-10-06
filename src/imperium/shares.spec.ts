@@ -119,6 +119,29 @@ describe('alcance de un enlace', () => {
 		expect(scope_allows(scope, url(`${PAGE}/?id=T1`))).toBe(true);
 	});
 
+	test('una ventana de fechas de «hoy» pasa días después, corrida hacia adelante, nunca hacia atrás', () => {
+		const stats = '/api/pedidos/stats';
+		const grabada = [scope_entry_of(url(`${stats}?date_from=2026-07-06T06:00:00.000Z&date_to=2026-10-06T05:59:59.999Z&status=abierto`))];
+		const ahora = { now: Date.parse('2026-10-09T15:00:00.000Z'), recorded_at: Date.parse('2026-10-06T15:00:00.000Z') };
+		const tres_dias = `${stats}?date_from=2026-07-09T06:00:00.000Z&date_to=2026-10-09T05:59:59.999Z&status=abierto`;
+		expect(scope_allows(grabada, url(tres_dias), ahora)).toBe(true);
+		expect(scope_allows(grabada, url(tres_dias))).toBe(false);
+		// El reporte de un día pasado se queda en ese día.
+		const de_un_dia = [scope_entry_of(url('/api/reporte?dia=2026-09-01'))];
+		expect(scope_allows(de_un_dia, url('/api/reporte?dia=2026-09-02'), ahora)).toBe(false);
+		// Más historia, otra longitud, otro filtro o el futuro: no.
+		expect(scope_allows(grabada, url(`${stats}?date_from=2026-01-01T06:00:00.000Z&date_to=2026-10-06T05:59:59.999Z&status=abierto`), ahora)).toBe(false);
+		expect(scope_allows(grabada, url(`${stats}?date_from=2026-07-09T06:00:00.000Z&date_to=2026-10-10T05:59:59.999Z&status=abierto`), ahora)).toBe(false);
+		expect(scope_allows(grabada, url(`${stats}?date_from=2026-07-09T06:00:00.000Z&date_to=2026-10-09T05:59:59.999Z&status=cerrado`), ahora)).toBe(false);
+		expect(scope_allows(grabada, url(`${stats}?date_from=2027-07-09T06:00:00.000Z&date_to=2027-10-09T05:59:59.999Z&status=abierto`), ahora)).toBe(false);
+		expect(scope_allows(grabada, url(`${stats}?date_from=2026-07-05&date_to=2026-10-05&status=abierto`), ahora)).toBe(false);
+		// Otra forma de escribir la misma fecha (sin zona, otra zona, solo el día) no pasa.
+		expect(scope_allows(grabada, url(`${stats}?date_from=2026-07-09T06:00:00&date_to=2026-10-09T05:59:59&status=abierto`), ahora)).toBe(false);
+		expect(scope_allows(grabada, url(`${stats}?date_from=2026-07-09T06:00:00.000%2B00:00&date_to=2026-10-09T05:59:59.999%2B00:00&status=abierto`), ahora)).toBe(false);
+		// Lo que no es fecha sigue exigiéndose tal cual.
+		expect(scope_allows([scope_entry_of(url(`${PAGE}?id=T1`))], url(`${PAGE}?id=2026-10-09`), ahora)).toBe(false);
+	});
+
 	test('la clave canónica no depende del orden de los parámetros', () => {
 		expect(scope_entry_of(url('/api/x?b=2&a=1')).key).toBe(scope_entry_of(url('/api/x?a=1&b=2')).key);
 	});
@@ -154,6 +177,17 @@ describe('bloqueos del administrador', () => {
 		const one: ShareBlock[] = [{ kind: 'ruta', key: '/internal/herr-tabla?id=T9', label: '' }];
 		expect(blocked_by(one, { target: '/internal/herr-tabla?id=T9&modo=x', paths: [], resource_app })).not.toBeNull();
 		expect(blocked_by(one, { target: '/internal/herr-tabla?id=T1', paths: [], resource_app })).toBeNull();
+	});
+
+	test('lo que lee rutas negadas o captura en el dispositivo no se comparte aunque nadie lo bloquee', () => {
+		const check = (target: string) => blocked_by([], { target, paths: [], resource_app });
+		expect(check('/internal/database-manager/health')).not.toBeNull();
+		expect(check('/internal/user-pin')).not.toBeNull();
+		expect(check('/internal/module-management')).not.toBeNull();
+		expect(check('/internal/pos/venta')).not.toBeNull();
+		expect(check('/internal/kiosk/form/new')).not.toBeNull();
+		expect(check('/internal/pos-session')).toBeNull();
+		expect(check('/internal/dbm-runs')).toBeNull();
 	});
 
 	test('una app o un recurso bloquean por lo que la vista lee', () => {

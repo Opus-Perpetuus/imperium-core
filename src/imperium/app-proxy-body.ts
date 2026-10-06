@@ -61,7 +61,7 @@ export async function guard_app_proxy_body(
 	} catch {
 		return raw;
 	}
-	if (count_images(parsed) > APP_PROXY_MAX_IMAGES) {
+	if ((await count_heavy_images(parsed)) > APP_PROXY_MAX_IMAGES) {
 		throw new AppProxyRequestError(422, MENSAJE_CANTIDAD);
 	}
 	let dirty = false;
@@ -74,20 +74,43 @@ export async function guard_app_proxy_body(
 	return encoded;
 }
 
-function count_images(value: unknown): number {
-	if (typeof value === 'string') {
-		return value.startsWith('data:image/') ? 1 : 0;
-	}
-	if (Array.isArray(value)) {
-		return value.reduce((sum, item) => sum + count_images(item), 0);
-	}
-	if (value && typeof value === 'object') {
-		return Object.values(value).reduce<number>(
-			(sum, item) => sum + count_images(item),
-			0,
+/**
+ * Solo cuentan las imágenes que habría que decodificar para reducirlas: una
+ * miniatura o una foto que ya cabe en 4000 px no choca con el tope. Se miden con
+ * sharp, el mismo lector que luego decide reducir: con otro lector de cabeceras,
+ * un JPEG armado para que los dos lean tamaños distintos se colaba sin contar y
+ * se decodificaba igual.
+ */
+async function count_heavy_images(value: unknown): Promise<number> {
+	if (typeof value === 'string') return (await is_heavy_image(value)) ? 1 : 0;
+	const items = Array.isArray(value)
+		? value
+		: value && typeof value === 'object'
+			? Object.values(value)
+			: [];
+	let total = 0;
+	for (const item of items) total += await count_heavy_images(item);
+	return total;
+}
+
+async function is_heavy_image(value: string): Promise<boolean> {
+	if (!value.startsWith('data:image/')) return false;
+	const comma = value.indexOf(',');
+	if (comma < 0 || !/base64/i.test(value.slice(0, comma))) return false;
+	try {
+		const info = await sharp(
+			Buffer.from(value.slice(comma + 1), 'base64'),
+			SHARP_LIMIT,
+		).metadata();
+		return (
+			!info.width ||
+			!info.height ||
+			info.width > IMAGEN_LADO_MAXIMO ||
+			info.height > IMAGEN_LADO_MAXIMO
 		);
+	} catch {
+		return true;
 	}
-	return 0;
 }
 
 async function walk(value: unknown, mark: () => void): Promise<unknown> {

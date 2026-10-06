@@ -104,6 +104,28 @@ describe('cuerpo del proxy de apps', () => {
 		);
 	});
 
+	test('las fotos que de verdad pasan de 4000 px cuentan para el tope aunque pesen poco', async () => {
+		const ancha = await sharp({ create: { width: 4100, height: 20, channels: 3, background: '#808080' } })
+			.jpeg()
+			.toBuffer();
+		const foto = `data:image/jpeg;base64,${ancha.toString('base64')}`;
+		const fotos = Array.from({ length: APP_PROXY_MAX_IMAGES + 1 }, () => foto);
+		const raw = new TextEncoder().encode(JSON.stringify({ fotos }));
+		await expect(guard_app_proxy_body(raw, 'application/json')).rejects.toMatchObject(
+			{ status: 422, message: expect.stringContaining('demasiadas') },
+		);
+	});
+
+	test('las fotos que ya caben en 4000 px no cuentan para el tope', async () => {
+		const chica = await sharp({ create: { width: 200, height: 150, channels: 3, background: '#808080' } })
+			.jpeg()
+			.toBuffer();
+		const foto = `data:image/jpeg;base64,${chica.toString('base64')}`;
+		const fotos = Array.from({ length: APP_PROXY_MAX_IMAGES + 4 }, () => foto);
+		const raw = new TextEncoder().encode(JSON.stringify({ fotos }));
+		expect(await guard_app_proxy_body(raw, 'application/json')).toBe(raw);
+	});
+
 	test('content-length por encima de 8 MB no lee el cuerpo', async () => {
 		let leido = false;
 		const req = {
