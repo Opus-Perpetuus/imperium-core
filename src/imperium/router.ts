@@ -22,7 +22,7 @@ import { handle_mcp_agent, seed_mcp_access } from './mcp-agent.ts';
 import { serve_media } from './media.ts';
 import { recover_orphan_processing_uploads } from './uploads.ts';
 import { ImperiumStore, load_catalog_path } from './store.ts';
-import { fail, humanize_caught_error } from './envelope.ts';
+import { caught_http_error, fail } from './envelope.ts';
 import { PinChallengeError } from './user-pin.ts';
 import {
 	bind_debug_store,
@@ -212,29 +212,12 @@ export function create_imperium_layer(sql: Bun.SQL) {
 				});
 				if (portal) {
 					const out = add_cors(req, portal);
-					if (out && req.method !== 'OPTIONS') {
-						await persist_request_log(
-							store,
-							req,
-							clone_for_request_log(out),
-							actor,
-							started_ms,
-						);
-					}
+					if (out) note_request(store, sql, req, out, started_ms);
 					return out;
 				}
 			}
 			const out = await dispatch(store, sql, req, url, path);
-			if (out && req.method !== 'OPTIONS') {
-				const actor = await current_user(sql, req).catch(() => null);
-				await persist_request_log(
-					store,
-					req,
-					clone_for_request_log(out),
-					actor,
-					started_ms,
-				);
-			}
+			if (out) note_request(store, sql, req, out, started_ms);
 			return out;
 		},
 	};
@@ -300,13 +283,13 @@ async function dispatch(
 				try {
 					return add_cors(req, await handle_mcp_agent(store, sql, req, mcp_url));
 				} catch (err) {
-					const e = err as Error & { status?: number; code?: string };
-					debug_error(e.message ?? String(err));
+					const mapped = caught_http_error(err);
+					debug_error(err instanceof Error ? err.message : String(err));
 					return add_cors(
 						req,
 						Response.json(
-							{ ok: false, error: e.code ?? 'error', message: e.message },
-							{ status: e.status ?? 400 },
+							{ ok: false, error: mapped.code ?? 'error', message: mapped.message },
+							{ status: mapped.status },
 						),
 					);
 				}
@@ -319,8 +302,8 @@ async function dispatch(
 			}
 			const hit = split_resource(path, store);
 			if (!hit) return null;
-			const actor = await current_user(sql, req);
 			try {
+				const actor = await current_user(sql, req);
 				return await run_with_history_context(
 					{
 						actor,
@@ -375,20 +358,17 @@ async function dispatch(
 						),
 					);
 				}
-				const e = err as Error & { status?: number; code?: string };
-				const humanized = humanize_caught_error(err);
-				const message = humanized.message;
-				const status = e.status ?? 400;
-				debug_error(message);
+				const mapped = caught_http_error(err);
+				debug_error(err instanceof Error ? err.message : String(err));
 				const extra: Record<string, unknown> = {};
-				if (humanized.code) extra.code = humanized.code;
-				if (humanized.field_errors) extra.field_errors = humanized.field_errors;
+				if (mapped.code) extra.code = mapped.code;
+				if (mapped.field_errors) extra.field_errors = mapped.field_errors;
 				if (err instanceof SubjectNotInstalledError && err.details) {
 					extra.details = err.details;
 				}
 				return add_cors(
 					req,
-					Response.json(fail(message, status, extra).body, { status }),
+					Response.json(fail(mapped.message, mapped.status, extra).body, { status: mapped.status }),
 				);
 			}
 }
@@ -785,6 +765,21 @@ function match_path(pattern: string, actual: string): Record<string, string> | n
 		else if (ps[i] !== as_[i]) return null;
 	}
 	return params;
+}
+
+function note_request(
+	store: ImperiumStore,
+	sql: Bun.SQL,
+	req: Request,
+	res: Response,
+	started_ms: number,
+): void {
+	if (req.method === 'OPTIONS') return;
+	const snapshot = clone_for_request_log(res);
+	void (async () => {
+		const actor = await current_user(sql, req).catch(() => null);
+		await persist_request_log(store, req, snapshot, actor, started_ms);
+	})().catch(() => {});
 }
 
 function clone_for_request_log(res: Response): Response {

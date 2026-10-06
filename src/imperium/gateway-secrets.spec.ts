@@ -468,7 +468,7 @@ describe('server.ts: cableado', () => {
 	});
 
 	test('un rechazo o una excepción sin atender se registran y no tumban el núcleo', () => {
-		const rejection = between("process.on('unhandledRejection'", 'const sql = new Bun.SQL');
+		const rejection = between("process.on('unhandledRejection'", 'const sql = open_core_sql');
 		expect(rejection).toContain("print_console_log('error'");
 		expect(rejection).not.toContain('process.exit');
 		expect(src.indexOf("process.on('unhandledRejection'")).toBeLessThan(

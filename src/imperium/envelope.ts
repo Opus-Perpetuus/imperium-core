@@ -67,6 +67,84 @@ export function humanize_caught_error(err: unknown): {
 	return { message, code };
 }
 
+const DRIVER_CODE =
+	/^ERR_POSTGRES_(CONNECTION_|IDLE_TIMEOUT|LIFETIME_TIMEOUT|UNSUPPORTED_|INVALID_)/;
+const SQLSTATE_UNAVAILABLE = /^(08|40|53|57|58|XX)/;
+
+type ErrorFields = {
+	message: string;
+	code: string;
+	errno: string;
+	status?: number;
+	name: string;
+};
+
+function error_fields(err: unknown): ErrorFields {
+	const rec = err && typeof err === 'object' ? (err as Record<string, unknown>) : {};
+	return {
+		message:
+			err instanceof Error
+				? err.message
+				: typeof rec.message === 'string'
+					? rec.message
+					: String(err ?? ''),
+		code: typeof rec.code === 'string' ? rec.code : '',
+		errno: rec.errno == null ? '' : String(rec.errno),
+		status: typeof rec.status === 'number' ? rec.status : undefined,
+		name: typeof rec.name === 'string' ? rec.name : '',
+	};
+}
+
+function is_validation(err: unknown, fields: ErrorFields): boolean {
+	if (fields.name === 'FieldValidationError' || fields.code === 'ValidationError') return true;
+	const rec = err as { field_errors?: unknown };
+	return Boolean(
+		rec?.field_errors && typeof rec.field_errors === 'object' && !Array.isArray(rec.field_errors),
+	);
+}
+
+function is_driver_transport(fields: ErrorFields): boolean {
+	if (fields.code === 'sql_timeout' || fields.code === 'http_deadline') return false;
+	if (/failed to read data/i.test(fields.message)) return true;
+	if (DRIVER_CODE.test(fields.code)) return true;
+	if (fields.code === 'sql_read_failed') return true;
+	if (fields.code === 'ECONNRESET' || fields.code === 'EPIPE' || fields.code === 'ECONNREFUSED')
+		return true;
+	return SQLSTATE_UNAVAILABLE.test(fields.errno);
+}
+
+function http_status_of(err: unknown): number {
+	const fields = error_fields(err);
+	if (fields.status != null && fields.status >= 400 && fields.status <= 599) return fields.status;
+	if (is_validation(err, fields)) return 400;
+	if (is_driver_transport(fields)) return 503;
+	return 400;
+}
+
+export function caught_http_error(err: unknown): {
+	status: number;
+	message: string;
+	code?: string;
+	field_errors?: Record<string, string[]>;
+} {
+	const fields = error_fields(err);
+	const humanized = humanize_caught_error(err);
+	const status = http_status_of(err);
+	if (status >= 500 && is_driver_transport(fields)) {
+		return {
+			status,
+			message: 'No se pudo leer la respuesta de la base',
+			code: 'sql_read_failed',
+		};
+	}
+	return {
+		status,
+		message: humanized.message,
+		code: humanized.code,
+		field_errors: humanized.field_errors,
+	};
+}
+
 function map_pg_duplicate_message(err: unknown): string | null {
 	if (!err || typeof err !== 'object') return null;
 	const rec = err as {

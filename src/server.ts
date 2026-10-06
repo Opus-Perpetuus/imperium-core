@@ -88,6 +88,13 @@ import {
 	bytes_for_proxy,
 	guard_app_proxy_body,
 } from './imperium/app-proxy-body.ts';
+import { caught_http_error } from './imperium/envelope.ts';
+import {
+	http_deadline_ms,
+	open_core_sql,
+	request_with_received_body,
+	with_deadline,
+} from './imperium/sql-client.ts';
 
 const PORT = Number(process.env.PORT ?? 3100);
 const DATABASE_URL =
@@ -136,7 +143,7 @@ process.on('unhandledRejection', (reason) => {
 	print_console_log('error', `Promesa rechazada sin atender: ${failure_text(reason)}`);
 });
 
-const sql = new Bun.SQL(DATABASE_URL);
+const sql = open_core_sql(DATABASE_URL);
 const imperium = create_imperium_layer(sql);
 const shares = share_deps(imperium.store, sql);
 /** Overrides de desarrollo (`POST /api/subjects/dev-attach`). Gana a env/DNS. */
@@ -566,14 +573,18 @@ const server = Bun.serve({
 		// La IP del socket, que el cliente no elige: el limitador la prefiere
 		// sobre `x-forwarded-for` salvo que el despliegue declare que hay un
 		// proxy delante (ver `request_ip`).
-		remember_socket_ip(req, server.requestIP(req)?.address ?? null);
+		const socket_ip = server.requestIP(req)?.address ?? null;
 		const started_ms = Date.now();
 		const url = new URL(req.url);
 		const path = url.pathname;
 		/** Remitente app → app, solo si el gateway lo aceptó. */
 		let accepted_caller: string | null = null;
 		let shared = { kind: 'none' } as ShareGate;
-		const res = await (async () => {
+		let res: Response;
+		try {
+			req = await request_with_received_body(req);
+			remember_socket_ip(req, socket_ip);
+			res = await with_deadline((async (): Promise<Response> => {
 			if (
 				(req.method === 'GET' || req.method === 'HEAD') &&
 				(path === '/' || path === '/app' || path === '/app/')
@@ -927,7 +938,18 @@ const server = Bun.serve({
 			if (compat) return compat;
 
 			return Response.json({ error: 'not found' }, { status: 404 });
-		})();
+			})(), http_deadline_ms());
+		} catch (err) {
+			const mapped = caught_http_error(err);
+			const raw = err instanceof Error ? err.message : String(err);
+			print_console_log('error', `${path} sin respuesta: ${raw}`);
+			const body: Record<string, unknown> = {
+				error: mapped.message,
+				message: mapped.message,
+			};
+			if (mapped.code) body.code = mapped.code;
+			res = Response.json(body, { status: mapped.status });
+		}
 		// La vista previa del dueño enseña qué llamadas hace la vista: eso es
 		// lo único que el enlace podrá pedir después.
 		if (shared.kind === 'bound' && shared.record && res.status < 400) {

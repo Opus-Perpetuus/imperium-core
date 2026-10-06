@@ -3,7 +3,7 @@
  * Replica `mcp-agent.token.service` y `mcp-agent.operations.service`.
  */
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { as_object, ok, type ImperiumDoc } from './envelope.ts';
+import { as_object, caught_http_error, ok, type ImperiumDoc } from './envelope.ts';
 import { read_imperium_body } from './body.ts';
 import { build_access, current_user } from './auth.ts';
 import type { ExtraCol, ImperiumStore } from './store.ts';
@@ -224,8 +224,8 @@ async function handle_v1(
 		}
 		return mcp_error(404, 'not_found', 'Ruta MCP v1 no encontrada');
 	} catch (err) {
-		const e = err as Error & { status?: number; code?: string };
-		return mcp_error(e.status ?? 400, e.code ?? 'error', e.message);
+		const mapped = caught_http_error(err);
+		return mcp_error(mapped.status, mapped.code ?? 'error', mapped.message);
 	}
 }
 
