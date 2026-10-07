@@ -6,6 +6,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { as_array, as_object, fail, ok, type ImperiumDoc } from './envelope.ts';
+import { internal_route } from './internal-route.ts';
 import { apply_missing_configuration_seeds } from './configuration-seed-sync.ts';
 import { plan_documentation_sync } from './documentation-sync.ts';
 import { serve_attachment_bytes } from './media.ts';
@@ -69,6 +70,7 @@ import {
 	clear_notifications,
 	delete_notification,
 	mark_all_notifications,
+	mark_mentions_read,
 	my_mentions,
 	my_notifications,
 	notify_message_recipients,
@@ -77,9 +79,82 @@ import {
 	notification_toast_digest,
 	notification_update_read,
 	register_comment_mentions,
+	register_comment_reply,
 	resolve_comment_mentioned_users,
 } from './notifications.ts';
-import { assert_http_access, assert_target_model_read, build_access } from './auth.ts';
+import { assert_http_access, assert_target_model_read, build_access, read_sid } from './auth.ts';
+import {
+	assert_attachment_access,
+	CHAT_ATTACHMENT_MODELS,
+	ChatError,
+	is_chat_private_resource,
+	is_chat_row,
+	without_chat_rows,
+} from './chat-access.ts';
+import {
+	add_conversation_members,
+	cancel_scheduled_message,
+	close_chat_poll,
+	create_chat_message,
+	create_chat_upload,
+	create_conversation_invite,
+	create_group_conversation,
+	create_scheduled_message,
+	decide_join_request,
+	delete_chat_message,
+	delete_chat_upload,
+	delete_saved_message,
+	edit_chat_message,
+	forward_chat_messages,
+	issue_media_tokens,
+	join_conversation_by_invite,
+	leave_conversation,
+	list_my_conversations,
+	mark_conversation_read,
+	mark_conversation_unread,
+	open_direct_conversation,
+	open_view_once,
+	pin_conversation_message,
+	read_chat_config,
+	read_chat_poll,
+	read_conversation,
+	read_conversation_detail,
+	read_conversation_invite,
+	read_conversation_media,
+	read_conversation_members,
+	read_conversation_summary,
+	read_message_info,
+	read_message_page,
+	read_message_reactions,
+	read_message_sync,
+	read_my_conversations,
+	read_saved_messages,
+	read_scheduled_messages,
+	remove_conversation_member,
+	revoke_conversation_invite,
+	save_chat_message,
+	search_chat_messages,
+	toggle_chat_reaction,
+	transfer_conversation_ownership,
+	unpin_conversation_message,
+	update_conversation_info,
+	update_conversation_member,
+	update_conversation_prefs,
+	update_saved_message,
+	update_scheduled_message,
+	vote_chat_poll,
+} from './chat-flow.ts';
+import {
+	create_story,
+	delete_story,
+	read_author_stories,
+	read_story_feed,
+	read_story_viewers,
+	reply_to_story,
+	view_story,
+} from './stories-flow.ts';
+import { rate_limited_response, take_token } from './rate-bucket.ts';
+import { sign_realtime_token, SOCKET_TICKET_TTL_S } from './realtime-tokens.ts';
 import { SubjectNotInstalledError } from './subjects-admin.ts';
 import {
 	enrich_history_row,
@@ -104,8 +179,7 @@ import {
 	seed_default_data,
 	recreate_indexes,
 } from './module-data.ts';
-import { is_upload, persist_upload_as_attachment } from './uploads.ts';
-import { emit_messages_refresh, last_driver_location } from './socket-stub.ts';
+import { last_driver_location } from './socket-stub.ts';
 import {
 	hydrate_loose_product_references,
 	hydrate_loose_product_references_many,
@@ -321,6 +395,72 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return cfdi_export(ctx, 'xml');
 		case 'cfdi-document:export_json':
 			return cfdi_export(ctx, 'json');
+		case 'chat-conversations:list_my_conversations':
+			return list_my_conversations(ctx);
+		case 'chat-conversations:read_conversation_summary':
+			return read_conversation_summary(ctx);
+		case 'chat-conversations:read_conversation_detail':
+			return read_conversation_detail(ctx);
+		case 'chat-conversations:mark_conversation_read':
+			return mark_conversation_read(ctx);
+		case 'chat-conversations:mark_conversation_unread':
+			return mark_conversation_unread(ctx);
+		case 'chat-conversations:open_direct_conversation':
+			return open_direct_conversation(ctx);
+		case 'chat-conversations:create_group_conversation':
+			return create_group_conversation(ctx);
+		case 'chat-conversations:update_conversation_info':
+			return update_conversation_info(ctx);
+		case 'chat-conversations:read_conversation_members':
+			return read_conversation_members(ctx);
+		case 'chat-conversations:add_conversation_members':
+			return add_conversation_members(ctx);
+		case 'chat-conversations:update_conversation_member':
+			return update_conversation_member(ctx);
+		case 'chat-conversations:remove_conversation_member':
+			return remove_conversation_member(ctx);
+		case 'chat-conversations:leave_conversation':
+			return leave_conversation(ctx);
+		case 'chat-conversations:transfer_conversation_ownership':
+			return transfer_conversation_ownership(ctx);
+		case 'chat-conversations:update_conversation_prefs':
+			return update_conversation_prefs(ctx);
+		case 'chat-conversations:create_conversation_invite':
+			return create_conversation_invite(ctx);
+		case 'chat-conversations:revoke_conversation_invite':
+			return revoke_conversation_invite(ctx);
+		case 'chat-conversations:read_conversation_invite':
+			return read_conversation_invite(ctx);
+		case 'chat-conversations:join_conversation_by_invite':
+			return join_conversation_by_invite(ctx);
+		case 'chat-conversations:decide_join_request':
+			return decide_join_request(ctx);
+		case 'chat-conversations:pin_conversation_message':
+			return pin_conversation_message(ctx);
+		case 'chat-conversations:unpin_conversation_message':
+			return unpin_conversation_message(ctx);
+		case 'chat-conversations:read_scheduled_messages':
+			return read_scheduled_messages(ctx);
+		case 'chat-conversations:create_scheduled_message':
+			return create_scheduled_message(ctx);
+		case 'chat-conversations:update_scheduled_message':
+			return update_scheduled_message(ctx);
+		case 'chat-conversations:cancel_scheduled_message':
+			return cancel_scheduled_message(ctx);
+		case 'chat-stories:read_story_feed':
+			return read_story_feed(ctx);
+		case 'chat-stories:read_author_stories':
+			return read_author_stories(ctx);
+		case 'chat-stories:create_story':
+			return create_story(ctx);
+		case 'chat-stories:delete_story':
+			return delete_story(ctx);
+		case 'chat-stories:view_story':
+			return view_story(ctx);
+		case 'chat-stories:read_story_viewers':
+			return read_story_viewers(ctx);
+		case 'chat-stories:reply_to_story':
+			return reply_to_story(ctx);
 		case 'auto-increment-control:increment':
 			return increment_counter(ctx);
 		case 'auto-increment-control:preview':
@@ -494,19 +634,63 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'messages:read_my_messages':
 			return my_messages(ctx);
 		case 'messages:read_my_conversations':
-			return my_conversations(ctx);
+			return read_my_conversations(ctx);
 		case 'messages:read_conversation':
-			return conversation(ctx);
+			return read_conversation(ctx);
+		case 'messages:read_chat_config':
+			return read_chat_config(ctx);
+		case 'messages:read_message_page':
+			return read_message_page(ctx);
+		case 'messages:read_message_sync':
+			return read_message_sync(ctx);
 		case 'messages:search_chat_messages':
 			return search_chat_messages(ctx);
 		case 'messages:create_chat_message':
 			return create_chat_message(ctx);
+		case 'messages:create_chat_upload':
+			return create_chat_upload(ctx);
+		case 'messages:delete_chat_upload':
+			return delete_chat_upload(ctx);
+		case 'messages:edit_chat_message':
+			return edit_chat_message(ctx);
+		case 'messages:delete_chat_message':
+			return delete_chat_message(ctx);
+		case 'messages:read_message_info':
+			return read_message_info(ctx);
+		case 'messages:toggle_chat_reaction':
+			return toggle_chat_reaction(ctx);
+		case 'messages:read_message_reactions':
+			return read_message_reactions(ctx);
+		case 'messages:vote_chat_poll':
+			return vote_chat_poll(ctx);
+		case 'messages:close_chat_poll':
+			return close_chat_poll(ctx);
+		case 'messages:read_chat_poll':
+			return read_chat_poll(ctx);
+		case 'messages:forward_chat_messages':
+			return forward_chat_messages(ctx);
+		case 'messages:read_conversation_media':
+			return read_conversation_media(ctx);
+		case 'messages:issue_media_tokens':
+			return issue_media_tokens(ctx);
+		case 'messages:open_view_once':
+			return open_view_once(ctx);
+		case 'messages:save_chat_message':
+			return save_chat_message(ctx);
+		case 'messages:read_saved_messages':
+			return read_saved_messages(ctx);
+		case 'messages:update_saved_message':
+			return update_saved_message(ctx);
+		case 'messages:delete_saved_message':
+			return delete_saved_message(ctx);
 		case 'messages:create_internal_message':
 			return create_internal_message(ctx);
 		case 'messages:create_interinstance_message':
 			return create_interinstance_message(ctx);
 		case 'messages:receive_interinstance_message':
 			return receive_interinstance_message(ctx);
+		case 'messages:issue_socket_ticket':
+			return issue_socket_ticket(ctx);
 		case 'module-management:recreate_indexes':
 			return recreate_indexes(ctx);
 		case 'module-management:activate_module':
@@ -537,6 +721,8 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return my_notifications(ctx);
 		case 'notifications:read_my_mentions':
 			return my_mentions(ctx);
+		case 'notifications:mark_mentions_read':
+			return mark_mentions_read(ctx);
 		case 'notifications:create_toast_digest':
 			return notification_toast_digest(ctx);
 		case 'notifications:mark_all_as_read':
@@ -931,7 +1117,7 @@ async function delete_one(ctx: Ctx, resource: string, id: string) {
 
 async function generic_action(ctx: Ctx) {
 	const id = ctx.params.id ?? String(ctx.body._id ?? ctx.body.id ?? '');
-	if (id && ctx.store.has(ctx.resource)) {
+	if (id && ctx.store.has(ctx.resource) && !is_chat_private_resource(ctx.resource)) {
 		return patch_doc(ctx, ctx.resource, id, {
 			...ctx.body,
 			ultima_accion: ctx.action,
@@ -2167,6 +2353,21 @@ async function create_history_comment(ctx: Ctx) {
 		throw new Error('No se pudo resolver el modelo del historial solicitado.');
 	}
 	await assert_target_model_read(ctx.store, ctx.actor, canonical);
+	const reply_to_history_id = String(ctx.body.reply_to_history_id ?? '').trim();
+	const parent = reply_to_history_id
+		? await ctx.store.find_id('document-change-history', reply_to_history_id)
+		: null;
+	if (
+		reply_to_history_id &&
+		(!parent ||
+			parent.is_active === false ||
+			is_chat_row('document-change-history', parent) ||
+			parent.entryType !== 'comment' ||
+			String(parent.documentId ?? '') !== document_id ||
+			resolve_history_model(ctx.store, String(parent.modelName ?? ''), String(parent.collectionName ?? '')) !== canonical)
+	) {
+		throw new ChatError(422, 'reply_target_invalid', 'Solo puedes responder comentarios del mismo registro.');
+	}
 	const mentioned_users = await resolve_comment_mentioned_users(
 		ctx.store,
 		ctx.actor,
@@ -2193,6 +2394,7 @@ async function create_history_comment(ctx: Ctx) {
 			name: user.name,
 			email: user.email,
 		})),
+		replyToHistoryId: parent ? reply_to_history_id : undefined,
 		created_by: actor_id(ctx),
 		actor: {
 			_id: actor_id(ctx),
@@ -2200,16 +2402,24 @@ async function create_history_comment(ctx: Ctx) {
 			email: ctx.actor?.email,
 		},
 	});
-	await register_comment_mentions(ctx.store, ctx.actor, {
+	const context = {
 		comment_text,
-		mentioned_user_ids: ctx.body.mentioned_user_ids ?? ctx.body.mentionedUserIds,
 		model_name,
 		collection_name: collection_name || model_name,
 		document_id,
 		history_id: String(created._id),
 		route: String(ctx.body.source_route ?? ctx.body.sourceRoute ?? ''),
 		entity_label: String(ctx.body.source_entity_label ?? ctx.body.sourceEntityLabel ?? ''),
+	};
+	await register_comment_mentions(ctx.store, ctx.actor, {
+		...context,
+		mentioned_user_ids: ctx.body.mentioned_user_ids ?? ctx.body.mentionedUserIds,
 	});
+	const parent_author = String(as_object(parent?.actor)._id ?? parent?.created_by ?? '');
+	// Quien también quedó mencionado ya recibió su aviso de mención.
+	if (parent && !mentioned_user_ids.includes(parent_author)) {
+		await register_comment_reply(ctx.store, ctx.actor, { ...context, author_id: parent_author });
+	}
 	// El panel manda model_name = model_id del módulo ('Ticket'), que no resuelve
 	// al recurso; la colección sí.
 	if (canonical === 'tickets' || resolve_history_model(ctx.store, collection_name) === 'tickets') {
@@ -2244,9 +2454,8 @@ async function read_history(ctx: Ctx) {
 		size: ctx.url.searchParams.get('size'),
 		desde: ctx.url.searchParams.get('desde'),
 	});
-	const { rows, total } = await ctx.store.find_many(
-		'document-change-history',
-		history_find_many_opts({
+	const { rows, total } = await ctx.store.find_many('document-change-history', {
+		...history_find_many_opts({
 			document_id,
 			canonical,
 			collection_name,
@@ -2254,7 +2463,8 @@ async function read_history(ctx: Ctx) {
 			desde,
 			limite,
 		}),
-	);
+		mongo_match: without_chat_rows('document-change-history', null),
+	});
 	const page = rows.map((row) => enrich_history_row(row));
 	return ok(
 		page,
@@ -2272,7 +2482,7 @@ async function read_history_by_id(ctx: Ctx) {
 	const history_id = String(ctx.params.id ?? '').trim();
 	if (!history_id) throw new Error('Debes indicar el historial que deseas consultar.');
 	const record = await ctx.store.find_id('document-change-history', history_id);
-	if (!record) {
+	if (!record || is_chat_row('document-change-history', record)) {
 		return ok([], 'Registro de historial no encontrado', 0);
 	}
 	const canonical = resolve_history_model(
@@ -3488,21 +3698,6 @@ function message_participants(doc: ImperiumDoc, uid: string): string[] {
 	return [...new Set([...parts, ...extra].filter(Boolean))];
 }
 
-function message_source_type(doc: ImperiumDoc): string {
-	return String(doc.sourceType ?? doc.source_type ?? '');
-}
-
-function message_conversation_key(doc: ImperiumDoc): string {
-	return String(doc.conversationKey ?? doc.conversation_key ?? '').trim();
-}
-
-function message_is_unread_for(doc: ImperiumDoc, uid: string): boolean {
-	if (!uid) return false;
-	const recipients = id_list(doc.recipientUserIds ?? doc.recipient_user_ids);
-	const read = id_list(doc.readByUserIds ?? doc.read_by_user_ids);
-	return recipients.includes(uid) && !read.includes(uid);
-}
-
 function user_messages_match(uid: string) {
 	return {
 		$or: [
@@ -3527,159 +3722,6 @@ function consider_latest(rows: ImperiumDoc[], row: ImperiumDoc, limit: number) {
 	rows.sort((a, b) => created_ms(b) - created_ms(a));
 }
 
-async function my_conversations(ctx: Ctx) {
-	const uid = actor_id(ctx);
-	const groups = new Map<
-		string,
-		{ latest: ImperiumDoc; unread_count: number; participant_user_ids: string[] }
-	>();
-	if (uid && ctx.store.has('messages')) {
-		for await (const page of ctx.store.scan('messages', {
-			mongo_match: user_messages_match(uid),
-			include_inactive: true,
-		})) {
-			for (const m of page) {
-				if (message_source_type(m) !== 'chat') continue;
-				const key = message_conversation_key(m);
-				if (!key) continue;
-				const participant_user_ids = id_list(
-					m.participantUserIds ?? m.participant_user_ids ?? m.participants,
-				);
-				if (!participant_user_ids.includes(uid)) continue;
-				const cur = groups.get(key);
-				if (!cur) {
-					groups.set(key, {
-						latest: m,
-						unread_count: message_is_unread_for(m, uid) ? 1 : 0,
-						participant_user_ids,
-					});
-					continue;
-				}
-				if (created_ms(m) > created_ms(cur.latest)) {
-					cur.latest = m;
-					cur.participant_user_ids = participant_user_ids;
-				}
-				if (message_is_unread_for(m, uid)) cur.unread_count += 1;
-			}
-		}
-	}
-	const summaries = [...groups.entries()]
-		.map(([conversation_key, group]) => {
-			const other_id =
-				group.participant_user_ids.find((p) => p !== uid) ??
-				group.participant_user_ids[0];
-			return {
-				conversation_key,
-				participant_user_ids: group.participant_user_ids,
-				other_participant: other_id
-					? {
-							_id: other_id,
-							name: String(group.latest.name ?? group.latest.title ?? other_id),
-						}
-					: undefined,
-				latest_message: group.latest,
-				unread_count: group.unread_count,
-			};
-		})
-		.sort((a, b) => created_ms(b.latest_message) - created_ms(a.latest_message))
-		.slice(0, 100);
-	return ok(summaries, 'Conversaciones cargadas correctamente.');
-}
-
-async function search_chat_messages(ctx: Ctx) {
-	const uid = actor_id(ctx);
-	const participant_id = String(
-		ctx.url.searchParams.get('participant_id') ??
-			ctx.url.searchParams.get('participantId') ??
-			'',
-	).trim();
-	const raw_term = String(
-		ctx.url.searchParams.get('term') ?? ctx.url.searchParams.get('termino') ?? '',
-	).trim();
-	if (!raw_term) {
-		return ok([], 'Debes indicar un texto para buscar en el chat.');
-	}
-	const needle = raw_term.toLowerCase();
-	const limit = Math.min(100, Math.max(1, Number(ctx.url.searchParams.get('limit') ?? 25) || 25));
-	const expected_key = participant_id ? conversation_key_for([uid, participant_id]) : '';
-	const matched: ImperiumDoc[] = [];
-	if (uid && ctx.store.has('messages')) {
-		for await (const page of ctx.store.scan('messages', {
-			mongo_match: user_messages_match(uid),
-			include_inactive: true,
-		})) {
-			for (const row of page) {
-				if (message_source_type(row) !== 'chat') continue;
-				if (
-					!id_list(
-						row.participantUserIds ?? row.participant_user_ids ?? row.participants,
-					).includes(uid)
-				) {
-					continue;
-				}
-				if (participant_id && expected_key && message_conversation_key(row) !== expected_key) {
-					continue;
-				}
-				const snapshots = as_array(row.participantSnapshot ?? row.participant_snapshot);
-				const attachments = as_array(row.attachments);
-				const reply = as_object(row.replyPreview ?? row.reply_preview);
-				const hay = [
-					row.search_field,
-					row.message,
-					row.name,
-					row.senderName,
-					row.senderEmail,
-					row.sender_name,
-					row.sender_email,
-					...snapshots.flatMap((item) => {
-						const rec = as_object(item);
-						return [rec.name, rec.email];
-					}),
-					...attachments.flatMap((item) => {
-						const rec = as_object(item);
-						return [rec.name, rec.fileExt, rec.mimetype];
-					}),
-					reply.textPreview,
-				]
-					.map((v) => String(v ?? '').toLowerCase())
-					.join(' ');
-				if (!hay.includes(needle)) continue;
-				consider_latest(matched, row, limit);
-			}
-		}
-	}
-	const hits = matched
-		.map((row) => {
-			const parts = message_participants(row, uid);
-			const other = parts.find((p) => p !== uid) ?? '';
-			const conversation_key =
-				String(row.conversationKey ?? row.conversation_key ?? '') ||
-				[uid, other].filter(Boolean).sort().join('::');
-			return {
-				conversation_key,
-				other_participant: other
-					? {
-							_id: other,
-							name: String(
-								row.senderName ??
-									as_object(row.participantSnapshot).name ??
-									row.name ??
-									other,
-							),
-						}
-					: undefined,
-				message: row,
-			};
-		})
-		.filter((row) => row.conversation_key);
-	return ok(
-		hits,
-		participant_id
-			? 'Coincidencias del chat cargadas correctamente.'
-			: 'Coincidencias globales del chat cargadas correctamente.',
-	);
-}
-
 async function my_messages(ctx: Ctx) {
 	const uid = actor_id(ctx);
 	const mine: ImperiumDoc[] = [];
@@ -3699,236 +3741,21 @@ async function my_messages(ctx: Ctx) {
 	return ok(mine, 'Mensajes', mine.length);
 }
 
-async function mark_conversation_as_read(
-	store: ImperiumStore,
-	uid: string,
-	conversation_key: string,
-) {
-	if (!uid || !conversation_key || !store.has('messages')) return;
-	for await (const page of store.scan('messages', {
-		mongo_match: {
-			$or: [
-				{ conversationKey: conversation_key },
-				{ conversation_key: conversation_key },
-			],
-		},
-		include_inactive: true,
-	})) {
-		for (const row of page) {
-			if (message_source_type(row) !== 'chat') continue;
-			if (message_conversation_key(row) !== conversation_key) continue;
-			if (!message_is_unread_for(row, uid)) continue;
-			const read = id_list(row.readByUserIds ?? row.read_by_user_ids);
-			await store.update('messages', String(row._id), {
-				readByUserIds: [...read, uid],
-			});
-		}
-	}
-}
+const SOCKET_TICKET_RATE = { capacity: 30, refill_per_s: 30 / 60 };
 
-async function conversation(ctx: Ctx) {
-	const other = String(
-		ctx.params.participantId ?? ctx.url.searchParams.get('participant_id') ?? '',
-	).trim();
-	const uid = actor_id(ctx);
-	if (!other) throw new Error('Debes indicar el participante del chat.');
-	const expected_key = conversation_key_for([uid, other]);
-	if (!expected_key) throw new Error('No fue posible resolver la conversación solicitada.');
-	await mark_conversation_as_read(ctx.store, uid, expected_key);
-	const size = Math.min(
-		500,
-		Math.max(1, Number(ctx.url.searchParams.get('size') ?? 250) || 250),
-	);
-	const { rows } = await ctx.store.find_many('messages', {
-		mongo_match: {
-			$or: [
-				{ conversationKey: expected_key },
-				{ conversation_key: expected_key },
-			],
-		},
-		take: size,
-		sort: 'created_at:asc',
-		include_inactive: true,
-		populate: false,
-		skip_total: true,
+/** Escritorio y Android conectan el socket desde otro origen: ahí la cookie no cuenta. */
+async function issue_socket_ticket(ctx: Ctx) {
+	const user_id = actor_id(ctx);
+	const allowed = take_token(`socket-ticket:${user_id}`, SOCKET_TICKET_RATE);
+	if (!allowed.ok) return rate_limited_response(allowed.retry_after_s);
+	const ticket = sign_realtime_token({
+		t: 'socket',
+		sub: user_id,
+		sid: read_sid(ctx.req),
+		n: crypto.randomUUID(),
+		exp: Math.floor(Date.now() / 1000) + SOCKET_TICKET_TTL_S,
 	});
-	const mine = rows
-		.filter(
-			(m) =>
-				message_source_type(m) === 'chat' &&
-				message_conversation_key(m) === expected_key,
-		)
-		.sort((a, b) => created_ms(a) - created_ms(b))
-		.slice(0, size);
-	return ok(mine, 'Historial del chat cargado correctamente.');
-}
-
-function conversation_key_for(ids: string[]): string {
-	return [...new Set(ids.map((id) => id.trim()).filter(Boolean))].sort().join('::');
-}
-
-function take_chat_attachment_files(body: Record<string, unknown>): Blob[] {
-	const files: Blob[] = [];
-	const attachments = body.attachments;
-	if (Array.isArray(attachments)) {
-		for (const item of attachments) {
-			if (is_upload(item)) files.push(item);
-		}
-	} else if (is_upload(attachments)) {
-		files.push(attachments);
-	}
-	delete body.attachments;
-	for (const [key, value] of Object.entries(body)) {
-		if (!/^attachments\[\d+\]$/.test(key) || !is_upload(value)) continue;
-		files.push(value);
-		delete body[key];
-	}
-	return files;
-}
-
-function chat_attachment_info(doc: ImperiumDoc) {
-	const mime = String(doc.mimetype ?? doc.mime ?? '');
-	const size = Number(doc.size_in_kb);
-	return {
-		attachmentId: String(doc._id ?? ''),
-		name: String(doc.name ?? ''),
-		fileExt: String(doc.file_ext ?? '') || undefined,
-		mimetype: mime || undefined,
-		sizeInKb: Number.isFinite(size) ? size : undefined,
-		isImage: mime.startsWith('image/'),
-	};
-}
-
-async function participant_snapshot(ctx: Ctx, ids: string[]) {
-	const current = {
-		_id: actor_id(ctx),
-		name: actor_name(ctx) || undefined,
-		email: String(ctx.actor?.email ?? '') || undefined,
-		img: String(ctx.actor?.img ?? '') || undefined,
-	};
-	const others: ImperiumDoc[] = [];
-	for (const id of ids) {
-		if (!id || id === current._id) continue;
-		const user = await ctx.store.find_id('user', id);
-		if (!user) continue;
-		others.push({
-			_id: String(user._id ?? id),
-			name: String(user.name ?? '').trim() || undefined,
-			email: String(user.email ?? '').trim() || undefined,
-			img: String(user.img ?? '').trim() || undefined,
-		});
-	}
-	return [current, ...others];
-}
-
-async function create_chat_message(ctx: Ctx) {
-	const sender_user_id = actor_id(ctx);
-	const files = take_chat_attachment_files(ctx.body);
-	const recipient_user_id = String(
-		ctx.body.recipient_user_id ?? ctx.body.recipientUserId ?? ctx.body.recipient_id ?? '',
-	).trim();
-	const message = String(ctx.body.message ?? '').trim();
-	if (!recipient_user_id) {
-		throw new Error('Debes indicar el usuario destinatario del chat.');
-	}
-	if (!message && !files.length) {
-		throw new Error('Debes escribir un mensaje o adjuntar al menos un archivo.');
-	}
-	const recipient = await ctx.store.find_id('user', recipient_user_id);
-	if (!recipient?._id) {
-		throw new Error('No se encontró el destinatario solicitado.');
-	}
-	const participant_user_ids = [...new Set([sender_user_id, recipient_user_id].filter(Boolean))];
-	const conversation_key = conversation_key_for(participant_user_ids);
-	if (!conversation_key) {
-		throw new Error('No fue posible crear la conversación solicitada.');
-	}
-	const reply_to = String(
-		ctx.body.reply_to_message_id ?? ctx.body.replyToMessageId ?? '',
-	).trim();
-	let reply_preview: ImperiumDoc | undefined;
-	if (reply_to) {
-		const replied = await ctx.store.find_id('messages', reply_to);
-		if (
-			!replied ||
-			message_source_type(replied) !== 'chat' ||
-			message_conversation_key(replied) !== conversation_key
-		) {
-			throw new Error(
-				'El mensaje que intentas responder no pertenece a esta conversación.',
-			);
-		}
-		reply_preview = {
-			messageId: String(replied._id ?? ''),
-			senderUserId: String(replied.senderUserId ?? replied.sender_user_id ?? ''),
-			senderName: String(replied.senderName ?? replied.sender_name ?? ''),
-			textPreview: String(replied.message ?? replied.name ?? 'Mensaje enviado').slice(0, 160),
-		};
-	}
-	const created = await ctx.store.insert('messages', {
-		name:
-			String(recipient.name ?? '').trim() ||
-			String(recipient.email ?? '').trim() ||
-			'Chat interno',
-		title:
-			String(recipient.name ?? '').trim() ||
-			String(recipient.email ?? '').trim() ||
-			'Chat interno',
-		message,
-		senderUserId: sender_user_id,
-		senderName: actor_name(ctx),
-		senderEmail: String(ctx.actor?.email ?? ''),
-		recipientUserIds: [recipient_user_id],
-		direction: 'internal',
-		sourceType: 'chat',
-		participantUserIds: participant_user_ids,
-		participantSnapshot: await participant_snapshot(ctx, participant_user_ids),
-		conversationKey: conversation_key,
-		replyToMessageId: reply_to || undefined,
-		replyPreview: reply_preview,
-		readByUserIds: sender_user_id ? [sender_user_id] : [],
-		from: sender_user_id,
-		to: recipient_user_id,
-		created_by: sender_user_id,
-		fecha: now(),
-	});
-	if (!files.length) {
-		emit_messages_refresh([sender_user_id, recipient_user_id], {
-			reason: 'created',
-			conversation_key,
-			message_ids: created._id ? [String(created._id)] : undefined,
-			message: created,
-		});
-		return ok([created], 'Mensaje del chat enviado correctamente.');
-	}
-	const infos = [];
-	try {
-		for (const file of files) {
-			const attachment = await persist_upload_as_attachment(ctx.store, file, {
-				actor_id: sender_user_id,
-				related_model: 'Message',
-				related_record_id: String(created._id ?? ''),
-				field: 'attachments',
-				index_if_is_array: infos.length,
-				inside_array: true,
-			});
-			infos.push(chat_attachment_info(attachment));
-		}
-	} catch (error) {
-		await ctx.store.remove('messages', String(created._id ?? ''));
-		throw error;
-	}
-	const updated = await ctx.store.update('messages', String(created._id ?? ''), {
-		attachments: infos,
-	});
-	const sent = updated ?? created;
-	emit_messages_refresh([sender_user_id, recipient_user_id], {
-		reason: 'created',
-		conversation_key,
-		message_ids: sent._id ? [String(sent._id)] : undefined,
-		message: sent,
-	});
-	return ok([sent], 'Mensaje del chat enviado correctamente.');
+	return ok([{ ticket, expires_in: SOCKET_TICKET_TTL_S }], 'Ticket de tiempo real listo.');
 }
 
 async function create_internal_message(ctx: Ctx) {
@@ -4827,6 +4654,7 @@ async function report_first(ctx: Ctx) {
 			take: 1,
 			sort: 'id:asc',
 			populate: false,
+			mongo_match: without_chat_rows(resource, null),
 		});
 		const raw = rows[0] ?? null;
 		const [populated] = raw
@@ -5101,6 +4929,7 @@ async function report_records(ctx: Ctx) {
 			q: ctx.url.searchParams.get('termino') ?? '',
 			skip: desde,
 			take: limite,
+			mongo_match: without_chat_rows(resource, null),
 		});
 		return ok(rows, 'Registros del modelo obtenidos correctamente', total);
 	} catch (err) {
@@ -5121,7 +4950,7 @@ async function report_record(ctx: Ctx) {
 		}
 		const resource = await resolve_report_target(ctx, model);
 		const loaded = await ctx.store.find_id(resource, record_id);
-		if (!loaded || loaded.is_active === false) {
+		if (!loaded || loaded.is_active === false || is_chat_row(resource, loaded)) {
 			return ok([], 'Registro no encontrado', 0);
 		}
 		const [populated] = await ctx.store.populate_docs(resource, [loaded], { full: true });
@@ -5175,7 +5004,7 @@ async function report_preview(ctx: Ctx) {
 		const loaded: ImperiumDoc[] = [];
 		for (const id of record_ids) {
 			const doc = await ctx.store.find_id(resource, id);
-			if (doc) loaded.push(doc);
+			if (doc && !is_chat_row(resource, doc)) loaded.push(doc);
 		}
 		if (!loaded.length) throw new Error('No se encontraron los registros para la vista previa');
 		const populated = await ctx.store.populate_docs(resource, loaded, { full: true });
@@ -5199,7 +5028,7 @@ async function report_preview(ctx: Ctx) {
 		try {
 			const resource = await resolve_report_target(ctx, model_name);
 			const loaded = await ctx.store.find_id(resource, record_id);
-			if (loaded) {
+			if (loaded && !is_chat_row(resource, loaded)) {
 				const [populated] = await ctx.store.populate_docs(resource, [loaded], {
 					full: true,
 				});
@@ -5355,7 +5184,8 @@ async function attachment_base64(ctx: Ctx, id: string) {
 	const doc = ctx.store.has('attachment-management')
 		? await ctx.store.find_id('attachment-management', attach_id)
 		: null;
-	if (!doc || doc.is_active === false) {
+	// Ruta pública (el render del PDF no lleva cookie): un adjunto del chat nunca sale por aquí.
+	if (!doc || doc.is_active === false || CHAT_ATTACHMENT_MODELS.has(String(doc.related_model ?? ''))) {
 		return ok([''], 'Data URL de imagen generada correctamente');
 	}
 	const served = await serve_attachment_bytes(doc);
@@ -5369,6 +5199,7 @@ async function attachment_base64(ctx: Ctx, id: string) {
 async function attachment_view(ctx: Ctx) {
 	const doc = await ctx.store.find_id('attachment-management', ctx.params.id);
 	if (!doc) return Response.json(fail('No encontrado', 404).body, { status: 404 });
+	await assert_attachment_access(ctx.store, ctx.actor, doc);
 	const served = await serve_attachment_bytes(doc);
 	if (!served) {
 		return Response.json({ error: 'Failed to download file' }, { status: 500 });
@@ -5402,7 +5233,8 @@ async function save_delivery_signature(ctx: Ctx, package_id: string): Promise<st
 	const mime = String(blob.type || 'image/png');
 	const created = await ctx.store.insert('attachment-management', {
 		name,
-		name_stored: name,
+		// El esquema lo exige; los bytes van en base64, así que no debe nombrar ningún archivo de la carpeta.
+		name_stored: crypto.randomUUID(),
 		mimetype: mime,
 		mime,
 		file_ext: name.includes('.') ? name.split('.').pop() : 'png',
@@ -5671,10 +5503,9 @@ const HOME_PINS_MAX = 60;
 
 function home_pin_fields(ctx: Ctx) {
 	const name = String(ctx.body.name ?? '').trim();
-	const path = String(ctx.body.path ?? '').trim();
+	const path = internal_route(ctx.body.path);
 	if (!name) throw new Error('Ponle un nombre al pin.');
-	// Solo rutas de esta misma app: `//host` sería un salto a otro sitio.
-	if (!/^\/(?!\/)/.test(path)) throw new Error('Elige a qué pantalla lleva el pin.');
+	if (!path) throw new Error('Elige a qué pantalla lleva el pin.');
 	return { name: name.slice(0, 60), path, icon: String(ctx.body.icon ?? '').trim() };
 }
 
@@ -6856,7 +6687,7 @@ async function postgres_table_tracker_reindex(ctx: Ctx) {
 				continue;
 			}
 			const resource = ctx.store.resource_for_model(model_id);
-			if (!resource || !ctx.store.has(resource)) continue;
+			if (!resource || !ctx.store.has(resource) || is_chat_private_resource(resource)) continue;
 			const collection = ctx.store.loc(resource).collection;
 			const meili = await SearchEngine.ensure_available();
 			if (meili) await SearchEngine.clear_index(collection);

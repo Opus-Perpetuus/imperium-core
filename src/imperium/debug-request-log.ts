@@ -5,7 +5,7 @@
  */
 import type { ImperiumDoc } from './envelope.ts';
 import type { ImperiumStore } from './store.ts';
-import { broadcast_event } from './socket-stub.ts';
+import { emit_to_users, online_user_ids } from './socket-stub.ts';
 import { share_binding_of } from './share-binding.ts';
 
 export type AppLogLevel =
@@ -132,6 +132,14 @@ export function print_console_log(level: string, message: string): void {
 
 let bound_store: ImperiumStore | null = null;
 
+/**
+ * La bitácora la lee cualquier sesión interna (`debug-log:read_logs` solo pide
+ * sesión): en vivo va a los sockets con usuario, nunca a anónimos ni invitados.
+ */
+function emit_new_log(logged: ImperiumDoc): void {
+	emit_to_users(online_user_ids(), 'new_log', logged);
+}
+
 export function bind_debug_store(store: ImperiumStore): void {
 	bound_store = store;
 }
@@ -209,7 +217,7 @@ export async function persist_app_log(
 			},
 			search_field: [level, label, message].join(' ').toLowerCase(),
 		});
-		broadcast_event('new_log', logged);
+		emit_new_log(logged);
 	} catch {
 		/* logging must never fail the request */
 	}
@@ -315,7 +323,7 @@ export async function persist_request_log(
 				.join(' ')
 				.toLowerCase(),
 		});
-		broadcast_event('new_log', logged);
+		emit_new_log(logged);
 	} catch {
 		/* logging must never fail the request */
 	}
@@ -335,6 +343,13 @@ export function should_read_response_body(content_type: string | null): boolean 
 	return false;
 }
 
+/**
+ * Rutas calientes del chat; la búsqueda dejaría sus términos en la bitácora y el
+ * hilo heredado (`conversation/:participantId`), con quién habla cada quien.
+ */
+const CHAT_QUIET_PATH =
+	/^\/(messages\/(search|socket-ticket|media-tokens|history\/[^/]+|sync\/[^/]+|conversation\/[^/]+)|chat-conversations\/(mine|[^/]+\/read)|chat-calls\/ice-servers)\/?$/;
+
 export function is_noisy_path(pathname: string): boolean {
 	const raw = pathname.split('?')[0] ?? pathname;
 	const path = raw.startsWith('/api/') ? raw.slice(4) || '/' : raw;
@@ -349,6 +364,9 @@ export function is_noisy_path(pathname: string): boolean {
 		raw === '/api/health' ||
 		path === '/debug-log' ||
 		path.startsWith('/debug-log/') ||
+		// `?mt=` es una credencial: la ruta guardada se difunde a todos los sockets.
+		(path.startsWith('/media/') && /[?&]mt=/.test(pathname)) ||
+		CHAT_QUIET_PATH.test(path) ||
 		/\/(kirlets|subjects)\/svc\/[^/]+\/logs$/.test(path) ||
 		/\/(kirlets|subjects)\/svc\/[^/]+\/logs$/.test(raw)
 	);

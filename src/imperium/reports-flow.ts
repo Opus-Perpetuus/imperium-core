@@ -3,6 +3,7 @@
  */
 import { as_array, as_object, ok, type ImperiumDoc } from './envelope.ts';
 import sharp from 'sharp';
+import { CHAT_ATTACHMENT_MODELS, is_chat_row, without_chat_rows } from './chat-access.ts';
 import { serve_attachment_bytes } from './media.ts';
 import {
 	build_report_qr_payload,
@@ -300,7 +301,10 @@ export async function hydrate_loose_product_references(
 async function attachment_data_url(store: ImperiumStore | undefined, attach_id: string) {
 	if (!store?.has('attachment-management') || !attach_id) return '';
 	const attach = await store.find_id('attachment-management', attach_id);
-	if (!attach || attach.is_active === false) return '';
+	// El render no conoce a quien pide el reporte: un adjunto del chat nunca entra.
+	if (!attach || attach.is_active === false || CHAT_ATTACHMENT_MODELS.has(String(attach.related_model ?? ''))) {
+		return '';
+	}
 	const served = await serve_attachment_bytes(attach);
 	if (!served?.body?.length) return '';
 	const image = await shrink_report_image(served.body, served.mime || 'image/jpeg');
@@ -577,8 +581,9 @@ export async function* iter_report_record_pages(
 	resource: string,
 	body: Record<string, unknown>,
 ): AsyncGenerator<ImperiumDoc[]> {
+	const mongo_match = without_chat_rows(resource, null);
 	if (body.apply_to_all === true) {
-		for await (const page of store.scan(resource, { page_size: 200 })) {
+		for await (const page of store.scan(resource, { page_size: 200, mongo_match })) {
 			if (page.length) yield page;
 		}
 		return;
@@ -594,6 +599,7 @@ export async function* iter_report_record_pages(
 			sort: 'id:asc',
 			populate: false,
 			skip_total: true,
+			mongo_match,
 		});
 		/* Sin poblar, {{departamento.name}} salía vacío en la ficha de prueba. */
 		if (rows.length) yield await store.populate_docs(resource, rows, { full: true });
@@ -603,7 +609,7 @@ export async function* iter_report_record_pages(
 		const chunk: ImperiumDoc[] = [];
 		for (const id of ids.slice(i, i + 200)) {
 			const doc = await store.find_id(resource, id);
-			if (doc) chunk.push(doc);
+			if (doc && !is_chat_row(resource, doc)) chunk.push(doc);
 		}
 		if (!chunk.length) continue;
 		yield await store.populate_docs(resource, chunk, { full: true });

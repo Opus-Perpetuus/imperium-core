@@ -1,6 +1,8 @@
-import { describe, expect, setDefaultTimeout, test } from 'bun:test';
+import { afterAll, describe, expect, setDefaultTimeout, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
 import {
 	chrome_paper_args,
+	close_shared_pdf_browser,
 	html_to_pdf_bytes,
 	html_to_pdf_response,
 	paper_size_inches,
@@ -14,6 +16,8 @@ import {
 
 /* Los casos con Chrome real tardan más con la máquina cargada. */
 setDefaultTimeout(90_000);
+/* bun test no emite 'exit': sin esto el Chrome compartido queda huérfano. */
+afterAll(close_shared_pdf_browser);
 
 describe('wrap_html_for_pdf', () => {
 	test('wraps a list-export fragment in a full document with @page margins', () => {
@@ -247,5 +251,39 @@ describe('html_to_pdf_response', () => {
 		const box = latin.match(/\/MediaBox\s*\[\s*[\d.]+\s+[\d.]+\s+([\d.]+)\s+([\d.]+)\s*\]/);
 		expect(Math.round(Number(box![1]))).toBe(243);
 		expect(Math.round(Number(box![2]))).toBe(153);
+	});
+});
+
+describe('Chrome compartido de los PDF', () => {
+	test('muere con el proceso que lo lanzó aunque no haya pasado su tiempo de inactividad', async () => {
+		if (!resolve_chrome_executable()) {
+			throw new Error('Chrome/Chromium is required to generate list PDFs');
+		}
+		/* Un proceso aparte imprime un PDF, lista sus hijos (el Chrome compartido)
+		 * y sale; bun test terminaba igual y dejaba ese Chrome huérfano. */
+		const script = `
+			import { readdirSync, readFileSync } from 'node:fs';
+			import { html_to_pdf_bytes } from ${JSON.stringify(`${import.meta.dir}/reports-pdf.ts`)};
+			await html_to_pdf_bytes('<p>Hola</p>');
+			const hijos = readdirSync('/proc/self/task').flatMap((tid) =>
+				readFileSync(\`/proc/self/task/\${tid}/children\`, 'utf8').trim().split(/\\s+/).filter(Boolean),
+			);
+			console.log(hijos.join(' '));
+		`;
+		const child = Bun.spawn([process.execPath, '-e', script], { stdout: 'pipe', stderr: 'ignore' });
+		const salida = await new Response(child.stdout).text();
+		expect(await child.exited).toBe(0);
+		const pids = salida.trim().split(/\s+/).filter(Boolean).map(Number);
+		expect(pids.length).toBeGreaterThan(0);
+		const vivo = (pid: number) => {
+			try {
+				return !readFileSync(`/proc/${pid}/stat`, 'utf8').split(') ')[1]?.startsWith('Z');
+			} catch {
+				return false;
+			}
+		};
+		const limite = Date.now() + 10_000;
+		while (pids.some(vivo) && Date.now() < limite) await Bun.sleep(200);
+		expect(pids.filter(vivo)).toEqual([]);
 	});
 });

@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { mongo_match_to_sql } from './record-rules.ts';
 import {
+	chat_backfill_sqls,
+	chat_index_sqls,
 	created_at_keyset_sql,
 	fecha_entrada_keyset_sql,
 	history_page_index_sqls,
@@ -164,6 +166,95 @@ describe('created_at_keyset_sql', () => {
 		expect(sql).toBe('(created_at, id) > ($3, $4)');
 		expect(sql).not.toContain('timestamptz');
 		expect(sql).not.toContain('::');
+	});
+
+	test('pages backwards from the newest with the same pair', () => {
+		expect(created_at_keyset_sql('$1', '$2', '<')).toBe('(created_at, id) < ($1, $2)');
+	});
+});
+
+describe('chat_index_sqls', () => {
+	const sqls_for = (resource: string, table_key: string) =>
+		chat_index_sqls({ resource, quoted_table: `"subject_configuracion"."${table_key}"`, table_key });
+
+	test('messages: sync by conversation, expiry sweep, guest idempotency and quotes of a deleted message', () => {
+		expect(sqls_for('messages', 'messages')).toEqual([
+			'CREATE INDEX IF NOT EXISTS "ix_messages_conversation_updated" ON "subject_configuracion"."messages" (conversation_id, updated_at)',
+			'CREATE INDEX IF NOT EXISTS "ix_messages_expires" ON "subject_configuracion"."messages" (expires_at) WHERE expires_at IS NOT NULL',
+			'CREATE INDEX IF NOT EXISTS "ix_messages_expire_due" ON "subject_configuracion"."messages" (expires_at, id) WHERE expires_at IS NOT NULL AND state IS NULL AND is_active IS DISTINCT FROM false',
+			'CREATE UNIQUE INDEX IF NOT EXISTS "uq_messages_guest_client" ON "subject_configuracion"."messages" (conversation_id, client_id) WHERE sender_user_id IS NULL',
+			`CREATE INDEX IF NOT EXISTS "ix_messages_reply_to" ON "subject_configuracion"."messages" ((payload ->> 'replyToMessageId')) WHERE (payload ->> 'replyToMessageId') IS NOT NULL`,
+			`CREATE INDEX IF NOT EXISTS "ix_messages_backfill_pending" ON "subject_configuracion"."messages" ((payload ->> 'conversationKey')) WHERE conversation_id IS NULL AND is_active IS DISTINCT FROM false AND payload ->> 'sourceType' = 'chat' AND payload ->> 'conversationKey' <> ''`,
+		]);
+	});
+
+	test('inbox, members, audit, scheduled, saved and stories pages', () => {
+		const all = [
+			...sqls_for('chat-conversations', 'chat_conversations'),
+			...sqls_for('chat-members', 'chat_members'),
+			...sqls_for('chat-audit', 'chat_audit'),
+			...sqls_for('chat-scheduled', 'chat_scheduled'),
+			...sqls_for('chat-saved', 'chat_saved'),
+			...sqls_for('chat-stories', 'chat_stories'),
+		].map((sql) => sql.replace(/^CREATE INDEX IF NOT EXISTS "([^"]+)" ON "[^"]+"\."([^"]+)" /, '$1 $2 '));
+		expect(all).toEqual([
+			'ix_chat_conversations_inbox chat_conversations (last_message_at DESC, id DESC)',
+			'ix_chat_members_user_state chat_members (user_id, state)',
+			'ix_chat_members_conversation_state chat_members (conversation_id, state)',
+			'ix_chat_audit_conversation_created chat_audit (conversation_id, created_at DESC)',
+			'ix_chat_scheduled_state_send chat_scheduled (state, send_at)',
+			'ix_chat_saved_state_remind chat_saved (state, remind_at)',
+			'ix_chat_stories_expires chat_stories (expires_at)',
+			'ix_chat_stories_expire_due chat_stories (expires_at, id) WHERE expires_at IS NOT NULL AND state IS NULL AND is_active IS DISTINCT FROM false',
+			'ix_chat_stories_author_expires chat_stories (author_id, expires_at)',
+		]);
+	});
+
+	test('mentions: the Activity inbox per person, newest first, and its rows by message', () => {
+		expect(sqls_for('mentions', 'mentions')).toEqual([
+			`CREATE INDEX IF NOT EXISTS "ix_mentions_recipient_created" ON "subject_configuracion"."mentions" ((payload ->> 'mentionedUserId'), created_at DESC, id DESC)`,
+			`CREATE INDEX IF NOT EXISTS "ix_mentions_message" ON "subject_configuracion"."mentions" ((payload ->> 'messageId')) WHERE (payload ->> 'messageId') IS NOT NULL`,
+		]);
+	});
+
+	test('notifications: each person bell, newest first (contract §1.12)', () => {
+		expect(sqls_for('notifications', 'notifications')).toEqual([
+			`CREATE INDEX IF NOT EXISTS "ix_notifications_recipient_created" ON "subject_configuracion"."notifications" ((payload ->> 'recipientId'), created_at DESC)`,
+		]);
+	});
+
+	test('a chat upload is unique per owner and client_upload_id while active; unbound ones and shared files have their own', () => {
+		expect(sqls_for('attachment-management', 'attachment_management')).toEqual([
+			`CREATE UNIQUE INDEX IF NOT EXISTS "uq_attachment_management_chat_upload" ON "subject_configuracion"."attachment_management" (created_by_id, (payload #>> '{chatUpload,clientUploadId}')) WHERE payload -> 'chatUpload' IS NOT NULL AND is_active IS DISTINCT FROM false`,
+			`CREATE INDEX IF NOT EXISTS "ix_attachment_management_chat_pending" ON "subject_configuracion"."attachment_management" (created_at) WHERE payload -> 'chatUpload' IS NOT NULL AND COALESCE(related_record_id, '') = '' AND is_active IS DISTINCT FROM false`,
+			`CREATE INDEX IF NOT EXISTS "ix_attachment_management_chat_file" ON "subject_configuracion"."attachment_management" (name_stored) WHERE related_model IN ('Message', 'messages', 'ChatConversation', 'ChatStory', 'ChatScheduled')`,
+		]);
+	});
+
+	test('other resources get nothing', () => {
+		expect(sqls_for('products', 'products')).toEqual([]);
+		expect(sqls_for('chat-reactions', 'chat_reactions')).toEqual([]);
+	});
+});
+
+describe('chat_backfill_sqls', () => {
+	const sqls = chat_backfill_sqls({ messages: '"m"', conversations: '"c"', members: '"b"' });
+
+	test('batches pending keys with the WHERE as cursor, never OFFSET', () => {
+		expect(sqls.pending_keys).toContain('m.conversation_id IS NULL');
+		expect(sqls.pending_keys).toContain('ORDER BY 1 LIMIT $1');
+		for (const sql of Object.values(sqls)) expect(sql).not.toContain('OFFSET');
+	});
+
+	test('numbers each conversation after its last_seq by (created_at, id), under a row lock', () => {
+		expect(sqls.lock).toContain('FOR UPDATE');
+		expect(sqls.messages).toContain('COALESCE(c.last_seq, 0) + row_number() OVER (PARTITION BY c.id ORDER BY m.created_at, m.id)');
+	});
+
+	test('search_field drops diacritics like the chat search', () => {
+		expect(sqls.messages).toContain('normalize(');
+		expect(sqls.messages).toContain('NFD');
+		expect(sqls.messages).toContain('[\u0300-\u036f]');
 	});
 });
 
@@ -472,6 +563,11 @@ describe('value_counts_sql', () => {
 		expect(sql).toContain("'-'");
 		expect(sql).not.toContain('SELECT *');
 		expect(sql).not.toContain('is_active IS DISTINCT FROM false');
+	});
+
+	test('acota el conteo con el alcance que recibe', () => {
+		const sql = value_counts_sql('"s"."t"', '"estado"', false, '(related_model NOT IN ($1))');
+		expect(sql).toContain('WHERE is_active IS DISTINCT FROM false AND (related_model NOT IN ($1)) AND "estado" IS NOT NULL');
 	});
 });
 

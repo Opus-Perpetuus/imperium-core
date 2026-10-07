@@ -4,8 +4,9 @@
  * serializa el File a `{}` y GET /media no tiene bytes.
  */
 import { existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import sharp from 'sharp';
+import { CHAT_ATTACHMENT_MODELS, is_chat_attachment } from './chat-access.ts';
 import type { ImperiumDoc } from './envelope.ts';
 import type { ImperiumStore } from './store.ts';
 
@@ -88,12 +89,32 @@ export function writable_upload_folder(): string {
 	return join(import.meta.dir, '../../../../backend/uploads');
 }
 
+/** `name_stored` sale de la base: solo vale como archivo directo de la carpeta, nunca como ruta. */
+export function upload_file_path(folder: string, stored: string): string | null {
+	const root = resolve(folder);
+	const full = resolve(root, stored);
+	return dirname(full) === root ? full : null;
+}
+
 export function is_upload(value: unknown): value is Blob {
 	if (value == null || typeof value !== 'object') return false;
 	if (typeof File !== 'undefined' && value instanceof File) return true;
 	if (typeof Blob !== 'undefined' && value instanceof Blob) return true;
 	return false;
 }
+
+export const ATTACHMENT_SERVER_FIELDS = [
+	'name_stored',
+	'base64',
+	'data',
+	'filename',
+	'related_model',
+	'related_record_id',
+	'field',
+	'index_if_is_array',
+	'inside_array',
+	'created_by_id',
+];
 
 export async function apply_uploads(
 	store: ImperiumStore,
@@ -110,10 +131,13 @@ export async function apply_uploads(
 
 	if (resource === 'attachment-management') {
 		const file = take_upload(out, 'file') ?? first_upload(out);
+		// El servidor decide qué archivo sirve la fila, a qué registro pertenece y quién la subió:
+		// assert_attachment_access confía en ese vínculo y un adjunto del chat solo nace por sus rutas.
+		for (const key of ATTACHMENT_SERVER_FIELDS) delete out[key];
 		if (file) {
 			const saved = await persist_blob(file, {
-				related_model: String(out.related_model ?? 'AttachmentManagement'),
-				field: String(out.field ?? 'file'),
+				related_model: 'AttachmentManagement',
+				field: 'file',
 			});
 			const name = filename_without_extension(file_name(file));
 			const fallback = String(out.name ?? '').trim() || name || 'archivo';
@@ -124,12 +148,11 @@ export async function apply_uploads(
 			out.file_ext = saved.ext;
 			out.size_in_kb = saved.bytes.length / 1024;
 			out.file_readiness = saved.file_readiness;
-			out.created_by_id = out.created_by_id ?? actor_id;
-			out.related_model =
-				out.related_model || 'AttachmentManagement';
-			out.field = out.field || 'file';
+			out.created_by_id = actor_id;
+			out.related_model = 'AttachmentManagement';
+			out.field = 'file';
 			out.is_active = out.is_active !== false;
-		} else if (!String(out.name_stored ?? out.base64 ?? '').trim()) {
+		} else if (!replacing) {
 			throw new Error('No se ha subido un archivo');
 		}
 		strip_uploads(out);
@@ -239,6 +262,8 @@ export async function persist_upload_as_attachment(
 		field: string;
 		index_if_is_array: number;
 		inside_array: boolean;
+		/** Subida del chat aún sin ligar a un mensaje (`payload.chatUpload`). */
+		chat_upload?: ImperiumDoc;
 	},
 ): Promise<ImperiumDoc> {
 	if (!store.has('attachment-management')) {
@@ -265,6 +290,7 @@ export async function persist_upload_as_attachment(
 			index_if_is_array: meta.index_if_is_array,
 			inside_array: meta.inside_array,
 			is_active: true,
+			...(meta.chat_upload ? { chatUpload: meta.chat_upload } : {}),
 		});
 	} catch (error) {
 		pending_optimize.delete(saved.filename);
@@ -582,12 +608,13 @@ export async function delete_attachments_of(store: ImperiumStore, value: unknown
 	if (!store.has('attachment-management')) return;
 	for (const id of attachment_ids_of(value)) {
 		const att = await store.find_id('attachment-management', id);
-		if (!att) continue;
+		// Otro registro puede apuntar a un adjunto del chat; vaciar su campo no lo borra.
+		if (!att || is_chat_attachment(att)) continue;
 		const stored = String(att.name_stored ?? '').trim();
 		if (stored) {
 			for (const folder of resolve_upload_folders()) {
-				const full = join(folder, stored);
-				if (existsSync(full)) unlinkSync(full);
+				const full = upload_file_path(folder, stored);
+				if (full && existsSync(full)) unlinkSync(full);
 			}
 		}
 		await store.remove('attachment-management', id);
@@ -600,8 +627,8 @@ function validate_upload(
 	size: number,
 	related_model: string,
 ) {
-	const arbitrary =
-		related_model === 'Message' || related_model === 'messages';
+	// Cada flujo del chat valida el tipo de lo suyo (voz, video de una historia, imagen de un grupo).
+	const arbitrary = CHAT_ATTACHMENT_MODELS.has(related_model);
 	if (!arbitrary) {
 		const image = mime.startsWith('image/') || EXT_PERMITIDAS.has(ext);
 		if (!image) {

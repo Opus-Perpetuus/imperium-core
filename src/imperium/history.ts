@@ -3,6 +3,7 @@
  * El panel de formularios lee `document-change-history` por documentId + modelo.
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { is_chat_private_resource } from './chat-access.ts';
 import { as_object, type ImperiumDoc } from './envelope.ts';
 import { notify_document_subscription_event, register_document_mentions } from './notifications.ts';
 
@@ -29,6 +30,11 @@ const SKIP_RESOURCES = new Set([
 	'auth',
 	'notifications',
 ]);
+
+/** El historial guarda el texto de cada cambio y no es privado: lo del chat no entra. */
+function skips_history(resource: string): boolean {
+	return SKIP_RESOURCES.has(resource) || is_chat_private_resource(resource);
+}
 
 const IGNORE_KEYS = new Set([
 	'createdAt',
@@ -323,10 +329,10 @@ export async function record_document_history(
 	const ctx = als.getStore();
 	if (!ctx) return;
 	if (!store.has('document-change-history')) return;
-	if (SKIP_RESOURCES.has(resource)) return;
+	if (skips_history(resource)) return;
 	const loc = store.has(resource) ? store.loc(resource) : null;
 	const canonical = loc?.resource ?? resource;
-	if (SKIP_RESOURCES.has(canonical)) return;
+	if (skips_history(canonical)) return;
 	const document_id = String(after?._id ?? before?._id ?? '').trim();
 	if (!document_id) return;
 	const changes = diff_docs(before, after);

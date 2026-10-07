@@ -13,6 +13,7 @@ import {
 	messaging_settings,
 	validate_interinstance_api_key,
 } from './interinstance.ts';
+import { insert_notification } from './notifications.ts';
 import { status_options_for_model_field } from './status-options.ts';
 import type { ImperiumStore } from './store.ts';
 import {
@@ -338,7 +339,7 @@ function ensure_ticket_update_allowed(
 async function notify_internal_ticket_created(store: ImperiumStore, ticket: ImperiumDoc, actor: ImperiumDoc | null) {
 	const uid = actor_id(actor);
 	if (!uid || !store.has('notifications')) return;
-	await store.insert('notifications', {
+	await insert_notification(store, {
 		name: 'Ticket creado',
 		title: 'Ticket creado',
 		message: text(ticket.title) || 'Se creó un ticket de soporte desde tu sesión.',

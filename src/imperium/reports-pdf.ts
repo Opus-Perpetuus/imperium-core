@@ -349,9 +349,21 @@ function shared_browser(chrome: string): Promise<SharedChrome | null> {
 			{ stdout: 'ignore', stderr: 'ignore' },
 		);
 		proc.unref();
+		/* Con el puerto de depuración, Chrome no muere con su padre: si el proceso
+		 * sale antes de cerrarlo por inactividad (fin de bun test, apagado), se
+		 * cierra aquí o queda huérfano para siempre. */
+		const kill_on_exit = () => {
+			try {
+				proc.kill();
+			} catch {
+				/* ya salió */
+			}
+		};
+		process.once('exit', kill_on_exit);
 		/* Solo olvida el Chrome si sigue siendo el vigente: uno viejo que muere
 		 * tarde no debe dejar huérfano al que lo reemplazó. */
 		void proc.exited.then(() => {
+			process.off('exit', kill_on_exit);
 			if (shared_chrome === launching) shared_chrome = null;
 		});
 		if (!(await wait_for_cdp(port, 30_000))) {
@@ -383,6 +395,21 @@ function release_shared_browser() {
 		shared_chrome = null;
 	}, SHARED_CHROME_IDLE_MS);
 	shared_idle_timer.unref?.();
+}
+
+/** Cierra ya el Chrome compartido. bun test no emite 'exit' al terminar: sus
+ * specs lo llaman en afterAll. */
+export async function close_shared_pdf_browser(): Promise<void> {
+	if (shared_idle_timer) clearTimeout(shared_idle_timer);
+	shared_idle_timer = null;
+	const current = shared_chrome;
+	shared_chrome = null;
+	const browser = await current?.catch(() => null);
+	try {
+		browser?.proc.kill();
+	} catch {
+		/* ya salió */
+	}
 }
 
 function discard_shared_browser(failed: Promise<SharedChrome | null> | null) {

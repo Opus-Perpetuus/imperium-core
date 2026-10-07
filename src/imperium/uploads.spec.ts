@@ -1,13 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import sharp from 'sharp';
 import { from_imperium, to_imperium, type ImperiumDoc } from './envelope.ts';
 import type { ImperiumStore } from './store.ts';
 import {
 	apply_uploads,
 	bind_deferred_image_optimize,
+	delete_attachments_of,
 	FILE_READINESS_PROCESSING,
 	FILE_READINESS_USABLE,
 	persist_upload_as_attachment,
@@ -324,5 +325,112 @@ describe('uploads diferidos', () => {
 		});
 		expect(back?.file_readiness).toBe(FILE_READINESS_PROCESSING);
 		expect(back?.mimetype).toBe('image/png');
+	});
+});
+
+describe('archivo de un adjunto', () => {
+	test('lo elige el servidor al recibirlo: el cliente no manda name_stored, base64, data ni filename', async () => {
+		const { store } = memory_store();
+		const ajenos = { name_stored: '../fuera.env', base64: 'eA==', data: 'eA==', filename: '../fuera.env' };
+		const file = new File(['%PDF-1.4'], 'acta.pdf', { type: 'application/pdf' });
+		const created = await apply_uploads(store, 'attachment-management', { ...ajenos, file, name: 'acta' }, null, {
+			method: 'POST',
+		});
+		expect(on_disk(String(created.name_stored)).toString()).toBe('%PDF-1.4');
+		for (const key of ['base64', 'data', 'filename']) expect(created[key]).toBeUndefined();
+
+		await expect(
+			apply_uploads(store, 'attachment-management', { ...ajenos, name: 'acta' }, null, { method: 'POST' }),
+		).rejects.toThrow('No se ha subido un archivo');
+
+		const patched = await apply_uploads(store, 'attachment-management', { ...ajenos, name: 'acta firmada' }, null, {
+			method: 'PATCH',
+			record_id: String(created._id),
+			previous: created,
+		});
+		expect(patched).toEqual({ name: 'acta firmada' });
+
+		const relabeled = await apply_uploads(
+			store,
+			'attachment-management',
+			{ name: 'acta', related_model: 'Message', related_record_id: 'm1' },
+			null,
+			{ method: 'PATCH', record_id: String(created._id), previous: created },
+		);
+		expect(relabeled).toEqual({ name: 'acta' });
+		const uploaded = await apply_uploads(
+			store,
+			'attachment-management',
+			{ file: new File(['<html></html>'], 'pagina.html', { type: 'text/html' }), name: 'pagina', related_model: 'Message' },
+			null,
+			{ method: 'POST' },
+		).catch((error: Error) => error);
+		expect(uploaded).toBeInstanceOf(Error);
+	});
+
+	test('a qué registro pertenece y quién lo subió también lo fija el servidor', async () => {
+		const { store } = memory_store();
+		const vinculo = {
+			related_model: 'products',
+			related_record_id: 'p1',
+			field: 'signature',
+			index_if_is_array: 3,
+			inside_array: true,
+			created_by_id: 'otra-persona',
+		};
+		const file = new File(['%PDF-1.4'], 'acta.pdf', { type: 'application/pdf' });
+		const created = await apply_uploads(store, 'attachment-management', { ...vinculo, file, name: 'acta' }, { _id: 'yo' }, {
+			method: 'POST',
+		});
+		expect(created).toMatchObject({ related_model: 'AttachmentManagement', field: 'file', created_by_id: 'yo' });
+		for (const key of ['related_record_id', 'index_if_is_array', 'inside_array']) expect(created[key]).toBeUndefined();
+
+		const patched = await apply_uploads(store, 'attachment-management', { ...vinculo, name: 'acta firmada' }, { _id: 'yo' }, {
+			method: 'PATCH',
+			record_id: String(created._id),
+			previous: created,
+		});
+		expect(patched).toEqual({ name: 'acta firmada' });
+	});
+
+	test('vaciar el campo de otro registro no borra un adjunto del chat', async () => {
+		const stored = crypto.randomUUID();
+		writeFileSync(join(folder, stored), 'foto del chat');
+		const id = 'b'.repeat(24);
+		const removed: string[] = [];
+		const store = {
+			has: (name: string) => name === 'attachment-management',
+			find_id: async () => ({ _id: id, name_stored: stored, related_model: 'Message', related_record_id: 'm1' }),
+			remove: async (_resource: string, removed_id: string) => {
+				removed.push(removed_id);
+				return null;
+			},
+		} as unknown as ImperiumStore;
+		const cleared = await apply_uploads(store, 'products', { image: '' }, null, {
+			method: 'PATCH',
+			record_id: 'p1',
+			previous: { _id: 'p1', image: id },
+		});
+		expect(cleared.image).toBe('');
+		expect(existsSync(join(folder, stored))).toBe(true);
+		expect(removed).toEqual([]);
+	});
+
+	test('borrarlo no alcanza archivos fuera de la carpeta de subidas', async () => {
+		const outside = join(dirname(folder), `${basename(folder)}-fuera.txt`);
+		writeFileSync(outside, 'no se borra');
+		const id = 'a'.repeat(24);
+		const removed: string[] = [];
+		const store = {
+			has: (name: string) => name === 'attachment-management',
+			find_id: async () => ({ _id: id, name_stored: `../${basename(outside)}` }),
+			remove: async (_resource: string, removed_id: string) => {
+				removed.push(removed_id);
+				return null;
+			},
+		} as unknown as ImperiumStore;
+		await delete_attachments_of(store, id);
+		expect(existsSync(outside)).toBe(true);
+		expect(removed).toEqual([id]);
 	});
 });

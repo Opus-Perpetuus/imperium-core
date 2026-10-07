@@ -2,8 +2,10 @@
  * Notificaciones, digest de toasts, invitaciones de proyecto y menciones.
  * Mismo contrato que `notifications.service.ts` + `mentions.service.ts`.
  */
+import { ACTIVITY_CONTEXTS, ChatError } from './chat-access.ts';
 import { as_array, as_object, ok, type ImperiumDoc } from './envelope.ts';
-import type { ImperiumStore } from './store.ts';
+import { emit_notifications_refresh } from './socket-stub.ts';
+import type { ChatUserBrief, ImperiumStore } from './store.ts';
 
 const PLANNING_REMINDER_WINDOW_MS = 48 * 60 * 60 * 1000;
 const MENTION_TOKEN = /\[@[^\n\]]*\]\(mention:([a-f\d]{24})\)/gi;
@@ -191,13 +193,49 @@ async function hard_remove(ctx: NotificationCtx, resource: string, id: string) {
 	await ctx.sql.unsafe(`DELETE FROM ${ctx.store.qt(resource)} WHERE id = $1`, [id]);
 }
 
-async function insert_notification(store: ImperiumStore, doc: ImperiumDoc) {
-	return store.insert('notifications', {
+/**
+ * Destinatario → notificaciones y actividad creadas en la ventana: un solo aviso por persona.
+ * Las acciones insertan en serie y esperan la base entre fila y fila; la ventana
+ * junta lo de una misma acción.
+ */
+const pending_refresh = new Map<string, { notification_ids: string[]; activity_ids: string[] }>();
+const REFRESH_WINDOW_MS = 100;
+
+function flush_notifications_refresh(): void {
+	const batch = [...pending_refresh];
+	pending_refresh.clear();
+	for (const [recipient_id, { notification_ids, activity_ids }] of batch) {
+		emit_notifications_refresh([recipient_id], {
+			reason: notification_ids.length ? 'notification_created' : 'activity_created',
+			...(notification_ids.length ? { notification_ids } : {}),
+			...(activity_ids.length ? { activity_ids } : {}),
+		});
+	}
+}
+
+function queue_refresh(recipient_id: string, created: { notification_id?: string; activity_id?: string }): void {
+	if (!pending_refresh.size) setTimeout(flush_notifications_refresh, REFRESH_WINDOW_MS);
+	const pending = pending_refresh.get(recipient_id) ?? { notification_ids: [], activity_ids: [] };
+	if (created.notification_id) pending.notification_ids.push(created.notification_id);
+	if (created.activity_id) pending.activity_ids.push(created.activity_id);
+	pending_refresh.set(recipient_id, pending);
+}
+
+/** Toda notificación nueva entra por aquí: así llega por socket a su destinatario. */
+export async function insert_notification(
+	store: ImperiumStore,
+	doc: ImperiumDoc,
+	opts: { notify?: boolean } = {},
+) {
+	const created = await store.insert('notifications', {
 		...doc,
 		name: String(doc.title ?? doc.name ?? 'Notificación'),
 		isRead: doc.isRead === true,
 		is_active: true,
 	});
+	const recipient_id = recipient_of(created);
+	if (recipient_id && opts.notify !== false) queue_refresh(recipient_id, { notification_id: String(created._id) });
+	return created;
 }
 
 /**
@@ -585,7 +623,18 @@ async function reminder_exists(store: ImperiumStore, input: ImperiumDoc) {
 	return false;
 }
 
-async function sync_planning_reminders(store: ImperiumStore, uid: string) {
+/** Comprobar y luego insertar no es atómico: una sincronización por usuario a la vez. */
+const reminder_syncs = new Map<string, Promise<void>>();
+
+function sync_planning_reminders(store: ImperiumStore, uid: string): Promise<void> {
+	const running = reminder_syncs.get(uid);
+	if (running) return running;
+	const sync = create_planning_reminders(store, uid).finally(() => reminder_syncs.delete(uid));
+	reminder_syncs.set(uid, sync);
+	return sync;
+}
+
+async function create_planning_reminders(store: ImperiumStore, uid: string) {
 	if (!store.has('planeacion-proyectos') && !store.has('planeacion-mis-tareas')) return;
 	const inputs: ImperiumDoc[] = [];
 	if (store.has('planeacion-proyectos')) {
@@ -677,7 +726,8 @@ async function sync_planning_reminders(store: ImperiumStore, uid: string) {
 	}
 	for (const input of inputs) {
 		if (await reminder_exists(store, input)) continue;
-		await insert_notification(store, input);
+		// Quien pidió el resumen ya los recibe en la respuesta; el aviso lo haría pedirlo otra vez.
+		await insert_notification(store, input, { notify: false });
 	}
 }
 
@@ -741,29 +791,247 @@ export async function my_notifications(ctx: NotificationCtx) {
 	);
 }
 
+const ACTIVITY_LIMIT = { fallback: 25, max: 50 };
+const ACTIVITY_MARK_MAX = 200;
+const ACTIVITY_FILTERS = new Set(['all', 'chat', 'history', 'reactions']);
+/** `contextType` de `mentions` → `kind` de `ChatActivityItem` (contrato §3.5). */
+const ACTIVITY_KINDS: Record<string, string> = {
+	'chat-message': 'mention',
+	'chat-reply': 'reply',
+	'chat-reaction': 'reaction',
+	'chat-missed-call': 'missed_call',
+	'history-comment': 'comment_mention',
+	'history-reply': 'reply',
+	document: 'mention',
+};
+const CHAT_MENTION_TOKEN = /\[@([^\n\]]*)\]\(mention:[a-z\d]+\)/gi;
+
+function invalid_request(): ChatError {
+	return new ChatError(422, 'invalid_request', 'La petición no es válida.');
+}
+
+/** Texto plano de ≤ 160 caracteres, sin markdown; una mención queda como `@Nombre`. */
+function plain_excerpt(text: string): string {
+	const plain = String(text ?? '')
+		.replace(CHAT_MENTION_TOKEN, '@$1')
+		.replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+		.replace(/[*_~`#>|]/g, '')
+		.replace(/\s+/g, ' ')
+		.trim();
+	return plain.length > 160 ? `${plain.slice(0, 159)}…` : plain;
+}
+
+function activity_filter(value: unknown): string[] | undefined {
+	const context = query_text(value) ?? 'all';
+	if (!ACTIVITY_FILTERS.has(context)) throw invalid_request();
+	return context === 'all' ? undefined : ACTIVITY_CONTEXTS[context as keyof typeof ACTIVITY_CONTEXTS];
+}
+
+function activity_cursor(row: ImperiumDoc): string {
+	return Buffer.from(JSON.stringify({ at: String(row.created_at), id: String(row._id) })).toString('base64url');
+}
+
+function activity_before(raw: string): { at: string; id: string } {
+	const cursor = as_object(Buffer.from(raw, 'base64url').toString('utf8'));
+	if (typeof cursor.at === 'string' && typeof cursor.id === 'string' && cursor.id) return { at: cursor.at, id: cursor.id };
+	throw new ChatError(400, 'invalid_cursor', 'La página solicitada ya no es válida; recarga la lista.');
+}
+
+function user_brief(user: ChatUserBrief) {
+	return { _id: user._id, name: user.name, ...(user.email ? { email: user.email } : {}), ...(user.img ? { img: user.img } : {}) };
+}
+
+/** `ChatActivityItem[]`: quien la causó, las conversaciones y sus títulos salen en una consulta cada uno. */
+async function activity_items(store: ImperiumStore, uid: string, rows: ImperiumDoc[]): Promise<ImperiumDoc[]> {
+	const actor_of = (row: ImperiumDoc) => String(row.actorId ?? ref_id(row.actor));
+	const conversation_ids = [...new Set(rows.map((row) => String(row.conversationId ?? '')).filter(Boolean))];
+	const conversations = conversation_ids.length
+		? (
+				await store.find_many('chat-conversations', {
+					ids: conversation_ids,
+					take: conversation_ids.length,
+					include_inactive: true,
+					populate: false,
+					skip_total: true,
+				})
+			).rows
+		: [];
+	const by_id = new Map(conversations.map((conversation) => [String(conversation._id), conversation]));
+	const { rows: memberships } = conversation_ids.length
+		? await store.find_many('chat-members', {
+				where: { user_id: uid, conversation_id: { in: conversation_ids }, state: 'active' },
+				take: conversation_ids.length,
+				populate: false,
+				skip_total: true,
+			})
+		: { rows: [] };
+	const member_of = new Set(memberships.map((row) => String(row.conversation_id)));
+	const peer_of = (conversation: ImperiumDoc | undefined) =>
+		conversation?.kind === 'direct'
+			? String(conversation.conversation_key ?? '')
+					.split('::')
+					.find((id) => id !== uid)
+			: undefined;
+	const users = new Map(
+		(await store.chat_users_brief([...rows.map(actor_of), ...conversations.flatMap((row) => peer_of(row) ?? [])])).map(
+			(user) => [user._id, user],
+		),
+	);
+	return rows.map((row) => {
+		const kind = ACTIVITY_KINDS[String(row.contextType ?? '')] ?? 'mention';
+		const actor = users.get(actor_of(row));
+		const source = as_object(row.source);
+		const conversation_id = String(row.conversationId ?? '');
+		const conversation = by_id.get(conversation_id);
+		const peer = users.get(peer_of(conversation) ?? '');
+		return {
+			_id: String(row._id),
+			kind,
+			created_at: String(row.created_at),
+			is_read: row.isRead === true,
+			actor: actor ? user_brief(actor) : null,
+			excerpt: plain_excerpt(String(row.excerpt ?? '')),
+			...(kind === 'reaction' && row.reaction ? { reaction: String(row.reaction) } : {}),
+			...(conversation_id
+				? {
+						chat: {
+							conversation_id,
+							message_id: String(row.messageId ?? ''),
+							conversation_title:
+								peer?.name ??
+								String((member_of.has(conversation_id) ? conversation?.name : row.conversationTitle) ?? ''),
+						},
+					}
+				: {
+						record: {
+							model_name: String(source.modelName ?? ''),
+							collection_name: String(source.collectionName ?? ''),
+							document_id: String(source.documentId ?? ''),
+							history_id: String(row.historyId ?? source.historyId ?? ''),
+							route: String(source.route ?? ''),
+							entity_label: String(source.entityLabel ?? ''),
+						},
+					}),
+		};
+	});
+}
+
+/**
+ * La bandeja de Actividad (contrato §3.5 y §4.6), por keyset del más nuevo al más viejo;
+ * `counts` son las no leídas de cada filtro.
+ */
 export async function my_mentions(ctx: NotificationCtx) {
 	const uid = actor_id(ctx);
 	if (!uid) throw new Error('No se encontró una sesión válida para consultar menciones.');
-	if (!ctx.store.has('mentions')) {
-		return ok([], 'No se encontraron menciones para este usuario');
-	}
-	const page = Math.max(1, Number.parseInt(String(ctx.url.searchParams.get('page') ?? '1'), 10) || 1);
-	const size = Math.min(100, Math.max(1, Number.parseInt(String(ctx.url.searchParams.get('size') ?? '25'), 10) || 25));
-	const { rows, total } = await ctx.store.find_many('mentions', {
-		where: { mentionedUserId: uid },
-		take: size,
-		skip: (page - 1) * size,
-		sort: 'created_at:desc',
-		include_inactive: false,
-		populate: false,
-	});
-	return ok(
-		rows,
-		rows.length
-			? 'Menciones obtenidas correctamente'
-			: 'No se encontraron menciones para este usuario',
-		total,
+	const params = ctx.url.searchParams;
+	const context_types = activity_filter(params.get('context'));
+	const raw_before = query_text(params.get('before'));
+	const limit = Math.min(
+		Math.max(1, Number.parseInt(params.get('limit') ?? '', 10) || ACTIVITY_LIMIT.fallback),
+		ACTIVITY_LIMIT.max,
 	);
+	const rows = await ctx.store.chat_activity_page({
+		user_id: uid,
+		context_types,
+		unread: params.get('unread') === '1' || params.get('unread') === 'true',
+		before: raw_before ? activity_before(raw_before) : undefined,
+		limit: limit + 1,
+	});
+	const page = rows.slice(0, limit);
+	const items = await activity_items(ctx.store, uid, page);
+	const last = page.at(-1);
+	return {
+		...ok(items, items.length ? 'Actividad cargada.' : 'No hay actividad.'),
+		next_cursor: rows.length > limit && last ? activity_cursor(last) : null,
+		server_time: new Date().toISOString(),
+		counts: await ctx.store.chat_activity_counts(uid),
+	};
+}
+
+/** Contrato §4.6: unas (`ids`), todas (`all`) o las de un filtro; también su notificación ligada. */
+export async function mark_mentions_read(ctx: NotificationCtx) {
+	const uid = actor_id(ctx);
+	if (!uid) throw new Error('No se encontró una sesión válida para consultar menciones.');
+	const context_types = activity_filter(ctx.body.context);
+	const ids = ctx.body.ids;
+	const all = ctx.body.all === true;
+	const listed =
+		Array.isArray(ids) &&
+		ids.length <= ACTIVITY_MARK_MAX &&
+		ids.every((id) => typeof id === 'string' && OBJECT_ID.test(id));
+	if (!all && !listed) throw invalid_request();
+	const read = await ctx.store.chat_mark_activity_read({
+		user_id: uid,
+		ids: all ? undefined : (ids as string[]),
+		context_types,
+		now: new Date().toISOString(),
+	});
+	if (read.ids.length) {
+		emit_notifications_refresh([uid], {
+			reason: 'activity_read',
+			activity_ids: read.ids,
+			...(read.notification_ids.length ? { notification_ids: read.notification_ids } : {}),
+		});
+	}
+	return ok([{ updated: read.ids.length }], 'Actividad marcada como leída.');
+}
+
+export type ChatActivityInput = {
+	user_id: string;
+	context_type: 'chat-message' | 'chat-reply' | 'chat-reaction';
+	conversation_id: string;
+	/** El título del grupo al momento: es lo que ve quien después ya no es miembro. */
+	conversation_title?: string;
+	message_id: string;
+	excerpt: string;
+	reaction?: string;
+};
+
+/**
+ * Actividad del chat (contrato §1.12): una fila de `mentions` por persona y su aviso
+ * `activity_created`. Los mensajes del chat no crean notificación de campana; el silencio de
+ * cada conversación lo aplica el cliente con sus preferencias.
+ */
+export async function register_chat_activity(
+	store: ImperiumStore,
+	actor: ImperiumDoc | null,
+	inputs: ChatActivityInput[],
+) {
+	const uid = String(actor?._id ?? '');
+	const records = inputs
+		.filter((input) => input.user_id && input.user_id !== uid)
+		.map((input) => ({
+			mentionedUserId: input.user_id,
+			actorId: uid,
+			actor: { _id: uid, name: actor?.name, email: actor?.email },
+			contextType: input.context_type,
+			conversationId: input.conversation_id,
+			...(input.conversation_title ? { conversationTitle: input.conversation_title } : {}),
+			messageId: input.message_id,
+			...(input.reaction ? { reaction: input.reaction } : {}),
+			excerpt: plain_excerpt(input.excerpt),
+			source: {
+				kind: 'chat',
+				action: input.context_type,
+				conversationId: input.conversation_id,
+				messageId: input.message_id,
+			},
+			isRead: false,
+		}));
+	if (records.length) await persist_mentions(store, records, []);
+}
+
+/** Lo que dejó de existir (un mensaje borrado, una reacción quitada) sale de la Actividad. */
+export async function retire_chat_activity(
+	store: ImperiumStore,
+	input: { message_id: string; context_type?: string; actor_id?: string; reaction?: string },
+) {
+	const retired = await store.chat_retire_activity({ ...input, now: new Date().toISOString() });
+	const by_user = new Map<string, string[]>();
+	for (const row of retired) by_user.set(row.user_id, [...(by_user.get(row.user_id) ?? []), row.id]);
+	for (const [user_id, activity_ids] of by_user) {
+		emit_notifications_refresh([user_id], { reason: 'activity_removed', activity_ids });
+	}
 }
 
 export async function clear_notifications(ctx: NotificationCtx) {
@@ -870,14 +1138,13 @@ async function persist_mentions(
 		}
 	}
 	if (!store.has('mentions')) return;
-	for (const record of records) {
-		await store.insert('mentions', {
-			...record,
-			name: 'mención',
-			notificationId: by_recipient.get(String(record.mentionedUserId ?? '')),
-			isRead: false,
-		});
-	}
+	const inserted = await store.insert_activity(
+		records.map((record) => {
+			const notification_id = by_recipient.get(String(record.mentionedUserId ?? ''));
+			return { ...record, ...(notification_id ? { notificationId: notification_id } : {}), isRead: false };
+		}),
+	);
+	for (const activity of inserted) queue_refresh(activity.user_id, { activity_id: activity.id });
 }
 
 export async function resolve_comment_mentioned_users(
@@ -961,6 +1228,70 @@ export async function register_comment_mentions(
 		});
 	}
 	await persist_mentions(store, records, notifications);
+}
+
+/**
+ * Contrato §4.6: quien escribió el comentario que se responde recibe la notificación
+ * `history-comment-reply` y la actividad `history-reply`.
+ */
+export async function register_comment_reply(
+	store: ImperiumStore,
+	actor: ImperiumDoc | null,
+	params: {
+		author_id: string;
+		comment_text: string;
+		model_name?: string;
+		collection_name?: string;
+		document_id?: string;
+		history_id?: string;
+		route?: string;
+		entity_label?: string;
+	},
+) {
+	const uid = String(actor?._id ?? '');
+	if (!params.author_id || params.author_id === uid) return;
+	const [author] = await resolve_users(store, [params.author_id]);
+	if (!author) return;
+	const excerpt = clean_excerpt(params.comment_text);
+	const by = { _id: uid, name: actor?.name, email: actor?.email };
+	const source = {
+		kind: 'document-change-history',
+		action: 'comment-reply',
+		modelName: params.model_name,
+		collectionName: params.collection_name,
+		documentId: params.document_id,
+		historyId: params.history_id,
+		route: params.route,
+		entityLabel: params.entity_label,
+	};
+	await persist_mentions(
+		store,
+		[
+			{
+				mentionedUserId: author._id,
+				actorId: uid,
+				actor: by,
+				source,
+				excerpt,
+				contextType: 'history-reply',
+				historyId: params.history_id,
+				isRead: false,
+			},
+		],
+		[
+			{
+				recipientId: author._id,
+				type: 'history-comment-reply',
+				title: `${actor_label(actor)} respondió tu comentario`,
+				message: excerpt || 'Respondieron tu comentario.',
+				description: 'Respuesta en el historial de cambios de un registro del sistema.',
+				actor: by,
+				source,
+				payload: { commentText: params.comment_text, historyId: params.history_id },
+				isRead: false,
+			},
+		],
+	);
 }
 
 export async function register_document_mentions(

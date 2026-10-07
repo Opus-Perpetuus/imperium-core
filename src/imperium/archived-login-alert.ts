@@ -4,6 +4,7 @@
  */
 import { as_array, as_object, type ImperiumDoc } from './envelope.ts';
 import { debug_error } from './debug-request-log.ts';
+import { insert_notification } from './notifications.ts';
 import type { ImperiumStore } from './store.ts';
 
 export const SEED_ADMIN_USER_REF = 'user-menu-management-0';
@@ -170,7 +171,7 @@ async function notify_admins_of_archived_login(store: ImperiumStore, user: Imper
 	});
 	const route = `/internal/user/detail/${route_slug(label)}/${archived_user_id}`;
 	for (const recipient_id of recipient_ids) {
-		await store.insert('notifications', {
+		await insert_notification(store, {
 			name: title,
 			recipientId: recipient_id,
 			type: ARCHIVED_LOGIN_ALERT_TYPE,

@@ -147,6 +147,7 @@ import {
 import { assign_document_increments } from './custom-pattern-render.ts';
 import { prepare_increment_create } from './increment-normalize.ts';
 import { build_access } from './auth.ts';
+import { is_chat_private_resource, is_chat_row, without_chat_rows } from './chat-access.ts';
 import { can_manage_user_groups, is_seed_admin } from './group-access.ts';
 import {
 	apply_related_labels,
@@ -227,7 +228,18 @@ async function label_ref_field_values(
 	return apply_related_labels(options, names);
 }
 
+/** Alcance de toda ruta del CRUD: las reglas de registro del actor y, para cualquiera, sin las filas del chat. */
 async function record_rule_scope(
+	store: ImperiumStore,
+	actor: ImperiumDoc | null,
+	resource: string,
+	method: string,
+): Promise<RecordRuleMatchResult> {
+	const scope = await actor_record_rule_scope(store, actor, resource, method);
+	return { ...scope, match: without_chat_rows(resource, scope.match) };
+}
+
+async function actor_record_rule_scope(
 	store: ImperiumStore,
 	actor: ImperiumDoc | null,
 	resource: string,
@@ -318,13 +330,21 @@ function assert_inventory_ledger_write(
 	if (message) throw new Error(message);
 }
 
+/**
+ * `doc` es la fila ya leída por la ruta. Una que no existe y una del chat responden igual, 404,
+ * antes que la regla de registro: su 403 confirmaría que la fila existe.
+ */
 async function assert_id_in_scope(
 	store: ImperiumStore,
 	resource: string,
 	id: string,
+	doc: ImperiumDoc | null,
 	scope: RecordRuleMatchResult,
 	method: string,
 ) {
+	if (!doc || is_chat_row(resource, doc)) {
+		throw Object.assign(new Error('No encontrado'), { status: 404 });
+	}
 	await assert_record_in_scope(store, resource, id, scope, method);
 }
 
@@ -336,6 +356,7 @@ export async function handle_crud(
 	rest: string,
 	actor: ImperiumDoc | null = null,
 ): Promise<Response | null> {
+	if (is_chat_private_resource(resource)) return null;
 	const method = req.method.toUpperCase();
 	const segs = rest.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean);
 	const body = async () => read_imperium_body(req);
@@ -394,7 +415,8 @@ export async function handle_crud(
 		const field_path = decodeURIComponent(segs[1] ?? '').trim();
 		if (!field_path) throw new Error(field_values_missing_field_error());
 		const termino = String(url.searchParams.get('termino') ?? '').trim();
-		const values = await store.distinct(resource, field_path, termino);
+		const scope = await record_rule_scope(store, actor, resource, method);
+		const values = await store.distinct(resource, field_path, termino, scope.match);
 		const metadata = await load_state_fields_metadata(store, resource);
 		const options = await filter_pedido_estado_options(
 			store,
@@ -425,6 +447,7 @@ export async function handle_crud(
 		const b = await body();
 		const ids = (Array.isArray(b.ids) ? b.ids.map(String) : []).filter(Boolean);
 		const capped = ids.slice(0, MASS_QUERY_MAX_IDS);
+		const scope = await record_rule_scope(store, actor, resource, 'GET');
 		const { rows, total } = await store.find_many(resource, {
 			ids: capped,
 			take: capped.length || 1,
@@ -432,6 +455,7 @@ export async function handle_crud(
 			include_inactive: true,
 			populate: false,
 			skip_total: true,
+			mongo_match: scope.match,
 		});
 		return json(
 			resource,
@@ -444,6 +468,10 @@ export async function handle_crud(
 		}
 		if (is_physical_count_resource(resource)) {
 			throw new Error('Los conteos físicos no soportan operaciones batch');
+		}
+		// El lote no pasa por apply_uploads: escribiría name_stored y related_model del cliente.
+		if (resource === 'attachment-management') {
+			throw new Error('Los adjuntos no soportan operaciones batch');
 		}
 		assert_inventory_ledger_write(resource, 'batch');
 		if (resource === 'delivery-return') {
@@ -506,7 +534,7 @@ export async function handle_crud(
 			}
 		}
 		const scope = await record_rule_scope(store, actor, resource, method);
-		await assert_id_in_scope(store, resource, segs[0]!, scope, method);
+		await assert_id_in_scope(store, resource, segs[0]!, doc, scope, method);
 		const [populated] = await finalize_rows(
 			store,
 			resource,
@@ -565,7 +593,8 @@ export async function handle_crud(
 		}
 		assert_inventory_ledger_write(resource, 'delete');
 		const scope = await record_rule_scope(store, actor, resource, method);
-		await assert_id_in_scope(store, resource, segs[1], scope, method);
+		const doc = await store.find_id(resource, segs[1]);
+		await assert_id_in_scope(store, resource, segs[1], doc, scope, method);
 		await assert_no_incoming_references(store, resource, segs[1]!);
 		if (is_pattern_parts_resource(resource)) {
 			const deleted = await soft_delete_pattern_part(store, segs[1]!);
@@ -645,7 +674,7 @@ export async function handle_crud(
 			}
 		}
 		const scope = await record_rule_scope(store, actor, resource, method);
-		await assert_id_in_scope(store, resource, segs[0]!, scope, method);
+		await assert_id_in_scope(store, resource, segs[0]!, doc, scope, method);
 		const [populated] = await finalize_rows(
 			store,
 			resource,
@@ -899,7 +928,7 @@ export async function handle_crud(
 		}
 		const previous = await store.find_id(resource, id);
 		const scope = await record_rule_scope(store, actor, resource, method);
-		await assert_id_in_scope(store, resource, id, scope, method);
+		await assert_id_in_scope(store, resource, id, previous, scope, method);
 		let b = await prepare_user_write(
 			resource,
 			await apply_uploads(store, resource, raw, actor, {
@@ -1084,7 +1113,7 @@ export async function handle_crud(
 		assert_inventory_ledger_write(resource, 'update');
 		const previous = await store.find_id(resource, segs[0]!);
 		const scope = await record_rule_scope(store, actor, resource, method);
-		await assert_id_in_scope(store, resource, segs[0]!, scope, method);
+		await assert_id_in_scope(store, resource, segs[0]!, previous, scope, method);
 		let patched = await prepare_user_write(
 			resource,
 			await apply_uploads(store, resource, await body(), actor, {

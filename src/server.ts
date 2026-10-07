@@ -6,20 +6,30 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+	can_enter_internal,
 	pg_schema_name,
 	type KirletSchemaBundle,
 } from '@opus-perpetuus/imperium-core-kit';
 import { handle_service_plane, service_plane_match } from './service-plane.ts';
 import { add_cors, create_imperium_layer } from './imperium/router.ts';
-import { current_user, ensure_session_table } from './imperium/auth.ts';
+import {
+	current_user,
+	ensure_session_table,
+	user_for_session_id,
+} from './imperium/auth.ts';
+import { start_chat_jobs } from './imperium/chat-jobs.ts';
+import { start_chat_realtime } from './imperium/chat-realtime.ts';
 import { start_subject_auto_update } from './imperium/subject-auto-update.ts';
 import { subject_files } from './imperium/subject-files.ts';
 import { start_support_sync } from './imperium/support-bridge.ts';
 import { seed_new_install } from './imperium/module-data.ts';
 import { superadmin_exists } from './imperium/superadmin-seed.ts';
 import {
+	bind_socket_identity_resolver,
 	handle_socket_io,
+	socket_websocket_handler,
 	SOCKET_IO_IDLE_TIMEOUT_SECONDS,
+	upgrade_socket_io,
 } from './imperium/socket-stub.ts';
 import {
 	is_noisy_path,
@@ -145,6 +155,11 @@ process.on('unhandledRejection', (reason) => {
 
 const sql = open_core_sql(DATABASE_URL);
 const imperium = create_imperium_layer(sql);
+bind_socket_identity_resolver(async (session_id) => {
+	const user = await user_for_session_id(sql, session_id);
+	return user && can_enter_internal(user) ? String(user._id) : null;
+});
+start_chat_realtime(imperium.store);
 const shares = share_deps(imperium.store, sql);
 /** Overrides de desarrollo (`POST /api/subjects/dev-attach`). Gana a env/DNS. */
 const subject_url_overrides = new Map<string, string>();
@@ -569,11 +584,16 @@ function log_api(
 const server = Bun.serve({
 	port: PORT,
 	idleTimeout: SOCKET_IO_IDLE_TIMEOUT_SECONDS,
+	websocket: socket_websocket_handler,
 	async fetch(req, server) {
 		// La IP del socket, que el cliente no elige: el limitador la prefiere
 		// sobre `x-forwarded-for` salvo que el despliegue declare que hay un
 		// proxy delante (ver `request_ip`).
 		const socket_ip = server.requestIP(req)?.address ?? null;
+		remember_socket_ip(req, socket_ip);
+		const upgraded = upgrade_socket_io(req, server);
+		if (upgraded === 'upgraded') return undefined;
+		if (upgraded) return upgraded;
 		const started_ms = Date.now();
 		const url = new URL(req.url);
 		const path = url.pathname;
@@ -977,3 +997,6 @@ start_subject_auto_update(imperium.store, sql);
 
 // Reintentos hacia el soporte en Odoo. Solo con TKSUPPORT en el entorno.
 start_support_sync(imperium.store);
+
+// Caducidad de los mensajes temporales y limpieza de subidas del chat sin ligar.
+start_chat_jobs(imperium.store);

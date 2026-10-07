@@ -522,6 +522,15 @@ describe('PostGressTableTracker field-values (shipped path)', () => {
 			has(resource: string) {
 				return resource === TRACKER_RESOURCE || resource === 'citizen-report';
 			},
+			loc(resource: string) {
+				return { resource };
+			},
+			available_mongoose_models() {
+				return [];
+			},
+			is_model_installed() {
+				return true;
+			},
 			resource_for_model(model: string) {
 				return model === 'CitizenReport' ? 'citizen-report' : null;
 			},
@@ -551,6 +560,7 @@ describe('PostGressTableTracker field-values (shipped path)', () => {
 		};
 		const result = await postgres_table_tracker_field_values({
 			store: store as never,
+			actor: { _id: 'admin', _ref: 'user-menu-management-0' },
 			params: { model_tracker_id: 'CitizenReport', field_path: 'status' },
 			url: new URL('http://imperium.test/api/postgres-table-tracker/global/CitizenReport/field-values/status'),
 		});

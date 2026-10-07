@@ -17,6 +17,16 @@ import {
 	type ImperiumDoc,
 } from './envelope.ts';
 import { SearchEngine, search_text_from_doc } from './search-engine.ts';
+import {
+	ACTIVITY_CONTEXTS,
+	CHAT_ATTACHMENT_MODELS,
+	chat_can,
+	chat_role,
+	DIRECT_CONVERSATION_SETTINGS,
+	invite_state,
+	is_chat_attachment,
+	is_chat_private_resource,
+} from './chat-access.ts';
 import { mongo_match_to_sql } from './record-rules.ts';
 import { products_inventory_cost } from './products-flow.ts';
 import { vehicle_by_status } from './vehicle-flow.ts';
@@ -181,6 +191,7 @@ const UNIQUE_FIELDS: Record<string, string[]> = {
 	'module-management-reference': ['reference'],
 	'mcp-user-token': ['token_hash'],
 	'epson-ticket-template': ['template_key'],
+	'chat-conversations': ['conversation_key', 'join_code'],
 };
 
 /** Unique solo entre activos (`partialFilterExpression: { is_active: { $ne: false } }`). */
@@ -195,6 +206,14 @@ const UNIQUE_COMPOSITES: Record<string, string[][]> = {
 	'custom-user-themes': [['user_id', 'theme_name']],
 	'documentation-page': [['slug', 'folder_path']],
 	'inventory-lot': [['producto', 'name']],
+	messages: [
+		['sender_user_id', 'client_id'],
+		['conversation_id', 'seq'],
+	],
+	'chat-members': [['conversation_id', 'user_id']],
+	'chat-reactions': [['message_id', 'user_id', 'kind', 'value']],
+	'chat-saved': [['user_id', 'message_id']],
+	'chat-story-views': [['story_id', 'viewer_id']],
 };
 
 /** Unique compuesto solo entre activos. */
@@ -296,6 +315,7 @@ export function lookup_index_sqls(input: {
 
 const LOOKUP_PAYLOAD_FIELDS: Record<string, string[]> = {
 	'document-change-history': ['documentId', 'modelName'],
+	messages: ['conversationKey'],
 };
 
 function lookup_payload_fields_for(resource: string): string[] {
@@ -331,13 +351,1662 @@ export function history_page_index_sqls(input: {
 	];
 }
 
+/** Una subida del chat que aún nadie ligó a un mensaje. */
+const CHAT_PENDING_UPLOAD = `payload -> 'chatUpload' IS NOT NULL AND COALESCE(related_record_id, '') = '' AND is_active IS DISTINCT FROM false`;
+/** La condición del único parcial de `user-settings`: sin ella, buscar por `user_id` recorre la tabla. */
+const SETTINGS_OWNER = "btrim(payload ->> 'user_id') <> ''";
+/** Un mensaje 1:1 legado que el respaldo aún no lleva a su conversación; `m` con el alias `m.`. */
+const legacy_pending = (m = '') =>
+	`${m}conversation_id IS NULL AND ${m}is_active IS DISTINCT FROM false AND ${m}payload ->> 'sourceType' = 'chat' AND ${m}payload ->> 'conversationKey' <> ''`;
+/** Lo que aún puede vencer: el mismo filtro que el reclamo de `expire` y de `story`. */
+const DUE_PENDING = 'expires_at IS NOT NULL AND state IS NULL AND is_active IS DISTINCT FROM false';
+const CHAT_FILE_MODELS = `related_model IN (${[...CHAT_ATTACHMENT_MODELS].map((model) => `'${model}'`).join(', ')})`;
+
+/** Índices de las páginas del chat (contrato §1) que no son un único simple. */
+const CHAT_INDEXES: Record<string, Array<{ suffix: string; on: string; where?: string; unique?: true }>> = {
+	messages: [
+		{ suffix: 'conversation_updated', on: 'conversation_id, updated_at' },
+		{ suffix: 'expires', on: 'expires_at', where: 'expires_at IS NOT NULL' },
+		// El reclamo de lo vencido (chat_claim_due_sql) sin recorrer lo que ya caducó alguna vez.
+		{ suffix: 'expire_due', on: 'expires_at, id', where: DUE_PENDING },
+		// Un invitado no tiene sender_user_id: su reintento se reconoce por conversación.
+		{ suffix: 'guest_client', on: 'conversation_id, client_id', where: 'sender_user_id IS NULL', unique: true },
+		// Borrar un mensaje limpia el texto de las respuestas que lo citan.
+		{
+			suffix: 'reply_to',
+			on: "(payload ->> 'replyToMessageId')",
+			where: "(payload ->> 'replyToMessageId') IS NOT NULL",
+		},
+		// Los lotes del respaldo leen solo lo pendiente, ya en orden de llave; migrado, queda vacío.
+		{ suffix: 'backfill_pending', on: "(payload ->> 'conversationKey')", where: legacy_pending() },
+	],
+	'chat-conversations': [{ suffix: 'inbox', on: 'last_message_at DESC, id DESC' }],
+	'chat-members': [
+		{ suffix: 'user_state', on: 'user_id, state' },
+		{ suffix: 'conversation_state', on: 'conversation_id, state' },
+	],
+	'chat-audit': [{ suffix: 'conversation_created', on: 'conversation_id, created_at DESC' }],
+	'chat-scheduled': [{ suffix: 'state_send', on: 'state, send_at' }],
+	'chat-saved': [{ suffix: 'state_remind', on: 'state, remind_at' }],
+	'chat-stories': [
+		{ suffix: 'expires', on: 'expires_at' },
+		{ suffix: 'expire_due', on: 'expires_at, id', where: DUE_PENDING },
+		{ suffix: 'author_expires', on: 'author_id, expires_at' },
+	],
+	// La bandeja de Actividad de cada persona, del más nuevo al más viejo.
+	mentions: [
+		{ suffix: 'recipient_created', on: "(payload ->> 'mentionedUserId'), created_at DESC, id DESC" },
+		{ suffix: 'message', on: "(payload ->> 'messageId')", where: "(payload ->> 'messageId') IS NOT NULL" },
+	],
+	// La campana de cada persona, de la más nueva a la más vieja (contrato §1.12).
+	notifications: [{ suffix: 'recipient_created', on: "(payload ->> 'recipientId'), created_at DESC" }],
+	// Un reintento de la subida (mismo client_upload_id) devuelve la misma fila.
+	'attachment-management': [
+		{
+			suffix: 'chat_upload',
+			on: "created_by_id, (payload #>> '{chatUpload,clientUploadId}')",
+			where: "payload -> 'chatUpload' IS NOT NULL AND is_active IS DISTINCT FROM false",
+			unique: true,
+		},
+		// La limpieza de lo que nadie ligó en 24 h no recorre los demás adjuntos.
+		{ suffix: 'chat_pending', on: 'created_at', where: CHAT_PENDING_UPLOAD },
+		// Un reenvío comparte el archivo: se borra del disco cuando ninguna fila del chat lo usa.
+		{ suffix: 'chat_file', on: 'name_stored', where: CHAT_FILE_MODELS },
+	],
+};
+
+export function chat_index_sqls(input: {
+	resource: string;
+	quoted_table: string;
+	table_key: string;
+}): string[] {
+	return (CHAT_INDEXES[input.resource] ?? []).map((index) => {
+		const name = index_name(input.table_key, index.suffix);
+		const idx = qident(index.unique ? name : name.replace(/^uq_/, 'ix_'));
+		const where = index.where ? ` WHERE ${index.where}` : '';
+		return `CREATE ${index.unique ? 'UNIQUE ' : ''}INDEX IF NOT EXISTS ${idx} ON ${input.quoted_table} (${index.on})${where}`;
+	});
+}
+
 /**
- * Keyset temporal: `(created_at, id) > ($at, $id)`.
- * `created_at` es TEXT ISO; el predicado no casteá — coincide con
- * `ORDER BY created_at ASC, id ASC` (lex = cronológico en ISO-8601).
+ * Respaldo de los 1:1 legados (`chat_backfill_direct`). Un lote es un conjunto de
+ * `conversationKey` cuyos mensajes aún no tienen conversación: el WHERE es el cursor.
+ * `$1` es el arreglo de llaves del lote (JSON); `$2`, la hora de la corrida.
  */
-export function created_at_keyset_sql(at_param: string, id_param: string): string {
-	return `(created_at, id) > (${at_param}, ${id_param})`;
+export function chat_backfill_sqls(tables: { messages: string; conversations: string; members: string }) {
+	const { messages, conversations, members } = tables;
+	const pending = legacy_pending('m.');
+	const in_batch = `IN (SELECT jsonb_array_elements_text($1::jsonb))`;
+	const new_id = `left(replace(gen_random_uuid()::text, '-', ''), 24)`;
+	const attachments = `CASE WHEN jsonb_typeof(m.payload -> 'attachments') = 'array'
+		THEN m.payload -> 'attachments' ELSE '[]'::jsonb END`;
+	// Igual que la búsqueda del chat: minúsculas y sin diacríticos (NFD).
+	const search_text = `NULLIF(btrim(lower(regexp_replace(normalize(concat_ws(' ', m.payload ->> 'message',
+		(SELECT string_agg(a ->> 'name', ' ') FROM jsonb_array_elements(${attachments}) a)), NFD),
+		'[\u0300-\u036f]', '', 'g'))), '')`;
+	const first_mime = `l.payload #>> '{attachments,0,mimetype}'`;
+	return {
+		pending_keys: `SELECT DISTINCT m.payload ->> 'conversationKey' AS key
+			FROM ${messages} m WHERE ${pending} ORDER BY 1 LIMIT $1`,
+		/** `$1` una llave: si aún le queda algo legado; lo encuentra el índice de `conversationKey`. */
+		key_pending: `SELECT 1 FROM ${messages} m WHERE m.payload ->> 'conversationKey' = $1 AND ${pending} LIMIT 1`,
+		/** `$3`: los ajustes fijos de un directo. */
+		conversations: `INSERT INTO ${conversations}
+				(id, name, description, is_active, kind, conversation_key, last_seq, payload, created_at, updated_at)
+			SELECT ${new_id}, '', '', true,
+				CASE WHEN strpos(k.key, '::') > 0 THEN 'direct' ELSE 'self' END,
+				k.key, 0,
+				jsonb_build_object(
+					'createdById', first.sender,
+					'memberCount', cardinality(string_to_array(k.key, '::')),
+					'participantUserIds', to_jsonb(string_to_array(k.key, '::')),
+					'settings', $3::jsonb,
+					'pins', '[]'::jsonb,
+					'invites', '[]'::jsonb),
+				first.created_at, $2
+			FROM jsonb_array_elements_text($1::jsonb) AS k(key)
+			CROSS JOIN LATERAL (
+				SELECT m.payload ->> 'senderUserId' AS sender, m.created_at FROM ${messages} m
+				WHERE m.payload ->> 'conversationKey' = k.key AND ${pending}
+				ORDER BY m.created_at, m.id LIMIT 1
+			) first
+			WHERE NOT EXISTS (SELECT 1 FROM ${conversations} c WHERE c.conversation_key = k.key)
+			ON CONFLICT DO NOTHING
+			RETURNING id`,
+		/** Un envío nuevo también sube `last_seq`: el lote lo congela antes de leerlo. */
+		lock: `SELECT id FROM ${conversations} WHERE conversation_key ${in_batch} FOR UPDATE`,
+		members: `INSERT INTO ${members}
+				(id, name, description, is_active, state, conversation_id, user_id, role,
+				 last_read_seq, public_read_seq, delivered_seq, payload, created_at, updated_at)
+			SELECT ${new_id}, '', '', true, 'active', c.id, u.user_id, 'member', 0, 0, 0,
+				jsonb_build_object('joinedAt', c.created_at, 'visibleFromSeq', 0, 'mentionSeqs', '[]'::jsonb,
+					'markedUnread', false, 'archived', false, 'notifyLevel', 'default'),
+				c.created_at, $2
+			FROM ${conversations} c
+			CROSS JOIN LATERAL unnest(string_to_array(c.conversation_key, '::')) AS u(user_id)
+			WHERE c.conversation_key ${in_batch}
+				AND NOT EXISTS (SELECT 1 FROM ${members} b WHERE b.conversation_id = c.id AND b.user_id = u.user_id)
+			ON CONFLICT DO NOTHING
+			RETURNING id`,
+		messages: `WITH ranked AS (
+				SELECT m.id, c.id AS conversation_id,
+					COALESCE(c.last_seq, 0) + row_number() OVER (PARTITION BY c.id ORDER BY m.created_at, m.id) AS seq
+				FROM ${messages} m
+				JOIN ${conversations} c ON c.conversation_key = m.payload ->> 'conversationKey'
+				WHERE ${pending} AND c.conversation_key ${in_batch}
+			)
+			UPDATE ${messages} m SET
+				conversation_id = r.conversation_id,
+				seq = r.seq,
+				sender_user_id = NULLIF(m.payload ->> 'senderUserId', ''),
+				kind = CASE WHEN jsonb_array_length(${attachments}) > 0 THEN 'media' ELSE 'text' END,
+				search_field = ${search_text},
+				payload = m.payload || jsonb_build_object('conversationId', r.conversation_id)
+			FROM ranked r
+			WHERE m.id = r.id
+			RETURNING m.id`,
+		last_message: `UPDATE ${conversations} c SET
+				last_seq = l.seq,
+				last_message_at = l.created_at,
+				updated_at = $2,
+				payload = COALESCE(c.payload, '{}'::jsonb) || jsonb_build_object('lastMessage',
+					jsonb_build_object(
+						'messageId', l.id, 'seq', l.seq, 'senderId', l.sender_user_id,
+						'senderName', COALESCE(l.payload ->> 'senderName', ''), 'kind', l.kind,
+						'textPreview', left(COALESCE(l.payload ->> 'message', ''), 160), 'at', l.created_at)
+					|| CASE WHEN l.kind = 'media' THEN jsonb_build_object('attachmentKind', CASE
+						WHEN (l.payload #>> '{attachments,0,isImage}') = 'true' OR ${first_mime} LIKE 'image/%' THEN 'image'
+						WHEN ${first_mime} LIKE 'video/%' THEN 'video'
+						WHEN ${first_mime} LIKE 'audio/%' THEN 'audio'
+						ELSE 'file' END) ELSE '{}'::jsonb END)
+			FROM (
+				SELECT DISTINCT ON (m.conversation_id)
+					m.conversation_id, m.id, m.seq, m.created_at, m.sender_user_id, m.kind, m.payload
+				FROM ${messages} m
+				JOIN ${conversations} batch ON batch.id = m.conversation_id
+				WHERE batch.conversation_key ${in_batch} AND m.seq IS NOT NULL
+				ORDER BY m.conversation_id, m.seq DESC
+			) l
+			WHERE c.id = l.conversation_id AND l.seq > COALESCE(c.last_seq, 0)`,
+		/**
+		 * Enviar es leer; los acuses legados eran públicos, así que la marca pública los conserva.
+		 * Lo que escribe este núcleo lleva `rev` y su lectura vive solo en las marcas: un acuse
+		 * legado nunca lleva la marca más allá de uno de esos que la persona no ha leído.
+		 */
+		read_marks: `WITH legacy_read AS (
+				SELECT m.conversation_id, u.user_id, max(m.seq) AS seq
+				FROM ${messages} m
+				JOIN ${conversations} c ON c.id = m.conversation_id
+				CROSS JOIN LATERAL (
+					SELECT m.sender_user_id AS user_id
+					UNION
+					SELECT jsonb_array_elements_text(CASE WHEN jsonb_typeof(m.payload -> 'readByUserIds') = 'array'
+						THEN m.payload -> 'readByUserIds' ELSE '[]'::jsonb END)
+				) u
+				WHERE c.conversation_key ${in_batch} AND m.seq IS NOT NULL
+				GROUP BY m.conversation_id, u.user_id
+			), capped AS (
+				SELECT b.id, LEAST(r.seq, COALESCE((
+					SELECT min(n.seq) - 1 FROM ${messages} n
+					WHERE n.conversation_id = b.conversation_id AND n.seq > COALESCE(b.last_read_seq, 0)
+						AND n.payload ? 'rev' AND n.sender_user_id IS DISTINCT FROM b.user_id
+				), r.seq)) AS seq
+				FROM legacy_read r
+				JOIN ${members} b ON b.conversation_id = r.conversation_id AND b.user_id = r.user_id
+			)
+			UPDATE ${members} b SET
+				last_read_seq = x.seq,
+				public_read_seq = GREATEST(COALESCE(b.public_read_seq, 0), x.seq),
+				delivered_seq = GREATEST(COALESCE(b.delivered_seq, 0), x.seq),
+				updated_at = $2
+			FROM capped x
+			WHERE b.id = x.id AND x.seq > COALESCE(b.last_read_seq, 0)`,
+	};
+}
+
+/**
+ * Un lote del respaldo dentro de una transacción: el bloqueo de las conversaciones va antes de
+ * numerar, para que un envío concurrente no tome el mismo `seq`.
+ */
+async function backfill_keys(
+	tx: Bun.SQL,
+	sqls: ReturnType<typeof chat_backfill_sqls>,
+	keys: string[],
+	now: string,
+): Promise<{ conversations: number; members: number; messages: number }> {
+	const conversations = (await tx.unsafe(sqls.conversations, [keys, now, DIRECT_CONVERSATION_SETTINGS])).length;
+	await tx.unsafe(sqls.lock, [keys]);
+	const members = (await tx.unsafe(sqls.members, [keys, now])).length;
+	const messages = (await tx.unsafe(sqls.messages, [keys])).length;
+	await tx.unsafe(sqls.last_message, [keys, now]);
+	await tx.unsafe(sqls.read_marks, [keys, now]);
+	return { conversations, members, messages };
+}
+
+/**
+ * Envío del chat en una sola sentencia: sube `last_seq` (el bloqueo de la fila de la
+ * conversación ordena los envíos concurrentes), inserta el mensaje con ese `seq`, avanza
+ * las marcas del remitente (enviar es leer: quita «no leído» y las menciones pendientes) y,
+ * con `attachments`, liga sus subidas. Si algo falla, la sentencia entera se revierte: no
+ * quedan huecos.
+ *
+ * `$1` id, `$2` conversación, `$3` hora, `$4` `lastMessage` sin `seq`, `$5` name, `$6`
+ * remitente, `$7` search_field, `$8` payload, `$9` client_id, `$10` kind, `$11` expires_at,
+ * `$12` si la marca pública avanza, `$13` quien lee al escribirlo un mensaje sin remitente
+ * (el de sistema lo lee quien lo causó), `$14` las subidas a ligar, en orden, y `$15` el programado
+ * que las tenía ligadas.
+ */
+export function chat_insert_message_sql(tables: {
+	messages: string;
+	conversations: string;
+	members: string;
+	attachments: string | null;
+}): string {
+	const { messages, conversations, members, attachments } = tables;
+	const bind = attachments
+		? `, bound AS (
+				UPDATE ${attachments} a SET
+					related_model = 'Message',
+					related_record_id = ins.id,
+					field = 'attachments',
+					index_if_is_array = (b.n - 1)::text,
+					inside_array = 'true',
+					updated_at = $3,
+					payload = COALESCE(a.payload, '{}'::jsonb) || jsonb_build_object('chatUpload',
+						COALESCE(a.payload -> 'chatUpload', '{}'::jsonb) || jsonb_build_object('boundAt', $3::text))
+				FROM ins, jsonb_array_elements_text($14::jsonb) WITH ORDINALITY AS b(id, n)
+				WHERE a.id = b.id AND a.created_by_id = ins.sender_user_id
+					AND (COALESCE(a.related_record_id, '') = '' OR (a.related_model = 'ChatScheduled' AND a.related_record_id = $15))
+			)`
+		: '';
+	// `$3` es la hora en que empezó la petición, que pudo tardar subiendo archivos: la conversación se
+	// fecha al confirmar y nunca hacia atrás, o un `changed_since` tomado entre medias no la vería.
+	const confirmed = `to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
+	return `WITH bump AS (
+			UPDATE ${conversations} SET
+				last_seq = COALESCE(last_seq, 0) + 1,
+				last_message_at = GREATEST(COALESCE(last_message_at, ''), $3, ${confirmed}),
+				updated_at = GREATEST(COALESCE(updated_at, ''), $3, ${confirmed}),
+				payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('lastMessage',
+					$4::jsonb || jsonb_build_object('seq', COALESCE(last_seq, 0) + 1))
+			WHERE id = $2 AND is_active IS DISTINCT FROM false
+			RETURNING id, last_seq
+		), ins AS (
+			INSERT INTO ${messages} (id, name, is_active, created_by, search_field, payload, created_at, updated_at,
+				conversation_id, seq, sender_user_id, client_id, kind, expires_at)
+			SELECT $1, $5, true, $6, $7, $8::jsonb, $3, $3, bump.id, bump.last_seq, $6, $9, $10, $11 FROM bump
+			RETURNING *
+		), mark AS (
+			UPDATE ${members} m SET
+				last_read_seq = GREATEST(COALESCE(m.last_read_seq, 0), ins.seq),
+				delivered_seq = GREATEST(COALESCE(m.delivered_seq, 0), ins.seq),
+				public_read_seq = CASE WHEN $12::boolean
+					THEN GREATEST(COALESCE(m.public_read_seq, 0), ins.seq) ELSE m.public_read_seq END,
+				payload = COALESCE(m.payload, '{}'::jsonb) || '{"markedUnread": false, "mentionSeqs": []}'::jsonb,
+				updated_at = $3
+			FROM ins
+			WHERE m.conversation_id = ins.conversation_id AND m.user_id = COALESCE(ins.sender_user_id, $13)
+		)${bind}
+		SELECT * FROM ins`;
+}
+
+/**
+ * Obtener o crear el directo (o el self) de una llave. Sin destino en ON CONFLICT: el único
+ * de `conversation_key` es parcial. `$1` id nuevo, `$2` kind, `$3` llave, `$4` payload, `$5`
+ * hora; los miembros: `$1` conversación, `$2` ids (JSON), `$3` payload, `$4` hora.
+ */
+export function chat_direct_sqls(tables: { conversations: string; members: string }) {
+	const { conversations, members } = tables;
+	return {
+		conversation: `INSERT INTO ${conversations}
+				(id, name, description, is_active, kind, conversation_key, last_seq, payload, created_at, updated_at)
+			VALUES ($1, '', '', true, $2, $3, 0, $4::jsonb, $5, $5)
+			ON CONFLICT DO NOTHING
+			RETURNING id`,
+		find: `SELECT * FROM ${conversations} WHERE conversation_key = $1 LIMIT 1`,
+		members: `INSERT INTO ${members}
+				(id, name, description, is_active, state, conversation_id, user_id, role,
+				 last_read_seq, public_read_seq, delivered_seq, payload, created_at, updated_at)
+			SELECT left(replace(gen_random_uuid()::text, '-', ''), 24), '', '', true, 'active', $1, u.user_id, 'member',
+				0, 0, 0, $3::jsonb, $4, $4
+			FROM jsonb_array_elements_text($2::jsonb) AS u(user_id)
+			WHERE NOT EXISTS (SELECT 1 FROM ${members} b WHERE b.conversation_id = $1 AND b.user_id = u.user_id)
+			ON CONFLICT DO NOTHING`,
+	};
+}
+
+export type ChatMessageInsert = {
+	id: string;
+	conversation_id: string;
+	/** `null` en un mensaje de sistema. */
+	sender_user_id: string | null;
+	/** Quien causó un mensaje de sistema: lo lee al escribirlo. */
+	reader_user_id?: string;
+	client_id: string | null;
+	kind: string;
+	name: string;
+	search_field: string | null;
+	payload: ImperiumDoc;
+	/** `lastMessage` de la conversación; el `seq` lo pone la sentencia. */
+	preview: ImperiumDoc;
+	expires_at: string | null;
+	/** El remitente comparte acuses: su marca pública también avanza. */
+	share_read: boolean;
+	attachment_ids: string[];
+	/** El programado que sale ahora: sus subidas pasan al mensaje. */
+	uploads_from?: string;
+	now: string;
+};
+
+export type ChatUserBrief = { _id: string; name: string; email?: string; img?: string; is_active: boolean };
+
+export type ChatPageDirection = 'tail' | 'before' | 'after' | 'from';
+
+/** Los tipos que escribe el servidor (mensajes de sistema y de llamada): nunca los manda una persona. */
+export const CHAT_SERVER_KINDS = ['system', 'call'] as const;
+const USER_KIND_SQL = `COALESCE(kind, '') NOT IN (${CHAT_SERVER_KINDS.map((kind) => `'${kind}'`).join(', ')})`;
+
+/** Lo que alguien ocultó para sí («borrar para mí») no le sale a esa persona. */
+function not_hidden_for(viewer_param: string): string {
+	return `NOT (COALESCE(payload -> 'hiddenForUserIds', '[]'::jsonb) ? ${viewer_param})`;
+}
+
+/**
+ * Página de un hilo por `seq`; el único `(conversation_id, seq)` la sirve. `$1` conversación,
+ * `$2` el `seq` desde el que el lector ve (exclusivo), `$3` límite, `$4` el ancla (antes de
+ * ella, después o desde ella; sin ancla, la cola) y el lector al final.
+ */
+export function chat_message_page_sql(messages: string, direction: ChatPageDirection, user_only = false): string {
+	const visible = `SELECT * FROM ${messages}
+		WHERE conversation_id = $1 AND seq > $2 AND is_active IS DISTINCT FROM false
+			AND ${not_hidden_for(direction === 'tail' ? '$4' : '$5')}${user_only ? ` AND ${USER_KIND_SQL}` : ''}`;
+	if (direction === 'tail') return `${visible} ORDER BY seq DESC LIMIT $3`;
+	if (direction === 'before') return `${visible} AND seq < $4 ORDER BY seq DESC LIMIT $3`;
+	return `${visible} AND seq ${direction === 'after' ? '>' : '>='} $4 ORDER BY seq LIMIT $3`;
+}
+
+/**
+ * Lo ya cargado (`seq` ≤ `$3`) que cambió después de `$4`; lo sirve `(conversation_id, updated_at)`.
+ * `$5` límite y `$6` el lector.
+ */
+export function chat_changed_messages_sql(messages: string): string {
+	return `SELECT * FROM ${messages}
+		WHERE conversation_id = $1 AND seq > $2 AND seq <= $3 AND updated_at > $4 AND is_active IS DISTINCT FROM false
+			AND ${not_hidden_for('$6')}
+		ORDER BY updated_at, id LIMIT $5`;
+}
+
+/** Cada cambio de un mensaje sube su `rev`: el cliente descarta un delta con un `rev` que ya tiene. */
+function next_rev(alias: string): string {
+	return `jsonb_build_object('rev', COALESCE((${alias}.payload ->> 'rev')::int, 0) + 1)`;
+}
+
+/** El mensaje vivo y sin lápida, bloqueado: la edición y el borrado leen su «antes» de aquí. */
+function live_message_cte(messages: string): string {
+	return `old AS (
+			SELECT id, conversation_id, seq, kind, payload FROM ${messages}
+			WHERE id = $1 AND is_active IS DISTINCT FROM false AND NOT (COALESCE(payload, '{}'::jsonb) ? 'deleted')
+			FOR UPDATE
+		)`;
+}
+
+/**
+ * Editar en una sentencia: el texto nuevo, `editedAt`, `editCount` y `rev`; la fila de
+ * `chat-audit` con el antes y el después; y la vista previa de la conversación si era su último
+ * mensaje. Sin fila: el mensaje no existe, está inactivo o ya tiene lápida.
+ *
+ * `$1` mensaje, `$2` texto, `$3` search_field, `$4` hora, `$5` lo demás que cambia (JSON),
+ * `$6` id de la auditoría, `$7` quien edita y `$8` la vista previa.
+ */
+export function chat_edit_message_sql(tables: { messages: string; conversations: string; audit: string }): string {
+	const { messages, conversations, audit } = tables;
+	return `WITH ${live_message_cte(messages)}, upd AS (
+			UPDATE ${messages} m SET
+				payload = COALESCE(m.payload, '{}'::jsonb) || $5::jsonb || jsonb_build_object(
+					'message', $2::text,
+					'editedAt', $4::text,
+					'editCount', COALESCE((m.payload ->> 'editCount')::int, 0) + 1) || ${next_rev('m')},
+				search_field = $3,
+				updated_at = $4
+			FROM old WHERE m.id = old.id
+			RETURNING m.*
+		), audit AS (
+			INSERT INTO ${audit} (id, name, description, is_active, created_by, conversation_id, message_id, actor_id,
+				action, payload, created_at, updated_at)
+			SELECT $6, '', '', true, $7, old.conversation_id, old.id, $7, 'edit',
+				jsonb_build_object('before', jsonb_build_object('text', COALESCE(old.payload ->> 'message', '')),
+					'after', jsonb_build_object('text', $2::text)),
+				$4, $4
+			FROM old
+		), last AS (
+			UPDATE ${conversations} c SET
+				payload = jsonb_set(c.payload, '{lastMessage,textPreview}', to_jsonb($8::text)),
+				updated_at = $4
+			FROM old WHERE c.id = old.conversation_id AND c.payload #>> '{lastMessage,messageId}' = old.id
+			RETURNING c.payload -> 'lastMessage' AS last_message
+		)
+		SELECT upd.*, (SELECT last_message FROM last) AS conversation_last_message FROM upd`;
+}
+
+/** Lo que una lápida vacía: el contenido y lo que lo describe o lo cita. */
+const TOMBSTONE_DROPS = `'{attachments,poll,voice,recordCard,mentions,mediaKinds,links,replyPreview,replyToMessageId,viewOnce,forwardedFrom,storyRef}'::text[]`;
+
+/** El contenido de `old` que la auditoría guarda como «antes» al borrarlo o al caducar. */
+const MESSAGE_CONTENT = `jsonb_strip_nulls(jsonb_build_object(
+	'kind', old.kind, 'text', old.payload ->> 'message', 'attachments', old.payload -> 'attachments',
+	'poll', old.payload -> 'poll', 'voice', old.payload -> 'voice', 'recordCard', old.payload -> 'recordCard',
+	'mentions', old.payload -> 'mentions', 'replyToMessageId', old.payload ->> 'replyToMessageId'))`;
+
+/**
+ * Borrar para todos en una sentencia: la lápida (`message` vacío, sin contenido, `deleted` y
+ * `search_field` nulo), la fila de `chat-audit` con el antes, el texto de las respuestas que lo
+ * citan (con su `rev`) y la vista previa de la conversación si era su último mensaje.
+ *
+ * `$1` mensaje, `$2` hora, `$3` `deleted` (JSON), `$4` id de la auditoría, `$5` quien borra,
+ * `$6` la acción (`delete` o `delete_moderator`) y `$7` el remitente si lo borra otro.
+ */
+export function chat_delete_message_sql(tables: {
+	messages: string;
+	conversations: string;
+	audit: string;
+	saved: string;
+	members: string;
+}): string {
+	const { messages, conversations, audit, saved, members } = tables;
+	return `WITH ${live_message_cte(messages)}, upd AS (
+			UPDATE ${messages} m SET
+				payload = (COALESCE(m.payload, '{}'::jsonb) - ${TOMBSTONE_DROPS})
+					|| jsonb_build_object('message', '', 'deleted', $3::jsonb) || ${next_rev('m')},
+				search_field = NULL,
+				updated_at = $2
+			FROM old WHERE m.id = old.id
+			RETURNING m.*
+		), audit AS (
+			INSERT INTO ${audit} (id, name, description, is_active, created_by, conversation_id, message_id, actor_id,
+				action, payload, created_at, updated_at)
+			SELECT $4, '', '', true, $5, old.conversation_id, old.id, $5, $6,
+				jsonb_strip_nulls(jsonb_build_object('before', ${MESSAGE_CONTENT}, 'targetUserId', $7::text)),
+				$2, $2
+			FROM old
+		), quotes AS (
+			UPDATE ${messages} q SET
+				payload = q.payload || jsonb_build_object('replyPreview',
+					((q.payload -> 'replyPreview') - 'attachmentKind') || '{"textPreview": null, "deleted": true}'::jsonb)
+					|| ${next_rev('q')},
+				updated_at = $2
+			FROM old
+			WHERE q.payload ->> 'replyToMessageId' = old.id AND q.conversation_id = old.conversation_id
+				AND q.id <> old.id AND jsonb_typeof(q.payload -> 'replyPreview') = 'object'
+			RETURNING jsonb_build_object('id', q.id, 'seq', q.seq, 'rev', q.payload -> 'rev',
+				'reply_preview', q.payload -> 'replyPreview', 'updated_at', q.updated_at) AS quote
+		), last AS (
+			UPDATE ${conversations} c SET
+				payload = c.payload || jsonb_build_object('lastMessage',
+					((c.payload -> 'lastMessage') - 'attachmentKind') || '{"textPreview": "", "deleted": true}'::jsonb),
+				updated_at = $2
+			FROM old WHERE c.id = old.conversation_id AND c.payload #>> '{lastMessage,messageId}' = old.id
+			RETURNING c.payload -> 'lastMessage' AS last_message
+		), ${unsave_text_sql(saved)}, ${unmention_sql(members)}
+		SELECT upd.*, (SELECT last_message FROM last) AS conversation_last_message,
+			(SELECT COALESCE(jsonb_agg(quote), '[]'::jsonb) FROM quotes) AS quoting
+		FROM upd`;
+}
+
+/** CTE `unmentioned`: los `seq` de `old` salen de las menciones pendientes de cada miembro. */
+function unmention_sql(members: string): string {
+	const gone = `(SELECT o.seq::numeric FROM old o WHERE o.conversation_id = m.conversation_id)`;
+	return `unmentioned AS (
+			UPDATE ${members} m SET payload = m.payload || jsonb_build_object('mentionSeqs', COALESCE(
+				(SELECT jsonb_agg(s) FROM ${MENTION_SEQS} WHERE (s #>> '{}')::numeric NOT IN ${gone}), '[]'::jsonb))
+			WHERE m.conversation_id IN (SELECT conversation_id FROM old)
+				AND EXISTS (SELECT 1 FROM ${MENTION_SEQS} WHERE (s #>> '{}')::numeric IN ${gone})
+		)`;
+}
+
+/** CTE `saved`: lo guardado de los mensajes de `old` se queda sin el texto de su vista previa. */
+function unsave_text_sql(saved: string): string {
+	return `saved AS (
+			UPDATE ${saved} s SET payload = jsonb_set(s.payload, '{preview,textPreview}', '""'::jsonb)
+			FROM old WHERE s.message_id = old.id AND jsonb_typeof(s.payload -> 'preview') = 'object'
+		)`;
+}
+
+/**
+ * «Borrar para mí»: solo agrega al lector a `hiddenForUserIds`. No toca `rev` ni `updated_at`:
+ * para los demás el mensaje no cambió. `$1` mensaje, `$2` lector.
+ */
+export function chat_hide_message_sql(messages: string): string {
+	return `UPDATE ${messages} SET
+			payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('hiddenForUserIds',
+				COALESCE(payload -> 'hiddenForUserIds', '[]'::jsonb) || to_jsonb($2::text))
+		WHERE id = $1 AND is_active IS DISTINCT FROM false AND ${not_hidden_for('$2')}
+		RETURNING id`;
+}
+
+/**
+ * Abrir un mensaje de ver una vez: agrega al lector y sube `rev`, una sola vez por persona. Sin
+ * fila: ya lo abrió o el mensaje ya no está vivo. `$1` mensaje, `$2` lector, `$3` hora.
+ */
+export function chat_open_view_once_sql(messages: string): string {
+	const opened = `COALESCE(payload #> '{viewOnce,openedByUserIds}', '[]'::jsonb)`;
+	return `UPDATE ${messages} m SET
+			payload = jsonb_set(m.payload, '{viewOnce,openedByUserIds}', ${opened} || to_jsonb($2::text)) || ${next_rev('m')},
+			updated_at = $3
+		WHERE id = $1 AND is_active IS DISTINCT FROM false AND NOT (COALESCE(payload, '{}'::jsonb) ? 'deleted')
+			AND jsonb_typeof(payload -> 'viewOnce') = 'object' AND NOT (${opened} ? $2)
+		RETURNING *`;
+}
+
+const NEW_ROW_ID = `left(replace(gen_random_uuid()::text, '-', ''), 24)`;
+
+/** El mensaje sigue vivo, sin lápida; `FOR UPDATE` ordena las reacciones y los votos sobre él. */
+function lock_live_message_sql(messages: string, extra = ''): string {
+	return `SELECT id, conversation_id, COALESCE((payload ->> 'rev')::int, 0) AS rev, updated_at FROM ${messages}
+		WHERE id = $1 AND is_active IS DISTINCT FROM false AND NOT (COALESCE(payload, '{}'::jsonb) ? 'deleted')${extra}
+		FOR UPDATE`;
+}
+
+/** `rev` + 1 y `updated_at`, para que el delta y el sync vean el cambio. `$1` mensaje, `$2` hora. */
+function bump_message_sql(messages: string): string {
+	return `UPDATE ${messages} m SET payload = COALESCE(m.payload, '{}'::jsonb) || ${next_rev('m')}, updated_at = $2
+		WHERE id = $1
+		RETURNING (m.payload ->> 'rev')::int AS rev, m.updated_at`;
+}
+
+/**
+ * Reacciones de un mensaje (`chat_toggle_reaction`), dentro de una transacción que primero bloquea
+ * el mensaje: así el tope por persona no se pasa con dos pedidos a la vez.
+ */
+export function chat_reaction_sqls(tables: { messages: string; reactions: string }) {
+	const { messages, reactions } = tables;
+	return {
+		lock: lock_live_message_sql(messages),
+		/** `$1` mensaje, `$2` persona. */
+		mine: `SELECT value FROM ${reactions} WHERE message_id = $1 AND user_id = $2 AND kind = 'emoji'`,
+		/** `$1` mensaje, `$2` conversación, `$3` persona, `$4` emoji, `$5` hora. */
+		add: `INSERT INTO ${reactions} (id, name, description, is_active, created_by, message_id, conversation_id, user_id,
+				kind, value, payload, created_at, updated_at)
+			VALUES (${NEW_ROW_ID}, '', '', true, $3, $1, $2, $3, 'emoji', $4, '{}'::jsonb, $5, $5)
+			ON CONFLICT DO NOTHING
+			RETURNING id`,
+		/** `$1` mensaje, `$2` persona, `$3` emoji. */
+		remove: `DELETE FROM ${reactions} WHERE message_id = $1 AND user_id = $2 AND kind = 'emoji' AND value = $3 RETURNING id`,
+		bump: bump_message_sql(messages),
+		/** `$1` mensaje, `$2` emoji. */
+		count: `SELECT count(*)::int AS count FROM ${reactions} WHERE message_id = $1 AND kind = 'emoji' AND value = $2`,
+	};
+}
+
+/**
+ * Votos de una encuesta (`chat_replace_votes`) en una transacción: bloquear el mensaje abierto,
+ * quitar lo que ya no se elige y agregar lo nuevo. Con el bloqueo primero, dos votos seguidos de
+ * la misma persona no se suman: el segundo ve lo que dejó el primero.
+ */
+export function chat_vote_sqls(tables: { messages: string; reactions: string }) {
+	const { messages, reactions } = tables;
+	return {
+		lock: lock_live_message_sql(
+			messages,
+			` AND jsonb_typeof(payload -> 'poll') = 'object' AND (payload #>> '{poll,closedAt}') IS NULL`,
+		),
+		/** `$1` mensaje, `$2` persona. */
+		mine: `SELECT value FROM ${reactions} WHERE message_id = $1 AND user_id = $2 AND kind = 'vote'`,
+		/** `$1` mensaje, `$2` persona, `$3` opciones elegidas (JSON). */
+		drop: `DELETE FROM ${reactions}
+			WHERE message_id = $1 AND user_id = $2 AND kind = 'vote'
+				AND value NOT IN (SELECT jsonb_array_elements_text($3::jsonb))
+			RETURNING id`,
+		/** `$1` mensaje, `$2` conversación, `$3` persona, `$4` opciones elegidas (JSON), `$5` hora. */
+		add: `INSERT INTO ${reactions} (id, name, description, is_active, created_by, message_id, conversation_id, user_id,
+				kind, value, payload, created_at, updated_at)
+			SELECT ${NEW_ROW_ID}, '', '', true, $3, $1, $2, $3, 'vote', v.value, '{}'::jsonb, $5, $5
+			FROM jsonb_array_elements_text($4::jsonb) AS v(value)
+			ON CONFLICT DO NOTHING
+			RETURNING id`,
+		bump: bump_message_sql(messages),
+	};
+}
+
+/** Cerrar una encuesta abierta: `closedAt` y `rev`. `$1` mensaje, `$2` hora. */
+export function chat_close_poll_sql(messages: string): string {
+	return `UPDATE ${messages} m SET
+			payload = jsonb_set(m.payload, '{poll,closedAt}', to_jsonb($2::text)) || ${next_rev('m')},
+			updated_at = $2
+		WHERE id = $1 AND is_active IS DISTINCT FROM false AND NOT (COALESCE(payload, '{}'::jsonb) ? 'deleted')
+			AND jsonb_typeof(payload -> 'poll') = 'object' AND (payload #>> '{poll,closedAt}') IS NULL
+		RETURNING *`;
+}
+
+/**
+ * Votos de las encuestas de una página en una consulta: un renglón por opción y uno por mensaje
+ * (`total`) con las personas distintas que votaron. `$1` mensajes (JSON), `$2` lector.
+ */
+export function chat_poll_tally_sql(reactions: string): string {
+	return `SELECT message_id, value AS option_id, grouping(value) = 1 AS total,
+			count(DISTINCT user_id)::int AS votes, bool_or(user_id = $2) AS mine,
+			jsonb_agg(user_id ORDER BY created_at, id) AS voter_ids
+		FROM ${reactions}
+		WHERE message_id IN (SELECT jsonb_array_elements_text($1::jsonb)) AND kind = 'vote'
+		GROUP BY GROUPING SETS ((message_id, value), (message_id))`;
+}
+
+/**
+ * Leído y entregado de un mensaje por las marcas de agua de los demás miembros activos.
+ * `$1` conversación, `$2` seq del mensaje y `$3` el remitente, que no cuenta.
+ */
+export function chat_message_receipts_sql(members: string): string {
+	const read = 'COALESCE(public_read_seq, 0) >= $2';
+	const delivered = 'COALESCE(delivered_seq, 0) >= $2';
+	return `SELECT count(*)::int AS member_count,
+			count(*) FILTER (WHERE ${read})::int AS read_count,
+			count(*) FILTER (WHERE ${delivered})::int AS delivered_count,
+			COALESCE(jsonb_agg(user_id ORDER BY user_id) FILTER (WHERE ${read}), '[]'::jsonb) AS read_ids,
+			COALESCE(jsonb_agg(user_id ORDER BY user_id) FILTER (WHERE ${delivered}), '[]'::jsonb) AS delivered_ids
+		FROM ${members}
+		WHERE conversation_id = $1 AND state = 'active' AND is_active IS DISTINCT FROM false
+			AND user_id IS DISTINCT FROM $3`;
+}
+
+/**
+ * Una mención pendiente más para cada miembro activo que aún no leyó ese `seq`; se guardan las
+ * 20 más nuevas. `$1` conversación, `$2` personas (JSON), `$3` seq y `$4` hora.
+ */
+export function chat_add_mention_seqs_sql(members: string): string {
+	return `UPDATE ${members} m SET
+			payload = COALESCE(m.payload, '{}'::jsonb) || jsonb_build_object('mentionSeqs', (
+				SELECT COALESCE(jsonb_agg(s ORDER BY s), '[]'::jsonb) FROM (
+					SELECT s FROM (
+						SELECT (s #>> '{}')::numeric AS s FROM ${MENTION_SEQS}
+						UNION SELECT $3::numeric
+					) seqs ORDER BY s DESC LIMIT 20
+				) newest)),
+			updated_at = $4
+		WHERE m.conversation_id = $1 AND m.user_id IN (SELECT jsonb_array_elements_text($2::jsonb))
+			AND m.state = 'active' AND COALESCE(m.last_read_seq, 0) < $3
+		RETURNING m.user_id`;
+}
+
+const ACTIVITY_UNREAD = `COALESCE(payload ->> 'isRead', '') <> 'true'`;
+
+export type ChatActivityQuery = {
+	user_id: string;
+	context_types?: string[];
+	unread?: boolean;
+	before?: { at: string; id: string };
+	limit: number;
+};
+
+/** La bandeja de Actividad de una persona por keyset `(created_at, id)`, del más nuevo al más viejo. */
+export function chat_activity_page_sql(mentions: string, query: ChatActivityQuery): { sql: string; params: unknown[] } {
+	const params: unknown[] = [query.user_id];
+	const param = (value: unknown) => {
+		params.push(value);
+		return `$${params.length}`;
+	};
+	const where = [`payload ->> 'mentionedUserId' = $1`, 'is_active IS DISTINCT FROM false'];
+	if (query.context_types) {
+		where.push(`payload ->> 'contextType' IN (SELECT jsonb_array_elements_text(${param(query.context_types)}::jsonb))`);
+	}
+	if (query.unread) where.push(ACTIVITY_UNREAD);
+	if (query.before) where.push(created_at_keyset_sql(param(query.before.at), param(query.before.id), '<'));
+	return {
+		sql: `SELECT * FROM ${mentions} WHERE ${where.join(' AND ')}
+			ORDER BY created_at DESC, id DESC LIMIT ${param(query.limit)}`,
+		params,
+	};
+}
+
+/** Las no leídas de cada filtro de la bandeja de Actividad en una agregación. `$1` persona. */
+export function chat_activity_counts_sql(mentions: string): string {
+	const of = (types: string[]) => `payload ->> 'contextType' IN (${types.map((type) => `'${type}'`).join(', ')})`;
+	return `SELECT count(*)::int AS "all",
+			count(*) FILTER (WHERE ${of(ACTIVITY_CONTEXTS.chat)})::int AS chat,
+			count(*) FILTER (WHERE ${of(ACTIVITY_CONTEXTS.history)})::int AS history,
+			count(*) FILTER (WHERE ${of(ACTIVITY_CONTEXTS.reactions)})::int AS reactions
+		FROM ${mentions}
+		WHERE payload ->> 'mentionedUserId' = $1 AND is_active IS DISTINCT FROM false AND ${ACTIVITY_UNREAD}`;
+}
+
+/**
+ * Marcar leída la actividad de una persona (todas, unas o las de un filtro) y la notificación que
+ * cada una tenga ligada. `$1` persona, `$2` ids (JSON o nulo), `$3` contextos (JSON o nulo), `$4` hora.
+ */
+export function chat_mark_activity_read_sql(tables: { mentions: string; notifications: string }): string {
+	return `WITH read AS (
+			UPDATE ${tables.mentions} SET payload = COALESCE(payload, '{}'::jsonb) || '{"isRead": true}'::jsonb, updated_at = $4
+			WHERE payload ->> 'mentionedUserId' = $1 AND is_active IS DISTINCT FROM false AND ${ACTIVITY_UNREAD}
+				AND ($2::jsonb IS NULL OR id IN (SELECT jsonb_array_elements_text($2::jsonb)))
+				AND ($3::jsonb IS NULL OR payload ->> 'contextType' IN (SELECT jsonb_array_elements_text($3::jsonb)))
+			RETURNING id, payload ->> 'notificationId' AS notification_id
+		), linked AS (
+			UPDATE ${tables.notifications} n SET payload = COALESCE(n.payload, '{}'::jsonb) || '{"isRead": true}'::jsonb, updated_at = $4
+			FROM read WHERE n.id = read.notification_id AND n.payload ->> 'recipientId' = $1
+			RETURNING n.id
+		)
+		SELECT read.id, (SELECT COALESCE(jsonb_agg(id), '[]'::jsonb) FROM linked) AS notification_ids FROM read`;
+}
+
+/**
+ * Retirar la actividad que apunta a un mensaje (borrado, o una reacción que se quitó). `$1`
+ * mensaje, `$2` contexto, `$3` quien la causó y `$4` la reacción (cada filtro nulo no aplica),
+ * `$5` hora.
+ */
+export function chat_retire_activity_sql(mentions: string): string {
+	return `UPDATE ${mentions} SET is_active = false, updated_at = $5
+		WHERE payload ->> 'messageId' = $1 AND is_active IS DISTINCT FROM false
+			AND ($2::text IS NULL OR payload ->> 'contextType' = $2)
+			AND ($3::text IS NULL OR payload ->> 'actorId' = $3)
+			AND ($4::text IS NULL OR payload ->> 'reaction' = $4)
+		RETURNING id, payload ->> 'mentionedUserId' AS user_id`;
+}
+
+/** Las reacciones de una página: un renglón por mensaje y emoji. `$1` mensajes (JSON), `$2` lector. */
+export function chat_reaction_summary_sql(reactions: string): string {
+	return `SELECT message_id, value AS emoji, count(*)::int AS count, bool_or(user_id = $2) AS mine,
+			(array_agg(user_id ORDER BY created_at, id))[1:3] AS sample_user_ids
+		FROM ${reactions}
+		WHERE message_id IN (SELECT jsonb_array_elements_text($1::jsonb)) AND kind = 'emoji'
+		GROUP BY message_id, value
+		ORDER BY message_id, min(created_at), value`;
+}
+
+const MENTION_SEQS = `jsonb_array_elements(CASE WHEN jsonb_typeof(m.payload -> 'mentionSeqs') = 'array'
+	THEN m.payload -> 'mentionSeqs' ELSE '[]'::jsonb END) s`;
+const UNREAD = 'GREATEST(COALESCE(c.last_seq, 0) - COALESCE(m.last_read_seq, 0), 0)';
+const ARCHIVED = `COALESCE(m.payload ->> 'archived', '') = 'true'`;
+const MARKED_UNREAD = `COALESCE(m.payload ->> 'markedUnread', '') = 'true'`;
+const ACTIVITY = 'COALESCE(c.last_message_at, c.created_at)';
+
+export type ChatInboxFilter = 'all' | 'unread' | 'mentions' | 'direct' | 'groups' | 'archived';
+
+export type ChatInboxQuery = {
+	user_id: string;
+	/** Sin filtro también salen las archivadas (resumen y rutas heredadas). */
+	filter?: ChatInboxFilter;
+	kinds?: string[];
+	folder?: string;
+	/** Resincronización: sin filtros y con las bajas. */
+	changed_since?: string;
+	conversation_ids?: string[];
+	/** `true`: solo las fijadas, en su orden; `false`: sin ellas. */
+	pinned?: boolean;
+	cursor?: { at: string; id: string };
+	limit: number;
+};
+
+/**
+ * Bandeja por actividad, en keyset `(última actividad, id)`. Los no leídos salen de las marcas
+ * de agua (`last_seq − last_read_seq`): enviar es leer, así que lo propio nunca cuenta.
+ */
+export function chat_inbox_sql(
+	tables: { conversations: string; members: string },
+	query: ChatInboxQuery,
+): { sql: string; params: unknown[] } {
+	const params: unknown[] = [query.user_id];
+	const param = (value: unknown) => {
+		params.push(value);
+		return `$${params.length}`;
+	};
+	const where = ['m.user_id = $1', 'm.is_active IS DISTINCT FROM false'];
+	if (query.changed_since) {
+		where.push(
+			`m.state IN ('active', 'left', 'removed', 'banned')`,
+			`GREATEST(c.updated_at, m.updated_at) > ${param(query.changed_since)}`,
+		);
+	} else {
+		where.push(`m.state = 'active'`, 'c.is_active IS DISTINCT FROM false');
+		if (query.filter === 'archived') where.push(ARCHIVED);
+		else if (query.filter) where.push(`NOT (${ARCHIVED})`);
+		if (query.filter === 'unread') where.push(`(${UNREAD} > 0 OR ${MARKED_UNREAD})`);
+		if (query.filter === 'mentions') {
+			where.push(`EXISTS (SELECT 1 FROM ${MENTION_SEQS} WHERE (s #>> '{}')::numeric > COALESCE(m.last_read_seq, 0))`);
+		}
+		if (query.filter === 'direct') where.push(`c.kind IN ('direct', 'self')`);
+		if (query.filter === 'groups') where.push(`c.kind IN ('group', 'channel', 'meeting')`);
+		if (query.kinds) where.push(`c.kind IN (SELECT jsonb_array_elements_text(${param(query.kinds)}::jsonb))`);
+		if (query.folder) where.push(`m.payload ->> 'folder' = ${param(query.folder)}`);
+		if (query.pinned !== undefined) {
+			where.push(`jsonb_typeof(m.payload -> 'pinnedOrder') ${query.pinned ? '=' : 'IS DISTINCT FROM'} 'number'`);
+		}
+	}
+	if (query.conversation_ids) {
+		where.push(`m.conversation_id IN (SELECT jsonb_array_elements_text(${param(query.conversation_ids)}::jsonb))`);
+	}
+	if (query.cursor) where.push(`(${ACTIVITY}, c.id) < (${param(query.cursor.at)}, ${param(query.cursor.id)})`);
+	const order = query.pinned
+		? `(m.payload ->> 'pinnedOrder')::numeric, ${ACTIVITY} DESC, c.id DESC`
+		: `${ACTIVITY} DESC, c.id DESC`;
+	return {
+		sql: `SELECT c.*, m.id AS member_id, m.role AS member_role, m.state AS member_state,
+				m.last_read_seq, m.public_read_seq, m.delivered_seq, m.payload AS member_payload,
+				m.updated_at AS member_updated_at, ${ACTIVITY} AS activity_at, ${UNREAD} AS unread_count,
+				COALESCE((SELECT jsonb_agg(s ORDER BY (s #>> '{}')::numeric) FROM ${MENTION_SEQS}
+					WHERE (s #>> '{}')::numeric > COALESCE(m.last_read_seq, 0)), '[]'::jsonb) AS unread_mention_seqs
+			FROM ${tables.members} m JOIN ${tables.conversations} c ON c.id = m.conversation_id
+			WHERE ${where.join(' AND ')}
+			ORDER BY ${order}
+			LIMIT ${param(query.limit)}`,
+		params,
+	};
+}
+
+/** Los conteos de la bandeja (`ChatInboxCounts`) en una sola agregación. `$1` usuario, `$2` hora. */
+export function chat_inbox_counts_sql(tables: { conversations: string; members: string; mentions: string }): string {
+	return `SELECT
+			count(*) FILTER (WHERE NOT archived)::int AS "all",
+			count(*) FILTER (WHERE NOT archived AND (unread > 0 OR marked))::int AS unread,
+			count(*) FILTER (WHERE NOT archived AND mentions > 0)::int AS mentions,
+			count(*) FILTER (WHERE NOT archived AND kind IN ('direct', 'self'))::int AS direct,
+			count(*) FILTER (WHERE NOT archived AND kind IN ('group', 'channel', 'meeting'))::int AS groups,
+			count(*) FILTER (WHERE archived)::int AS archived,
+			COALESCE(sum(unread) FILTER (WHERE NOT archived AND NOT muted), 0)::int AS unread_messages_total,
+			(SELECT count(*) FROM ${tables.mentions}
+				WHERE payload ->> 'mentionedUserId' = $1 AND is_active IS DISTINCT FROM false
+					AND COALESCE(payload ->> 'isRead', '') <> 'true')::int AS activity_unread
+		FROM (
+			SELECT c.kind, ${ARCHIVED} AS archived, ${MARKED_UNREAD} AS marked,
+				COALESCE(m.payload ->> 'mutedUntil', '') > $2 AS muted, ${UNREAD} AS unread,
+				(SELECT count(*) FROM ${MENTION_SEQS} WHERE (s #>> '{}')::numeric > COALESCE(m.last_read_seq, 0)) AS mentions
+			FROM ${tables.members} m JOIN ${tables.conversations} c ON c.id = m.conversation_id
+			WHERE m.user_id = $1 AND m.state = 'active' AND m.is_active IS DISTINCT FROM false
+				AND c.is_active IS DISTINCT FROM false
+		) t`;
+}
+
+/**
+ * Marca de leído monótona y acotada a `last_seq`; poda las menciones ya leídas, quita
+ * «no leído» y mueve la marca pública solo si el usuario comparte acuses (`$4`). `$1`
+ * conversación, `$2` usuario, `$3` seq leído, `$5` hora.
+ */
+export function chat_mark_read_sql(tables: { conversations: string; members: string }): string {
+	const read = 'LEAST(GREATEST(COALESCE(m.last_read_seq, 0), $3), COALESCE(c.last_seq, 0))';
+	return `UPDATE ${tables.members} m SET
+			last_read_seq = ${read},
+			public_read_seq = CASE WHEN $4::boolean
+				THEN GREATEST(COALESCE(m.public_read_seq, 0), ${read}) ELSE m.public_read_seq END,
+			delivered_seq = GREATEST(COALESCE(m.delivered_seq, 0), ${read}),
+			payload = COALESCE(m.payload, '{}'::jsonb) || jsonb_build_object(
+				'markedUnread', false,
+				'mentionSeqs', COALESCE((SELECT jsonb_agg(s) FROM ${MENTION_SEQS}
+					WHERE (s #>> '{}')::numeric > ${read}), '[]'::jsonb)),
+			updated_at = $5
+		FROM ${tables.conversations} c
+		WHERE m.conversation_id = $1 AND m.user_id = $2 AND m.state = 'active' AND c.id = m.conversation_id
+		RETURNING m.last_read_seq, m.public_read_seq, m.delivered_seq, c.last_seq, m.payload -> 'mentionSeqs' AS mention_seqs`;
+}
+
+/**
+ * Entregado en lote al listar la bandeja: lo listado ya llegó. Devuelve, por conversación que
+ * avanzó, su nueva marca y a quiénes avisar. `$1` usuario, `$2` conversaciones (JSON).
+ */
+export function chat_inbox_delivered_sql(tables: { conversations: string; members: string }): string {
+	return `WITH moved AS (
+			UPDATE ${tables.members} m SET delivered_seq = c.last_seq
+			FROM ${tables.conversations} c
+			WHERE c.id = m.conversation_id AND m.user_id = $1
+				AND m.conversation_id IN (SELECT jsonb_array_elements_text($2::jsonb))
+				AND m.state = 'active' AND COALESCE(m.delivered_seq, 0) < COALESCE(c.last_seq, 0)
+			RETURNING m.conversation_id, m.delivered_seq
+		)
+		SELECT moved.conversation_id, moved.delivered_seq AS seq, array_agg(o.user_id) AS member_ids
+		FROM moved
+		JOIN ${tables.members} o ON o.conversation_id = moved.conversation_id
+			AND o.state = 'active' AND o.is_active IS DISTINCT FROM false
+		GROUP BY moved.conversation_id, moved.delivered_seq`;
+}
+
+/**
+ * Entregado hasta donde dice el cliente, nunca más allá de `last_seq`: un `seq` inventado no
+ * marca lo que aún no existe. `$1` conversación, `$2` usuario, `$3` seq recibido.
+ */
+export function chat_delivered_up_to_sql(tables: { conversations: string; members: string }): string {
+	const upto = 'LEAST($3::numeric, COALESCE(c.last_seq, 0))';
+	return `UPDATE ${tables.members} m SET delivered_seq = ${upto}
+		FROM ${tables.conversations} c
+		WHERE c.id = m.conversation_id AND m.conversation_id = $1 AND m.user_id = $2 AND m.state = 'active'
+			AND COALESCE(m.delivered_seq, 0) < ${upto}
+		RETURNING m.delivered_seq`;
+}
+
+export type ChatInboxRow = {
+	conversation: ImperiumDoc;
+	member: ImperiumDoc;
+	activity_at: string;
+	unread_count: number;
+	unread_mention_seqs: number[];
+};
+
+export type ChatReadMarks = { user_id: string; last_read_seq: number; public_read_seq: number; delivered_seq: number };
+
+export type ChatReadResult = {
+	last_read_seq: number;
+	public_read_seq: number;
+	delivered_seq: number;
+	last_seq: number;
+	mention_seqs: number[];
+};
+
+export type ChatEditInput = {
+	id: string;
+	text: string;
+	search_field: string | null;
+	/** Lo demás del payload que cambia con el texto. */
+	merge: ImperiumDoc;
+	audit_id: string;
+	actor_id: string;
+	/** El `textPreview` de la conversación si era su último mensaje. */
+	preview: string;
+	now: string;
+};
+
+export type ChatDeleteInput = {
+	id: string;
+	deleted: { at: string; byUserId: string; byRole: 'sender' | 'moderator' };
+	audit_id: string;
+	actor_id: string;
+	action: 'delete' | 'delete_moderator';
+	target_user_id: string | null;
+	now: string;
+};
+
+/** Una respuesta cuya cita quedó sin texto porque su original se borró. */
+export type ChatQuote = { id: string; seq: number; rev: number; reply_preview: ImperiumDoc; updated_at: string };
+
+export type ChatMessageChange = {
+	message: ImperiumDoc;
+	/** `lastMessage` de la conversación, si este era su último mensaje. */
+	last_message: ImperiumDoc | null;
+	quoting: ChatQuote[];
+};
+
+export type ChatPurge = {
+	purged: Array<{ id: string; conversation_id: string; seq: number }>;
+	quoting: Array<ChatQuote & { conversation_id: string }>;
+	last_messages: Array<{ conversation_id: string; last_message: ImperiumDoc }>;
+	/** `name_stored` de los adjuntos que se dieron de baja; el archivo puede seguir en uso por un reenvío. */
+	files: string[];
+};
+
+export type ChatReactionToggle =
+	| { limited: true }
+	| { limited: false; changed: boolean; mine: boolean; count: number; rev: number; updated_at: string };
+
+export type ChatVoteResult =
+	| { already_voted: true }
+	| { already_voted: false; changed: boolean; rev: number; updated_at: string };
+
+export type ChatPollTally = {
+	total_voters: number;
+	options: Map<string, { votes: number; mine: boolean; voter_ids: string[] }>;
+};
+
+export type ChatReceipts = {
+	member_count: number;
+	read_count: number;
+	delivered_count: number;
+	read_ids: string[];
+	delivered_ids: string[];
+};
+
+/**
+ * Si un mensaje tiene medios del tipo `type_param` (`image`, `video`, `audio`, `voice` o `file`,
+ * con el tipo que deduce la vista también para los adjuntos legados) o, con `link`, enlaces.
+ */
+export function chat_media_kind_sql(type_param: string, payload = 'payload'): string {
+	const kind = `COALESCE(NULLIF(a ->> 'kind', ''), CASE
+		WHEN a ->> 'isImage' = 'true' OR a ->> 'mimetype' LIKE 'image/%' THEN 'image'
+		WHEN a ->> 'mimetype' LIKE 'video/%' THEN 'video'
+		WHEN a ->> 'mimetype' LIKE 'audio/%' THEN 'audio'
+		ELSE 'file' END)`;
+	return `CASE WHEN ${type_param} = 'link'
+		THEN jsonb_typeof(${payload} -> 'links') = 'array' AND jsonb_array_length(${payload} -> 'links') > 0
+		ELSE EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(${payload} -> 'attachments') = 'array'
+			THEN ${payload} -> 'attachments' ELSE '[]'::jsonb END) a WHERE ${kind} = ${type_param}) END`;
+}
+
+export type ChatSearchQuery = {
+	user_id: string;
+	/** El texto normalizado como `search_field`: minúsculas y sin diacríticos. */
+	needle: string;
+	conversation_id?: string;
+	/** Remitente. */
+	from?: string;
+	/** `file`, `image`, `link` o `voice`. */
+	has?: string;
+	before?: string;
+	after?: string;
+	kinds?: string[];
+	cursor?: { at: string; id: string };
+	limit: number;
+};
+
+/**
+ * Búsqueda del chat sobre `search_field` (GIN de trigramas) y solo en lo que quien busca ve:
+ * miembro activo, desde su `visibleFromSeq` y sin lo que ocultó. Del más nuevo al más viejo por
+ * keyset `(created_at, id)`.
+ */
+export function chat_search_sql(
+	tables: { messages: string; members: string; conversations: string },
+	query: ChatSearchQuery,
+): { sql: string; params: unknown[] } {
+	const params: unknown[] = [query.user_id, `%${query.needle.replace(/[\\%_]/g, '\\$&')}%`];
+	const param = (value: unknown) => {
+		params.push(value);
+		return `$${params.length}`;
+	};
+	const where = [
+		'm.search_field ILIKE $2',
+		'm.is_active IS DISTINCT FROM false',
+		`m.seq > COALESCE((cm.payload ->> 'visibleFromSeq')::numeric, 0)`,
+		`NOT (COALESCE(m.payload -> 'hiddenForUserIds', '[]'::jsonb) ? $1)`,
+	];
+	if (query.conversation_id) where.push(`m.conversation_id = ${param(query.conversation_id)}`);
+	if (query.from) where.push(`m.sender_user_id = ${param(query.from)}`);
+	if (query.has) where.push(chat_media_kind_sql(`${param(query.has)}::text`, 'm.payload'));
+	if (query.before) where.push(`m.created_at < ${param(query.before)}`);
+	if (query.after) where.push(`m.created_at > ${param(query.after)}`);
+	if (query.kinds) where.push(`c.kind IN (SELECT jsonb_array_elements_text(${param(query.kinds)}::jsonb))`);
+	if (query.cursor) where.push(`(m.created_at, m.id) < (${param(query.cursor.at)}, ${param(query.cursor.id)})`);
+	return {
+		sql: `SELECT m.*, c.conversation_key AS conversation_key_of
+			FROM ${tables.messages} m
+			JOIN ${tables.members} cm ON cm.conversation_id = m.conversation_id AND cm.user_id = $1
+				AND cm.state = 'active' AND cm.is_active IS DISTINCT FROM false
+			JOIN ${tables.conversations} c ON c.id = m.conversation_id AND c.is_active IS DISTINCT FROM false
+			WHERE ${where.join(' AND ')}
+			ORDER BY m.created_at DESC, m.id DESC
+			LIMIT ${param(query.limit)}`,
+		params,
+	};
+}
+
+/**
+ * Galería de una conversación, del más nuevo al más viejo, por `seq`: la sirve el único
+ * `(conversation_id, seq)`. `$1` conversación, `$2` el `seq` desde el que el lector ve
+ * (exclusivo), `$3` el lector, `$4` el tipo, `$5` límite y, con `before`, `$6` el ancla.
+ */
+export function chat_media_page_sql(messages: string, before: boolean): string {
+	return `SELECT * FROM ${messages}
+		WHERE conversation_id = $1 AND seq > $2 AND is_active IS DISTINCT FROM false
+			AND NOT (COALESCE(payload, '{}'::jsonb) ? 'deleted') AND ${not_hidden_for('$3')}
+			AND ${chat_media_kind_sql('$4::text')}${before ? ' AND seq < $6' : ''}
+		ORDER BY seq DESC LIMIT $5`;
+}
+
+/** Lo que vence: dónde vive, qué columna lo dice, el estado de lo pendiente y el de lo reclamado. */
+const CHAT_DUE_JOBS = {
+	expire: { resource: 'messages', column: 'expires_at', pending: null, claimed: 'expiring' },
+	send: { resource: 'chat-scheduled', column: 'send_at', pending: 'pending', claimed: 'sending' },
+	remind: { resource: 'chat-saved', column: 'remind_at', pending: 'pending', claimed: 'notified' },
+	story: { resource: 'chat-stories', column: 'expires_at', pending: null, claimed: 'expired' },
+} as const satisfies Record<string, { resource: string; column: string; pending: string | null; claimed: string }>;
+
+export type ChatDueJob = keyof typeof CHAT_DUE_JOBS;
+
+function due_state(state: string | null): string {
+	return state === null ? 'state IS NULL' : `state = '${state}'`;
+}
+
+/**
+ * Reclamar lo vencido: pasa al estado reclamado con `FOR UPDATE SKIP LOCKED`, así dos pasadas nunca
+ * toman lo mismo. `$1` hora, `$2` límite.
+ */
+export function chat_claim_due_sql(table: string, job: ChatDueJob): string {
+	const { column, pending, claimed } = CHAT_DUE_JOBS[job];
+	return `UPDATE ${table} SET state = '${claimed}', updated_at = $1
+		WHERE id IN (
+			SELECT id FROM ${table}
+			WHERE ${column} IS NOT NULL AND ${column} <= $1 AND ${due_state(pending)} AND is_active IS DISTINCT FROM false
+			ORDER BY ${column}, id
+			LIMIT $2
+			FOR UPDATE SKIP LOCKED
+		)
+		RETURNING *`;
+}
+
+/**
+ * Devolver a pendiente lo reclamado que no terminó: al arrancar, cuando nada está en curso, o lo
+ * de una pasada que falló. `$1` ids (JSON), o nulo para todo.
+ */
+export function chat_release_claims_sql(table: string, job: ChatDueJob): string {
+	const { column, pending, claimed } = CHAT_DUE_JOBS[job];
+	return `UPDATE ${table} SET state = ${pending === null ? 'NULL' : `'${pending}'`}
+		WHERE ${column} IS NOT NULL AND ${due_state(claimed)} AND is_active IS DISTINCT FROM false
+			AND ($1::jsonb IS NULL OR id IN (SELECT jsonb_array_elements_text($1::jsonb)))
+		RETURNING id`;
+}
+
+/**
+ * Caducar los mensajes reclamados en una sentencia: sin contenido ni `search_field` y fuera de las
+ * páginas; las citas y la vista previa de la conversación pierden su texto, como al borrar. Con
+ * retención legal (`$3`) el contenido se copia antes a `chat-audit` y los archivos se quedan; sin
+ * ella se dan de baja sus filas de adjunto. `$1` ids (JSON), `$2` hora.
+ */
+export function chat_purge_messages_sql(tables: {
+	messages: string;
+	conversations: string;
+	audit: string;
+	reactions: string;
+	attachments: string;
+	saved: string;
+	members: string;
+}): string {
+	const { messages, conversations, audit, reactions, attachments, saved, members } = tables;
+	return `WITH old AS (
+			SELECT id, conversation_id, seq, kind, sender_user_id, payload FROM ${messages}
+			WHERE id IN (SELECT jsonb_array_elements_text($1::jsonb)) AND state = 'expiring'
+				AND is_active IS DISTINCT FROM false
+			FOR UPDATE
+		), audit AS (
+			INSERT INTO ${audit} (id, name, description, is_active, conversation_id, message_id, action, payload,
+				created_at, updated_at)
+			SELECT ${NEW_ROW_ID}, '', '', true, old.conversation_id, old.id, 'expired',
+				jsonb_strip_nulls(jsonb_build_object('before', ${MESSAGE_CONTENT}, 'targetUserId', old.sender_user_id)),
+				$2, $2
+			FROM old WHERE $3::boolean
+		), upd AS (
+			UPDATE ${messages} m SET
+				payload = (COALESCE(m.payload, '{}'::jsonb) - ${TOMBSTONE_DROPS}) || '{"message": ""}'::jsonb || ${next_rev('m')},
+				search_field = NULL,
+				is_active = false,
+				state = 'expired',
+				updated_at = $2
+			FROM old WHERE m.id = old.id
+			RETURNING m.id, m.conversation_id, m.seq
+		), quotes AS (
+			UPDATE ${messages} q SET
+				payload = q.payload || jsonb_build_object('replyPreview',
+					((q.payload -> 'replyPreview') - 'attachmentKind') || '{"textPreview": null, "deleted": true}'::jsonb)
+					|| ${next_rev('q')},
+				updated_at = $2
+			FROM old
+			WHERE q.payload ->> 'replyToMessageId' = old.id AND q.conversation_id = old.conversation_id
+				AND q.id NOT IN (SELECT id FROM old) AND jsonb_typeof(q.payload -> 'replyPreview') = 'object'
+			RETURNING jsonb_build_object('conversation_id', q.conversation_id, 'id', q.id, 'seq', q.seq,
+				'rev', q.payload -> 'rev', 'reply_preview', q.payload -> 'replyPreview', 'updated_at', q.updated_at) AS quote
+		), last AS (
+			UPDATE ${conversations} c SET
+				payload = c.payload || jsonb_build_object('lastMessage',
+					((c.payload -> 'lastMessage') - 'attachmentKind') || '{"textPreview": "", "deleted": true}'::jsonb),
+				updated_at = $2
+			FROM old WHERE c.id = old.conversation_id AND c.payload #>> '{lastMessage,messageId}' = old.id
+			RETURNING jsonb_build_object('conversation_id', c.id, 'last_message', c.payload -> 'lastMessage') AS last
+		), files AS (
+			UPDATE ${attachments} a SET is_active = false, updated_at = $2
+			FROM old
+			WHERE NOT $3::boolean AND a.is_active IS DISTINCT FROM false
+				AND a.id IN (SELECT jsonb_array_elements(CASE WHEN jsonb_typeof(old.payload -> 'attachments') = 'array'
+					THEN old.payload -> 'attachments' ELSE '[]'::jsonb END) ->> 'attachmentId')
+			RETURNING a.name_stored
+		), unreacted AS (
+			DELETE FROM ${reactions} r USING old WHERE r.message_id = old.id
+		), ${unsave_text_sql(saved)}, ${unmention_sql(members)}
+		SELECT
+			(SELECT COALESCE(jsonb_agg(jsonb_build_object('id', id, 'conversation_id', conversation_id, 'seq', seq)), '[]'::jsonb)
+				FROM upd) AS purged,
+			(SELECT COALESCE(jsonb_agg(quote), '[]'::jsonb) FROM quotes) AS quoting,
+			(SELECT COALESCE(jsonb_agg(last), '[]'::jsonb) FROM last) AS last_messages,
+			(SELECT COALESCE(jsonb_agg(name_stored), '[]'::jsonb) FROM files WHERE name_stored IS NOT NULL) AS files`;
+}
+
+/**
+ * Dar de baja las subidas del chat que nadie ligó antes de `$1`, con `FOR UPDATE SKIP LOCKED`.
+ * `$2` hora, `$3` límite.
+ */
+export function chat_discard_orphan_uploads_sql(attachments: string): string {
+	return `UPDATE ${attachments} SET is_active = false, updated_at = $2
+		WHERE id IN (
+			SELECT id FROM ${attachments}
+			WHERE ${CHAT_PENDING_UPLOAD} AND created_at < $1
+			ORDER BY created_at
+			LIMIT $3
+			FOR UPDATE SKIP LOCKED
+		)
+		RETURNING id, name_stored`;
+}
+
+/**
+ * Ligar subidas propias aún sin ligar a otro registro del chat, todas o ninguna. `$1` ids (JSON),
+ * `$2` dueño, `$3` modelo, `$4` registro, `$5` hora.
+ */
+export function chat_bind_uploads_sql(attachments: string): string {
+	return `WITH free AS (
+			SELECT id FROM ${attachments}
+			WHERE id IN (SELECT jsonb_array_elements_text($1::jsonb)) AND created_by_id = $2
+				AND COALESCE(related_record_id, '') = '' AND is_active IS DISTINCT FROM false
+			FOR UPDATE
+		)
+		UPDATE ${attachments} a SET related_model = $3, related_record_id = $4, updated_at = $5
+		FROM free WHERE a.id = free.id AND (SELECT count(*) FROM free) = jsonb_array_length($1::jsonb)
+		RETURNING a.id`;
+}
+
+/**
+ * Un programado que sigue en el estado esperado: editarlo o cancelarlo mientras está pendiente, o
+ * cerrarlo tras el envío. `$1` id, `$2` remitente (o nulo), `$3` estado esperado, `$4` estado nuevo
+ * (o nulo), `$5` `send_at` nuevo (o nulo), `$6` lo que se mezcla al payload, `$7` hora.
+ */
+export function chat_update_scheduled_sql(scheduled: string): string {
+	return `UPDATE ${scheduled} SET
+			state = COALESCE($4, state),
+			send_at = COALESCE($5, send_at),
+			payload = COALESCE(payload, '{}'::jsonb) || $6::jsonb,
+			updated_at = $7
+		WHERE id = $1 AND ($2::text IS NULL OR sender_user_id = $2) AND state = $3 AND is_active IS DISTINCT FROM false
+		RETURNING *`;
+}
+
+/**
+ * Guardar un mensaje: uno por persona y mensaje; guardarlo otra vez aplica la nota o el
+ * recordatorio que traiga. `$1` id nuevo, `$2` persona, `$3` mensaje, `$4` recordatorio (o nulo),
+ * `$5` payload, `$6` hora.
+ */
+export function chat_save_message_sql(saved: string): string {
+	return `INSERT INTO ${saved} AS s (id, name, description, is_active, state, user_id, message_id, remind_at, payload,
+			created_at, updated_at)
+		VALUES ($1, '', '', true, 'pending', $2, $3, $4, $5::jsonb, $6, $6)
+		ON CONFLICT (user_id, message_id) DO UPDATE SET
+			payload = COALESCE(s.payload, '{}'::jsonb) || EXCLUDED.payload,
+			remind_at = COALESCE(EXCLUDED.remind_at, s.remind_at),
+			state = CASE WHEN EXCLUDED.remind_at IS NOT NULL THEN 'pending' ELSE s.state END,
+			updated_at = EXCLUDED.updated_at
+		RETURNING *`;
+}
+
+/**
+ * `viewer` es contacto de `owner` si `owner` le escribió por su directo: abrir un directo no
+ * deja mensaje ni avisa, así que solo cuenta lo que decidió quien es dueño de la privacidad. La
+ * llave del directo son los dos ids en orden binario, como la arma el núcleo.
+ */
+function contact_sql(owner: string, viewer: string, tables: { conversations: string; messages: string }): string {
+	return `EXISTS (
+			SELECT 1 FROM ${tables.conversations} d
+			JOIN ${tables.messages} dm ON dm.conversation_id = d.id AND dm.sender_user_id = ${owner}::text
+			WHERE d.kind = 'direct' AND d.is_active IS DISTINCT FROM false
+				AND d.conversation_key = CASE WHEN ${owner}::text COLLATE "C" < ${viewer}::text COLLATE "C"
+					THEN ${owner}::text || '::' || ${viewer}::text ELSE ${viewer}::text || '::' || ${owner}::text END)`;
+}
+
+/**
+ * La audiencia de una historia `s` para el lector `viewer` (contrato §1.8): la organización, los
+ * usuarios elegidos o los contactos del autor; nunca los excluidos.
+ */
+function story_audience_sql(viewer: string, tables: ChatStoryTables): string {
+	return `NOT (COALESCE(s.payload #> '{audience,excludeIds}', '[]'::jsonb) ? ${viewer})
+		AND CASE s.payload #>> '{audience,kind}'
+			WHEN 'users' THEN COALESCE(s.payload #> '{audience,userIds}', '[]'::jsonb) ? ${viewer}
+			WHEN 'contacts' THEN ${contact_sql('s.author_id', viewer, tables)}
+			ELSE true END`;
+}
+
+export type ChatStoryTables = { stories: string; views: string; conversations: string; messages: string };
+
+export type ChatStoryFeedQuery = {
+	viewer_id: string;
+	now: string;
+	/** `stories_muted_author_ids`: van al final. */
+	muted: string[];
+	cursor?: { muted: boolean; at: string; id: string };
+	limit: number;
+};
+
+/**
+ * Los autores con historias vigentes que el lector puede ver, sin las propias, por keyset
+ * `(silenciado, última historia, autor)`: los silenciados al final. Lo vigente es lo de 24 h, así
+ * que el índice de `expires_at` acota lo que se lee.
+ */
+export function chat_story_feed_sql(tables: ChatStoryTables, query: ChatStoryFeedQuery): { sql: string; params: unknown[] } {
+	const params: unknown[] = [query.viewer_id, query.now, query.muted];
+	const param = (value: unknown) => {
+		params.push(value);
+		return `$${params.length}`;
+	};
+	const cursor = query.cursor;
+	const after = cursor
+		? (() => {
+				const muted = param(cursor.muted);
+				return `WHERE muted > ${muted}::boolean OR (muted = ${muted}::boolean AND (latest_at, author_id) < (${param(cursor.at)}, ${param(cursor.id)}))`;
+			})()
+		: '';
+	return {
+		sql: `WITH visible AS (
+				SELECT s.author_id, s.created_at,
+					EXISTS (SELECT 1 FROM ${tables.views} w WHERE w.story_id = s.id AND w.viewer_id = $1) AS seen
+				FROM ${tables.stories} s
+				WHERE s.expires_at > $2 AND s.is_active IS DISTINCT FROM false AND s.author_id <> $1
+					AND ${story_audience_sql('$1', tables)}
+			), authors AS (
+				SELECT author_id, max(created_at) AS latest_at, bool_or(NOT seen) AS has_unseen,
+					author_id IN (SELECT jsonb_array_elements_text($3::jsonb)) AS muted
+				FROM visible GROUP BY author_id
+			)
+			SELECT * FROM authors ${after}
+			ORDER BY muted, latest_at DESC, author_id DESC
+			LIMIT ${param(query.limit)}`,
+		params,
+	};
+}
+
+/** Las historias vigentes de esos autores que el lector ve (las propias siempre), con su vista. `$1` lector, `$2` autores (JSON), `$3` hora. */
+export function chat_story_items_sql(tables: ChatStoryTables): string {
+	return `SELECT s.*, w.viewed_at AS my_viewed_at, w.payload ->> 'reaction' AS my_reaction
+		FROM ${tables.stories} s
+		LEFT JOIN ${tables.views} w ON w.story_id = s.id AND w.viewer_id = $1
+		WHERE s.author_id IN (SELECT jsonb_array_elements_text($2::jsonb)) AND s.expires_at > $3
+			AND s.is_active IS DISTINCT FROM false
+			AND (s.author_id = $1 OR ${story_audience_sql('$1', tables)})
+		ORDER BY s.author_id, s.created_at, s.id`;
+}
+
+/** Una historia si el lector es su autor o está en su audiencia, vigente o no. `$1` lector, `$2` historia. */
+export function chat_story_visible_sql(tables: ChatStoryTables): string {
+	return `SELECT s.* FROM ${tables.stories} s
+		WHERE s.id = $2 AND s.is_active IS DISTINCT FROM false
+			AND (s.author_id = $1 OR ${story_audience_sql('$1', tables)})`;
+}
+
+/**
+ * Una vista por persona e historia; verla otra vez solo cambia la reacción. `$1` historia, `$2`
+ * lector, `$3` hora, `$4` payload (`anonymous` y, si viene, `reaction`).
+ */
+export function chat_view_story_sql(views: string): string {
+	return `INSERT INTO ${views} AS v (id, name, description, is_active, story_id, viewer_id, viewed_at, payload, created_at, updated_at)
+		VALUES (${NEW_ROW_ID}, '', '', true, $1, $2, $3, $4::jsonb, $3, $3)
+		ON CONFLICT (story_id, viewer_id) DO UPDATE SET
+			payload = COALESCE(v.payload, '{}'::jsonb) || EXCLUDED.payload,
+			updated_at = EXCLUDED.updated_at
+		RETURNING *`;
+}
+
+/**
+ * Dar de baja historias sin su texto, con sus vistas y las filas de su archivo, en una sentencia:
+ * las propias que su autor borra o las vencidas que el latido reclamó. `$1` ids (JSON), `$2` hora y
+ * `$3` el autor (o nulo: entonces solo las reclamadas).
+ */
+export function chat_drop_stories_sql(tables: { stories: string; views: string; attachments: string }): string {
+	return `WITH old AS (
+			SELECT id, payload FROM ${tables.stories}
+			WHERE id IN (SELECT jsonb_array_elements_text($1::jsonb)) AND is_active IS DISTINCT FROM false
+				AND (CASE WHEN $3::text IS NULL THEN state = 'expired' ELSE author_id = $3 END)
+			FOR UPDATE
+		), upd AS (
+			UPDATE ${tables.stories} s SET
+				is_active = false,
+				payload = COALESCE(s.payload, '{}'::jsonb) - '{text,caption,background}'::text[],
+				updated_at = $2
+			FROM old WHERE s.id = old.id
+			RETURNING s.id
+		), unviewed AS (
+			DELETE FROM ${tables.views} v USING old WHERE v.story_id = old.id
+		), files AS (
+			UPDATE ${tables.attachments} a SET is_active = false, updated_at = $2
+			FROM old WHERE a.id = old.payload ->> 'attachmentId' AND a.is_active IS DISTINCT FROM false
+			RETURNING a.name_stored
+		)
+		SELECT (SELECT COALESCE(jsonb_agg(id), '[]'::jsonb) FROM upd) AS ids,
+			(SELECT COALESCE(jsonb_agg(name_stored), '[]'::jsonb) FROM files WHERE name_stored IS NOT NULL) AS files`;
+}
+
+/** `null` quita la nota o el recordatorio; con un recordatorio nuevo vuelve a quedar pendiente. */
+export type ChatSavedPatch = { note?: string | null; remind_at?: string | null; done?: boolean };
+
+/** Cambiar un guardado propio. */
+export function chat_update_saved_sql(
+	saved: string,
+	patch: ChatSavedPatch,
+	target: { id: string; user_id: string; now: string },
+): { sql: string; params: unknown[] } {
+	const params: unknown[] = [target.id, target.user_id, target.now];
+	const param = (value: unknown) => {
+		params.push(value);
+		return `$${params.length}`;
+	};
+	const sets = ['updated_at = $3'];
+	if (patch.note === null) sets.push(`payload = COALESCE(payload, '{}'::jsonb) - 'note'`);
+	else if (patch.note !== undefined) {
+		sets.push(`payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('note', ${param(patch.note)}::text)`);
+	}
+	if (patch.remind_at !== undefined) sets.push(`remind_at = ${param(patch.remind_at)}`);
+	if (patch.done) sets.push(`state = 'done'`);
+	else if (patch.remind_at) sets.push(`state = 'pending'`);
+	return {
+		sql: `UPDATE ${saved} SET ${sets.join(', ')} WHERE id = $1 AND user_id = $2 AND is_active IS DISTINCT FROM false RETURNING *`,
+		params,
+	};
+}
+
+/** Lo que trae una membresía nueva (o un regreso); lo demás del payload son las preferencias de la persona. */
+const MEMBERSHIP_KEYS = `ARRAY['joinedAt', 'leftAt', 'requestedAt', 'restrictedUntil', 'invitedById', 'visibleFromSeq', 'mentionSeqs', 'markedUnread']`;
+const ACTIVE_MEMBER = `state = 'active' AND is_active IS DISTINCT FROM false`;
+
+/**
+ * Membresía de un grupo dentro de una transacción que primero bloquea la conversación: los
+ * cambios de una misma conversación se ordenan y `memberCount` sale de las filas activas.
+ */
+export function chat_membership_sqls(tables: { conversations: string; members: string }) {
+	const { conversations, members } = tables;
+	return {
+		/** `$1` conversación. */
+		lock: `SELECT * FROM ${conversations} WHERE id = $1 AND is_active IS DISTINCT FROM false FOR UPDATE`,
+		/** `$1` id, `$2` título, `$3` descripción, `$4` quien lo crea, `$5` kind, `$6` payload, `$7` hora. */
+		group: `INSERT INTO ${conversations} (id, name, description, is_active, created_by, kind, conversation_key,
+				last_seq, payload, created_at, updated_at)
+			VALUES ($1, $2, $3, true, $4, $5, 'conv:' || $1::text, 0, $6::jsonb, $7, $7)`,
+		/** `$1` conversación, `$2` personas (JSON). */
+		current: `SELECT user_id, state, role FROM ${members}
+			WHERE conversation_id = $1 AND user_id IN (SELECT jsonb_array_elements_text($2::jsonb))`,
+		/** `$1` conversación. */
+		active_count: `SELECT count(*)::int AS n FROM ${members} WHERE conversation_id = $1 AND ${ACTIVE_MEMBER}`,
+		/**
+		 * Alta, regreso o solicitud. La fila de quien salió, lo quitaron o pidió entrar se reutiliza
+		 * con sus preferencias; quien ya está activo o baneado no cambia. `$1` conversación, `$2`
+		 * personas `{user_id, role, invited_by}` (JSON), `$3` estado, `$4` marcas iniciales, `$5` lo
+		 * nuevo de la membresía (JSON), `$6` hora.
+		 */
+		join: `INSERT INTO ${members} AS b (id, name, description, is_active, state, conversation_id, user_id, role,
+				last_read_seq, public_read_seq, delivered_seq, payload, created_at, updated_at)
+			SELECT ${NEW_ROW_ID}, '', '', true, $3, $1, u.user_id, COALESCE(u.role, 'member'), $4, 0, $4,
+				'{"archived": false, "notifyLevel": "default"}'::jsonb || $5::jsonb
+					|| jsonb_strip_nulls(jsonb_build_object('invitedById', u.invited_by)),
+				$6, $6
+			FROM jsonb_to_recordset($2::jsonb) AS u(user_id text, role text, invited_by text)
+			ON CONFLICT (conversation_id, user_id) DO UPDATE SET
+				state = EXCLUDED.state,
+				role = EXCLUDED.role,
+				is_active = true,
+				last_read_seq = EXCLUDED.last_read_seq,
+				delivered_seq = EXCLUDED.delivered_seq,
+				payload = EXCLUDED.payload || (COALESCE(b.payload, '{}'::jsonb) - ${MEMBERSHIP_KEYS}),
+				updated_at = EXCLUDED.updated_at
+			WHERE b.state NOT IN ('active', 'banned')
+			RETURNING *`,
+		/** `$1` conversación, `$2` persona. */
+		member: `SELECT * FROM ${members} WHERE conversation_id = $1 AND user_id = $2 FOR UPDATE`,
+		/** Salir, quitar o banear; el dueño que sale deja de serlo. `$1` conversación, `$2` persona, `$3` estado, `$4` hora. */
+		leave: `UPDATE ${members} SET
+				state = $3,
+				role = CASE WHEN role = 'owner' THEN 'member' ELSE role END,
+				payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('leftAt', $4::text),
+				updated_at = $4
+			WHERE conversation_id = $1 AND user_id = $2
+			RETURNING *`,
+		/** El administrador más antiguo o, si no hay, el miembro más antiguo. `$1` conversación, `$2` quien sale. */
+		successor: `SELECT user_id FROM ${members}
+			WHERE conversation_id = $1 AND user_id <> $2 AND ${ACTIVE_MEMBER}
+			ORDER BY role = 'admin' DESC, COALESCE(payload ->> 'joinedAt', created_at), created_at, id
+			LIMIT 1`,
+		/** `$1` conversación, `$2` persona, `$3` rol, `$4` hora. */
+		set_role: `UPDATE ${members} SET role = $3, updated_at = $4
+			WHERE conversation_id = $1 AND user_id = $2 AND ${ACTIVE_MEMBER}
+			RETURNING *`,
+		/** `$1` conversación, `$2` hora. */
+		count: `UPDATE ${conversations} c SET
+				payload = COALESCE(c.payload, '{}'::jsonb) || jsonb_build_object('memberCount',
+					(SELECT count(*) FROM ${members} m
+						WHERE m.conversation_id = c.id AND m.state = 'active' AND m.is_active IS DISTINCT FROM false)),
+				updated_at = $2
+			WHERE c.id = $1
+			RETURNING *`,
+		/** Nadie quedó. `$1` conversación, `$2` hora. */
+		close: `UPDATE ${conversations} SET is_active = false, updated_at = $2 WHERE id = $1 RETURNING *`,
+		/** Un uso más del enlace. `$1` conversación, `$2` enlace, `$3` hora. */
+		use_invite: `UPDATE ${conversations} SET
+				payload = jsonb_set(payload, '{invites}', (
+					SELECT jsonb_agg(CASE WHEN e.invite ->> 'id' = $2
+						THEN e.invite || jsonb_build_object('uses', COALESCE((e.invite ->> 'uses')::int, 0) + 1)
+						ELSE e.invite END ORDER BY e.n)
+					FROM jsonb_array_elements(payload -> 'invites') WITH ORDINALITY AS e(invite, n))),
+				updated_at = $3
+			WHERE id = $1`,
+		/** Los enlaces y el prefijo, que se fija una vez. `$1` conversación, `$2` prefijo, `$3` enlaces (JSON), `$4` hora. */
+		invites: `UPDATE ${conversations} SET
+				join_code = COALESCE(join_code, $2),
+				payload = jsonb_set(COALESCE(payload, '{}'::jsonb), '{invites}', $3::jsonb),
+				updated_at = $4
+			WHERE id = $1
+			RETURNING *`,
+		/** `$1` conversación, `$2` fijados (JSON), `$3` hora. */
+		pins: `UPDATE ${conversations} SET
+				payload = jsonb_set(COALESCE(payload, '{}'::jsonb), '{pins}', $2::jsonb),
+				updated_at = $3
+			WHERE id = $1
+			RETURNING *`,
+		/** Rechazar una solicitud de unión. `$1` conversación, `$2` persona, `$3` hora. */
+		deny: `UPDATE ${members} SET
+				state = 'removed',
+				payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('leftAt', $3::text),
+				updated_at = $3
+			WHERE conversation_id = $1 AND user_id = $2 AND state = 'requested'
+			RETURNING *`,
+	};
+}
+
+/**
+ * Rol o restricción de un miembro activo, solo si aún tiene el rol con el que se autorizó el
+ * cambio: un traspaso o una baja que llegó antes lo deja sin efecto. `$1` conversación, `$2`
+ * persona, `$3` rol esperado, `$4` rol nuevo (nulo no cambia), `$5` si cambia la restricción,
+ * `$6` hasta cuándo (nulo la quita), `$7` hora.
+ */
+export function chat_update_member_sql(members: string): string {
+	return `UPDATE ${members} SET
+			role = COALESCE($4, role),
+			payload = CASE WHEN $5::boolean
+				THEN (COALESCE(payload, '{}'::jsonb) - 'restrictedUntil')
+					|| jsonb_strip_nulls(jsonb_build_object('restrictedUntil', $6::text))
+				ELSE payload END,
+			updated_at = $7
+		WHERE conversation_id = $1 AND user_id = $2 AND role = $3 AND ${ACTIVE_MEMBER}
+		RETURNING *`;
+}
+
+/**
+ * Título, descripción, ajustes y avatar de un grupo en una sentencia, con el antes para la
+ * auditoría y para retirar el avatar anterior. `$1` conversación, `$2` título y `$3`
+ * descripción (nulos no cambian), `$4` ajustes que cambian (JSON o nulo), `$5` lo que se agrega
+ * al payload, `$6` las claves que se quitan (JSON), `$7` hora.
+ */
+export function chat_update_conversation_sql(conversations: string): string {
+	return `WITH old AS (
+			SELECT id, name, description, payload FROM ${conversations}
+			WHERE id = $1 AND is_active IS DISTINCT FROM false FOR UPDATE
+		)
+		UPDATE ${conversations} c SET
+			name = COALESCE($2, c.name),
+			description = COALESCE($3, c.description),
+			payload = (COALESCE(c.payload, '{}'::jsonb) - ARRAY(SELECT jsonb_array_elements_text($6::jsonb)))
+				|| $5::jsonb
+				|| CASE WHEN $4::jsonb IS NULL THEN '{}'::jsonb
+					ELSE jsonb_build_object('settings', COALESCE(c.payload -> 'settings', '{}'::jsonb) || $4::jsonb) END,
+			updated_at = $7
+		FROM old WHERE c.id = old.id
+		RETURNING c.*, old.name AS before_name, old.description AS before_description, old.payload AS before_payload`;
+}
+
+/**
+ * Preferencias de una persona en una conversación. `$4` fija (`true`: al final de sus fijadas,
+ * si caben en `$5`), desfija (`false`) o no toca (nulo). `$1` conversación, `$2` persona, `$3`
+ * lo que cambia (JSON), `$6` hora. Sin fila: ya no es miembro activo o no cabe otra fijada.
+ */
+export function chat_update_prefs_sql(members: string): string {
+	const pinned_of_user = `FROM ${members} o
+		WHERE o.user_id = $2 AND o.state = 'active' AND jsonb_typeof(o.payload -> 'pinnedOrder') = 'number'`;
+	const pinned = `jsonb_typeof(m.payload -> 'pinnedOrder') = 'number'`;
+	return `UPDATE ${members} m SET
+			payload = COALESCE(m.payload, '{}'::jsonb) || $3::jsonb || CASE
+				WHEN $4::boolean IS NULL OR ($4 AND ${pinned}) THEN '{}'::jsonb
+				WHEN NOT $4 THEN '{"pinnedOrder": null}'::jsonb
+				ELSE jsonb_build_object('pinnedOrder',
+					COALESCE((SELECT max((o.payload ->> 'pinnedOrder')::numeric) ${pinned_of_user}), 0) + 1)
+			END,
+			updated_at = $6
+		WHERE m.conversation_id = $1 AND m.user_id = $2 AND m.state = 'active'
+			AND ($4 IS NOT TRUE OR ${pinned} OR (SELECT count(*) ${pinned_of_user}) < $5)
+		RETURNING *`;
+}
+
+export type ChatMemberQuery = {
+	conversation_id: string;
+	states: string[];
+	role?: string;
+	/** Nombre o correo. */
+	q?: string;
+	cursor?: { at: string; id: string };
+	limit: number;
+};
+
+/** Miembros por keyset `(created_at, id)`, en el orden en que entraron, con lo mínimo de cada persona. */
+export function chat_member_page_sql(
+	tables: { members: string; users: string },
+	query: ChatMemberQuery,
+): { sql: string; params: unknown[] } {
+	const params: unknown[] = [query.conversation_id, query.states];
+	const param = (value: unknown) => {
+		params.push(value);
+		return `$${params.length}`;
+	};
+	const where = [
+		'm.conversation_id = $1',
+		'm.is_active IS DISTINCT FROM false',
+		'm.state IN (SELECT jsonb_array_elements_text($2::jsonb))',
+	];
+	if (query.role) where.push(`m.role = ${param(query.role)}`);
+	if (query.q) {
+		const like = param(`%${query.q.replace(/[\\%_]/g, '\\$&')}%`);
+		where.push(`(u.name ILIKE ${like} OR u.email ILIKE ${like})`);
+	}
+	if (query.cursor) where.push(`(m.created_at, m.id) > (${param(query.cursor.at)}, ${param(query.cursor.id)})`);
+	return {
+		sql: `SELECT m.*, u.id AS user_found, u.name AS user_name, u.email AS user_email, u.img AS user_img,
+				u.is_active AS user_active
+			FROM ${tables.members} m LEFT JOIN ${tables.users} u ON u.id = m.user_id
+			WHERE ${where.join(' AND ')}
+			ORDER BY m.created_at, m.id
+			LIMIT ${param(query.limit)}`,
+		params,
+	};
+}
+
+export type ChatJoinResult =
+	| { status: 'missing' | 'full' | 'not_requested' | 'invite_not_found' | 'invite_expired' | 'invite_exhausted' }
+	| { status: 'banned'; user_ids: string[] }
+	/** `joined`: las filas que entraron o pidieron entrar; `previous`, el estado de antes de cada persona. */
+	| { status: 'ok'; conversation: ImperiumDoc; joined: ImperiumDoc[]; previous: Record<string, string> };
+
+export type ChatLeaveResult =
+	| { status: 'not_member' | 'not_member_target' }
+	| { status: 'ok'; conversation: ImperiumDoc; successor_id: string | null; closed: boolean };
+
+export type ChatTransferResult =
+	| { status: 'not_owner' | 'not_member_target' }
+	| { status: 'ok'; owner: ImperiumDoc; previous: ImperiumDoc };
+
+/**
+ * Keyset temporal: `(created_at, id) > ($at, $id)`, o `<` para ir del más nuevo al
+ * más viejo. `created_at` es TEXT ISO; el predicado no casteá — coincide con
+ * `ORDER BY created_at, id` (lex = cronológico en ISO-8601).
+ */
+export function created_at_keyset_sql(at_param: string, id_param: string, op: '>' | '<' = '>'): string {
+	return `(created_at, id) ${op} (${at_param}, ${id_param})`;
 }
 
 /**
@@ -370,11 +2039,13 @@ export function value_counts_sql(
 	quoted_table: string,
 	expr: string,
 	include_inactive: boolean,
+	scoped = '',
 ): string {
 	const active = include_inactive ? '' : 'is_active IS DISTINCT FROM false AND ';
+	const scope = scoped ? `${scoped} AND ` : '';
 	return `SELECT ${expr} AS v, COUNT(*)::int AS n
 		FROM ${quoted_table}
-		WHERE ${active}${expr} IS NOT NULL
+		WHERE ${active}${scope}${expr} IS NOT NULL
 		  AND btrim(${expr}::text) <> ''
 		  AND ${expr}::text NOT IN ('-', 'ERR!')
 		GROUP BY 1`;
@@ -1167,6 +2838,70 @@ export function scan_omit_sql(cols: Set<string>, omit: string[]): string {
 	return physical.length ? physical.join(', ') : '*';
 }
 
+/** Recursos del chat sin app en el catálogo: viven bajo `configuracion`, como `messages`. */
+const CHAT_ORPHANS = [
+	'chat-conversations',
+	'chat-members',
+	'chat-reactions',
+	'chat-audit',
+	'chat-scheduled',
+	'chat-saved',
+	'chat-stories',
+	'chat-story-views',
+];
+
+const physical_cols = (types: Record<string, 'text' | 'real'>): ExtraCol[] =>
+	Object.entries(types).map(([name, pg]) => ({ name, pg }));
+
+/** Lo que el chat filtra, ordena o hace único va en columna, no en `payload`. */
+const ORPHAN_COLUMNS: Record<string, ExtraCol[]> = {
+	'user-settings': [
+		{
+			name: 'table_configs',
+			mongo: 'table_configs',
+			pg: 'json',
+			crud: 'json',
+			component: 'input-json',
+			label: 'table configs',
+		},
+	],
+	messages: physical_cols({
+		conversation_id: 'text',
+		seq: 'real',
+		sender_user_id: 'text',
+		client_id: 'text',
+		kind: 'text',
+		expires_at: 'text',
+	}),
+	'chat-conversations': physical_cols({
+		kind: 'text',
+		conversation_key: 'text',
+		last_seq: 'real',
+		last_message_at: 'text',
+		join_code: 'text',
+	}),
+	'chat-members': physical_cols({
+		conversation_id: 'text',
+		user_id: 'text',
+		role: 'text',
+		last_read_seq: 'real',
+		public_read_seq: 'real',
+		delivered_seq: 'real',
+	}),
+	'chat-reactions': physical_cols({
+		message_id: 'text',
+		conversation_id: 'text',
+		user_id: 'text',
+		kind: 'text',
+		value: 'text',
+	}),
+	'chat-audit': physical_cols({ conversation_id: 'text', message_id: 'text', actor_id: 'text', action: 'text' }),
+	'chat-scheduled': physical_cols({ conversation_id: 'text', sender_user_id: 'text', send_at: 'text' }),
+	'chat-saved': physical_cols({ user_id: 'text', message_id: 'text', remind_at: 'text' }),
+	'chat-stories': physical_cols({ author_id: 'text', expires_at: 'text' }),
+	'chat-story-views': physical_cols({ story_id: 'text', viewer_id: 'text', viewed_at: 'text' }),
+};
+
 export class ImperiumStore {
 	readonly locs = new Map<string, ModuleLoc>();
 	readonly all_locs: ModuleLoc[] = [];
@@ -1269,6 +3004,7 @@ export class ImperiumStore {
 				'proyectos-time-log',
 				'user-print-template',
 				'time-sheets',
+				...CHAT_ORPHANS,
 			];
 			for (const resource of orphans) {
 				if (this.locs.has(resource)) continue;
@@ -1279,19 +3015,7 @@ export class ImperiumStore {
 					table: resource.replace(/-/g, '_'),
 					collection: resource,
 					name: resource,
-					columns:
-						resource === 'user-settings'
-							? [
-									{
-										name: 'table_configs',
-										mongo: 'table_configs',
-										pg: 'json',
-										crud: 'json',
-										component: 'input-json',
-										label: 'table configs',
-									},
-								]
-							: [],
+					columns: [...(ORPHAN_COLUMNS[resource] ?? [])],
 				};
 				this.all_locs.push(loc);
 				this.locs.set(resource, loc);
@@ -1369,6 +3093,11 @@ export class ImperiumStore {
 							table_key: loc.table,
 						})
 					: []),
+				...chat_index_sqls({
+					resource: loc.resource,
+					quoted_table: this.qt(loc.resource),
+					table_key: loc.table,
+				}),
 			];
 			for (const sql of sqls) {
 				try {
@@ -1378,6 +3107,1423 @@ export class ImperiumStore {
 				}
 			}
 		}
+	}
+
+	/**
+	 * Lleva los 1:1 legados al modelo de conversaciones: su directo o self, sus miembros y
+	 * el `seq` de cada mensaje por `(created_at, id)`. Cada lote entra entero o no entra,
+	 * así que se puede cortar y volver a correr: lo ya respaldado deja de ser candidato.
+	 */
+	async chat_backfill_direct(batch = 500): Promise<{ conversations: number; members: number; messages: number }> {
+		const done = { conversations: 0, members: 0, messages: 0 };
+		if (!this.has('messages') || !this.has('chat-conversations') || !this.has('chat-members')) return done;
+		const sqls = chat_backfill_sqls({
+			messages: this.qt('messages'),
+			conversations: this.qt('chat-conversations'),
+			members: this.qt('chat-members'),
+		});
+		for (;;) {
+			const pending = (await this.sql.unsafe(sqls.pending_keys, [batch])) as Array<{ key: string }>;
+			if (!pending.length) return done;
+			const keys = pending.map((row) => row.key);
+			const moved = await this.sql.begin((tx) => backfill_keys(tx, sqls, keys, new Date().toISOString()));
+			done.conversations += moved.conversations;
+			done.members += moved.members;
+			done.messages += moved.messages;
+			// Un lote sin avance volvería a salir igual: mejor parar que colgar el arranque.
+			if (!moved.messages) return done;
+		}
+	}
+
+	/** `null`: la conversación ya no existe o está inactiva. Un `client_id` repetido devuelve el ya creado. */
+	async chat_insert_message(input: ChatMessageInsert): Promise<{ message: ImperiumDoc; duplicate: boolean } | null> {
+		const binds = input.attachment_ids.length > 0;
+		const sql = chat_insert_message_sql({
+			messages: this.qt('messages'),
+			conversations: this.qt('chat-conversations'),
+			members: this.qt('chat-members'),
+			attachments: binds ? this.qt('attachment-management') : null,
+		});
+		const params: unknown[] = [
+			input.id,
+			input.conversation_id,
+			input.now,
+			input.preview,
+			input.name,
+			input.sender_user_id,
+			input.search_field,
+			input.payload,
+			input.client_id,
+			input.kind,
+			input.expires_at,
+			input.share_read,
+			input.reader_user_id ?? null,
+		];
+		if (binds) params.push(input.attachment_ids, input.uploads_from ?? null);
+		try {
+			const rows = await this.sql.unsafe(sql, params);
+			const row = rows[0] as Record<string, unknown> | undefined;
+			return row ? { message: this.flatten(row, 'messages')!, duplicate: false } : null;
+		} catch (err) {
+			if (!input.client_id || !input.sender_user_id || !is_unique_violation(err)) throw err;
+			const existing = await this.chat_message_by_client_id(input.sender_user_id, input.client_id);
+			if (!existing) throw err;
+			return { message: existing, duplicate: true };
+		}
+	}
+
+	async chat_message_by_client_id(sender_user_id: string, client_id: string): Promise<ImperiumDoc | null> {
+		const rows = await this.sql.unsafe(
+			`SELECT * FROM ${this.qt('messages')} WHERE sender_user_id = $1 AND client_id = $2 LIMIT 1`,
+			[sender_user_id, client_id],
+		);
+		return this.flatten((rows[0] as Record<string, unknown>) ?? null, 'messages');
+	}
+
+	/** `conversation_key`: los ids ordenados unidos con `::` (uno solo en el self). */
+	async chat_open_direct(input: {
+		conversation_key: string;
+		user_ids: string[];
+		created_by: string;
+		now: string;
+	}): Promise<ImperiumDoc> {
+		const sqls = chat_direct_sqls({
+			conversations: this.qt('chat-conversations'),
+			members: this.qt('chat-members'),
+		});
+		const conversation = {
+			createdById: input.created_by,
+			memberCount: input.user_ids.length,
+			participantUserIds: input.user_ids,
+			settings: DIRECT_CONVERSATION_SETTINGS,
+			pins: [],
+			invites: [],
+		};
+		const member = {
+			joinedAt: input.now,
+			visibleFromSeq: 0,
+			mentionSeqs: [],
+			markedUnread: false,
+			archived: false,
+			notifyLevel: 'default',
+		};
+		const kind = input.user_ids.length > 1 ? 'direct' : 'self';
+		const backfill = chat_backfill_sqls({
+			messages: this.qt('messages'),
+			conversations: this.qt('chat-conversations'),
+			members: this.qt('chat-members'),
+		});
+		const row = await this.sql.begin(async (tx) => {
+			const created = await tx.unsafe(sqls.conversation, [
+				crypto.randomUUID().replace(/-/g, '').slice(0, 24),
+				kind,
+				input.conversation_key,
+				conversation,
+				input.now,
+			]);
+			// El arranque tolera un respaldo a medias: lo legado de esta llave toma los primeros `seq`
+			// antes de que un envío nuevo pueda llegar a la conversación.
+			if (created.length && (await tx.unsafe(backfill.key_pending, [input.conversation_key])).length) {
+				await backfill_keys(tx, backfill, [input.conversation_key], input.now);
+			}
+			const [found] = (await tx.unsafe(sqls.find, [input.conversation_key])) as Array<Record<string, unknown>>;
+			await tx.unsafe(sqls.members, [found!.id, input.user_ids, member, input.now]);
+			return found!;
+		});
+		return this.flatten(row, 'chat-conversations')!;
+	}
+
+	async chat_member_ids(conversation_id: string): Promise<string[]> {
+		const rows = (await this.sql.unsafe(
+			`SELECT user_id FROM ${this.qt('chat-members')}
+			 WHERE conversation_id = $1 AND state = 'active' AND is_active IS DISTINCT FROM false`,
+			[conversation_id],
+		)) as Array<{ user_id: string }>;
+		return rows.map((row) => row.user_id);
+	}
+
+	/** Los miembros activos con el seq desde el que ven el historial. */
+	async chat_member_visibility(conversation_id: string): Promise<Array<{ user_id: string; visible_from: number }>> {
+		return (await this.sql.unsafe(
+			`SELECT user_id, COALESCE((payload ->> 'visibleFromSeq')::numeric, 0)::float8 AS visible_from
+			 FROM ${this.qt('chat-members')}
+			 WHERE conversation_id = $1 AND state = 'active' AND is_active IS DISTINCT FROM false`,
+			[conversation_id],
+		)) as Array<{ user_id: string; visible_from: number }>;
+	}
+
+	/** Devuelve a quiénes les avanzó la marca de entregado. */
+	async chat_mark_delivered(conversation_id: string, user_ids: string[], seq: number): Promise<string[]> {
+		if (!user_ids.length) return [];
+		const rows = (await this.sql.unsafe(
+			`UPDATE ${this.qt('chat-members')} SET delivered_seq = $3
+			 WHERE conversation_id = $1 AND user_id IN (SELECT jsonb_array_elements_text($2::jsonb))
+			   AND state = 'active' AND COALESCE(delivered_seq, 0) < $3
+			 RETURNING user_id`,
+			[conversation_id, user_ids, seq],
+		)) as Array<{ user_id: string }>;
+		return rows.map((row) => row.user_id);
+	}
+
+	/** Lo que una vista del chat muestra de una persona; nunca el documento de usuario. */
+	async chat_users_brief(ids: string[]): Promise<ChatUserBrief[]> {
+		const wanted = [...new Set(ids.filter(Boolean))];
+		if (!wanted.length || !this.has('user')) return [];
+		const rows = (await this.sql.unsafe(
+			`SELECT id, name, email, img, is_active FROM ${this.qt('user')}
+			 WHERE id IN (SELECT jsonb_array_elements_text($1::jsonb))`,
+			[wanted],
+		)) as Array<Record<string, unknown>>;
+		return rows.map((row) => ({
+			_id: String(row.id),
+			name: String(row.name ?? ''),
+			...(row.email ? { email: String(row.email) } : {}),
+			...(row.img ? { img: String(row.img) } : {}),
+			is_active: row.is_active !== false,
+		}));
+	}
+
+	async chat_upload_by_client_id(owner_id: string, client_upload_id: string): Promise<ImperiumDoc | null> {
+		const rows = await this.sql.unsafe(
+			`SELECT * FROM ${this.qt('attachment-management')}
+			 WHERE created_by_id = $1 AND payload #>> '{chatUpload,clientUploadId}' = $2
+			   AND payload -> 'chatUpload' IS NOT NULL AND is_active IS DISTINCT FROM false
+			 LIMIT 1`,
+			[owner_id, client_upload_id],
+		);
+		return this.flatten((rows[0] as Record<string, unknown>) ?? null, 'attachment-management');
+	}
+
+	/** `chat_preferences.privacy` de `user-settings`; vacío si el usuario nunca lo guardó. */
+	async chat_privacy(user_id: string): Promise<Record<string, unknown>> {
+		if (!this.has('user-settings')) return {};
+		const rows = (await this.sql.unsafe(
+			`SELECT payload #> '{chat_preferences,privacy}' AS privacy FROM ${this.qt('user-settings')}
+			 WHERE payload ->> 'user_id' = $1 AND ${SETTINGS_OWNER} ORDER BY id LIMIT 1`,
+			[user_id],
+		)) as Array<{ privacy: unknown }>;
+		return as_object(rows[0]?.privacy);
+	}
+
+	/** `chat_preferences.privacy` y `presence_status` de varios usuarios en una consulta; sin fila, no salen. */
+	async chat_privacy_many(
+		user_ids: string[],
+	): Promise<Map<string, { privacy: Record<string, unknown>; presence_status: string }>> {
+		const wanted = [...new Set(user_ids.filter(Boolean))];
+		const out = new Map<string, { privacy: Record<string, unknown>; presence_status: string }>();
+		if (!wanted.length || !this.has('user-settings')) return out;
+		const rows = (await this.sql.unsafe(
+			`SELECT DISTINCT ON (payload ->> 'user_id') payload ->> 'user_id' AS user_id,
+				payload #> '{chat_preferences,privacy}' AS privacy,
+				payload #>> '{chat_preferences,presence_status}' AS presence_status
+			 FROM ${this.qt('user-settings')}
+			 WHERE payload ->> 'user_id' IN (SELECT jsonb_array_elements_text($1::jsonb)) AND ${SETTINGS_OWNER}
+			 ORDER BY payload ->> 'user_id', id`,
+			[wanted],
+		)) as Array<{ user_id: string; privacy: unknown; presence_status: string | null }>;
+		for (const row of rows) {
+			out.set(row.user_id, { privacy: as_object(row.privacy), presence_status: row.presence_status ?? '' });
+		}
+		return out;
+	}
+
+	/** La nueva marca de entregado, o `null` si no avanzó (o ya no es miembro activo). */
+	async chat_mark_delivered_up_to(conversation_id: string, user_id: string, seq: number): Promise<number | null> {
+		const [row] = (await this.sql.unsafe(
+			chat_delivered_up_to_sql({ conversations: this.qt('chat-conversations'), members: this.qt('chat-members') }),
+			[conversation_id, user_id, seq],
+		)) as Array<{ delivered_seq: number }>;
+		return row ? Number(row.delivered_seq) : null;
+	}
+
+	/** Filas en orden ascendente; `more` dice si quedaban más en la dirección pedida. */
+	async chat_message_page(input: {
+		conversation_id: string;
+		visible_from: number;
+		viewer_id: string;
+		limit: number;
+		direction: ChatPageDirection;
+		seq?: number;
+		user_only?: boolean;
+	}): Promise<{ rows: ImperiumDoc[]; more: boolean }> {
+		const params: unknown[] = [input.conversation_id, input.visible_from, input.limit + 1];
+		if (input.direction !== 'tail') params.push(input.seq);
+		params.push(input.viewer_id);
+		const rows = (await this.sql.unsafe(
+			chat_message_page_sql(this.qt('messages'), input.direction, input.user_only),
+			params,
+		)) as Array<Record<string, unknown>>;
+		const page = rows.slice(0, input.limit).map((row) => this.flatten(row, 'messages')!);
+		if (input.direction === 'tail' || input.direction === 'before') page.reverse();
+		return { rows: page, more: rows.length > input.limit };
+	}
+
+	/** El último mensaje de una persona en cada conversación; cada uno lo sirve `(conversation_id, seq)`. */
+	async chat_latest_user_messages(conversation_ids: string[]): Promise<ImperiumDoc[]> {
+		if (!conversation_ids.length) return [];
+		const rows = (await this.sql.unsafe(
+			`SELECT m.* FROM (SELECT jsonb_array_elements_text($1::jsonb) AS id) c
+			 CROSS JOIN LATERAL (
+				SELECT * FROM ${this.qt('messages')}
+				WHERE conversation_id = c.id AND is_active IS DISTINCT FROM false AND ${USER_KIND_SQL}
+				ORDER BY seq DESC LIMIT 1
+			 ) m`,
+			[conversation_ids],
+		)) as Array<Record<string, unknown>>;
+		return rows.map((row) => this.flatten(row, 'messages')!);
+	}
+
+	async chat_changed_messages(input: {
+		conversation_id: string;
+		visible_from: number;
+		viewer_id: string;
+		up_to_seq: number;
+		since: string;
+		limit: number;
+	}): Promise<{ rows: ImperiumDoc[]; more: boolean }> {
+		const rows = (await this.sql.unsafe(chat_changed_messages_sql(this.qt('messages')), [
+			input.conversation_id,
+			input.visible_from,
+			input.up_to_seq,
+			input.since,
+			input.limit + 1,
+			input.viewer_id,
+		])) as Array<Record<string, unknown>>;
+		return {
+			rows: rows.slice(0, input.limit).map((row) => this.flatten(row, 'messages')!),
+			more: rows.length > input.limit,
+		};
+	}
+
+	/** `ChatReactionView[]` por mensaje. */
+	async chat_reaction_summary(message_ids: string[], viewer_id: string): Promise<Map<string, ImperiumDoc[]>> {
+		const out = new Map<string, ImperiumDoc[]>();
+		if (!message_ids.length || !this.has('chat-reactions')) return out;
+		const rows = (await this.sql.unsafe(chat_reaction_summary_sql(this.qt('chat-reactions')), [
+			message_ids,
+			viewer_id,
+		])) as Array<Record<string, unknown>>;
+		for (const row of rows) {
+			const id = String(row.message_id);
+			out.set(id, [
+				...(out.get(id) ?? []),
+				{
+					emoji: String(row.emoji),
+					count: Number(row.count),
+					mine: row.mine === true,
+					sample_user_ids: as_array(row.sample_user_ids).map(String),
+				},
+			]);
+		}
+		return out;
+	}
+
+	async chat_conversation_page(query: ChatInboxQuery): Promise<ChatInboxRow[]> {
+		const { sql, params } = chat_inbox_sql(
+			{ conversations: this.qt('chat-conversations'), members: this.qt('chat-members') },
+			query,
+		);
+		const rows = (await this.sql.unsafe(sql, params)) as Array<Record<string, unknown>>;
+		return rows.map((row) => {
+			const {
+				member_id,
+				member_role,
+				member_state,
+				last_read_seq,
+				public_read_seq,
+				delivered_seq,
+				member_payload,
+				member_updated_at,
+				activity_at,
+				unread_count,
+				unread_mention_seqs,
+				...conversation
+			} = row;
+			return {
+				conversation: this.flatten(conversation, 'chat-conversations')!,
+				member: {
+					...as_object(member_payload),
+					_id: String(member_id),
+					role: member_role,
+					state: member_state,
+					last_read_seq: Number(last_read_seq ?? 0),
+					public_read_seq: Number(public_read_seq ?? 0),
+					delivered_seq: Number(delivered_seq ?? 0),
+					updated_at: member_updated_at,
+				},
+				activity_at: String(activity_at),
+				unread_count: Number(unread_count),
+				unread_mention_seqs: as_array(unread_mention_seqs).map(Number),
+			};
+		});
+	}
+
+	async chat_inbox_counts(user_id: string, now: string): Promise<Record<string, number>> {
+		const [row] = (await this.sql.unsafe(
+			chat_inbox_counts_sql({
+				conversations: this.qt('chat-conversations'),
+				members: this.qt('chat-members'),
+				mentions: this.qt('mentions'),
+			}),
+			[user_id, now],
+		)) as Array<Record<string, unknown>>;
+		return Object.fromEntries(Object.entries(row ?? {}).map(([key, value]) => [key, Number(value) || 0]));
+	}
+
+	/** `null` si el usuario ya no es miembro activo. */
+	async chat_mark_read(input: {
+		conversation_id: string;
+		user_id: string;
+		seq: number;
+		share_read: boolean;
+		now: string;
+	}): Promise<ChatReadResult | null> {
+		const [row] = (await this.sql.unsafe(
+			chat_mark_read_sql({ conversations: this.qt('chat-conversations'), members: this.qt('chat-members') }),
+			[input.conversation_id, input.user_id, input.seq, input.share_read, input.now],
+		)) as Array<Record<string, unknown>>;
+		if (!row) return null;
+		return {
+			last_read_seq: Number(row.last_read_seq ?? 0),
+			public_read_seq: Number(row.public_read_seq ?? 0),
+			delivered_seq: Number(row.delivered_seq ?? 0),
+			last_seq: Number(row.last_seq ?? 0),
+			mention_seqs: as_array(row.mention_seqs).map(Number),
+		};
+	}
+
+	/** `false` si el usuario ya no es miembro activo. */
+	async chat_mark_unread(conversation_id: string, user_id: string, now: string): Promise<boolean> {
+		const rows = await this.sql.unsafe(
+			`UPDATE ${this.qt('chat-members')}
+			 SET payload = COALESCE(payload, '{}'::jsonb) || '{"markedUnread": true}'::jsonb, updated_at = $3
+			 WHERE conversation_id = $1 AND user_id = $2 AND state = 'active'
+			 RETURNING id`,
+			[conversation_id, user_id, now],
+		);
+		return rows.length > 0;
+	}
+
+	/** Quiénes no comparten acuses de lectura: tampoco ven los ajenos. */
+	async chat_receipts_off(user_ids: string[]): Promise<Set<string>> {
+		if (!user_ids.length || !this.has('user-settings')) return new Set();
+		const rows = (await this.sql.unsafe(
+			`SELECT payload ->> 'user_id' AS user_id FROM ${this.qt('user-settings')}
+			 WHERE payload ->> 'user_id' IN (SELECT jsonb_array_elements_text($1::jsonb)) AND ${SETTINGS_OWNER}
+			   AND payload #> '{chat_preferences,privacy,read_receipts}' = 'false'::jsonb`,
+			[user_ids],
+		)) as Array<{ user_id: string }>;
+		return new Set(rows.map((row) => row.user_id));
+	}
+
+	async chat_read_marks(conversation_id: string): Promise<ChatReadMarks[]> {
+		const rows = (await this.sql.unsafe(
+			`SELECT user_id, last_read_seq, public_read_seq, delivered_seq FROM ${this.qt('chat-members')}
+			 WHERE conversation_id = $1 AND state = 'active' AND is_active IS DISTINCT FROM false
+			 ORDER BY user_id`,
+			[conversation_id],
+		)) as Array<Record<string, unknown>>;
+		return rows.map((row) => ({
+			user_id: String(row.user_id),
+			last_read_seq: Number(row.last_read_seq ?? 0),
+			public_read_seq: Number(row.public_read_seq ?? 0),
+			delivered_seq: Number(row.delivered_seq ?? 0),
+		}));
+	}
+
+	async chat_mark_inbox_delivered(
+		user_id: string,
+		conversation_ids: string[],
+	): Promise<Array<{ conversation_id: string; seq: number; member_ids: string[] }>> {
+		if (!conversation_ids.length) return [];
+		const rows = (await this.sql.unsafe(
+			chat_inbox_delivered_sql({ conversations: this.qt('chat-conversations'), members: this.qt('chat-members') }),
+			[user_id, conversation_ids],
+		)) as Array<Record<string, unknown>>;
+		return rows.map((row) => ({
+			conversation_id: String(row.conversation_id),
+			seq: Number(row.seq),
+			member_ids: as_array(row.member_ids).map(String),
+		}));
+	}
+
+	private chat_mutation_tables() {
+		return {
+			messages: this.qt('messages'),
+			conversations: this.qt('chat-conversations'),
+			audit: this.qt('chat-audit'),
+			saved: this.qt('chat-saved'),
+			members: this.qt('chat-members'),
+		};
+	}
+
+	/** `null`: el mensaje no existe, está inactivo o ya tiene lápida. */
+	async chat_edit_message(input: ChatEditInput): Promise<ChatMessageChange | null> {
+		const [row] = (await this.sql.unsafe(chat_edit_message_sql(this.chat_mutation_tables()), [
+			input.id,
+			input.text,
+			input.search_field,
+			input.now,
+			input.merge,
+			input.audit_id,
+			input.actor_id,
+			input.preview,
+		])) as Array<Record<string, unknown>>;
+		if (!row) return null;
+		const { conversation_last_message, ...message } = row;
+		return {
+			message: this.flatten(message, 'messages')!,
+			last_message: conversation_last_message ? as_object(conversation_last_message) : null,
+			quoting: [],
+		};
+	}
+
+	/** `null`: el mensaje no existe, está inactivo o ya tiene lápida. */
+	async chat_delete_message(input: ChatDeleteInput): Promise<ChatMessageChange | null> {
+		const [row] = (await this.sql.unsafe(chat_delete_message_sql(this.chat_mutation_tables()), [
+			input.id,
+			input.now,
+			input.deleted,
+			input.audit_id,
+			input.actor_id,
+			input.action,
+			input.target_user_id,
+		])) as Array<Record<string, unknown>>;
+		if (!row) return null;
+		const { conversation_last_message, quoting, ...message } = row;
+		return {
+			message: this.flatten(message, 'messages')!,
+			last_message: conversation_last_message ? as_object(conversation_last_message) : null,
+			quoting: as_array(quoting).map((item) => {
+				const quote = as_object(item);
+				return {
+					id: String(quote.id),
+					seq: Number(quote.seq),
+					rev: Number(quote.rev) || 0,
+					reply_preview: as_object(quote.reply_preview),
+					updated_at: String(quote.updated_at),
+				};
+			}),
+		};
+	}
+
+	/** `null`: el mensaje ya no está vivo. `on` sin valor conmuta. */
+	async chat_toggle_reaction(input: {
+		message_id: string;
+		user_id: string;
+		emoji: string;
+		on?: boolean;
+		/** Emojis distintos por persona y mensaje. */
+		limit: number;
+		now: string;
+	}): Promise<ChatReactionToggle | null> {
+		const sqls = chat_reaction_sqls({ messages: this.qt('messages'), reactions: this.qt('chat-reactions') });
+		return this.sql.begin(async (tx): Promise<ChatReactionToggle | null> => {
+			const [locked] = (await tx.unsafe(sqls.lock, [input.message_id])) as Array<Record<string, unknown>>;
+			if (!locked) return null;
+			const mine = ((await tx.unsafe(sqls.mine, [input.message_id, input.user_id])) as Array<{ value: string }>).map(
+				(row) => row.value,
+			);
+			const had = mine.includes(input.emoji);
+			const want = input.on ?? !had;
+			if (want && !had && mine.length >= input.limit) return { limited: true };
+			let changed = false;
+			if (want && !had) {
+				const added = await tx.unsafe(sqls.add, [
+					input.message_id,
+					locked.conversation_id,
+					input.user_id,
+					input.emoji,
+					input.now,
+				]);
+				changed = added.length > 0;
+			}
+			if (!want && had) changed = (await tx.unsafe(sqls.remove, [input.message_id, input.user_id, input.emoji])).length > 0;
+			const [mark] = changed
+				? ((await tx.unsafe(sqls.bump, [input.message_id, input.now])) as Array<Record<string, unknown>>)
+				: [locked];
+			const [counted] = (await tx.unsafe(sqls.count, [input.message_id, input.emoji])) as Array<{ count: number }>;
+			return {
+				limited: false,
+				changed,
+				mine: want,
+				count: Number(counted?.count ?? 0),
+				rev: Number(mark?.rev ?? 0),
+				updated_at: String(mark?.updated_at ?? ''),
+			};
+		});
+	}
+
+	/**
+	 * Reemplaza los votos de una persona (vale el último; `[]` los retira). `null`: la encuesta ya no
+	 * está abierta o el mensaje ya no está vivo. Con `final` (cuestionario) la respuesta no cambia.
+	 */
+	async chat_replace_votes(input: {
+		message_id: string;
+		user_id: string;
+		option_ids: string[];
+		final: boolean;
+		now: string;
+	}): Promise<ChatVoteResult | null> {
+		const sqls = chat_vote_sqls({ messages: this.qt('messages'), reactions: this.qt('chat-reactions') });
+		return this.sql.begin(async (tx): Promise<ChatVoteResult | null> => {
+			const [locked] = (await tx.unsafe(sqls.lock, [input.message_id])) as Array<Record<string, unknown>>;
+			if (!locked) return null;
+			const mine = ((await tx.unsafe(sqls.mine, [input.message_id, input.user_id])) as Array<{ value: string }>).map(
+				(row) => row.value,
+			);
+			const same = mine.length === input.option_ids.length && input.option_ids.every((id) => mine.includes(id));
+			if (input.final && mine.length && !same) return { already_voted: true };
+			const dropped = await tx.unsafe(sqls.drop, [input.message_id, input.user_id, input.option_ids]);
+			const added = await tx.unsafe(sqls.add, [
+				input.message_id,
+				locked.conversation_id,
+				input.user_id,
+				input.option_ids,
+				input.now,
+			]);
+			const changed = dropped.length + added.length > 0;
+			const [mark] = changed
+				? ((await tx.unsafe(sqls.bump, [input.message_id, input.now])) as Array<Record<string, unknown>>)
+				: [locked];
+			return { already_voted: false, changed, rev: Number(mark?.rev ?? 0), updated_at: String(mark?.updated_at ?? '') };
+		});
+	}
+
+	/** `null`: ya estaba cerrada, no es una encuesta o el mensaje ya no está vivo. */
+	async chat_close_poll(message_id: string, now: string): Promise<ImperiumDoc | null> {
+		const [row] = (await this.sql.unsafe(chat_close_poll_sql(this.qt('messages')), [message_id, now])) as Array<
+			Record<string, unknown>
+		>;
+		return this.flatten(row ?? null, 'messages');
+	}
+
+	async chat_poll_tally(message_ids: string[], viewer_id: string): Promise<Map<string, ChatPollTally>> {
+		const out = new Map<string, ChatPollTally>();
+		if (!message_ids.length) return out;
+		const rows = (await this.sql.unsafe(chat_poll_tally_sql(this.qt('chat-reactions')), [
+			message_ids,
+			viewer_id,
+		])) as Array<Record<string, unknown>>;
+		for (const row of rows) {
+			const id = String(row.message_id);
+			const tally = out.get(id) ?? { total_voters: 0, options: new Map() };
+			if (row.total === true) tally.total_voters = Number(row.votes);
+			else {
+				tally.options.set(String(row.option_id), {
+					votes: Number(row.votes),
+					mine: row.mine === true,
+					voter_ids: as_array(row.voter_ids).map(String),
+				});
+			}
+			out.set(id, tally);
+		}
+		return out;
+	}
+
+	/** A quiénes les quedó la mención pendiente: miembros activos que aún no leyeron ese `seq`. */
+	async chat_add_mention_seqs(conversation_id: string, user_ids: string[], seq: number, now: string): Promise<string[]> {
+		if (!user_ids.length) return [];
+		const rows = (await this.sql.unsafe(chat_add_mention_seqs_sql(this.qt('chat-members')), [
+			conversation_id,
+			user_ids,
+			seq,
+			now,
+		])) as Array<{ user_id: string }>;
+		return rows.map((row) => row.user_id);
+	}
+
+	/** Filas de Actividad (`mentions`) en una sentencia; devuelve el id de cada una con su destinatario. */
+	async insert_activity(payloads: ImperiumDoc[]): Promise<Array<{ id: string; user_id: string }>> {
+		if (!payloads.length) return [];
+		return (await this.sql.unsafe(
+			`INSERT INTO ${this.qt('mentions')} (id, name, is_active, payload, created_at, updated_at)
+			 SELECT ${NEW_ROW_ID}, 'mención', true, p, $2, $2 FROM jsonb_array_elements($1::jsonb) AS p
+			 RETURNING id, payload ->> 'mentionedUserId' AS user_id`,
+			[payloads, new Date().toISOString()],
+		)) as Array<{ id: string; user_id: string }>;
+	}
+
+	/** Quita `seq` de las menciones pendientes de los miembros que no están en `keep_user_ids`. */
+	async chat_drop_mention_seq(conversation_id: string, seq: number, keep_user_ids: string[]): Promise<void> {
+		await this.sql.unsafe(
+			`UPDATE ${this.qt('chat-members')} m SET payload = m.payload || jsonb_build_object('mentionSeqs', COALESCE(
+				(SELECT jsonb_agg(s) FROM ${MENTION_SEQS} WHERE (s #>> '{}')::numeric <> $2), '[]'::jsonb))
+			 WHERE m.conversation_id = $1 AND m.user_id NOT IN (SELECT jsonb_array_elements_text($3::jsonb))
+				AND jsonb_typeof(m.payload -> 'mentionSeqs') = 'array' AND m.payload -> 'mentionSeqs' @> to_jsonb($2::numeric)`,
+			[conversation_id, seq, keep_user_ids],
+		);
+	}
+
+	async chat_activity_page(query: ChatActivityQuery): Promise<ImperiumDoc[]> {
+		if (!this.has('mentions')) return [];
+		const { sql, params } = chat_activity_page_sql(this.qt('mentions'), query);
+		const rows = (await this.sql.unsafe(sql, params)) as Array<Record<string, unknown>>;
+		return rows.map((row) => this.flatten(row, 'mentions')!);
+	}
+
+	async chat_activity_counts(user_id: string): Promise<Record<'all' | 'chat' | 'history' | 'reactions', number>> {
+		const counts = { all: 0, chat: 0, history: 0, reactions: 0 };
+		if (!this.has('mentions')) return counts;
+		const [row] = (await this.sql.unsafe(chat_activity_counts_sql(this.qt('mentions')), [user_id])) as Array<
+			Record<string, unknown>
+		>;
+		for (const key of Object.keys(counts) as Array<keyof typeof counts>) counts[key] = Number(row?.[key] ?? 0);
+		return counts;
+	}
+
+	/** Sin `ids` ni `context_types`, toda la actividad sin leer de esa persona. */
+	async chat_mark_activity_read(input: {
+		user_id: string;
+		ids?: string[];
+		context_types?: string[];
+		now: string;
+	}): Promise<{ ids: string[]; notification_ids: string[] }> {
+		if (!this.has('mentions') || !this.has('notifications')) return { ids: [], notification_ids: [] };
+		const rows = (await this.sql.unsafe(
+			chat_mark_activity_read_sql({ mentions: this.qt('mentions'), notifications: this.qt('notifications') }),
+			[input.user_id, input.ids ?? null, input.context_types ?? null, input.now],
+		)) as Array<Record<string, unknown>>;
+		return {
+			ids: rows.map((row) => String(row.id)),
+			notification_ids: as_array(rows[0]?.notification_ids).map(String),
+		};
+	}
+
+	async chat_retire_activity(input: {
+		message_id: string;
+		context_type?: string;
+		actor_id?: string;
+		reaction?: string;
+		now: string;
+	}): Promise<Array<{ id: string; user_id: string }>> {
+		if (!this.has('mentions')) return [];
+		const rows = (await this.sql.unsafe(chat_retire_activity_sql(this.qt('mentions')), [
+			input.message_id,
+			input.context_type ?? null,
+			input.actor_id ?? null,
+			input.reaction ?? null,
+			input.now,
+		])) as Array<Record<string, unknown>>;
+		return rows.map((row) => ({ id: String(row.id), user_id: String(row.user_id) }));
+	}
+
+	/** `false` si ya estaba oculto para esa persona o el mensaje ya no está activo. */
+	async chat_hide_message(message_id: string, user_id: string): Promise<boolean> {
+		const rows = await this.sql.unsafe(chat_hide_message_sql(this.qt('messages')), [message_id, user_id]);
+		return rows.length > 0;
+	}
+
+	/** `null`: esa persona ya lo abrió o el mensaje ya no está vivo. */
+	async chat_open_view_once(message_id: string, user_id: string, now: string): Promise<ImperiumDoc | null> {
+		const [row] = (await this.sql.unsafe(chat_open_view_once_sql(this.qt('messages')), [message_id, user_id, now])) as Array<
+			Record<string, unknown>
+		>;
+		return this.flatten(row ?? null, 'messages');
+	}
+
+	async chat_message_receipts(conversation_id: string, seq: number, sender_id: string | null): Promise<ChatReceipts> {
+		const [row] = (await this.sql.unsafe(chat_message_receipts_sql(this.qt('chat-members')), [
+			conversation_id,
+			seq,
+			sender_id,
+		])) as Array<Record<string, unknown>>;
+		return {
+			member_count: Number(row?.member_count ?? 0),
+			read_count: Number(row?.read_count ?? 0),
+			delivered_count: Number(row?.delivered_count ?? 0),
+			read_ids: as_array(row?.read_ids).map(String),
+			delivered_ids: as_array(row?.delivered_ids).map(String),
+		};
+	}
+
+	private chat_membership() {
+		return chat_membership_sqls({ conversations: this.qt('chat-conversations'), members: this.qt('chat-members') });
+	}
+
+	/** Un grupo o un canal con sus miembros, en una transacción. */
+	async chat_create_group(input: {
+		id: string;
+		kind: string;
+		title: string;
+		description: string;
+		created_by: string;
+		payload: ImperiumDoc;
+		members: Array<{ user_id: string; role: string; invited_by?: string }>;
+		now: string;
+	}): Promise<ImperiumDoc> {
+		const sqls = this.chat_membership();
+		const row = await this.sql.begin(async (tx) => {
+			await tx.unsafe(sqls.group, [
+				input.id,
+				input.title,
+				input.description,
+				input.created_by,
+				input.kind,
+				input.payload,
+				input.now,
+			]);
+			await tx.unsafe(sqls.join, [
+				input.id,
+				input.members,
+				'active',
+				0,
+				{ joinedAt: input.now, visibleFromSeq: 0, mentionSeqs: [], markedUnread: false },
+				input.now,
+			]);
+			const [counted] = (await tx.unsafe(sqls.count, [input.id, input.now])) as Array<Record<string, unknown>>;
+			return counted!;
+		});
+		return this.flatten(row, 'chat-conversations')!;
+	}
+
+	/**
+	 * Alta (`active`) o solicitud (`requested`) de personas en un grupo. Quien ya estaba no cambia;
+	 * con un baneado o sin cupo no entra nadie. Quien entra ve el historial desde ahí si el grupo
+	 * no lo comparte y empieza sin no leídos. Con `invite_id`, el enlace tiene que seguir sirviendo
+	 * y gasta un uso solo si alguien entra o pide entrar.
+	 */
+	async chat_join_members(input: {
+		conversation_id: string;
+		user_ids: string[];
+		state: 'active' | 'requested';
+		invited_by?: string;
+		max_members: number;
+		/** Aprobar: solo entra quien ya pidió entrar. */
+		only_requested?: boolean;
+		invite_id?: string;
+		now: string;
+	}): Promise<ChatJoinResult> {
+		const sqls = this.chat_membership();
+		return this.sql.begin(async (tx): Promise<ChatJoinResult> => {
+			const [locked] = (await tx.unsafe(sqls.lock, [input.conversation_id])) as Array<Record<string, unknown>>;
+			if (!locked) return { status: 'missing' };
+			if (input.invite_id) {
+				const invite = as_array(as_object(locked.payload).invites)
+					.map(as_object)
+					.find((item) => item.id === input.invite_id);
+				const state = invite ? invite_state(invite, input.now) : 'revoked';
+				if (!invite || state === 'revoked') return { status: 'invite_not_found' };
+				if (state !== 'live') return { status: `invite_${state}` };
+				// El enlace vale lo que su autor: si ya no está o ya no puede invitar, deja de servir.
+				const [creator] = (await tx.unsafe(sqls.current, [input.conversation_id, [String(invite.createdById)]])) as Array<{
+					state: string;
+					role: string;
+				}>;
+				const settings = as_object(as_object(locked.payload).settings);
+				if (creator?.state !== 'active' || !chat_can(chat_role(creator.role), settings, 'create_invite')) {
+					return { status: 'invite_not_found' };
+				}
+			}
+			const current = (await tx.unsafe(sqls.current, [input.conversation_id, input.user_ids])) as Array<{
+				user_id: string;
+				state: string;
+			}>;
+			const previous = Object.fromEntries(current.map((row) => [row.user_id, row.state]));
+			const banned = input.user_ids.filter((id) => previous[id] === 'banned');
+			if (banned.length) return { status: 'banned', user_ids: banned };
+			if (input.only_requested && input.user_ids.some((id) => previous[id] !== 'requested')) {
+				return { status: 'not_requested' };
+			}
+			const entering = input.user_ids.filter((id) => previous[id] !== 'active' && previous[id] !== input.state);
+			if (!entering.length) {
+				return { status: 'ok', conversation: this.flatten(locked, 'chat-conversations')!, joined: [], previous };
+			}
+			if (input.state === 'active') {
+				const [counted] = (await tx.unsafe(sqls.active_count, [input.conversation_id])) as Array<{ n: number }>;
+				if (Number(counted?.n) + entering.length > input.max_members) return { status: 'full' };
+			}
+			const last_seq = Number(locked.last_seq) || 0;
+			const shares_history = as_object(as_object(locked.payload).settings).historyVisibleToNewMembers !== false;
+			const membership =
+				input.state === 'active'
+					? { joinedAt: input.now, visibleFromSeq: shares_history ? 0 : last_seq, mentionSeqs: [], markedUnread: false }
+					: { requestedAt: input.now, mentionSeqs: [], markedUnread: false };
+			const joined = await tx.unsafe(sqls.join, [
+				input.conversation_id,
+				entering.map((user_id) => ({ user_id, invited_by: input.invited_by ?? null })),
+				input.state,
+				input.state === 'active' ? last_seq : 0,
+				membership,
+				input.now,
+			]);
+			if (input.invite_id) await tx.unsafe(sqls.use_invite, [input.conversation_id, input.invite_id, input.now]);
+			const [conversation] = (await tx.unsafe(sqls.count, [input.conversation_id, input.now])) as Array<
+				Record<string, unknown>
+			>;
+			return {
+				status: 'ok',
+				conversation: this.flatten(conversation!, 'chat-conversations')!,
+				joined: (joined as Array<Record<string, unknown>>).map((row) => this.flatten(row, 'chat-members')!),
+				previous,
+			};
+		});
+	}
+
+	/**
+	 * Cambia los enlaces de invitación de un grupo con la conversación bloqueada: `update` recibe los
+	 * de ahora y devuelve los nuevos, o `null` si no proceden. El prefijo de los enlaces se fija la
+	 * primera vez.
+	 */
+	async chat_update_invites(input: {
+		conversation_id: string;
+		join_code: string | null;
+		now: string;
+		update: (invites: ImperiumDoc[]) => ImperiumDoc[] | null;
+	}): Promise<{ status: 'missing' | 'rejected' } | { status: 'ok'; conversation: ImperiumDoc }> {
+		const sqls = this.chat_membership();
+		return this.sql.begin(async (tx) => {
+			const [locked] = (await tx.unsafe(sqls.lock, [input.conversation_id])) as Array<Record<string, unknown>>;
+			if (!locked) return { status: 'missing' as const };
+			const invites = input.update(as_array(as_object(locked.payload).invites).map(as_object));
+			if (!invites) return { status: 'rejected' as const };
+			const [row] = (await tx.unsafe(sqls.invites, [input.conversation_id, input.join_code, invites, input.now])) as Array<
+				Record<string, unknown>
+			>;
+			return { status: 'ok' as const, conversation: this.flatten(row!, 'chat-conversations')! };
+		});
+	}
+
+	/** Como `chat_update_invites`, para los mensajes fijados. */
+	async chat_update_pins(input: {
+		conversation_id: string;
+		now: string;
+		update: (pins: ImperiumDoc[]) => ImperiumDoc[] | null;
+	}): Promise<{ status: 'missing' | 'rejected' } | { status: 'ok'; conversation: ImperiumDoc }> {
+		const sqls = this.chat_membership();
+		return this.sql.begin(async (tx) => {
+			const [locked] = (await tx.unsafe(sqls.lock, [input.conversation_id])) as Array<Record<string, unknown>>;
+			if (!locked) return { status: 'missing' as const };
+			const pins = input.update(as_array(as_object(locked.payload).pins).map(as_object));
+			if (!pins) return { status: 'rejected' as const };
+			const [row] = (await tx.unsafe(sqls.pins, [input.conversation_id, pins, input.now])) as Array<Record<string, unknown>>;
+			return { status: 'ok' as const, conversation: this.flatten(row!, 'chat-conversations')! };
+		});
+	}
+
+	/** Filas del más nuevo al más viejo; `more` dice si quedaban más. */
+	async chat_media_page(input: {
+		conversation_id: string;
+		visible_from: number;
+		viewer_id: string;
+		type: string;
+		before_seq?: number;
+		limit: number;
+	}): Promise<{ rows: ImperiumDoc[]; more: boolean }> {
+		const params: unknown[] = [input.conversation_id, input.visible_from, input.viewer_id, input.type, input.limit + 1];
+		if (input.before_seq !== undefined) params.push(input.before_seq);
+		const rows = (await this.sql.unsafe(
+			chat_media_page_sql(this.qt('messages'), input.before_seq !== undefined),
+			params,
+		)) as Array<Record<string, unknown>>;
+		return {
+			rows: rows.slice(0, input.limit).map((row) => this.flatten(row, 'messages')!),
+			more: rows.length > input.limit,
+		};
+	}
+
+	async chat_search(query: ChatSearchQuery): Promise<Array<{ message: ImperiumDoc; conversation_key: string }>> {
+		const { sql, params } = chat_search_sql(
+			{ messages: this.qt('messages'), members: this.qt('chat-members'), conversations: this.qt('chat-conversations') },
+			query,
+		);
+		const rows = (await this.sql.unsafe(sql, params)) as Array<Record<string, unknown>>;
+		return rows.map(({ conversation_key_of, ...message }) => ({
+			message: this.flatten(message, 'messages')!,
+			conversation_key: String(conversation_key_of ?? ''),
+		}));
+	}
+
+	async chat_claim_due(job: ChatDueJob, now: string, limit: number): Promise<ImperiumDoc[]> {
+		const { resource } = CHAT_DUE_JOBS[job];
+		const rows = (await this.sql.unsafe(chat_claim_due_sql(this.qt(resource), job), [now, limit])) as Array<
+			Record<string, unknown>
+		>;
+		return rows.map((row) => this.flatten(row, resource)!);
+	}
+
+	/** Sin `ids`, todo lo reclamado de ese trabajo. */
+	async chat_release_claims(job: ChatDueJob, ids: string[] | null = null): Promise<number> {
+		const { resource } = CHAT_DUE_JOBS[job];
+		return (await this.sql.unsafe(chat_release_claims_sql(this.qt(resource), job), [ids])).length;
+	}
+
+	async chat_purge_messages(input: { ids: string[]; now: string; legal_hold: boolean }): Promise<ChatPurge> {
+		const [row] = (await this.sql.unsafe(
+			chat_purge_messages_sql({
+				messages: this.qt('messages'),
+				conversations: this.qt('chat-conversations'),
+				audit: this.qt('chat-audit'),
+				reactions: this.qt('chat-reactions'),
+				attachments: this.qt('attachment-management'),
+				saved: this.qt('chat-saved'),
+				members: this.qt('chat-members'),
+			}),
+			[input.ids, input.now, input.legal_hold],
+		)) as Array<Record<string, unknown>>;
+		return {
+			purged: as_array(row?.purged).map((item) => {
+				const purged = as_object(item);
+				return { id: String(purged.id), conversation_id: String(purged.conversation_id), seq: Number(purged.seq) };
+			}),
+			quoting: as_array(row?.quoting).map((item) => {
+				const quote = as_object(item);
+				return {
+					conversation_id: String(quote.conversation_id),
+					id: String(quote.id),
+					seq: Number(quote.seq),
+					rev: Number(quote.rev) || 0,
+					reply_preview: as_object(quote.reply_preview),
+					updated_at: String(quote.updated_at),
+				};
+			}),
+			last_messages: as_array(row?.last_messages).map((item) => {
+				const last = as_object(item);
+				return { conversation_id: String(last.conversation_id), last_message: as_object(last.last_message) };
+			}),
+			files: as_array(row?.files).map(String),
+		};
+	}
+
+	/** Las subidas sin ligar desde antes de `before`, ya dadas de baja. */
+	async chat_discard_orphan_uploads(before: string, now: string, limit: number): Promise<Array<{ id: string; name_stored: string }>> {
+		const rows = (await this.sql.unsafe(chat_discard_orphan_uploads_sql(this.qt('attachment-management')), [
+			before,
+			now,
+			limit,
+		])) as Array<{ id: string; name_stored: string | null }>;
+		return rows.map((row) => ({ id: String(row.id), name_stored: String(row.name_stored ?? '') }));
+	}
+
+	/** De estos archivos, los que alguna fila de adjunto del chat sigue usando. */
+	async chat_files_in_use(names: string[]): Promise<Set<string>> {
+		const wanted = [...new Set(names.filter(Boolean))];
+		if (!wanted.length) return new Set();
+		const rows = (await this.sql.unsafe(
+			`SELECT DISTINCT name_stored FROM ${this.qt('attachment-management')}
+			 WHERE name_stored IN (SELECT jsonb_array_elements_text($1::jsonb)) AND ${CHAT_FILE_MODELS}
+			   AND is_active IS DISTINCT FROM false`,
+			[wanted],
+		)) as Array<{ name_stored: string }>;
+		return new Set(rows.map((row) => row.name_stored));
+	}
+
+	/** `false` si alguna ya no estaba libre: entonces no se ligó ninguna. */
+	async chat_bind_uploads(ids: string[], owner_id: string, model: string, record_id: string, now: string): Promise<boolean> {
+		if (!ids.length) return true;
+		const rows = await this.sql.unsafe(chat_bind_uploads_sql(this.qt('attachment-management')), [
+			ids,
+			owner_id,
+			model,
+			record_id,
+			now,
+		]);
+		return rows.length === ids.length;
+	}
+
+	/** `null`: no existe, no es de ese remitente o ya no está en el estado esperado. */
+	async chat_update_scheduled(input: {
+		id: string;
+		sender_user_id?: string;
+		from: string;
+		to?: string;
+		send_at?: string;
+		merge?: ImperiumDoc;
+		now: string;
+	}): Promise<ImperiumDoc | null> {
+		const [row] = (await this.sql.unsafe(chat_update_scheduled_sql(this.qt('chat-scheduled')), [
+			input.id,
+			input.sender_user_id ?? null,
+			input.from,
+			input.to ?? null,
+			input.send_at ?? null,
+			input.merge ?? {},
+			input.now,
+		])) as Array<Record<string, unknown>>;
+		return this.flatten(row ?? null, 'chat-scheduled');
+	}
+
+	async chat_save_message(input: {
+		id: string;
+		user_id: string;
+		message_id: string;
+		remind_at: string | null;
+		payload: ImperiumDoc;
+		now: string;
+	}): Promise<ImperiumDoc> {
+		const [row] = (await this.sql.unsafe(chat_save_message_sql(this.qt('chat-saved')), [
+			input.id,
+			input.user_id,
+			input.message_id,
+			input.remind_at,
+			input.payload,
+			input.now,
+		])) as Array<Record<string, unknown>>;
+		return this.flatten(row!, 'chat-saved')!;
+	}
+
+	/** `null`: no existe o no es de esa persona. */
+	async chat_update_saved(id: string, user_id: string, patch: ChatSavedPatch, now: string): Promise<ImperiumDoc | null> {
+		const { sql, params } = chat_update_saved_sql(this.qt('chat-saved'), patch, { id, user_id, now });
+		const [row] = (await this.sql.unsafe(sql, params)) as Array<Record<string, unknown>>;
+		return this.flatten(row ?? null, 'chat-saved');
+	}
+
+	/**
+	 * De estos guardados, los que quien guardó aún ve: mensaje vivo, sin lápida ni caducado, siendo
+	 * miembro activo desde su `visibleFromSeq` y sin haberlo ocultado.
+	 */
+	async chat_saved_still_visible(ids: string[], now: string): Promise<Set<string>> {
+		if (!ids.length) return new Set();
+		const rows = (await this.sql.unsafe(
+			`SELECT s.id FROM ${this.qt('chat-saved')} s
+			 JOIN ${this.qt('messages')} m ON m.id = s.message_id
+			 JOIN ${this.qt('chat-members')} cm ON cm.conversation_id = m.conversation_id AND cm.user_id = s.user_id
+			 WHERE s.id IN (SELECT jsonb_array_elements_text($1::jsonb))
+				AND m.is_active IS DISTINCT FROM false AND NOT (COALESCE(m.payload, '{}'::jsonb) ? 'deleted')
+				AND (m.expires_at IS NULL OR m.expires_at > $2)
+				AND NOT (COALESCE(m.payload -> 'hiddenForUserIds', '[]'::jsonb) ? s.user_id)
+				AND cm.state = 'active' AND cm.is_active IS DISTINCT FROM false
+				AND m.seq > COALESCE((cm.payload ->> 'visibleFromSeq')::numeric, 0)`,
+			[ids, now],
+		)) as Array<{ id: string }>;
+		return new Set(rows.map((row) => row.id));
+	}
+
+	async chat_delete_saved(id: string, user_id: string): Promise<boolean> {
+		const rows = await this.sql.unsafe(`DELETE FROM ${this.qt('chat-saved')} WHERE id = $1 AND user_id = $2 RETURNING id`, [
+			id,
+			user_id,
+		]);
+		return rows.length > 0;
+	}
+
+	private chat_story_tables(): ChatStoryTables {
+		return {
+			stories: this.qt('chat-stories'),
+			views: this.qt('chat-story-views'),
+			conversations: this.qt('chat-conversations'),
+			messages: this.qt('messages'),
+		};
+	}
+
+	/** De `owner_ids`, quienes tienen a `viewer_id` por contacto (ver `contact_sql`). */
+	async chat_contact_owners(viewer_id: string, owner_ids: string[]): Promise<string[]> {
+		const owners = [...new Set(owner_ids)].filter((id) => id && id !== viewer_id);
+		if (!viewer_id || !owners.length) return [];
+		const rows = (await this.sql.unsafe(
+			`SELECT o.id FROM jsonb_array_elements_text($2::jsonb) AS o(id)
+			 WHERE ${contact_sql('o.id', '$1', { conversations: this.qt('chat-conversations'), messages: this.qt('messages') })}`,
+			[viewer_id, owners],
+		)) as Array<{ id: string }>;
+		return rows.map((row) => row.id);
+	}
+
+	async chat_story_feed(
+		query: ChatStoryFeedQuery,
+	): Promise<Array<{ author_id: string; latest_at: string; has_unseen: boolean; muted: boolean }>> {
+		const { sql, params } = chat_story_feed_sql(this.chat_story_tables(), query);
+		const rows = (await this.sql.unsafe(sql, params)) as Array<Record<string, unknown>>;
+		return rows.map((row) => ({
+			author_id: String(row.author_id),
+			latest_at: String(row.latest_at),
+			has_unseen: row.has_unseen === true,
+			muted: row.muted === true,
+		}));
+	}
+
+	/** Cada historia trae `my_viewed_at` y `my_reaction` del lector. */
+	async chat_story_items(viewer_id: string, author_ids: string[], now: string): Promise<ImperiumDoc[]> {
+		if (!author_ids.length) return [];
+		const rows = (await this.sql.unsafe(chat_story_items_sql(this.chat_story_tables()), [viewer_id, author_ids, now])) as Array<
+			Record<string, unknown>
+		>;
+		return rows.map(({ my_viewed_at, my_reaction, ...story }) => ({
+			...this.flatten(story, 'chat-stories')!,
+			my_viewed_at,
+			my_reaction,
+		}));
+	}
+
+	async chat_story_visible(viewer_id: string, story_id: string): Promise<ImperiumDoc | null> {
+		const [row] = (await this.sql.unsafe(chat_story_visible_sql(this.chat_story_tables()), [viewer_id, story_id])) as Array<
+			Record<string, unknown>
+		>;
+		return this.flatten(row ?? null, 'chat-stories');
+	}
+
+	async chat_view_story(input: { story_id: string; viewer_id: string; payload: ImperiumDoc; now: string }): Promise<void> {
+		await this.sql.unsafe(chat_view_story_sql(this.qt('chat-story-views')), [input.story_id, input.viewer_id, input.now, input.payload]);
+	}
+
+	async chat_story_view_counts(story_ids: string[]): Promise<Map<string, number>> {
+		if (!story_ids.length) return new Map();
+		const rows = (await this.sql.unsafe(
+			`SELECT story_id, count(*)::int AS n FROM ${this.qt('chat-story-views')}
+			 WHERE story_id IN (SELECT jsonb_array_elements_text($1::jsonb)) GROUP BY story_id`,
+			[story_ids],
+		)) as Array<{ story_id: string; n: number }>;
+		return new Map(rows.map((row) => [row.story_id, Number(row.n)]));
+	}
+
+	/** Quienes vieron con su nombre, de lo más nuevo a lo más viejo, y cuántos lo hicieron sin compartirlo. */
+	async chat_story_viewers(
+		story_id: string,
+		limit: number,
+	): Promise<{ viewers: Array<{ viewer_id: string; viewed_at: string; reaction: string | null }>; anonymous_count: number }> {
+		const views = this.qt('chat-story-views');
+		const viewers = (await this.sql.unsafe(
+			`SELECT viewer_id, viewed_at, payload ->> 'reaction' AS reaction FROM ${views}
+			 WHERE story_id = $1 AND COALESCE(payload ->> 'anonymous', '') <> 'true'
+			 ORDER BY viewed_at DESC, id DESC LIMIT $2`,
+			[story_id, limit],
+		)) as Array<{ viewer_id: string; viewed_at: string; reaction: string | null }>;
+		const [counted] = (await this.sql.unsafe(
+			`SELECT count(*)::int AS n FROM ${views} WHERE story_id = $1 AND payload ->> 'anonymous' = 'true'`,
+			[story_id],
+		)) as Array<{ n: number }>;
+		return { viewers, anonymous_count: Number(counted?.n ?? 0) };
+	}
+
+	/** `chat_preferences.stories_muted_author_ids` de `user-settings`. */
+	async chat_muted_story_authors(user_id: string): Promise<string[]> {
+		if (!this.has('user-settings')) return [];
+		const rows = (await this.sql.unsafe(
+			`SELECT payload #> '{chat_preferences,stories_muted_author_ids}' AS muted FROM ${this.qt('user-settings')}
+			 WHERE payload ->> 'user_id' = $1 AND ${SETTINGS_OWNER} ORDER BY id LIMIT 1`,
+			[user_id],
+		)) as Array<{ muted: unknown }>;
+		return as_array(rows[0]?.muted).map(String);
+	}
+
+	/** Con `author_id`, solo las suyas; sin él, solo las que el latido reclamó al vencer. */
+	async chat_drop_stories(ids: string[], now: string, author_id: string | null): Promise<{ ids: string[]; files: string[] }> {
+		const [row] = (await this.sql.unsafe(
+			chat_drop_stories_sql({
+				stories: this.qt('chat-stories'),
+				views: this.qt('chat-story-views'),
+				attachments: this.qt('attachment-management'),
+			}),
+			[ids, now, author_id],
+		)) as Array<Record<string, unknown>>;
+		return { ids: as_array(row?.ids).map(String), files: as_array(row?.files).map(String) };
+	}
+
+	/** `null`: esa persona no tiene una solicitud pendiente. */
+	async chat_deny_request(conversation_id: string, user_id: string, now: string): Promise<ImperiumDoc | null> {
+		const [row] = (await this.sql.unsafe(this.chat_membership().deny, [conversation_id, user_id, now])) as Array<
+			Record<string, unknown>
+		>;
+		return this.flatten(row ?? null, 'chat-members');
+	}
+
+	/** Quitar o banear a alguien con el rol con el que se autorizó; `null` si ese rol o su estado cambiaron. */
+	async chat_remove_member(input: {
+		conversation_id: string;
+		user_id: string;
+		expected_role: string;
+		state: 'removed' | 'banned';
+		now: string;
+	}): Promise<{ conversation: ImperiumDoc; member: ImperiumDoc; previous_state: string } | null> {
+		const sqls = this.chat_membership();
+		return this.sql.begin(async (tx) => {
+			const [locked] = (await tx.unsafe(sqls.lock, [input.conversation_id])) as Array<Record<string, unknown>>;
+			const [member] = locked
+				? ((await tx.unsafe(sqls.member, [input.conversation_id, input.user_id])) as Array<Record<string, unknown>>)
+				: [];
+			const previous_state = String(member?.state ?? '');
+			if (
+				!member ||
+				member.role !== input.expected_role ||
+				previous_state === input.state ||
+				(input.state === 'removed' && previous_state !== 'active')
+			) {
+				return null;
+			}
+			const [updated] = (await tx.unsafe(sqls.leave, [
+				input.conversation_id,
+				input.user_id,
+				input.state,
+				input.now,
+			])) as Array<Record<string, unknown>>;
+			const [conversation] = (await tx.unsafe(sqls.count, [input.conversation_id, input.now])) as Array<
+				Record<string, unknown>
+			>;
+			return {
+				conversation: this.flatten(conversation!, 'chat-conversations')!,
+				member: this.flatten(updated!, 'chat-members')!,
+				previous_state,
+			};
+		});
+	}
+
+	/**
+	 * Salir de un grupo. Si sale el dueño, lo hereda `transfer_to`, el administrador más antiguo o
+	 * el miembro más antiguo; si no queda nadie, la conversación se da de baja.
+	 */
+	async chat_leave_conversation(input: {
+		conversation_id: string;
+		user_id: string;
+		transfer_to?: string;
+		now: string;
+	}): Promise<ChatLeaveResult> {
+		const sqls = this.chat_membership();
+		return this.sql.begin(async (tx): Promise<ChatLeaveResult> => {
+			const [locked] = (await tx.unsafe(sqls.lock, [input.conversation_id])) as Array<Record<string, unknown>>;
+			const [member] = locked
+				? ((await tx.unsafe(sqls.member, [input.conversation_id, input.user_id])) as Array<Record<string, unknown>>)
+				: [];
+			if (!member || member.state !== 'active') return { status: 'not_member' };
+			let successor_id: string | null = null;
+			if (member.role === 'owner') {
+				if (input.transfer_to) {
+					const [target] = (await tx.unsafe(sqls.member, [input.conversation_id, input.transfer_to])) as Array<
+						Record<string, unknown>
+					>;
+					if (!target || target.state !== 'active' || input.transfer_to === input.user_id) {
+						return { status: 'not_member_target' };
+					}
+					successor_id = input.transfer_to;
+				} else {
+					const [next] = (await tx.unsafe(sqls.successor, [input.conversation_id, input.user_id])) as Array<{
+						user_id: string;
+					}>;
+					successor_id = next?.user_id ?? null;
+				}
+			}
+			await tx.unsafe(sqls.leave, [input.conversation_id, input.user_id, 'left', input.now]);
+			if (successor_id) await tx.unsafe(sqls.set_role, [input.conversation_id, successor_id, 'owner', input.now]);
+			const [counted] = (await tx.unsafe(sqls.count, [input.conversation_id, input.now])) as Array<
+				Record<string, unknown>
+			>;
+			const closed = !Number(as_object(counted!.payload).memberCount);
+			const [conversation] = closed
+				? ((await tx.unsafe(sqls.close, [input.conversation_id, input.now])) as Array<Record<string, unknown>>)
+				: [counted];
+			return {
+				status: 'ok',
+				conversation: this.flatten(conversation!, 'chat-conversations')!,
+				successor_id,
+				closed,
+			};
+		});
+	}
+
+	/** El dueño pasa a administrador y `to` a dueño, en una transacción. */
+	async chat_transfer_owner(input: {
+		conversation_id: string;
+		from: string;
+		to: string;
+		now: string;
+	}): Promise<ChatTransferResult> {
+		const sqls = this.chat_membership();
+		return this.sql.begin(async (tx): Promise<ChatTransferResult> => {
+			const [locked] = (await tx.unsafe(sqls.lock, [input.conversation_id])) as Array<Record<string, unknown>>;
+			const [from] = locked
+				? ((await tx.unsafe(sqls.member, [input.conversation_id, input.from])) as Array<Record<string, unknown>>)
+				: [];
+			if (!from || from.state !== 'active' || from.role !== 'owner') return { status: 'not_owner' };
+			const [to] = (await tx.unsafe(sqls.member, [input.conversation_id, input.to])) as Array<Record<string, unknown>>;
+			if (!to || to.state !== 'active' || input.to === input.from) return { status: 'not_member_target' };
+			const [previous] = await tx.unsafe(sqls.set_role, [input.conversation_id, input.from, 'admin', input.now]);
+			const [owner] = await tx.unsafe(sqls.set_role, [input.conversation_id, input.to, 'owner', input.now]);
+			return {
+				status: 'ok',
+				owner: this.flatten(owner as Record<string, unknown>, 'chat-members')!,
+				previous: this.flatten(previous as Record<string, unknown>, 'chat-members')!,
+			};
+		});
+	}
+
+	/** `null`: ya no es miembro activo o su rol cambió desde que se autorizó el cambio. */
+	async chat_update_member(input: {
+		conversation_id: string;
+		user_id: string;
+		expected_role: string;
+		role?: string;
+		/** `undefined` no cambia la restricción; `null` la quita. */
+		restricted_until?: string | null;
+		now: string;
+	}): Promise<ImperiumDoc | null> {
+		const [row] = (await this.sql.unsafe(chat_update_member_sql(this.qt('chat-members')), [
+			input.conversation_id,
+			input.user_id,
+			input.expected_role,
+			input.role ?? null,
+			input.restricted_until !== undefined,
+			input.restricted_until ?? null,
+			input.now,
+		])) as Array<Record<string, unknown>>;
+		return this.flatten(row ?? null, 'chat-members');
+	}
+
+	/** `null`: la conversación ya no está activa. `before` trae el título, la descripción y el payload de antes. */
+	async chat_update_conversation(input: {
+		id: string;
+		title?: string;
+		description?: string;
+		/** Los ajustes que cambian, en camelCase. */
+		settings?: ImperiumDoc;
+		merge: ImperiumDoc;
+		unset: string[];
+		now: string;
+	}): Promise<{ conversation: ImperiumDoc; before: ImperiumDoc } | null> {
+		const [row] = (await this.sql.unsafe(chat_update_conversation_sql(this.qt('chat-conversations')), [
+			input.id,
+			input.title ?? null,
+			input.description ?? null,
+			input.settings ?? null,
+			input.merge,
+			input.unset,
+			input.now,
+		])) as Array<Record<string, unknown>>;
+		if (!row) return null;
+		const { before_name, before_description, before_payload, ...conversation } = row;
+		return {
+			conversation: this.flatten(conversation, 'chat-conversations')!,
+			before: { ...as_object(before_payload), name: before_name, description: before_description },
+		};
+	}
+
+	/** `null`: ya no es miembro activo o no cabe otra conversación fijada. */
+	async chat_update_prefs(input: {
+		conversation_id: string;
+		user_id: string;
+		merge: ImperiumDoc;
+		pinned?: boolean;
+		max_pinned: number;
+		now: string;
+	}): Promise<ImperiumDoc | null> {
+		const [row] = (await this.sql.unsafe(chat_update_prefs_sql(this.qt('chat-members')), [
+			input.conversation_id,
+			input.user_id,
+			input.merge,
+			input.pinned ?? null,
+			input.max_pinned,
+			input.now,
+		])) as Array<Record<string, unknown>>;
+		return this.flatten(row ?? null, 'chat-members');
+	}
+
+	async chat_member_page(query: ChatMemberQuery): Promise<Array<{ member: ImperiumDoc; user: ChatUserBrief | null }>> {
+		const { sql, params } = chat_member_page_sql(
+			{ members: this.qt('chat-members'), users: this.qt('user') },
+			query,
+		);
+		const rows = (await this.sql.unsafe(sql, params)) as Array<Record<string, unknown>>;
+		return rows.map(({ user_found, user_name, user_email, user_img, user_active, ...member }) => ({
+			member: this.flatten(member, 'chat-members')!,
+			user:
+				user_found == null
+					? null
+					: {
+							_id: String(member.user_id),
+							name: String(user_name ?? ''),
+							...(user_email ? { email: String(user_email) } : {}),
+							...(user_img ? { img: String(user_img) } : {}),
+							is_active: user_active !== false,
+						},
+		}));
 	}
 
 	async ensure_object_json_cells(): Promise<void> {
@@ -1452,6 +4598,18 @@ export class ImperiumStore {
 		await this.ensure_object_json_cells();
 		await this.ensure_search_indexes();
 		await this.ensure_unique_indexes();
+		try {
+			const done = await this.chat_backfill_direct();
+			if (done.messages) {
+				console.log(
+					`[chat] Respaldo de los 1:1: ${done.conversations} conversaciones, ${done.members} miembros, ${done.messages} mensajes`,
+				);
+			}
+		} catch (err) {
+			console.warn(
+				`[chat] Respaldo de los 1:1 incompleto, sigue en el próximo arranque: ${err instanceof Error ? err.message : String(err)}`,
+			);
+		}
 		await this.seed_font_awesome_catalog();
 		if (this.has('branchoffice')) {
 			const { total } = await this.find_many('branchoffice', { take: 1, include_inactive: true });
@@ -1566,6 +4724,12 @@ export class ImperiumStore {
 		for (const loc of this.all_locs) {
 			if (seen.has(loc.collection)) continue;
 			seen.add(loc.collection);
+			if (is_chat_private_resource(loc.resource)) {
+				if (!(await SearchEngine.index_is_empty(loc.collection))) {
+					await SearchEngine.clear_index(loc.collection);
+				}
+				continue;
+			}
 			if (!(await SearchEngine.index_is_empty(loc.collection))) continue;
 			for await (const rows of this.scan(loc.resource, {
 				include_inactive: false,
@@ -1574,6 +4738,7 @@ export class ImperiumStore {
 				await SearchEngine.index_documents(
 					loc.collection,
 					rows
+						.filter((doc) => loc.resource !== 'attachment-management' || !is_chat_attachment(doc))
 						.map((doc) => ({
 							id: String(doc._id),
 							search_text: search_text_from_doc(doc),
@@ -1817,6 +4982,7 @@ export class ImperiumStore {
 			'user-print-template',
 			'time-sheets',
 			'home-pin',
+			...CHAT_ORPHANS,
 		]) {
 			if (!this.locs.has(resource)) continue;
 			const qt = this.qt(resource);
@@ -2074,6 +5240,8 @@ export class ImperiumStore {
 			populate_lite?: boolean;
 			/** Keyset `(created_at, id)` para scan ordenado por tiempo. */
 			after_created?: { at: string; id: string };
+			/** Keyset `(created_at, id) <`: la página siguiente, del más nuevo al más viejo. */
+			before_created?: { at: string; id: string };
 			/** Keyset FIFO `(fecha_entrada, created_at, id)`. */
 			after_entrada?: { fecha: string; created: string; id: string };
 			/** Barrido: solo estas claves + id/keyset, no SELECT *. */
@@ -2160,6 +5328,12 @@ export class ImperiumStore {
 				created_at_keyset_sql(`$${params.length - 1}`, `$${params.length}`),
 			);
 		}
+		if (opts.before_created?.at && opts.before_created.id && cols.has('created_at')) {
+			params.push(opts.before_created.at, opts.before_created.id);
+			clauses.push(
+				created_at_keyset_sql(`$${params.length - 1}`, `$${params.length}`, '<'),
+			);
+		}
 		if (
 			opts.after_entrada?.fecha &&
 			opts.after_entrada.created &&
@@ -2194,6 +5368,9 @@ export class ImperiumStore {
 			order = ' ORDER BY fecha_entrada ASC NULLS LAST, created_at ASC, id ASC';
 		} else if (opts.after_created?.at && cols.has('created_at')) {
 			order = ' ORDER BY created_at ASC NULLS LAST, id ASC';
+		} else if (opts.before_created?.at && cols.has('created_at')) {
+			// Sin NULLS LAST: el keyset ya descarta los NULL y así sirve un índice `created_at DESC`.
+			order = ' ORDER BY created_at DESC, id DESC';
 		} else if (opts.sort) {
 			const m = opts.sort.match(/^([a-zA-Z_][a-zA-Z0-9_]*)(?::(asc|desc))?$/i);
 			const raw_campo = (m?.[1] ?? '').replace(/^_/, '');
@@ -2597,10 +5774,11 @@ export class ImperiumStore {
 	}
 
 	async sync_search(resource: string, doc: ImperiumDoc) {
+		if (is_chat_private_resource(resource)) return;
 		const collection = this.loc(resource).collection;
 		const id = String(doc._id ?? '');
 		if (!id) return;
-		if (doc.is_active === false) {
+		if (doc.is_active === false || (resource === 'attachment-management' && is_chat_attachment(doc))) {
 			await SearchEngine.delete_documents(collection, [id]);
 			return;
 		}
@@ -2717,18 +5895,26 @@ export class ImperiumStore {
 		return null;
 	}
 
-	async distinct(resource: string, field: string, q = ''): Promise<unknown[]> {
+	async distinct(
+		resource: string,
+		field: string,
+		q = '',
+		mongo_match: Record<string, unknown> | null = null,
+	): Promise<unknown[]> {
 		const cols = this.column_names(resource);
 		const qt = this.qt(resource);
 		const expr = cols.has(field) ? qident(field) : payload_distinct_expr(field);
 		const params: unknown[] = [];
-		let extra = '';
+		const clauses: string[] = [];
 		if (q) {
 			params.push(`%${q}%`);
-			extra = ` WHERE ${expr}::text ILIKE $1`;
+			clauses.push(`${expr}::text ILIKE $1`);
 		}
+		const scoped = mongo_match_to_sql(mongo_match, cols, params);
+		if (scoped) clauses.push(scoped);
+		const where = clauses.length ? ` WHERE ${clauses.join(' AND ')}` : '';
 		const rows = await this.sql.unsafe(
-			`SELECT DISTINCT ${expr} AS v FROM ${qt}${extra} LIMIT 200`,
+			`SELECT DISTINCT ${expr} AS v FROM ${qt}${where} LIMIT 200`,
 			params,
 		);
 		return rows.map((r) => (r as { v: unknown }).v).filter((v) => v != null && v !== '');
@@ -2741,14 +5927,17 @@ export class ImperiumStore {
 	async value_counts(
 		resource: string,
 		field: string,
-		opts: { include_inactive?: boolean } = {},
+		opts: { include_inactive?: boolean; mongo_match?: Record<string, unknown> | null } = {},
 	): Promise<Array<{ value: string; count: number }>> {
 		if (!this.has(resource)) return [];
 		if (!/^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*$/.test(field)) return [];
 		const cols = this.column_names(resource);
 		const expr = cols.has(field) ? qident(field) : payload_distinct_expr(field);
+		const params: unknown[] = [];
+		const scoped = mongo_match_to_sql(opts.mongo_match ?? null, cols, params);
 		const rows = await this.sql.unsafe(
-			value_counts_sql(this.qt(resource), expr, opts.include_inactive === true),
+			value_counts_sql(this.qt(resource), expr, opts.include_inactive === true, scoped),
+			params,
 		);
 		const out: Array<{ value: string; count: number }> = [];
 		for (const row of rows) {

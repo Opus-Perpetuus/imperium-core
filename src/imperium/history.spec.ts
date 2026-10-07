@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
+import type { ImperiumDoc } from './envelope.ts';
 import {
 	build_history_action_description,
 	diff_docs,
@@ -7,6 +8,8 @@ import {
 	enrich_history_row,
 	history_find_many_opts,
 	history_page_limits,
+	record_document_history,
+	run_with_history_context,
 } from './history.ts';
 
 describe('diff_docs', () => {
@@ -145,5 +148,32 @@ describe('enrich_history_change', () => {
 				valorNuevo: '"new"',
 			}),
 		);
+	});
+});
+
+describe('record_document_history del chat', () => {
+	test('mensajes y recursos chat-* no dejan historial, ni por su alias', async () => {
+		const recorded: unknown[] = [];
+		const store = {
+			has: () => true,
+			loc: (resource: string) => ({
+				resource: resource === 'mensajes' ? 'messages' : resource,
+				collection: resource,
+				name: resource,
+			}),
+			insert: async (resource: string, doc: ImperiumDoc) => {
+				if (resource === 'document-change-history') recorded.push(doc.modelName);
+				return { ...doc, _id: 'h1' };
+			},
+			all_locs: [],
+		};
+		await run_with_history_context({ actor: { _id: 'ana' }, method: 'POST' }, async () => {
+			for (const resource of ['messages', 'mensajes', 'chat-conversations', 'chat-members', 'chat-reactions']) {
+				await record_document_history(store, resource, null, { _id: 'm1', message: 'hola' });
+				await record_document_history(store, resource, { _id: 'm1', message: 'hola' }, { _id: 'm1', message: 'editado' });
+			}
+			await record_document_history(store, 'products', null, { _id: 'p1', name: 'Mesa' });
+		});
+		expect(recorded).toEqual(['products']);
 	});
 });

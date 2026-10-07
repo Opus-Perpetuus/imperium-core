@@ -522,6 +522,336 @@
     "action": "receive_interinstance_message"
   },
   {
+    "resource": "messages",
+    "method": "post",
+    "path": "/socket-ticket",
+    "action": "issue_socket_ticket"
+  },
+  {
+    "resource": "messages",
+    "method": "post",
+    "path": "/uploads",
+    "action": "create_chat_upload"
+  },
+  {
+    "resource": "messages",
+    "method": "delete",
+    "path": "/uploads/:attachmentId",
+    "action": "delete_chat_upload"
+  },
+  {
+    "resource": "messages",
+    "method": "get",
+    "path": "/chat-config",
+    "action": "read_chat_config"
+  },
+  {
+    "resource": "messages",
+    "method": "get",
+    "path": "/history/:conversationId",
+    "action": "read_message_page"
+  },
+  {
+    "resource": "messages",
+    "method": "get",
+    "path": "/sync/:conversationId",
+    "action": "read_message_sync"
+  },
+  {
+    "resource": "messages",
+    "method": "patch",
+    "path": "/message/:id",
+    "action": "edit_chat_message"
+  },
+  {
+    "resource": "messages",
+    "method": "delete",
+    "path": "/message/:id",
+    "action": "delete_chat_message"
+  },
+  {
+    "resource": "messages",
+    "method": "get",
+    "path": "/message/:id/info",
+    "action": "read_message_info"
+  },
+  {
+    "resource": "messages",
+    "method": "post",
+    "path": "/message/:id/reactions",
+    "action": "toggle_chat_reaction"
+  },
+  {
+    "resource": "messages",
+    "method": "get",
+    "path": "/message/:id/reactions",
+    "action": "read_message_reactions"
+  },
+  {
+    "resource": "messages",
+    "method": "post",
+    "path": "/message/:id/vote",
+    "action": "vote_chat_poll"
+  },
+  {
+    "resource": "messages",
+    "method": "post",
+    "path": "/message/:id/poll-close",
+    "action": "close_chat_poll"
+  },
+  {
+    "resource": "messages",
+    "method": "get",
+    "path": "/message/:id/poll",
+    "action": "read_chat_poll"
+  },
+  {
+    "resource": "messages",
+    "method": "post",
+    "path": "/forward",
+    "action": "forward_chat_messages"
+  },
+  {
+    "resource": "messages",
+    "method": "get",
+    "path": "/media/:conversationId",
+    "action": "read_conversation_media"
+  },
+  {
+    "resource": "messages",
+    "method": "post",
+    "path": "/media-tokens",
+    "action": "issue_media_tokens"
+  },
+  {
+    "resource": "messages",
+    "method": "post",
+    "path": "/message/:id/open",
+    "action": "open_view_once"
+  },
+  {
+    "resource": "messages",
+    "method": "post",
+    "path": "/message/:id/save",
+    "action": "save_chat_message"
+  },
+  {
+    "resource": "messages",
+    "method": "get",
+    "path": "/saved",
+    "action": "read_saved_messages"
+  },
+  {
+    "resource": "messages",
+    "method": "patch",
+    "path": "/saved/:id",
+    "action": "update_saved_message"
+  },
+  {
+    "resource": "messages",
+    "method": "delete",
+    "path": "/saved/:id",
+    "action": "delete_saved_message"
+  },
+  {
+    "resource": "chat-conversations",
+    "method": "get",
+    "path": "/mine",
+    "action": "list_my_conversations"
+  },
+  {
+    "resource": "chat-conversations",
+    "method": "get",
+    "path": "/:id",
+    "action": "read_conversation_summary"
+  },
+  {
+    "resource": "chat-conversations",
+    "method": "get",
+    "path": "/:id/detail",
+    "action": "read_conversation_detail"
+  },
+  {
+    "resource": "chat-conversations",
+    "method": "post",
+    "path": "/:id/read",
+    "action": "mark_conversation_read"
+  },
+  {
+    "resource": "chat-conversations",
+    "method": "post",
+    "path": "/:id/unread",
+    "action": "mark_conversation_unread"
+  },
+  {
+    "resource": "chat-conversations",
+    "method": "post",
+    "path": "/direct",
+    "action": "open_direct_conversation"
+  },
+  {
+    "resource": "chat-conversations",
+    "method": "post",
+    "path": "/group",
+    "action": "create_group_conversation"
+  },
+  {
+    "resource": "chat-conversations",
+    "method": "patch",
+    "path": "/:id/info",
+    "action": "update_conversation_info"
+  },
+  {
+    "resource": "chat-conversations",
+    "method": "get",
+    "path": "/:id/members",
+    "action": "read_conversation_members"
+  },
+  {
+    "resource": "chat-conversations",
+    "method": "post",
+    "path": "/:id/members",
+    "action": "add_conversation_members"
+  },
+  {
+    "resource": "chat-conversations",
+    "method": "patch",
+    "path": "/:id/members/:userId",
+    "action": "update_conversation_member"
+  },
+  {
+    "resource": "chat-conversations",
+    "method": "delete",
+    "path": "/:id/members/:userId",
+    "action": "remove_conversation_member"
+  },
+  {
+    "resource": "chat-conversations",
+    "method": "post",
+    "path": "/:id/leave",
+    "action": "leave_conversation"
+  },
+  {
+    "resource": "chat-conversations",
+    "method": "post",
+    "path": "/:id/transfer",
+    "action": "transfer_conversation_ownership"
+  },
+  {
+    "resource": "chat-conversations",
+    "method": "patch",
+    "path": "/:id/prefs",
+    "action": "update_conversation_prefs"
+  },
+  {
+    "resource": "chat-conversations",
+    "method": "post",
+    "path": "/:id/invites",
+    "action": "create_conversation_invite"
+  },
+  {
+    "resource": "chat-conversations",
+    "method": "delete",
+    "path": "/:id/invites/:inviteId",
+    "action": "revoke_conversation_invite"
+  },
+  {
+    "resource": "chat-conversations",
+    "method": "get",
+    "path": "/invite/:token",
+    "action": "read_conversation_invite"
+  },
+  {
+    "resource": "chat-conversations",
+    "method": "post",
+    "path": "/invite/:token/join",
+    "action": "join_conversation_by_invite"
+  },
+  {
+    "resource": "chat-conversations",
+    "method": "post",
+    "path": "/:id/requests/:userId",
+    "action": "decide_join_request"
+  },
+  {
+    "resource": "chat-conversations",
+    "method": "post",
+    "path": "/:id/pins",
+    "action": "pin_conversation_message"
+  },
+  {
+    "resource": "chat-conversations",
+    "method": "delete",
+    "path": "/:id/pins/:messageId",
+    "action": "unpin_conversation_message"
+  },
+  {
+    "resource": "chat-conversations",
+    "method": "get",
+    "path": "/:id/scheduled",
+    "action": "read_scheduled_messages"
+  },
+  {
+    "resource": "chat-conversations",
+    "method": "post",
+    "path": "/:id/scheduled",
+    "action": "create_scheduled_message"
+  },
+  {
+    "resource": "chat-conversations",
+    "method": "patch",
+    "path": "/scheduled/:id",
+    "action": "update_scheduled_message"
+  },
+  {
+    "resource": "chat-conversations",
+    "method": "delete",
+    "path": "/scheduled/:id",
+    "action": "cancel_scheduled_message"
+  },
+  {
+    "resource": "chat-stories",
+    "method": "get",
+    "path": "/feed",
+    "action": "read_story_feed"
+  },
+  {
+    "resource": "chat-stories",
+    "method": "get",
+    "path": "/author/:userId",
+    "action": "read_author_stories"
+  },
+  {
+    "resource": "chat-stories",
+    "method": "post",
+    "path": "/mine",
+    "action": "create_story"
+  },
+  {
+    "resource": "chat-stories",
+    "method": "delete",
+    "path": "/mine/:id",
+    "action": "delete_story"
+  },
+  {
+    "resource": "chat-stories",
+    "method": "post",
+    "path": "/:id/view",
+    "action": "view_story"
+  },
+  {
+    "resource": "chat-stories",
+    "method": "get",
+    "path": "/:id/viewers",
+    "action": "read_story_viewers"
+  },
+  {
+    "resource": "chat-stories",
+    "method": "post",
+    "path": "/:id/reply",
+    "action": "reply_to_story"
+  },
+  {
     "resource": "module-management",
     "method": "post",
     "path": "/recreate-indexes",
@@ -610,6 +940,12 @@
     "method": "get",
     "path": "/my-mentions",
     "action": "read_my_mentions"
+  },
+  {
+    "resource": "notifications",
+    "method": "patch",
+    "path": "/my-mentions/read",
+    "action": "mark_mentions_read"
   },
   {
     "resource": "notifications",

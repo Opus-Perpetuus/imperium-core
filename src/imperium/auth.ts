@@ -40,9 +40,11 @@ import {
 } from './auth-rate-limit.ts';
 import {
 	access_flag,
+	assert_record_in_scope,
 	build_model_denied_message,
 	load_record_rules_by_model,
 	record_rule_lookup_keys,
+	record_rule_scope_from_access,
 	type RecordRuleOperationFlag,
 } from './record-rules.ts';
 import { debug_error, debug_info } from './debug-request-log.ts';
@@ -55,6 +57,8 @@ import {
 	keep_reshaped_menus_for_access,
 } from './group-access.ts';
 import { is_base_subject_slug } from './subject-runtime.ts';
+import { disconnect_sockets_for_auth_sid } from './socket-stub.ts';
+import { is_chat_private_resource } from './chat-access.ts';
 
 const COOKIE = 'connect.sid';
 const SECRET = process.env.SESSION_SECRET ?? 'imperium-modular-dev-session';
@@ -582,6 +586,7 @@ async function create_session(
 
 async function destroy_session(sql: Bun.SQL, id: string): Promise<void> {
 	memory.delete(id);
+	disconnect_sockets_for_auth_sid(id);
 	await sql.unsafe(`DELETE FROM public.imperium_sessions WHERE id = $1`, [
 		id,
 	]);
@@ -598,7 +603,18 @@ async function load_session(
 		return { id: `share:${shared.share_id}`, user: shared.owner, expires: Number.MAX_SAFE_INTEGER };
 	}
 	const id = read_sid(req);
-	if (!id) return null;
+	return id ? stored_session(sql, id) : null;
+}
+
+/** El socket solo trae el id de sesión de su handshake, no la petición HTTP. */
+export async function user_for_session_id(
+	sql: Bun.SQL,
+	id: string,
+): Promise<ImperiumDoc | null> {
+	return (await stored_session(sql, id))?.user ?? null;
+}
+
+async function stored_session(sql: Bun.SQL, id: string): Promise<Session | null> {
 	const mem = memory.get(id);
 	if (mem && mem.expires > Date.now()) return mem;
 	const rows = await sql.unsafe(
@@ -613,7 +629,7 @@ async function load_session(
 	return session;
 }
 
-function read_sid(req: Request): string {
+export function read_sid(req: Request): string {
 	const raw = req.headers.get('cookie') ?? '';
 	const m = raw.match(new RegExp(`(?:^|;\\s*)${COOKIE}=([^;]+)`));
 	return m ? decodeURIComponent(m[1]!) : '';
@@ -815,6 +831,7 @@ const SESSION_SCOPED_EXTRAS = new Set([
 	'notifications:read_my_summary',
 	'notifications:read_my_notifications',
 	'notifications:read_my_mentions',
+	'notifications:mark_mentions_read',
 	'notifications:create_toast_digest',
 	'notifications:mark_all_as_read',
 	'notifications:update_read_status',
@@ -828,6 +845,61 @@ const SESSION_SCOPED_EXTRAS = new Set([
 	'messages:create_chat_message',
 	'messages:create_internal_message',
 	'messages:create_interinstance_message',
+	'messages:issue_socket_ticket',
+	'messages:create_chat_upload',
+	'messages:delete_chat_upload',
+	'messages:read_chat_config',
+	'messages:read_message_page',
+	'messages:read_message_sync',
+	'messages:edit_chat_message',
+	'messages:delete_chat_message',
+	'messages:read_message_info',
+	'messages:toggle_chat_reaction',
+	'messages:read_message_reactions',
+	'messages:vote_chat_poll',
+	'messages:close_chat_poll',
+	'messages:read_chat_poll',
+	'messages:forward_chat_messages',
+	'messages:read_conversation_media',
+	'messages:issue_media_tokens',
+	'messages:open_view_once',
+	'messages:save_chat_message',
+	'messages:read_saved_messages',
+	'messages:update_saved_message',
+	'messages:delete_saved_message',
+	'chat-conversations:list_my_conversations',
+	'chat-conversations:read_conversation_summary',
+	'chat-conversations:read_conversation_detail',
+	'chat-conversations:mark_conversation_read',
+	'chat-conversations:mark_conversation_unread',
+	'chat-conversations:open_direct_conversation',
+	'chat-conversations:create_group_conversation',
+	'chat-conversations:update_conversation_info',
+	'chat-conversations:read_conversation_members',
+	'chat-conversations:add_conversation_members',
+	'chat-conversations:update_conversation_member',
+	'chat-conversations:remove_conversation_member',
+	'chat-conversations:leave_conversation',
+	'chat-conversations:transfer_conversation_ownership',
+	'chat-conversations:update_conversation_prefs',
+	'chat-conversations:create_conversation_invite',
+	'chat-conversations:revoke_conversation_invite',
+	'chat-conversations:read_conversation_invite',
+	'chat-conversations:join_conversation_by_invite',
+	'chat-conversations:decide_join_request',
+	'chat-conversations:pin_conversation_message',
+	'chat-conversations:unpin_conversation_message',
+	'chat-conversations:read_scheduled_messages',
+	'chat-conversations:create_scheduled_message',
+	'chat-conversations:update_scheduled_message',
+	'chat-conversations:cancel_scheduled_message',
+	'chat-stories:read_story_feed',
+	'chat-stories:read_author_stories',
+	'chat-stories:create_story',
+	'chat-stories:delete_story',
+	'chat-stories:view_story',
+	'chat-stories:read_story_viewers',
+	'chat-stories:reply_to_story',
 	'interactive-manual:board',
 	'view-config-preset:available',
 	'view-config-preset:baseline',
@@ -1082,16 +1154,50 @@ export async function assert_target_model_read(
 	model_or_resource: string,
 ): Promise<string> {
 	if (!actor) throw new HttpAuthRequiredError();
-	const access = await build_access(store, actor);
+	return target_model_read(store, await build_access(store, actor), model_or_resource);
+}
+
+function target_model_read(
+	store: ImperiumStore,
+	access: Awaited<ReturnType<typeof build_access>>,
+	model_or_resource: string,
+): string {
 	const canonical = store.has(model_or_resource)
 		? store.loc(model_or_resource).resource
 		: model_or_resource;
+	if (is_chat_private_resource(store.resource_for_model(canonical) ?? canonical)) {
+		throw new HttpAccessDeniedError(
+			'Los chats y los avisos de cada persona son privados: no se consultan desde aquí.',
+		);
+	}
 	if (access.has_full_access) return canonical;
 	const { perms, model } = permissions_for_resource(access, canonical);
 	if (perms?.allow_read) return model;
 	throw new HttpAccessDeniedError(
 		build_model_denied_message('GET', model, access.user_group_names ?? []),
 	);
+}
+
+/**
+ * Leer un registro concreto de otro modelo: el permiso de Leer del modelo y las reglas de
+ * registro de lectura, como el GET del CRUD. Devuelve el recurso, o null si el modelo no tiene tabla.
+ */
+export async function assert_target_record_read(
+	store: ImperiumStore,
+	actor: ImperiumDoc | null,
+	model_or_resource: string,
+	id: string,
+): Promise<string | null> {
+	if (!actor) throw new HttpAuthRequiredError();
+	const access = await build_access(store, actor);
+	target_model_read(store, access, model_or_resource);
+	const resource = store.has(model_or_resource)
+		? store.loc(model_or_resource).resource
+		: store.resource_for_model(model_or_resource);
+	if (!resource) return null;
+	const keys = record_rule_lookup_keys(resource, model_or_resource);
+	await assert_record_in_scope(store, resource, id, record_rule_scope_from_access(access, actor, keys, 'allow_read'), 'GET');
+	return resource;
 }
 
 const REPORTS_PDF_SETTING_ID = /^[a-f0-9]{24}$/i;

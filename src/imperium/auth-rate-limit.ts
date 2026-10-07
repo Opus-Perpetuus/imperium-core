@@ -59,17 +59,45 @@ function trusts_proxy_headers(): boolean {
 	return raw === '1' || raw === 'true' || raw === 'yes';
 }
 
+function forwarded_ip(req: Request): string | null {
+	if (!trusts_proxy_headers()) return null;
+	const first = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
+	if (first) return first;
+	return req.headers.get('x-real-ip')?.trim() || null;
+}
+
 export function request_ip(req: Request): string {
-	if (trusts_proxy_headers()) {
-		const forwarded = req.headers.get('x-forwarded-for');
-		if (forwarded) {
-			const first = forwarded.split(',')[0]?.trim();
-			if (first) return first;
-		}
-		const real = req.headers.get('x-real-ip')?.trim();
-		if (real) return real;
+	return forwarded_ip(req) ?? (socket_ips.get(req) || 'unknown');
+}
+
+/**
+ * `request_ip` nombra a quien llama si la dio un proxy declarado o si es una
+ * dirección pública directa. Una privada sin proxy declarado suele ser la del
+ * propio proxy: la de todo el tenant.
+ */
+export function request_ip_names_client(req: Request): boolean {
+	if (forwarded_ip(req)) return true;
+	const ip = socket_ips.get(req);
+	return ip ? !is_internal_address(ip) : false;
+}
+
+/** Loopback, redes privadas, enlace local, CGNAT y locales únicas de IPv6. */
+function is_internal_address(ip: string): boolean {
+	const v4 = ip.replace(/^::ffff:/i, '').split('.').map(Number);
+	if (v4.length === 4 && v4.every((n) => Number.isInteger(n) && n >= 0 && n <= 255)) {
+		const [a, b] = v4 as [number, number];
+		return (
+			a === 0 ||
+			a === 10 ||
+			a === 127 ||
+			(a === 100 && b >= 64 && b <= 127) ||
+			(a === 169 && b === 254) ||
+			(a === 172 && b >= 16 && b <= 31) ||
+			(a === 192 && b === 168)
+		);
 	}
-	return socket_ips.get(req) || 'unknown';
+	const v6 = ip.toLowerCase();
+	return v6 === '::' || v6 === '::1' || /^f[cd]/.test(v6) || /^fe[89ab]/.test(v6);
 }
 
 export async function ensure_auth_rate_limit_table(sql: Bun.SQL): Promise<void> {

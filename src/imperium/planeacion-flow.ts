@@ -3,6 +3,7 @@
  * El detalle hidrata tareas y tiempos; el save sincroniza esos hijos.
  */
 import { as_array, as_object, type ImperiumDoc } from './envelope.ts';
+import { insert_notification } from './notifications.ts';
 import type { ImperiumStore } from './store.ts';
 
 const TIME_LOG = 'proyectos-time-log';
@@ -350,7 +351,7 @@ async function notify_new_collaborators(
 	const name = text(project.name) || 'Proyecto';
 	const route = `/internal/planeacion/proyectos/detail/${route_slug(name)}/${project._id}`;
 	for (const recipientId of recipients) {
-		await store.insert('notifications', {
+		await insert_notification(store, {
 			name: `Te agregaron al proyecto "${name}"`,
 			title: `Te agregaron al proyecto "${name}"`,
 			message:

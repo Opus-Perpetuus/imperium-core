@@ -477,6 +477,9 @@
     "RegistroIncidencias": "registro-incidencias",
     "TimeSheets": "time-sheets",
     "time-sheets": "time-sheets",
-    "timesheets": "time-sheets"
+    "timesheets": "time-sheets",
+    "chatconversation": "chat-conversations",
+    "chatstory": "chat-stories",
+    "chatscheduled": "chat-scheduled"
   }
 }

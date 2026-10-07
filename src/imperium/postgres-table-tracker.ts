@@ -3,6 +3,7 @@
  * Sustituye al model-tracker de Mongoose: `__schema_fields` se deriva de
  * columnas + refs + custom fields, y el detalle acepta UUID o `__model_name`.
  */
+import { is_chat_private_resource } from './chat-access.ts';
 import {
 	normalize_custom_field_definitions,
 	type CustomFieldDefinition,
@@ -413,7 +414,7 @@ function unique_locs(store: ImperiumStore): ModuleLoc[] {
 	const seen = new Set<string>();
 	const out: ModuleLoc[] = [];
 	for (const loc of store.locs.values()) {
-		if (seen.has(loc.resource)) continue;
+		if (seen.has(loc.resource) || is_chat_private_resource(loc.resource)) continue;
 		seen.add(loc.resource);
 		out.push(loc);
 	}

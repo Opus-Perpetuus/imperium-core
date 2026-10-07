@@ -6,6 +6,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { as_object, caught_http_error, ok, type ImperiumDoc } from './envelope.ts';
 import { read_imperium_body } from './body.ts';
 import { build_access, current_user } from './auth.ts';
+import { is_chat_private_resource, is_chat_row, without_chat_rows } from './chat-access.ts';
 import type { ExtraCol, ImperiumStore } from './store.ts';
 import { register_comment_mentions } from './notifications.ts';
 import {
@@ -14,6 +15,7 @@ import {
 	record_rule_scope_from_access,
 } from './record-rules.ts';
 import { history_find_many_opts, history_page_limits } from './history.ts';
+import { ATTACHMENT_SERVER_FIELDS } from './uploads.ts';
 
 const MODEL_ID = 'McpAgent';
 const TOKEN_PREFIX = 'isic_';
@@ -453,12 +455,12 @@ function resolve_resource(store: ImperiumStore, model_id: string): string {
 	if (FORBIDDEN.has(raw)) {
 		deny(403, 'model_forbidden', 'Ese modelo no es operable por el agente MCP.');
 	}
-	if (store.has(raw)) return raw;
+	if (store.has(raw)) return operable(raw);
 	const collapsed = raw.replace(/[^A-Za-z0-9]/g, '').toLowerCase();
 	for (const loc of store.all_locs) {
-		if (loc.resource.replace(/-/g, '') === collapsed) return loc.resource;
+		if (loc.resource.replace(/-/g, '') === collapsed) return operable(loc.resource);
 		if (loc.name.replace(/[^A-Za-z0-9]/g, '').toLowerCase() === collapsed) {
-			return loc.resource;
+			return operable(loc.resource);
 		}
 	}
 	deny(
@@ -466,6 +468,14 @@ function resolve_resource(store: ImperiumStore, model_id: string): string {
 		'unknown_model',
 		`No existe el modelo "${raw}". Usa sic_capabilities para ver modelos disponibles.`,
 	);
+}
+
+/** Se revisa ya resuelto: cualquier forma de escribir el modelo llega al mismo recurso. */
+function operable(resource: string): string {
+	if (is_chat_private_resource(resource)) {
+		deny(403, 'model_forbidden', 'Ese modelo no es operable por el agente MCP.');
+	}
+	return resource;
 }
 
 function can(access: Access, resource: string, op: 'read' | 'create' | 'update') {
@@ -499,6 +509,15 @@ function sanitize(payload: Record<string, unknown>) {
 		clean[key] = value;
 	}
 	delete clean.sequence;
+	return clean;
+}
+
+/** Qué archivo sirve una fila de adjuntos y a qué registro pertenece lo decide el servidor, como en el CRUD. */
+function writable(resource: string, values: Record<string, unknown>) {
+	const clean = sanitize(values);
+	if (resource === 'attachment-management') {
+		for (const key of ATTACHMENT_SERVER_FIELDS) delete clean[key];
+	}
 	return clean;
 }
 
@@ -615,12 +634,13 @@ function describe_fields(store: ImperiumStore, resource: string) {
 }
 
 function mcp_read_scope(access: Access, actor: ImperiumDoc, resource: string, model_id: string) {
-	return record_rule_scope_from_access(
+	const scope = record_rule_scope_from_access(
 		access,
 		actor,
 		record_rule_lookup_keys(resource, model_id),
 		'allow_read',
 	);
+	return { ...scope, match: without_chat_rows(resource, scope.match) };
 }
 
 function split_mcp_filters(filters: Record<string, unknown>) {
@@ -780,7 +800,7 @@ async function get_record(
 	const resource = resolve_resource(store, model_id);
 	require_perm(access, resource, 'read');
 	const doc = await store.find_id(resource, id);
-	if (!doc) deny(404, 'not_found', 'Registro no encontrado');
+	if (!doc || is_chat_row(resource, doc)) deny(404, 'not_found', 'Registro no encontrado');
 	const scope = mcp_read_scope(access, user, resource, model_id);
 	await assert_record_in_scope(store, resource, id, scope, 'GET');
 	return ok([doc], 'Registro encontrado');
@@ -796,7 +816,7 @@ async function create_record(
 	const resource = resolve_resource(store, model_id);
 	require_perm(access, resource, 'create');
 	const created = await store.insert(resource, {
-		...sanitize(values),
+		...writable(resource, values),
 		created_by: String(user._id),
 	});
 	return ok([created], 'Registro creado');
@@ -813,7 +833,7 @@ async function update_record(
 	const resource = resolve_resource(store, model_id);
 	require_perm(access, resource, 'update');
 	const existing = await store.find_id(resource, id);
-	if (!existing) deny(404, 'not_found', 'Registro no encontrado');
+	if (!existing || is_chat_row(resource, existing)) deny(404, 'not_found', 'Registro no encontrado');
 	const scope = record_rule_scope_from_access(
 		access,
 		user,
@@ -821,7 +841,7 @@ async function update_record(
 		'allow_update',
 	);
 	await assert_record_in_scope(store, resource, id, scope, 'PATCH');
-	const updated = await store.update(resource, id, sanitize(values));
+	const updated = await store.update(resource, id, writable(resource, values));
 	if (!updated) deny(404, 'not_found', 'Registro no encontrado');
 	return ok([updated], 'Actualizado correctamente');
 }
@@ -837,16 +857,16 @@ async function get_history(
 	await get_record(store, access, user, model_id, id);
 	const resource = resolve_resource(store, model_id);
 	const { limite } = history_page_limits({ limite: limit });
-	const { rows } = await store.find_many(
-		'document-change-history',
-		history_find_many_opts({
+	const { rows } = await store.find_many('document-change-history', {
+		...history_find_many_opts({
 			document_id: id,
 			canonical: resource,
 			model_name: model_id,
 			desde: 0,
 			limite,
 		}),
-	);
+		mongo_match: without_chat_rows('document-change-history', null),
+	});
 	return ok(
 		rows,
 		rows.length

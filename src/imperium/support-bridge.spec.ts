@@ -377,6 +377,7 @@ describe('envío a Odoo', () => {
 		const store = Object.assign(memory_store({ tickets: [linked_ticket()], 'document-change-history': [] }), {
 			available_mongoose_models: () => [],
 			is_model_installed: () => true,
+			resource_for_model: () => null,
 		});
 		// Lo que manda el panel: collection_name = base del servicio, model_name = module_info.model_id.
 		const req = new Request('http://instancia.test/api/document-change-history/comment', {

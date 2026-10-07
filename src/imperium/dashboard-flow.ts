@@ -3,6 +3,7 @@
  */
 import { as_array, as_object, ok, type ImperiumDoc } from './envelope.ts';
 import { build_access } from './auth.ts';
+import { is_chat_private_resource, without_chat_rows } from './chat-access.ts';
 import { is_seed_admin } from './group-access.ts';
 import {
 	access_flag,
@@ -333,6 +334,9 @@ export async function resolve_widget_data(
 	} catch {
 		throw new Error(`El modelo '${model_id}' no está disponible.`);
 	}
+	if (is_chat_private_resource(resource)) {
+		throw new Error(`El modelo '${model_id}' no está disponible.`);
+	}
 	await assert_widget_module_enabled(store, resource, model_id);
 	const access = actor
 		? await build_access(store, actor)
@@ -389,7 +393,7 @@ export async function resolve_widget_data(
 		{ is_active: true },
 		date_match,
 		domain_match,
-		scope.match,
+		without_chat_rows(resource, scope.match),
 	]);
 	const take = Math.min(
 		WIDGET_TABLE_MAX_LIMIT,
@@ -639,7 +643,14 @@ export async function resolve_dashboard_catalog(
 	const seen = new Set<string>();
 	const pending: Array<{ resource: string; model_id: string; module_name: string }> = [];
 	const consider = (resource: string, model_id: string, module_name: string) => {
-		if (!resource || INTERNAL_CATALOG_RESOURCES.has(resource) || !store.has(resource)) return;
+		if (
+			!resource ||
+			INTERNAL_CATALOG_RESOURCES.has(resource) ||
+			is_chat_private_resource(resource) ||
+			!store.has(resource)
+		) {
+			return;
+		}
 		// Mismo criterio que `resolve_widget_data`: no ofrecer lo que luego se
 		// rechaza, ni muestrear la tabla de una app que nunca se instaló.
 		if (!store.is_resource_installed(resource)) return;

@@ -2,6 +2,8 @@
  * `GET /postgres-table-tracker/global/:id/field-values/:field_path` —
  * mismo contrato que el tracker Mongo: `{ value, label, count, is_reference }`.
  */
+import { assert_target_model_read } from './auth.ts';
+import { without_chat_rows } from './chat-access.ts';
 import { as_array, as_object, ok, type ImperiumDoc } from './envelope.ts';
 import { field_values_message } from './field-values.ts';
 import {
@@ -20,6 +22,7 @@ type FieldValueOption = {
 
 export type TrackerFieldValuesCtx = {
 	store: ImperiumStore;
+	actor: ImperiumDoc | null;
 	params: Record<string, string>;
 	url: URL;
 };
@@ -134,6 +137,8 @@ export async function postgres_table_tracker_field_values(ctx: TrackerFieldValue
 	if (!resource || !ctx.store.has(resource)) {
 		throw new Error('El modelo no tiene una colección asociada.');
 	}
+	// La ruta solo exige sesión: el permiso de lectura del modelo se revisa aquí.
+	await assert_target_model_read(ctx.store, ctx.actor, resource);
 
 	const termino = text(ctx.url.searchParams.get('termino'));
 	const desde = Math.max(Number.parseInt(ctx.url.searchParams.get('desde') ?? '0', 10) || 0, 0);
@@ -153,16 +158,19 @@ export async function postgres_table_tracker_field_values(ctx: TrackerFieldValue
 	 * siguen en scan: `payload ->>` no es el id de serialize_field_value. */
 	const use_sql_counts = !dotted && !as_array_field && !is_reference;
 
+	const mongo_match = without_chat_rows(resource, null);
 	const counts = new Map<string, number>();
 	if (use_sql_counts) {
 		const counted = await ctx.store.value_counts(resource, field_path, {
 			include_inactive: true,
+			mongo_match,
 		});
 		for (const { value, count } of counted) counts.set(value, count);
 	} else {
 		for await (const page of ctx.store.scan(resource, {
 			include_inactive: true,
 			fields: [field_path],
+			mongo_match,
 		})) {
 			increment_parent_counts(counts, page, field_path);
 		}
@@ -174,6 +182,7 @@ export async function postgres_table_tracker_field_values(ctx: TrackerFieldValue
 		for await (const refs of ctx.store.scan(ref_resource, {
 			include_inactive: true,
 			populate_lite: true,
+			mongo_match: without_chat_rows(ref_resource, null),
 		})) {
 			for (const doc of refs) {
 				const value = String(doc._id ?? '');

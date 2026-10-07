@@ -11,6 +11,7 @@ import { as_array, as_object, ok, type ImperiumDoc } from './envelope.ts';
 import { raw_json_body } from './body.ts';
 import { print_console_log } from './debug-request-log.ts';
 import { outside_history_context, run_with_history_context } from './history.ts';
+import { insert_notification } from './notifications.ts';
 import type { ImperiumStore } from './store.ts';
 
 const DEFAULT_BASE_URL = 'https://codice-progressio.online';
@@ -432,7 +433,7 @@ async function notify_ticket_people(store: ImperiumStore, ticket: ImperiumDoc, s
 	);
 	const title = text(ticket.title) || 'Ticket de soporte';
 	for (const recipient of recipients) {
-		await store.insert('notifications', {
+		await insert_notification(store, {
 			name: 'Respuesta de soporte',
 			title: 'Respuesta de soporte',
 			message: `${sender}: ${body}`.slice(0, 500),

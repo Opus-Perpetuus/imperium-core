@@ -189,6 +189,168 @@
 		"value": ""
 	},
 	{
+		"_ref": "configuration-calls-enabled",
+		"description": "Permite llamadas de voz y video desde el chat, 1:1 y en grupo, y las reuniones.",
+		"is_system": true,
+		"module_id": "NA",
+		"name": "Activar llamadas y videollamadas",
+		"type": "checkbox",
+		"value": true
+	},
+	{
+		"_ref": "configuration-calls-mesh-max-participants",
+		"description": "Personas que caben en una llamada conectada de equipo a equipo, sin servidor de medios. Se acota de 2 a 6.",
+		"is_system": true,
+		"module_id": "NA",
+		"name": "Participantes máximos en conexión directa",
+		"type": "number",
+		"value": 4
+	},
+	{
+		"_ref": "configuration-calls-class-max-participants",
+		"description": "Asistentes que caben en una reunión en modo clase (solo publican el anfitrión y los presentadores) cuando no hay servidor de medios.",
+		"is_system": true,
+		"module_id": "NA",
+		"name": "Participantes máximos en modo clase sin servidor de medios",
+		"type": "number",
+		"value": 20
+	},
+	{
+		"_ref": "configuration-calls-ring-timeout-seconds",
+		"description": "Tiempo que suena una llamada antes de registrarse como perdida.",
+		"is_system": true,
+		"module_id": "NA",
+		"name": "Segundos de timbre antes de marcar perdida",
+		"type": "number",
+		"value": 45
+	},
+	{
+		"_ref": "configuration-calls-stun-urls",
+		"description": "Servidores STUN públicos que ayudan a conectar las llamadas, separados por coma. Las credenciales de TURN y del servidor de medios van en variables de entorno, nunca aquí.",
+		"is_system": true,
+		"module_id": "NA",
+		"name": "Servidores STUN (separados por coma)",
+		"type": "text",
+		"value": "stun:stun.cloudflare.com:3478"
+	},
+	{
+		"_ref": "configuration-meetings-guests-enabled",
+		"description": "Si está en SI, una reunión puede admitir por enlace a personas sin cuenta, con sala de espera y aprobación del anfitrión.",
+		"is_system": true,
+		"module_id": "NA",
+		"name": "Permitir invitados sin cuenta en reuniones",
+		"type": "checkbox",
+		"value": false
+	},
+	{
+		"_ref": "configuration-meetings-recording-enabled",
+		"description": "El anfitrión puede grabar una reunión. Todos los participantes ven el aviso de grabación.",
+		"is_system": true,
+		"module_id": "NA",
+		"name": "Permitir grabar reuniones",
+		"type": "checkbox",
+		"value": true
+	},
+	{
+		"_ref": "configuration-meetings-captions-cloud-allowed",
+		"description": "Si está en NO, los subtítulos solo usan el reconocimiento de voz del equipo y el audio no sale a la nube.",
+		"is_system": true,
+		"module_id": "NA",
+		"name": "Permitir subtítulos con el servicio de voz en la nube del navegador",
+		"type": "checkbox",
+		"value": false
+	},
+	{
+		"_ref": "configuration-chat-edit-window-minutes",
+		"description": "Tiempo para editar un mensaje ya enviado. 0 = sin límite.",
+		"is_system": true,
+		"module_id": "NA",
+		"name": "Minutos para editar un mensaje",
+		"type": "number",
+		"value": 15
+	},
+	{
+		"_ref": "configuration-chat-delete-window-minutes",
+		"description": "Tiempo para borrar un mensaje para todos los participantes. 0 = sin límite.",
+		"is_system": true,
+		"module_id": "NA",
+		"name": "Minutos para borrar para todos",
+		"type": "number",
+		"value": 60
+	},
+	{
+		"_ref": "configuration-chat-stories-enabled",
+		"description": "Publicaciones que duran 24 horas, con la audiencia que elige quien publica.",
+		"is_system": true,
+		"module_id": "NA",
+		"name": "Activar historias",
+		"type": "checkbox",
+		"value": true
+	},
+	{
+		"_ref": "configuration-chat-ephemeral-enabled",
+		"description": "Permite que los administradores de un grupo hagan que sus mensajes caduquen solos.",
+		"is_system": true,
+		"module_id": "NA",
+		"name": "Permitir mensajes temporales",
+		"type": "checkbox",
+		"value": false
+	},
+	{
+		"_ref": "configuration-chat-legal-hold",
+		"description": "Si está en SI, el contenido de un mensaje que caduca se copia a la auditoría del chat antes de borrarse.",
+		"is_system": true,
+		"module_id": "NA",
+		"name": "Retención legal del chat",
+		"type": "checkbox",
+		"value": false
+	},
+	{
+		"_ref": "configuration-chat-mass-mention-threshold",
+		"description": "Desde este número de miembros, mencionar a @todos o @aquí pide confirmación antes de enviar.",
+		"is_system": true,
+		"module_id": "NA",
+		"name": "Miembros desde los que @todos pide confirmación",
+		"type": "number",
+		"value": 15
+	},
+	{
+		"_ref": "configuration-chat-live-features-max-members",
+		"description": "En conversaciones más grandes no se muestra quién está escribiendo ni quién leyó cada mensaje.",
+		"is_system": true,
+		"module_id": "NA",
+		"name": "Miembros máximos con escritura y acuses en vivo",
+		"type": "number",
+		"value": 20
+	},
+	{
+		"_ref": "configuration-chat-max-group-members",
+		"description": "Tope de miembros de un grupo o canal del chat.",
+		"is_system": true,
+		"module_id": "NA",
+		"name": "Miembros máximos por grupo",
+		"type": "number",
+		"value": 1024
+	},
+	{
+		"_ref": "configuration-chat-max-pinned-messages",
+		"description": "Mensajes que se pueden fijar a la vez en una conversación.",
+		"is_system": true,
+		"module_id": "NA",
+		"name": "Mensajes fijados por conversación",
+		"type": "number",
+		"value": 5
+	},
+	{
+		"_ref": "configuration-chat-max-upload-mb",
+		"description": "Tamaño máximo de cada archivo que se envía por el chat.",
+		"is_system": true,
+		"module_id": "NA",
+		"name": "Tamaño máximo por archivo del chat (MB)",
+		"type": "number",
+		"value": 50
+	},
+	{
 		"_ref": "configuration-violation-uma-value",
 		"description": "Valor en pesos de la UMA (Unidad de Medida y Actualización) usado para calcular el monto de las infracciones. Se actualiza anualmente.",
 		"is_system": true,

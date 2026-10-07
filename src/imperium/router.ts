@@ -19,6 +19,7 @@ import { handle_crud } from './crud.ts';
 import { handle_action } from './actions.ts';
 import { handle_db_admin, is_db_admin_path } from './db-admin.ts';
 import { handle_mcp_agent, seed_mcp_access } from './mcp-agent.ts';
+import { ChatError, media_token_actor } from './chat-access.ts';
 import { serve_media } from './media.ts';
 import { recover_orphan_processing_uploads } from './uploads.ts';
 import { ImperiumStore, load_catalog_path } from './store.ts';
@@ -232,7 +233,8 @@ async function dispatch(
 ): Promise<Response | null> {
 			if (path === '/media' || path.startsWith('/media/')) {
 				const id = path.slice('/media/'.length).split('/')[0] ?? '';
-				const actor = await current_user(sql, req);
+				const token_actor = media_token_actor(url.searchParams.get('mt'), decodeURIComponent(id));
+				const actor = (await current_user(sql, req)) ?? token_actor;
 				if (!actor) {
 					return add_cors(
 						req,
@@ -261,7 +263,14 @@ async function dispatch(
 						);
 					}
 				}
-				return add_cors(req, await serve_media(store, decodeURIComponent(id)));
+				return add_cors(
+					req,
+					await serve_media(store, decodeURIComponent(id), {
+						req,
+						actor,
+						token_user_id: token_actor ? String(token_actor._id) : undefined,
+					}),
+				);
 			}
 			if (path === '/subjects' || path.startsWith('/subjects/')) {
 				return add_cors(req, await handle_subjects(store, sql, req, path));
@@ -366,6 +375,7 @@ async function dispatch(
 				if (err instanceof SubjectNotInstalledError && err.details) {
 					extra.details = err.details;
 				}
+				if (err instanceof ChatError && err.details) extra.details = err.details;
 				return add_cors(
 					req,
 					Response.json(fail(mapped.message, mapped.status, extra).body, { status: mapped.status }),
@@ -782,8 +792,15 @@ function note_request(
 	})().catch(() => {});
 }
 
-function clone_for_request_log(res: Response): Response {
-	if (!should_read_response_body(res.headers.get('content-type'))) {
+/**
+ * Un archivo servido no se lee: su texto acabaría en la bitácora, que se
+ * difunde a todos los sockets, y clonarlo lo cargaría completo en memoria.
+ */
+export function clone_for_request_log(res: Response): Response {
+	if (
+		res.headers.has('content-disposition') ||
+		!should_read_response_body(res.headers.get('content-type'))
+	) {
 		return new Response(null, { status: res.status, headers: res.headers });
 	}
 	return res.clone();

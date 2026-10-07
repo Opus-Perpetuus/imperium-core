@@ -8,11 +8,11 @@ export const INTERINSTANCE_API_KEY_HEADER = 'x-imperium-interinstance-key';
 export const API_KEY_INVALID_ERROR = 'Clave interinstancia inválida.';
 export const API_KEY_EXPIRED_ERROR = 'La API key interinstancia ha expirado.';
 
-function cfg_text(value: unknown) {
+export function cfg_text(value: unknown) {
 	return String(value ?? '').replace(/^"+|"+$/g, '').trim();
 }
 
-function cfg_bool(value: unknown, fallback = false) {
+export function cfg_bool(value: unknown, fallback = false) {
 	if (value === true || value === 1) return true;
 	if (value === false || value === 0) return false;
 	const raw = cfg_text(value).toLowerCase();

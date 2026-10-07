@@ -137,6 +137,9 @@ describe('pines de inicio', () => {
 		await expect(crear(store, ana, { name: 'Fuera', path: 'https://otro-sitio.com' })).rejects.toThrow(
 			'pantalla',
 		);
+		for (const path of ['/\\otro-sitio.com', '/\t/otro-sitio.com', '/\n/otro-sitio.com', '/\\/otro-sitio.com', '/login']) {
+			await expect(crear(store, ana, { name: 'Fuera', path })).rejects.toThrow('pantalla');
+		}
 	});
 
 	test('las rutas propias solo piden sesión; el CRUD general sigue pidiendo permisos', async () => {

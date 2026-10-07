@@ -57,9 +57,15 @@ export async function read_imperium_body(
 			}
 			throw error;
 		}
+		// Una clave repetida se junta en arreglo; una sola parte queda como Blob,
+		// que es lo que esperan los lectores de `is_upload`.
 		const files: Record<string, unknown> = {};
 		for (const [k, v] of form.entries()) {
-			if (typeof v !== 'string') files[k] = v;
+			if (typeof v === 'string') continue;
+			const prev = files[k];
+			if (prev === undefined) files[k] = v;
+			else if (Array.isArray(prev)) prev.push(v);
+			else files[k] = [prev, v];
 		}
 		const packed = form.get('imperium-sic__data__');
 		if (typeof packed === 'string' && packed.trim()) {

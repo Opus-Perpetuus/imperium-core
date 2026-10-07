@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { field_values_from_distinct } from './field-values.ts';
 import { MASS_QUERY_MAX_IDS } from './crud.ts';
+import { chat_activity_page_sql, chat_inbox_sql, chat_message_page_sql, chat_search_sql } from './store.ts';
 
 describe('scale contracts', () => {
 	test('ensure unwraps string-wrapped jsonb so payload ->> can use the btree', () => {
@@ -348,23 +349,88 @@ describe('scale contracts', () => {
 		expect(store).toContain('LIMIT 1');
 	});
 
-	test('conversation messages page by size instead of hydrating 20000', () => {
-		const src = readFileSync(new URL('./actions.ts', import.meta.url), 'utf8');
-		const start = src.indexOf('async function conversation(');
-		const body = src.slice(start, src.indexOf('function conversation_key_for'));
-		expect(body).toContain("sort: 'created_at:asc'");
-		expect(body).toContain('skip_total: true');
-		expect(body).not.toContain('take: 20000');
+	test('chat threads page by seq in SQL and the inbox computes unread in SQL, never scanning', () => {
+		const flow = readFileSync(new URL('./chat-flow.ts', import.meta.url), 'utf8');
+		const handler = (name: string) => {
+			const start = flow.indexOf(`export async function ${name}(`);
+			expect(start).toBeGreaterThan(-1);
+			const next = flow.indexOf('\nexport async function ', start + 1);
+			return flow.slice(start, next === -1 ? undefined : next);
+		};
+		for (const name of [
+			'read_message_page',
+			'read_message_sync',
+			'list_my_conversations',
+			'read_my_conversations',
+			'read_conversation',
+		]) {
+			const body = handler(name);
+			expect(body).not.toContain('store.scan(');
+			expect(body).not.toContain('take: 20000');
+			expect(body).not.toContain('OFFSET');
+		}
+		expect(handler('read_message_page')).toContain('ctx.store.chat_message_page(');
+		expect(handler('read_conversation')).toContain('ctx.store.chat_message_page(');
+		expect(handler('list_my_conversations')).toContain('ctx.store.chat_conversation_page(');
+		expect(handler('read_my_conversations')).toContain('ctx.store.chat_conversation_page(');
+		expect(chat_message_page_sql('"m"', 'tail')).toContain('ORDER BY seq DESC LIMIT $3');
+		const { sql } = chat_inbox_sql(
+			{ conversations: '"c"', members: '"m"' },
+			{ user_id: 'u', filter: 'unread', cursor: { at: 'a', id: 'i' }, limit: 41 },
+		);
+		expect(sql).toContain('GREATEST(COALESCE(c.last_seq, 0) - COALESCE(m.last_read_seq, 0), 0)');
+		expect(sql).toContain('LIMIT $');
+		expect(sql).not.toContain('OFFSET');
 	});
 
-	test('chat inbox scans messages instead of taking 20000', () => {
-		const src = readFileSync(new URL('./actions.ts', import.meta.url), 'utf8');
-		const start = src.indexOf('async function my_conversations');
-		const body = src.slice(start, src.indexOf('async function mark_conversation_as_read'));
-		expect(body).toContain('ctx.store.scan(');
-		expect(body).toContain('consider_latest');
-		expect(body).not.toContain('take: 20000');
-		expect(body).not.toContain('take = 20000');
+	test('chat search filters in SQL by search_field and membership, by keyset, never scanning', () => {
+		const flow = readFileSync(new URL('./chat-flow.ts', import.meta.url), 'utf8');
+		const actions = readFileSync(new URL('./actions.ts', import.meta.url), 'utf8');
+		const search = flow.slice(flow.indexOf('async function legacy_search('));
+		expect(search).toContain('export async function search_chat_messages(');
+		expect(search.split('ctx.store.chat_search(').length - 1).toBe(2);
+		for (const forbidden of ['store.scan(', 'take: 20000', 'OFFSET', 'skip:']) expect(search).not.toContain(forbidden);
+		expect(actions).not.toContain('async function search_chat_messages(');
+		const { sql, params } = chat_search_sql(
+			{ messages: '"m"', members: '"cm"', conversations: '"c"' },
+			{ user_id: 'u', needle: '50%_x', has: 'file', cursor: { at: 'a', id: 'i' }, limit: 21 },
+		);
+		for (const part of [
+			'm.search_field ILIKE $2',
+			'cm.user_id = $1',
+			"cm.state = 'active'",
+			"(cm.payload ->> 'visibleFromSeq')",
+			'(m.created_at, m.id) <',
+			'ORDER BY m.created_at DESC, m.id DESC',
+			'LIMIT $',
+		]) {
+			expect(sql).toContain(part);
+		}
+		expect(sql).not.toContain('OFFSET');
+		expect(params[1]).toBe('%50\\%\\_x%');
+	});
+
+	test('the Activity inbox pages by keyset in SQL and counts unread in SQL', () => {
+		const src = readFileSync(new URL('./notifications.ts', import.meta.url), 'utf8');
+		const handler = (name: string) => {
+			const start = src.indexOf(`export async function ${name}(`);
+			expect(start).toBeGreaterThan(-1);
+			return src.slice(start, src.indexOf('\nexport ', start + 1));
+		};
+		for (const name of ['my_mentions', 'mark_mentions_read']) {
+			const body = handler(name);
+			expect(body).not.toContain('take: 20000');
+			expect(body).not.toContain('skip:');
+			expect(body).not.toContain('store.scan(');
+			expect(body).not.toContain('OFFSET');
+		}
+		expect(handler('my_mentions')).toContain('ctx.store.chat_activity_page(');
+		expect(handler('my_mentions')).toContain('ctx.store.chat_activity_counts(');
+		expect(handler('mark_mentions_read')).toContain('ctx.store.chat_mark_activity_read(');
+		const { sql } = chat_activity_page_sql('"m"', { user_id: 'u', unread: true, before: { at: 'a', id: 'i' }, limit: 26 });
+		expect(sql).toContain('ORDER BY created_at DESC, id DESC LIMIT $');
+		expect(sql).toContain('(created_at, id) <');
+		expect(sql).not.toContain('OFFSET');
 	});
 
 	test('planning project stats scan tasks instead of taking 20000', () => {
@@ -431,7 +497,7 @@ describe('scale contracts', () => {
 		const src = readFileSync(new URL('./notifications.ts', import.meta.url), 'utf8');
 		const inbox = src.slice(0, src.indexOf('export async function notify_document_subscription_event'));
 		expect(inbox).toContain('async function* scan_mine');
-		expect(inbox).toContain("sort: 'created_at:desc'");
+		expect(inbox).toContain('ctx.store.chat_activity_page(');
 		expect(inbox).not.toContain('take: 20000');
 		expect(inbox).not.toContain('take = 20000');
 	});
