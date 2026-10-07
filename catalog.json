@@ -1700,6 +1700,7 @@
           "collection": "inventory-lot",
           "model_file": "",
           "menu_ref": "inventory-lot-menu-management-0",
+          "icon": "fa-barcode",
           "columns": [
             {
               "name": "producto",

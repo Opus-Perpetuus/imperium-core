@@ -558,9 +558,14 @@ function visit_objectid_path(
 /**
  * Replica el CastError de Mongoose 9 (ObjectId inválido → ValidationError + field_errors).
  */
-function assert_objectid_refs(resource: string, doc: ImperiumDoc) {
+export function assert_objectid_refs(
+	resource: string,
+	doc: ImperiumDoc,
+	only_keys?: string[],
+) {
 	const field_map = field_map_for(resource);
 	if (!field_map) return;
+	const scoped = only_keys ? new Set(only_keys) : null;
 	const field_errors: Record<string, string[]> = {};
 	const add = (path: string, raw: unknown) => {
 		const message = objectid_cast_message(raw, path);
@@ -568,6 +573,8 @@ function assert_objectid_refs(resource: string, doc: ImperiumDoc) {
 		if (!field_errors[path].includes(message)) field_errors[path].push(message);
 	};
 	for (const field of Object.keys(field_map)) {
+		const top = field.split('.')[0] ?? field;
+		if (scoped && !scoped.has(field) && !scoped.has(top)) continue;
 		visit_objectid_path(doc, field.split('.'), '', add);
 	}
 	if (!Object.keys(field_errors).length) return;
@@ -1693,11 +1700,71 @@ export class ImperiumStore {
 		await this.ensure_loc_columns('postgres-table-tracker');
 	}
 
+	async ensure_missing_catalog_tables(): Promise<void> {
+		const wanted: ModuleLoc[] = [];
+		const seen = new Set<string>();
+		for (const loc of this.locs.values()) {
+			if (seen.has(loc.resource)) continue;
+			seen.add(loc.resource);
+			if (!this.is_resource_installed(loc.resource)) continue;
+			wanted.push(loc);
+		}
+		if (!wanted.length) return;
+		let existing = new Set<string>();
+		try {
+			const rows = (await this.sql.unsafe(
+				`SELECT n.nspname AS schema, c.relname AS table
+				 FROM pg_class c
+				 JOIN pg_namespace n ON n.oid = c.relnamespace
+				 WHERE c.relkind = 'r' AND n.nspname LIKE 'subject_%'`,
+			)) as Array<{ schema?: unknown; table?: unknown }>;
+			existing = new Set(
+				rows.map(
+					(row) => `${String(row.schema ?? '')}.${String(row.table ?? '')}`,
+				),
+			);
+		} catch {
+			return;
+		}
+		const schemas = new Set<string>();
+		for (const loc of wanted) {
+			const schema = pg_schema_name(loc.technical_id);
+			if (existing.has(`${schema}.${loc.table}`)) continue;
+			try {
+				if (!schemas.has(schema)) {
+					schemas.add(schema);
+					await this.sql.unsafe(
+						`CREATE SCHEMA IF NOT EXISTS ${qident(schema)}`,
+					);
+				}
+				await this.sql.unsafe(`
+        CREATE TABLE IF NOT EXISTS ${this.qt(loc.resource)} (
+          id TEXT PRIMARY KEY,
+          name TEXT,
+          description TEXT,
+          is_active BOOLEAN DEFAULT true,
+          state TEXT,
+          ref TEXT,
+          search_field TEXT,
+          created_by TEXT,
+          custom_data JSONB DEFAULT '{}'::jsonb,
+          payload JSONB DEFAULT '{}'::jsonb,
+          created_at TEXT,
+          updated_at TEXT
+        )
+      `);
+			} catch {
+				/* un DDL que falla no frena el resto de las tablas */
+			}
+		}
+	}
+
 	/**
 	 * Columnas extra del catálogo (p. ej. table_configs) sobre tablas ya creadas.
 	 * Sin esto un INSERT del núcleo falla hasta que el subject vuelva a emitir DDL.
 	 */
 	async ensure_catalog_columns(): Promise<void> {
+		await this.ensure_missing_catalog_tables();
 		const seen = new Set<string>();
 		for (const loc of this.locs.values()) {
 			if (seen.has(loc.resource)) continue;
@@ -2476,7 +2543,7 @@ export class ImperiumStore {
 		};
 		apply_schema_setters(resource, merged, { apply_defaults: false });
 		assert_required_fields(resource, merged, Object.keys(patch));
-		assert_objectid_refs(resource, merged);
+		assert_objectid_refs(resource, merged, Object.keys(patch));
 		await this.assert_unique_business_keys(resource, merged, id);
 		const row = from_imperium(merged, cols);
 		row.id = id;

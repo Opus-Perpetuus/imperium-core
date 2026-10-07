@@ -139,7 +139,6 @@ export async function apply_cobranza_payment(ctx: CobranzaPaymentCtx) {
 	const amount = Number(ctx.body.amount ?? ctx.body.importe ?? ctx.body.monto);
 	if (!charge_id) throw new Error('Se requiere el cargo a abonar.');
 	if (!method_id) throw new Error('Se requiere el método de pago.');
-	if (!pos_session_id) throw new Error('Se requiere una sesión de caja abierta.');
 	if (!Number.isFinite(amount) || amount <= 0) {
 		throw new Error('El monto del pago debe ser mayor a cero.');
 	}
@@ -156,17 +155,23 @@ export async function apply_cobranza_payment(ctx: CobranzaPaymentCtx) {
 	if (amount > balance + 0.009) {
 		throw new Error(`El monto excede el saldo pendiente (${balance.toFixed(2)}).`);
 	}
-	await ctx.store.assert_resource_installed('pos-session');
-	const session = await ctx.store.find_id('pos-session', pos_session_id);
-	if (!session) throw new Error('No se encontró la sesión de caja.');
-	if (!is_pos_session_open(session)) {
-		throw new Error('La sesión de caja no está abierta.');
+	// pos_session_id es opcional. Sin la app POS el abono no lleva caja;
+	// un id de sesión con la app ausente sigue en 404.
+	const pos_installed = ctx.store.is_resource_installed('pos-session');
+	if (pos_installed || pos_session_id) {
+		if (!pos_session_id) throw new Error('Se requiere una sesión de caja abierta.');
+		await ctx.store.assert_resource_installed('pos-session');
+		const session = await ctx.store.find_id('pos-session', pos_session_id);
+		if (!session) throw new Error('No se encontró la sesión de caja.');
+		if (!is_pos_session_open(session)) {
+			throw new Error('La sesión de caja no está abierta.');
+		}
 	}
 	const cashier = actor_id(ctx.actor);
 	const folio = await next_payment_folio(ctx.store, {
 		charge_id: charge._id,
 		amount,
-		pos_session_id,
+		...(pos_session_id ? { pos_session_id } : {}),
 	});
 	const created = await ctx.store.insert('cobranza-payment', {
 		name: `Pago ${charge.reference}`,
@@ -174,7 +179,7 @@ export async function apply_cobranza_payment(ctx: CobranzaPaymentCtx) {
 		charge_id: charge._id,
 		amount,
 		method_id,
-		pos_session_id,
+		...(pos_session_id ? { pos_session_id } : {}),
 		cashier_id: cashier,
 		created_by: cashier,
 		payment_date: now(),

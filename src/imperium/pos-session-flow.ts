@@ -75,7 +75,7 @@ function usage_entry(params: {
 }
 
 function release_usage_history(session: ImperiumDoc, reason: string): ImperiumDoc[] {
-	const history = as_array(session.usage_history).map(as_object);
+	const history = as_array(session.usage_history).map((raw) => ({ ...as_object(raw) }));
 	const last = history[history.length - 1];
 	if (last && !last.ended_at) {
 		last.ended_at = new Date().toISOString();
@@ -90,7 +90,7 @@ function activate_usage_history(
 	cashier: unknown,
 	cashier_name: string,
 ): ImperiumDoc[] {
-	const history = as_array(session.usage_history).map(as_object);
+	const history = as_array(session.usage_history).map((raw) => ({ ...as_object(raw) }));
 	const last = history[history.length - 1];
 	if (last && !last.ended_at) {
 		last.used_by_user = actor_id(actor) || text(last.used_by_user);
@@ -122,9 +122,41 @@ async function resolve_cashier_name(store: ImperiumStore, cashier_id: string): P
 	return text(employee?.name);
 }
 
+const POS_SESSION_STATUS_ALIASES: Record<string, string> = {
+	abierta: 'abierta',
+	open: 'abierta',
+	ABIERTA: 'abierta',
+	cerrada: 'cerrada',
+	closed: 'cerrada',
+	CERRADA: 'cerrada',
+	cancelada: 'cancelada',
+	canceled: 'cancelada',
+	cancelled: 'cancelada',
+	CANCELADA: 'cancelada',
+};
+
+export function normalize_pos_session_status_value(value: unknown): string {
+	const raw = text(value);
+	if (!raw) return raw;
+	return POS_SESSION_STATUS_ALIASES[raw] ?? POS_SESSION_STATUS_ALIASES[raw.toLowerCase()] ?? raw;
+}
+
 export function is_pos_session_open(doc: ImperiumDoc): boolean {
 	const raw = text(doc.status ?? doc.estado).toLowerCase();
 	return raw === 'abierta' || raw === 'open';
+}
+
+export function actor_can_restore_pos_session(
+	session: ImperiumDoc | null,
+	actor: ImperiumDoc | null,
+): boolean {
+	if (!session || !actor || !is_pos_session_open(session)) return false;
+	const uid = actor_id(actor);
+	if (!uid) return false;
+	if (ref_id(session.created_by) === uid) return true;
+	const history = as_array(session.usage_history).map(as_object);
+	const active = [...history].reverse().find((entry) => !text(entry.ended_at));
+	return ref_id(active?.used_by_user) === uid;
 }
 
 const POS_WORK_MODES = new Set(['ONLINE', 'OFFLINE']);
@@ -307,25 +339,59 @@ export async function prepare_pos_session_update(
 	actor: ImperiumDoc | null,
 ): Promise<ImperiumDoc> {
 	if (!previous) throw new Error('No se encontró la sesión a actualizar');
-	const out = { ...previous, ...doc };
-	delete out.name;
-	delete out.consecutivo;
-	out.name = previous.name;
-	out.consecutivo = previous.consecutivo;
-	const cashier = out.cashier ? ref_id(out.cashier) || out.cashier : previous.cashier;
-	const cashier_name =
-		text(out.cashier_name) ||
-		text(previous.cashier_name) ||
-		(await resolve_cashier_name(store, text(cashier)));
+	const patch: ImperiumDoc = { ...doc };
+	delete patch._id;
+	delete patch.id;
+	delete patch.name;
+	delete patch.consecutivo;
+
+	const cashier_in_patch = patch.cashier != null && text(patch.cashier) !== '';
+	const cashier = cashier_in_patch ? ref_id(patch.cashier) || patch.cashier : undefined;
+	if (cashier !== undefined) patch.cashier = cashier;
+
+	let cashier_name = text(patch.cashier_name);
+	if (!cashier_name && cashier_in_patch) {
+		cashier_name = await resolve_cashier_name(store, text(cashier));
+	}
+	if (cashier_name) patch.cashier_name = cashier_name;
+	else delete patch.cashier_name;
+
 	if (doc.on_use === true) {
-		out.usage_history = activate_usage_history(previous, actor, cashier, cashier_name);
+		const resolved_cashier = cashier ?? previous.cashier;
+		const resolved_name =
+			cashier_name ||
+			text(previous.cashier_name) ||
+			(await resolve_cashier_name(store, text(resolved_cashier)));
+		patch.usage_history = activate_usage_history(
+			previous,
+			actor,
+			resolved_cashier,
+			resolved_name,
+		);
+		patch.cashier = ref_id(resolved_cashier) || resolved_cashier;
+		if (resolved_name) patch.cashier_name = resolved_name;
 	}
 	if (doc.on_use === false) {
-		out.usage_history = release_usage_history(previous, text(doc.release_reason) || 'VIEW_EXIT');
+		patch.usage_history = release_usage_history(previous, text(doc.release_reason) || 'VIEW_EXIT');
 	}
-	out.cashier = cashier;
-	out.cashier_name = cashier_name;
-	return out;
+
+	if (patch.status !== undefined) {
+		const next = normalize_pos_session_status_value(patch.status);
+		patch.status = next;
+		patch.estado = next;
+		patch.state = next;
+		if (is_pos_session_open(previous) && next !== 'abierta') {
+			patch.closing_date = new Date().toISOString();
+			patch.on_use = false;
+			patch.usage_history = release_usage_history(
+				previous,
+				next === 'cancelada' ? 'SESSION_CANCELED' : 'CIERRE_CAJA',
+			);
+		} else if (next === 'abierta' && !is_pos_session_open(previous)) {
+			patch.closing_date = null;
+		}
+	}
+	return patch;
 }
 
 export async function prepare_pos_ticket_create(

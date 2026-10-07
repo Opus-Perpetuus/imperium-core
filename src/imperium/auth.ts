@@ -1237,6 +1237,18 @@ function is_generic_menu_icon(icon: unknown): boolean {
 	return GENERIC_MENU_ICONS.has(String(icon ?? '').trim());
 }
 
+function menu_label_collides(
+	modules: Array<{ resource: string; name: string }>,
+	resource: string,
+	stored: string,
+): boolean {
+	const label = stored.trim();
+	if (!label) return false;
+	return modules.some(
+		(other) => other.resource !== resource && other.name === label,
+	);
+}
+
 function apply_declared_subject_menus(
 	sub: SubjectInfo,
 	root: ImperiumDoc,
@@ -1356,14 +1368,27 @@ export function reshape_subject_menus(
 			let found = false;
 			for (const m of menus) {
 				if (String(m._id) === String(root._id)) continue;
+				const by_ref_hit =
+					!!mod.menu_ref && String(m._ref ?? '') === mod.menu_ref;
 				const hit =
-					(mod.menu_ref && String(m._ref ?? '') === mod.menu_ref) ||
-					(mod.path && norm(m.path) === norm(mod.path));
+					by_ref_hit ||
+					(!!mod.path && norm(m.path) === norm(mod.path));
 				if (!hit) continue;
 				if (!menu_is_under_root(m, String(root._id), by_id)) {
 					m.parent_id = root._id;
 				}
 				if (mod.icon && is_generic_menu_icon(m.icon)) m.icon = mod.icon;
+				if (
+					by_ref_hit &&
+					mod.name &&
+					menu_label_collides(
+						sub.modules,
+						mod.resource,
+						String(m.name ?? ''),
+					)
+				) {
+					m.name = mod.name;
+				}
 				found = true;
 			}
 			if (!found && mod.path && norm(mod.path) !== norm(root.path)) {

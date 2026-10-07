@@ -9,6 +9,8 @@ export const USER_PIN_UNLOCK_TOKEN_HEADER = 'x-user-pin-token';
 export const USER_PIN_POS_CONFIGURATION_REF = 'configuration-pos-pins-enabled';
 export const USER_PIN_POS_FEATURE_TOGGLE_KEY = 'pos-session-pin-enabled';
 
+const POS_PIN_DOCUMENT_MODEL = 'PosSession';
+
 const POS_PROTECTED_ROUTES = [
 	{ method: 'GET', path: '/pos-session/:id', label: 'Restaurar sesion POS' },
 	{ method: 'PUT', path: '/pos-session', label: 'Actualizar sesion POS' },
@@ -88,7 +90,7 @@ export function issue_unlock_token(
 	const payload = {
 		pin_id: String(pin._id),
 		document_id: String(pin.document_id ?? ''),
-		document_model: String(pin.document_model ?? 'PosSession'),
+		document_model: String(pin.document_model ?? POS_PIN_DOCUMENT_MODEL),
 		pin_version: Number(pin.pin_version ?? 1),
 		user_id: user_id || undefined,
 		expires_at,
@@ -124,7 +126,7 @@ export function verify_unlock_token(
 		if (!payload.expires_at || payload.expires_at <= Date.now()) return false;
 		if (payload.pin_id !== String(pin._id)) return false;
 		if (payload.document_id !== String(pin.document_id ?? '')) return false;
-		if (payload.document_model !== String(pin.document_model ?? '')) return false;
+		if (payload.document_model !== String(pin.document_model ?? POS_PIN_DOCUMENT_MODEL)) return false;
 		if (Number(payload.pin_version ?? 1) !== Number(pin.pin_version ?? 1)) return false;
 		if (payload.user_id && user_id && payload.user_id !== user_id) return false;
 		return true;

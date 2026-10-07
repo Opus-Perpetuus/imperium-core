@@ -60,6 +60,7 @@ import {
 	prepare_ticketing_turn_create,
 } from './ticketing-turn-flow.ts';
 import {
+	actor_can_restore_pos_session,
 	prepare_pos_session_create,
 	prepare_pos_session_update,
 	prepare_pos_ticket_create,
@@ -485,7 +486,11 @@ export async function handle_crud(
 		if (!field_path) {
 			throw new Error('No se proporciono el campo de arreglo solicitado.');
 		}
-		if (resource === 'pos-session') {
+		const doc = await store.find_id(resource, segs[0]!);
+		if (!doc) {
+			return json(resource, ok([], 'No se encontro el registro solicitado.', 0));
+		}
+		if (resource === 'pos-session' && !actor_can_restore_pos_session(doc, actor)) {
 			await assert_pos_pin(
 				store,
 				req,
@@ -493,10 +498,6 @@ export async function handle_crud(
 				{ method: 'GET', path: '/pos-session/:id', label: 'Restaurar sesion POS' },
 				actor,
 			);
-		}
-		const doc = await store.find_id(resource, segs[0]!);
-		if (!doc) {
-			return json(resource, ok([], 'No se encontro el registro solicitado.', 0));
 		}
 		if (is_dashboard_resource(resource)) {
 			const access = await dashboard_access(store, actor);
@@ -613,7 +614,10 @@ export async function handle_crud(
 		}));
 	}
 	if (method === 'GET' && segs.length === 1) {
-		if (resource === 'pos-session') {
+		const doc = is_postgres_table_tracker_resource(resource)
+			? await lookup_tracker(store, segs[0]!)
+			: await store.find_id(resource, segs[0]!);
+		if (resource === 'pos-session' && !actor_can_restore_pos_session(doc, actor)) {
 			await assert_pos_pin(
 				store,
 				req,
@@ -622,9 +626,6 @@ export async function handle_crud(
 				actor,
 			);
 		}
-		const doc = is_postgres_table_tracker_resource(resource)
-			? await lookup_tracker(store, segs[0]!)
-			: await store.find_id(resource, segs[0]!);
 		if (!doc) {
 			return json(
 				resource,

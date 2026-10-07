@@ -359,6 +359,58 @@ describe('flujos entre apps', () => {
 		expect(calls).toEqual(['find_id:cobranza']);
 	});
 
+	test('cobro municipal sin POS registra el pago sin sesión de caja', async () => {
+		const { apply_cobranza_payment } = await import('./cobranza-payment-flow.ts');
+		const { store } = recording_store('control-municipal');
+		const inserted: ImperiumDoc[] = [];
+		(store as unknown as { find_id: unknown }).find_id = async (resource: string) =>
+			resource === 'cobranza'
+				? { _id: 'c1', balance: 100, total_amount: 100, reference: 'AG-1' }
+				: null;
+		(store as unknown as { insert: unknown }).insert = async (
+			resource: string,
+			doc: ImperiumDoc,
+		) => {
+			inserted.push({ resource, ...doc });
+			return { _id: 'p1', ...doc };
+		};
+		(store as unknown as { next_auto_increment: unknown }).next_auto_increment = async () => 7;
+		const res = await apply_cobranza_payment({
+			store,
+			actor: { _id: 'u1' },
+			params: {},
+			body: { charge_id: 'c1', method_id: 'm1', amount: 10 },
+		});
+		expect(res.message).toContain('Pago aplicado');
+		expect(inserted).toHaveLength(1);
+		expect(inserted[0]).toMatchObject({
+			resource: 'cobranza-payment',
+			amount: 10,
+			method_id: 'm1',
+			folio: 7,
+		});
+		expect(inserted[0]).not.toHaveProperty('pos_session_id');
+		expect(store.is_resource_installed('pos-session')).toBe(false);
+	});
+
+	test('con POS instalado el efectivo sigue exigiendo caja abierta', async () => {
+		const { apply_cobranza_payment } = await import('./cobranza-payment-flow.ts');
+		const { store } = recording_store('control-municipal', 'pos');
+		(store as unknown as { find_id: unknown }).find_id = async (resource: string) =>
+			resource === 'cobranza'
+				? { _id: 'c1', balance: 100, total_amount: 100, reference: 'AG-1' }
+				: null;
+		const err = await apply_cobranza_payment({
+			store,
+			actor: { _id: 'u1' },
+			params: {},
+			body: { charge_id: 'c1', method_id: 'm1', amount: 10 },
+		}).catch((e) => e);
+		expect(err).toBeInstanceOf(Error);
+		expect(err.message).toBe('Se requiere una sesión de caja abierta.');
+		expect(store.is_resource_installed('pos-session')).toBe(true);
+	});
+
 	test('estadísticas de costos: sin Ventas no se recorren pedidos', async () => {
 		const { cost_entry_stats } = await import('./inventory-logistics-flow.ts');
 		const solo = recording_store('almacen');
@@ -487,6 +539,65 @@ describe('reportes genéricos', () => {
 		const res = await model_records(store, 'Employee');
 		expect(res.status).toBe(200);
 		expect(calls).toEqual(['employee']);
+	});
+});
+
+describe('tablas del catálogo que la app no llegó a crear', () => {
+	const BASE_IDS = [
+		'subject-configuracion',
+		'subject-configuraciones-de-vista',
+		'subject-planeacion',
+		'subject-reportes',
+	];
+
+	function sql_recording(present: Array<{ schema: string; table: string }>) {
+		const statements: string[] = [];
+		const sql = {
+			unsafe: async (query: string) => {
+				statements.push(query);
+				if (query.includes('pg_class')) return present;
+				return [];
+			},
+		};
+		return { sql, statements };
+	}
+
+	function creates(statements: string[], table: string) {
+		return statements.some(
+			(query) =>
+				query.includes('CREATE TABLE') && query.includes(`"${table}"`),
+		);
+	}
+
+	test('con Almacén instalada crea subject_almacen.inventory_lot si falta', async () => {
+		const { sql, statements } = sql_recording([]);
+		const store = new ImperiumStore(sql as unknown as Bun.SQL, load_catalog_path());
+		store.set_installed_subjects([...BASE_IDS, 'subject-almacen']);
+		await store.ensure_missing_catalog_tables();
+		expect(creates(statements, 'inventory_lot')).toBe(true);
+		expect(
+			statements.some((query) =>
+				query.includes('CREATE SCHEMA IF NOT EXISTS "subject_almacen"'),
+			),
+		).toBe(true);
+	});
+
+	test('no vuelve a crear la tabla si ya está', async () => {
+		const { sql, statements } = sql_recording([
+			{ schema: 'subject_almacen', table: 'inventory_lot' },
+		]);
+		const store = new ImperiumStore(sql as unknown as Bun.SQL, load_catalog_path());
+		store.set_installed_subjects([...BASE_IDS, 'subject-almacen']);
+		await store.ensure_missing_catalog_tables();
+		expect(creates(statements, 'inventory_lot')).toBe(false);
+	});
+
+	test('sin Almacén instalada no crea inventory_lot', async () => {
+		const { sql, statements } = sql_recording([]);
+		const store = new ImperiumStore(sql as unknown as Bun.SQL, load_catalog_path());
+		store.set_installed_subjects(BASE_IDS);
+		await store.ensure_missing_catalog_tables();
+		expect(creates(statements, 'inventory_lot')).toBe(false);
 	});
 });
 

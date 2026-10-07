@@ -8,6 +8,7 @@ import {
 	filter_menus_for_access,
 	keep_reshaped_menus_for_access,
 } from './group-access.ts';
+import { ImperiumStore, load_catalog_path } from './store.ts';
 
 describe('menu_path_is_disabled', () => {
 	const disabled = new Set(['/turnos', '/vehicle']);
@@ -536,5 +537,65 @@ describe('launcher menus respect access after catalog reshape', () => {
 				(m) => String(m.subject_slug ?? '') === 'configuraciones-de-vista',
 			),
 		).toBe(false);
+	});
+});
+
+describe('lanzador de almacén', () => {
+	const store = new ImperiumStore(
+		null as unknown as Bun.SQL,
+		load_catalog_path(),
+	);
+	const root = {
+		_id: 'root',
+		_ref: 'menu-management-inventory',
+		name: 'Almacén',
+		path: '',
+		parent_id: null,
+		icon: 'fa-warehouse',
+	};
+
+	test('la tarjeta de entradas de costo no repite el nombre de movimientos', () => {
+		const out = reshape_subject_menus(store, [
+			root,
+			{
+				_id: 'cost',
+				_ref: 'inventory-cost-entry-menu-management-0',
+				name: 'Movimientos de inventario',
+				path: '/inventory-cost-entry',
+				parent_id: 'root',
+				icon: 'fa-boxes-stacked',
+			},
+			{
+				_id: 'mov',
+				_ref: 'inventory-movement-menu-management-0',
+				name: 'Movimientos de inventario',
+				path: '/inventory-movement',
+				parent_id: 'root',
+				icon: 'fa-right-left',
+			},
+		]);
+		const by_ref = new Map(out.map((m) => [String(m._ref ?? ''), m]));
+		expect(by_ref.get('inventory-cost-entry-menu-management-0')?.name).toBe(
+			'Entradas de costo',
+		);
+		expect(by_ref.get('inventory-movement-menu-management-0')?.name).toBe(
+			'Movimientos de inventario',
+		);
+	});
+
+	test('lotes y series no usa el círculo vacío', () => {
+		const out = reshape_subject_menus(store, [
+			root,
+			{
+				_id: 'lot',
+				_ref: 'inventory-lot-menu-management-0',
+				name: 'Lotes y series',
+				path: '/inventory-lot',
+				parent_id: 'root',
+				icon: 'fa-circle',
+			},
+		]);
+		const lot = out.find((m) => m._ref === 'inventory-lot-menu-management-0');
+		expect(String(lot?.icon ?? '')).toBe('fa-barcode');
 	});
 });
