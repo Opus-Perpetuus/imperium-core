@@ -16,6 +16,7 @@ import {
 	to_imperium,
 	type ImperiumDoc,
 } from './envelope.ts';
+import { is_record_id } from './record-id.ts';
 import { SearchEngine, search_text_from_doc } from './search-engine.ts';
 import {
 	ACTIVITY_CONTEXTS,
@@ -33,7 +34,10 @@ import { vehicle_by_status } from './vehicle-flow.ts';
 import { delivery_package_by_status } from './delivery-package-flow.ts';
 import { pedidos_sales_stats } from './pedidos-flow.ts';
 import { pedido_order_sql } from './pedidos-list-order.ts';
-import { purchase_order_stats } from './purchase-order-flow.ts';
+import {
+	purchase_order_stats,
+	with_purchase_order_supplier_name,
+} from './purchase-order-flow.ts';
 import { planeacion_statistics } from './planeacion-flow.ts';
 import { invoice_request_stats } from './invoice-request-flow.ts';
 import { physical_count_by_state } from './inventory-physical-count-flow.ts';
@@ -59,6 +63,8 @@ import {
 import { list_projection_keys } from './list-projection.ts';
 import { is_base_subject_slug } from './subject-runtime.ts';
 import { icon_search_terms_es } from './font-awesome-icon-search-es.ts';
+
+export { is_record_id };
 
 /** Subirla re-siembra el catálogo de íconos una vez en cada servidor. */
 const ICON_CATALOG_SEED_VERSION = 2;
@@ -1420,7 +1426,6 @@ export type ChatSearchQuery = {
 	/** El texto normalizado como `search_field`: minúsculas y sin diacríticos. */
 	needle: string;
 	conversation_id?: string;
-	/** Remitente. */
 	from?: string;
 	/** `file`, `image`, `link` o `voice`. */
 	has?: string;
@@ -1817,7 +1822,6 @@ export function chat_drop_stories_sql(tables: { stories: string; views: string; 
 /** `null` quita la nota o el recordatorio; con un recordatorio nuevo vuelve a quedar pendiente. */
 export type ChatSavedPatch = { note?: string | null; remind_at?: string | null; done?: boolean };
 
-/** Cambiar un guardado propio. */
 export function chat_update_saved_sql(
 	saved: string,
 	patch: ChatSavedPatch,
@@ -2421,16 +2425,6 @@ export function related_model_for_field(
 }
 
 const OBJECT_ID_HEX = /^[a-fA-F0-9]{24}$/;
-/** Id que genera el kit de una app (`new_id`): `prefijo_` + 16 hex. */
-const KIT_RECORD_ID = /^[a-z][a-z0-9-]*_[a-f0-9]{16}$/;
-
-/**
- * Referencia válida: ObjectId migrado de Mongo o id de una fila creada por una
- * app. Sin lo segundo, el CRUD rechazaba toda referencia a esas filas.
- */
-export function is_record_id(value: string): boolean {
-	return OBJECT_ID_HEX.test(value) || KIT_RECORD_ID.test(value);
-}
 
 function objectid_model_label(resource: string) {
 	const canonical = RESOURCE_ALIASES[resource] ?? resource;
@@ -3745,7 +3739,7 @@ export class ImperiumStore {
 			}),
 			[user_id, now],
 		)) as Array<Record<string, unknown>>;
-		return Object.fromEntries(Object.entries(row ?? {}).map(([key, value]) => [key, Number(value) || 0]));
+		return Object.fromEntries(Object.entries(row).map(([key, value]) => [key, Number(value)]));
 	}
 
 	/** `null` si el usuario ya no es miembro activo. */
@@ -3925,9 +3919,9 @@ export class ImperiumStore {
 				limited: false,
 				changed,
 				mine: want,
-				count: Number(counted?.count ?? 0),
-				rev: Number(mark?.rev ?? 0),
-				updated_at: String(mark?.updated_at ?? ''),
+				count: Number(counted.count),
+				rev: Number(mark.rev),
+				updated_at: String(mark.updated_at ?? ''),
 			};
 		});
 	}
@@ -3964,7 +3958,7 @@ export class ImperiumStore {
 			const [mark] = changed
 				? ((await tx.unsafe(sqls.bump, [input.message_id, input.now])) as Array<Record<string, unknown>>)
 				: [locked];
-			return { already_voted: false, changed, rev: Number(mark?.rev ?? 0), updated_at: String(mark?.updated_at ?? '') };
+			return { already_voted: false, changed, rev: Number(mark.rev), updated_at: String(mark.updated_at ?? '') };
 		});
 	}
 
@@ -4046,7 +4040,7 @@ export class ImperiumStore {
 		const [row] = (await this.sql.unsafe(chat_activity_counts_sql(this.qt('mentions')), [user_id])) as Array<
 			Record<string, unknown>
 		>;
-		for (const key of Object.keys(counts) as Array<keyof typeof counts>) counts[key] = Number(row?.[key] ?? 0);
+		for (const key of Object.keys(counts) as Array<keyof typeof counts>) counts[key] = Number(row[key]);
 		return counts;
 	}
 
@@ -4107,11 +4101,11 @@ export class ImperiumStore {
 			sender_id,
 		])) as Array<Record<string, unknown>>;
 		return {
-			member_count: Number(row?.member_count ?? 0),
-			read_count: Number(row?.read_count ?? 0),
-			delivered_count: Number(row?.delivered_count ?? 0),
-			read_ids: as_array(row?.read_ids).map(String),
-			delivered_ids: as_array(row?.delivered_ids).map(String),
+			member_count: Number(row.member_count),
+			read_count: Number(row.read_count),
+			delivered_count: Number(row.delivered_count),
+			read_ids: as_array(row.read_ids).map(String),
+			delivered_ids: as_array(row.delivered_ids).map(String),
 		};
 	}
 
@@ -4209,7 +4203,7 @@ export class ImperiumStore {
 			}
 			if (input.state === 'active') {
 				const [counted] = (await tx.unsafe(sqls.active_count, [input.conversation_id])) as Array<{ n: number }>;
-				if (Number(counted?.n) + entering.length > input.max_members) return { status: 'full' };
+				if (Number(counted.n) + entering.length > input.max_members) return { status: 'full' };
 			}
 			const last_seq = Number(locked.last_seq) || 0;
 			const shares_history = as_object(as_object(locked.payload).settings).historyVisibleToNewMembers !== false;
@@ -4340,11 +4334,11 @@ export class ImperiumStore {
 			[input.ids, input.now, input.legal_hold],
 		)) as Array<Record<string, unknown>>;
 		return {
-			purged: as_array(row?.purged).map((item) => {
+			purged: as_array(row.purged).map((item) => {
 				const purged = as_object(item);
 				return { id: String(purged.id), conversation_id: String(purged.conversation_id), seq: Number(purged.seq) };
 			}),
-			quoting: as_array(row?.quoting).map((item) => {
+			quoting: as_array(row.quoting).map((item) => {
 				const quote = as_object(item);
 				return {
 					conversation_id: String(quote.conversation_id),
@@ -4355,11 +4349,11 @@ export class ImperiumStore {
 					updated_at: String(quote.updated_at),
 				};
 			}),
-			last_messages: as_array(row?.last_messages).map((item) => {
+			last_messages: as_array(row.last_messages).map((item) => {
 				const last = as_object(item);
 				return { conversation_id: String(last.conversation_id), last_message: as_object(last.last_message) };
 			}),
-			files: as_array(row?.files).map(String),
+			files: as_array(row.files).map(String),
 		};
 	}
 
@@ -4569,7 +4563,7 @@ export class ImperiumStore {
 			`SELECT count(*)::int AS n FROM ${views} WHERE story_id = $1 AND payload ->> 'anonymous' = 'true'`,
 			[story_id],
 		)) as Array<{ n: number }>;
-		return { viewers, anonymous_count: Number(counted?.n ?? 0) };
+		return { viewers, anonymous_count: Number(counted.n) };
 	}
 
 	/** `chat_preferences.stories_muted_author_ids` de `user-settings`. */
@@ -4593,7 +4587,7 @@ export class ImperiumStore {
 			}),
 			[ids, now, author_id],
 		)) as Array<Record<string, unknown>>;
-		return { ids: as_array(row?.ids).map(String), files: as_array(row?.files).map(String) };
+		return { ids: as_array(row.ids).map(String), files: as_array(row.files).map(String) };
 	}
 
 	/** `null`: esa persona no tiene una solicitud pendiente. */
@@ -4918,7 +4912,6 @@ export class ImperiumStore {
 		return rows.map((row) => this.flatten(row, 'chat-meeting-attendance')!);
 	}
 
-	/** Las salas pequeñas que tuvo una llamada de reunión. */
 	async meeting_breakout_call_ids(input: { meeting_id: string; parent_call_id: string; limit: number }): Promise<string[]> {
 		const rows = (await this.sql.unsafe(
 			`SELECT id FROM ${this.qt('chat-calls')}
@@ -4938,7 +4931,7 @@ export class ImperiumStore {
 			   AND is_active IS DISTINCT FROM false`,
 			[input.meeting_id, input.conversation_id],
 		)) as Array<{ bytes: number | string }>;
-		return Math.round(Number(row?.bytes ?? 0));
+		return Math.round(Number(row.bytes));
 	}
 
 	/** El `seq` que sigue al último bloque guardado de esa llamada; 0 si no hay. */
@@ -4947,7 +4940,7 @@ export class ImperiumStore {
 			`SELECT COALESCE(max(seq), -1) + 1 AS next FROM ${this.qt('chat-meeting-transcripts')} WHERE call_id = $1`,
 			[call_id],
 		)) as Array<{ next: number | string }>;
-		return Number(row?.next ?? 0);
+		return Number(row.next);
 	}
 
 	/** La transcripción de una llamada por bloques, en orden de `seq` (keyset). */
@@ -5486,6 +5479,34 @@ export class ImperiumStore {
 			} catch {
 				/* columna o tabla aún no aplicables */
 			}
+			if (col.pg === 'boolean') {
+				await this.promote_text_column_to_boolean(loc, name);
+			}
+		}
+	}
+
+	/** Postgres rechaza un boolean de JS en una columna text (42804). */
+	private async promote_text_column_to_boolean(loc: ModuleLoc, name: string): Promise<void> {
+		const schema = pg_schema_name(loc.technical_id);
+		let rows: Array<{ data_type?: string }> = [];
+		try {
+			rows = (await this.sql.unsafe(
+				`SELECT data_type FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2 AND column_name = $3`,
+				[schema, loc.table, name],
+			)) as Array<{ data_type?: string }>;
+		} catch {
+			return;
+		}
+		const data_type = String(rows[0]?.data_type ?? '').toLowerCase();
+		if (data_type !== 'text' && data_type !== 'character varying') return;
+		const ident = qident(name);
+		const using = `CASE WHEN ${ident} IS NULL THEN NULL WHEN lower(btrim(${ident})) IN ('true', 't', '1', 'yes', 'si', 'sí') THEN TRUE ELSE FALSE END`;
+		try {
+			await this.sql.unsafe(
+				`ALTER TABLE ${this.qt(loc.resource)} ALTER COLUMN ${ident} TYPE BOOLEAN USING ${using}`,
+			);
+		} catch {
+			/* columna o tabla aún no aplicables */
 		}
 	}
 
@@ -5631,7 +5652,7 @@ export class ImperiumStore {
 	incoming_simple_refs(target: string): Array<{ resource: string; field: string }> {
 		const out: Array<{ resource: string; field: string }> = [];
 		for (const [from, fields] of Object.entries(REFS.fields)) {
-			if (from === target || !this.has(from)) continue;
+			if (from === target || !this.has(from) || !this.is_resource_installed(from)) continue;
 			for (const [field, model] of Object.entries(fields)) {
 				if (!field || field.includes('.')) continue;
 				if (this.resource_for_model(model) === target) {
@@ -5648,12 +5669,18 @@ export class ImperiumStore {
 	): Promise<Array<{ resource: string; field: string; conteo: number }>> {
 		const hits: Array<{ resource: string; field: string; conteo: number }> = [];
 		for (const incoming of this.incoming_simple_refs(target)) {
-			const { total } = await this.find_many(incoming.resource, {
-				where: { [incoming.field]: id },
-				take: 1,
-				include_inactive: false,
-				populate: false,
-			});
+			let total = 0;
+			try {
+				({ total } = await this.find_many(incoming.resource, {
+					where: { [incoming.field]: id },
+					take: 1,
+					include_inactive: false,
+					populate: false,
+				}));
+			} catch (err) {
+				if (is_missing_relation(err)) continue;
+				throw err;
+			}
 			if (total > 0) hits.push({ ...incoming, conteo: total });
 		}
 		return hits;
@@ -5739,10 +5766,20 @@ export class ImperiumStore {
 			for (const col of this.loc(resource).columns) {
 				if (jsons.has(col.name)) continue;
 				if (!(col.name in parsed)) continue;
-				parsed[col.name] = parse_json_cell(parsed[col.name]);
+				/* En BD migradas la columna física `real` puede ser TEXT: el ticket POS
+				 * regresaba `subtotal: '3'` y el front tronaba en `.toFixed`. */
+				parsed[col.name] =
+					col.pg === 'real' || col.pg === 'number'
+						? numeric_cell(parsed[col.name])
+						: parse_json_cell(parsed[col.name]);
 			}
 		}
-		return to_imperium(parsed);
+		const doc = to_imperium(parsed);
+		if (!doc || !resource) return doc;
+		for (const name of this.bool_cols(resource)) {
+			if (name in doc) doc[name] = pg_boolean(doc[name]);
+		}
+		return doc;
 	}
 
 		async find_many(
@@ -6360,7 +6397,7 @@ export class ImperiumStore {
 				new Map(rows.map((r) => [String(r._id), full ? strip_populated_secrets(target, r) : r])),
 			);
 		}
-		return docs.map((doc) => {
+		const populated = docs.map((doc) => {
 			const out = { ...doc };
 			for (const [field, model] of Object.entries(field_map)) {
 				const target = this.resource_for_model(model);
@@ -6370,6 +6407,9 @@ export class ImperiumStore {
 			}
 			return out;
 		});
+		return resource === 'purchase-order'
+			? with_purchase_order_supplier_name(populated)
+			: populated;
 	}
 
 	/**
@@ -7320,6 +7360,12 @@ function parse_json_cell(value: unknown): unknown {
 	}
 }
 
+function numeric_cell(value: unknown): unknown {
+	if (typeof value !== 'string' || !value.trim()) return value;
+	const n = Number(value);
+	return Number.isFinite(n) ? n : value;
+}
+
 function turn_duration_minutes(row: ImperiumDoc): number {
 	let raw: unknown = row.time_box;
 	if (typeof raw === 'string') {
@@ -7603,12 +7649,33 @@ export function json_bind_value(v: unknown): unknown {
 	return typeof v === 'string' ? parse_json_cell(v) : v;
 }
 
-/** SWITCH del front a veces manda 0/1; PG BOOLEAN no acepta integer. */
+/** 0/1 del switch y el texto legado `true`/`false` de una columna que era text. */
 export function pg_boolean(v: unknown): unknown {
-	if (v === true || v === 1 || v === '1' || v === 'true') return true;
-	if (v === false || v === 0 || v === '0' || v === 'false' || v === '') {
-		return false;
+	if (typeof v === 'string') {
+		const text = v.trim().toLowerCase();
+		if (
+			text === 'true' ||
+			text === 't' ||
+			text === '1' ||
+			text === 'yes' ||
+			text === 'si' ||
+			text === 'sí'
+		) {
+			return true;
+		}
+		if (
+			text === 'false' ||
+			text === 'f' ||
+			text === '0' ||
+			text === 'no' ||
+			text === ''
+		) {
+			return false;
+		}
+		return v;
 	}
+	if (v === true || v === 1) return true;
+	if (v === false || v === 0) return false;
 	return v;
 }
 

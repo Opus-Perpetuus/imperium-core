@@ -4,6 +4,7 @@
  * `purchase-order.replenishment.service`.
  */
 import { as_array, as_object, type ImperiumDoc } from './envelope.ts';
+import { is_record_id } from './record-id.ts';
 import type { ImperiumStore } from './store.ts';
 
 export function round_quantity(value: number): number {
@@ -302,7 +303,7 @@ export async function generate_replenishment_for_order(
 		const articulo = as_object(raw);
 		const producto_id = ref_id(articulo.product);
 		const cantidad = round_quantity(Number(articulo.cantidad ?? 0));
-		if (!producto_id || !/^[a-f0-9]{24}$/i.test(producto_id) || !(cantidad > 0)) continue;
+		if (!producto_id || !is_record_id(producto_id) || !(cantidad > 0)) continue;
 		const ruta = await compute_picking_route(store, producto_id, cantidad);
 		if (ruta.faltante <= 0) continue;
 		const product = await store.find_id('products', producto_id);

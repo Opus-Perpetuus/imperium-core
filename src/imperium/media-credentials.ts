@@ -232,13 +232,15 @@ class SfuAdminError extends Error {
 /**
  * Cliente Twirp de administración (JSON por POST). `null` sin SFU. Que la
  * pata o la sala ya no existan no es un error: el efecto buscado ya se cumplió.
+ * `IMPERIUM_SFU_ADMIN_URL` es la dirección del SFU desde el núcleo cuando no es la que usa el
+ * navegador (red interna); vacía, vale `IMPERIUM_SFU_URL`.
  */
 export function sfu_admin(opts: { env?: Env; fetch?: typeof fetch; now?: () => number } = {}): SfuAdmin | null {
 	const env = opts.env ?? process.env;
 	if (!sfu_available(env)) return null;
 	const send = opts.fetch ?? fetch;
 	const now = opts.now ?? Date.now;
-	const base = env.IMPERIUM_SFU_URL!.replace(/^ws(s?):\/\//i, 'http$1://').replace(/\/+$/, '');
+	const base = (env.IMPERIUM_SFU_ADMIN_URL || env.IMPERIUM_SFU_URL!).replace(/^ws(s?):\/\//i, 'http$1://').replace(/\/+$/, '');
 	const rpc = async (method: string, body: Record<string, unknown>, room: string, create = false) => {
 		const token = sfu_admin_token({ room, create, now: now(), env })!;
 		const res = await send(`${base}/twirp/livekit.RoomService/${method}`, {

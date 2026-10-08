@@ -73,8 +73,49 @@ export async function register_pos_ticket_exit(
 		const product = await store.find_id('products', pid);
 		if (!product) continue;
 		const previa = Number(product.existencia ?? 0);
-		const next = previa - qty;
-		await store.update('products', pid, { existencia: next < 0 ? 0 : next });
-		await consume_exit_quants(store, product, previa - Math.max(next, 0));
+		const next = Math.max(previa - qty, 0);
+		await store.update('products', pid, { existencia: next });
+		await consume_exit_quants(store, product, previa - next);
+		await insert_pos_sale_movement(store, ticket, product, qty, previa, next);
 	}
+}
+
+async function insert_pos_sale_movement(
+	store: ImperiumStore,
+	ticket: ImperiumDoc,
+	product: ImperiumDoc,
+	cantidad: number,
+	stock_total_previo: number,
+	stock_total_resultante: number,
+): Promise<void> {
+	if (!store.has('inventory-movement')) return;
+	const warehouse = store.has('inventory-internal-location')
+		? ((await store.find_where('inventory-internal-location', { _ref: WAREHOUSE_REF })) ??
+			(await store.find_where('inventory-internal-location', { ref: WAREHOUSE_REF })))
+		: null;
+	const producto = String(product._id ?? '');
+	const apartado = round_quantity(Number(product.existenciaApartada ?? 0));
+	await store.insert('inventory-movement', {
+		name: `Venta POS ${String(product.name ?? producto)}`,
+		producto,
+		producto_id: producto,
+		producto_nombre: product.name,
+		producto_codigo: product.codigo,
+		tipo_movimiento: 'salida_entrega',
+		ubicacion_origen: warehouse?._id,
+		ubicacion_origen_id: warehouse?._id,
+		ubicacion_origen_nombre: warehouse?.name,
+		documento_tipo: 'pos-ticket',
+		documento_id: String(ticket._id ?? ''),
+		documento_modelo: 'PosTickets',
+		documento_nombre: String(ticket.name ?? ticket.ticket_sequence ?? ''),
+		documento_referencia: String(ticket.ticket_sequence ?? ''),
+		description: 'Salida por venta en punto de venta',
+		cantidad: round_quantity(cantidad),
+		stock_total_previo: round_quantity(stock_total_previo),
+		stock_total_resultante: round_quantity(stock_total_resultante),
+		stock_apartado_previo: apartado,
+		stock_apartado_resultante: apartado,
+		fecha_movimiento: new Date().toISOString(),
+	});
 }

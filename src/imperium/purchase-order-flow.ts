@@ -101,6 +101,19 @@ function normalize_item(raw_item: ImperiumDoc, index: number) {
 	};
 }
 
+export async function supplier_display_name(
+	store: ImperiumStore,
+	proveedor_nombre: unknown,
+	proveedor: unknown,
+): Promise<string> {
+	const current = text(proveedor_nombre);
+	if (current) return current;
+	const id = ref_id(proveedor);
+	if (!id || !store.has('contacto')) return '';
+	const contact = await store.find_id('contacto', id);
+	return text(contact?.name);
+}
+
 function normalize_payload(payload: ImperiumDoc): ImperiumDoc {
 	const articulos = as_array(payload.articulos).map((raw, index) =>
 		normalize_item(as_object(raw), index),
@@ -132,7 +145,13 @@ export async function prepare_purchase_order_create(
 	store: ImperiumStore,
 	doc: ImperiumDoc,
 ): Promise<ImperiumDoc> {
-	const out = normalize_payload({ ...doc });
+	const payload = { ...doc };
+	payload.proveedor_nombre = await supplier_display_name(
+		store,
+		payload.proveedor_nombre,
+		payload.proveedor,
+	);
+	const out = normalize_payload(payload);
 	delete out._id;
 	delete out.folio_interno;
 	out.estado = 'borrador';
@@ -324,6 +343,23 @@ export async function apply_purchase_receipt_stock(
 			fechaUltimaCompra: fecha,
 		});
 	}
+}
+
+/**
+ * Lista y detalle leen `proveedor_nombre`. El id está en `proveedor`;
+ * si el snapshot está vacío o es ese id, se completa con el contacto poblado.
+ */
+export function with_purchase_order_supplier_name(docs: ImperiumDoc[]): ImperiumDoc[] {
+	return docs.map((doc) => {
+		const supplier_id = ref_id(doc.proveedor);
+		const current = text(doc.proveedor_nombre);
+		if (current && current !== supplier_id) return doc;
+		const related = doc.proveedor;
+		if (!related || typeof related !== 'object' || Array.isArray(related)) return doc;
+		const name = text(related.name ?? related.nombreCompleto);
+		if (!name || name === supplier_id) return doc;
+		return { ...doc, proveedor_nombre: name };
+	});
 }
 
 /**

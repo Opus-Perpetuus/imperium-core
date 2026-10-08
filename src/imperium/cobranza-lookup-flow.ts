@@ -4,6 +4,7 @@
  */
 import { as_array, as_object, ok, type ImperiumDoc } from './envelope.ts';
 import { build_access } from './auth.ts';
+import { recompute_cobranza_charge } from './cobranza-payment-flow.ts';
 import { access_flag } from './record-rules.ts';
 import type { ImperiumStore } from './store.ts';
 
@@ -174,10 +175,14 @@ async function payments_of(store: ImperiumStore, charge_id: string) {
 	);
 }
 
-async function agua_outstanding_amount(store: ImperiumStore, contrato: ImperiumDoc): Promise<number> {
+async function agua_outstanding_amount(
+	store: ImperiumStore,
+	contrato: ImperiumDoc,
+	settled: boolean,
+): Promise<number> {
 	const adeudo = Number(contrato.adeudo ?? 0);
 	if (adeudo > 0) return round_money(adeudo);
-	if (!store.has('lectura')) return 0;
+	if (settled || !store.has('lectura')) return 0;
 	const number = text(contrato.contrato);
 	const { rows } = await store.find_many('lectura', {
 		where: number ? { contrato: number } : undefined,
@@ -195,25 +200,32 @@ async function agua_outstanding_amount(store: ImperiumStore, contrato: ImperiumD
 async function get_or_create_agua_charge(store: ImperiumStore, source_id: string): Promise<ImperiumDoc> {
 	const contrato = await store.find_id('contrato', source_id);
 	if (!contrato) throw new Error('No se encontró el contrato de agua.');
-	const outstanding = await agua_outstanding_amount(store, contrato);
 	const existing = await store.find_where('cobranza', {
 		source_module: SOURCE_AGUA,
 		source_id: String(contrato._id),
 	});
+	if (existing) {
+		const status = text(existing.status ?? existing.estado).toUpperCase();
+		if (status === 'CANCELADO' || status === 'CANCELED') return existing;
+	}
+	const outstanding = await agua_outstanding_amount(
+		store,
+		contrato,
+		Boolean(existing && Number(existing.paid_amount ?? 0) > 0),
+	);
 	const reference = text(contrato.contrato ?? contrato.name ?? contrato._id);
 	const concept = text(contrato.contribuyente)
 		? `Servicio de agua - ${text(contrato.contribuyente)}`
 		: `Servicio de agua ${reference}`;
 	if (existing) {
-		const status = text(existing.status ?? existing.estado).toUpperCase();
-		if (status === 'CANCELADO' || status === 'CANCELED') return existing;
-		const updated = await store.update('cobranza', String(existing._id), {
+		await store.update('cobranza', String(existing._id), {
 			total_amount: round_money(Number(existing.paid_amount ?? 0) + outstanding),
 			reference,
 			concept,
 			name: `Cobro agua ${reference}`,
 		});
-		return updated ?? existing;
+		const recomputed = await recompute_cobranza_charge(store, String(existing._id));
+		return recomputed ?? existing;
 	}
 	return store.insert('cobranza', {
 		name: `Cobro agua ${reference}`,

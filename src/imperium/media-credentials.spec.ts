@@ -209,6 +209,26 @@ describe('administración del servidor de medios', () => {
 		expect(claims_of(sent[4]!.auth.replace('Bearer ', '')).video).toEqual({ roomCreate: true });
 	});
 
+	test('IMPERIUM_SFU_ADMIN_URL lleva la administración por la red interna; el token sigue con la URL del navegador', async () => {
+		const urls: string[] = [];
+		const fetch_fake = (async (url: string) => {
+			urls.push(url);
+			return new Response('{}', { status: 200 });
+		}) as unknown as typeof fetch;
+		for (const admin_url of ['http://livekit:7880/', '', undefined]) {
+			const env = { ...SFU, IMPERIUM_SFU_ADMIN_URL: admin_url };
+			await sfu_admin({ env, fetch: fetch_fake, now: () => NOW })!.remove_participant('imperium-c1', 'u:x:l');
+			expect(sfu_token({ call_id: 'c1', leg_key: 'u:x:l', name: 'X', role: 'participant', can_publish: true, sources: [], now: NOW, env })!.url).toBe(
+				SFU.IMPERIUM_SFU_URL,
+			);
+		}
+		expect(urls).toEqual([
+			'http://livekit:7880/twirp/livekit.RoomService/RemoveParticipant',
+			'https://sfu.empresa.test/twirp/livekit.RoomService/RemoveParticipant',
+			'https://sfu.empresa.test/twirp/livekit.RoomService/RemoveParticipant',
+		]);
+	});
+
 	test('que la pata o la sala ya no existan no es error; cualquier otro fallo sí', async () => {
 		const { admin } = fake(() => [404, { code: 'not_found', msg: 'participant not found' }]);
 		expect(await admin.tracks('imperium-c1', 'u:x:l')).toBeNull();

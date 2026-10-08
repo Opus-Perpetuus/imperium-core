@@ -7,7 +7,8 @@ import {
 	apply_quant_delta,
 	recompute_product_existencia,
 } from './delivery-return-flow.ts';
-import { resolve_reception_location } from './purchase-order-flow.ts';
+import { resolve_reception_location, supplier_display_name } from './purchase-order-flow.ts';
+import { is_record_id } from './record-id.ts';
 import type { ImperiumStore } from './store.ts';
 
 function text(value: unknown): string {
@@ -36,16 +37,12 @@ function reserved_of(item: ImperiumDoc): number {
 
 const OPEN_STATES = new Set(['pendiente', 'parcial', 'PENDING', 'PARTIAL']);
 
-function is_object_id(value: string): boolean {
-	return /^[a-fA-F0-9]{24}$/.test(value);
-}
-
 function pending_lines_from_po(po: ImperiumDoc, strict_product: boolean) {
 	return as_array(po.articulos)
 		.map((raw, index) => {
 			const item = as_object(raw);
 			const producto = ref_id(item.producto ?? item.product_id);
-			if (!producto || !is_object_id(producto)) {
+			if (!producto || !is_record_id(producto)) {
 				if (strict_product) {
 					throw new Error(
 						`La línea ${index + 1} de la recepción necesita un producto válido`,
@@ -104,7 +101,7 @@ async function insert_reception_from_po(
 		purchase_order_nombre: po.name,
 		purchase_order_folio: po.folio_interno,
 		proveedor: po.proveedor,
-		proveedor_nombre: po.proveedor_nombre ?? '',
+		proveedor_nombre: await supplier_display_name(store, po.proveedor_nombre, po.proveedor),
 		proveedor_rfc: po.proveedor_rfc ?? '',
 		uuid_xml: text(extra.uuid_xml) || text(po.uuid_xml),
 		referencia: text(extra.referencia) || text(po.referencia_origen),
@@ -124,7 +121,7 @@ export async function ensure_pending_reception_from_purchase_order(
 	purchase_order: ImperiumDoc,
 ): Promise<ImperiumDoc | null> {
 	const po_id = text(purchase_order?._id);
-	if (!po_id || !is_object_id(po_id) || !store.has('inventory-reception')) return null;
+	if (!po_id || !is_record_id(po_id) || !store.has('inventory-reception')) return null;
 	if (text(purchase_order.estado) === 'archivada') return null;
 	const existing = await find_open_reception(store, po_id);
 	if (existing) return existing;
@@ -133,13 +130,54 @@ export async function ensure_pending_reception_from_purchase_order(
 	return insert_reception_from_po(store, purchase_order, articulos);
 }
 
+/**
+ * Confirmar la orden no pasa por la recepción: descuenta la abierta
+ * para que en camino no vuelva a contar lo ya recibido.
+ */
+export async function apply_receipt_to_open_reception(
+	store: ImperiumStore,
+	po_id: string,
+	lines: Array<{ producto: string; cantidad: number }>,
+): Promise<void> {
+	if (!store.has('inventory-reception')) return;
+	const open = await find_open_reception(store, po_id);
+	if (!open) return;
+	const articulos = as_array(open.articulos).map(as_object);
+	const by_product = new Map(articulos.map((item) => [ref_id(item.producto), item]));
+	let touched = false;
+	for (const line of lines) {
+		if (!(line.cantidad > 0)) continue;
+		const item = by_product.get(ref_id(line.producto));
+		if (!item) continue;
+		item.cantidad_recibida = round_qty(Number(item.cantidad_recibida ?? 0) + line.cantidad);
+		touched = true;
+	}
+	if (!touched) return;
+	const total_esperado = round_qty(
+		articulos.reduce((sum, item) => sum + Number(item.cantidad_esperada ?? 0), 0),
+	);
+	const total_recibido = round_qty(
+		articulos.reduce((sum, item) => sum + Number(item.cantidad_recibida ?? 0), 0),
+	);
+	let estado = text(open.estado);
+	if (total_esperado > 0 && total_recibido + 1e-6 >= total_esperado) estado = 'recibida';
+	else if (total_recibido > 0) estado = 'parcial';
+	await store.update('inventory-reception', String(open._id), {
+		articulos,
+		total_esperado,
+		total_recibido,
+		estado,
+		fecha_confirmacion: new Date().toISOString(),
+	});
+}
+
 export async function create_reception_from_purchase_order(
 	store: ImperiumStore,
 	purchase_order_id: string,
 	body: ImperiumDoc,
 ): Promise<ImperiumDoc> {
 	const po_id = text(purchase_order_id);
-	if (!po_id || !is_object_id(po_id)) {
+	if (!po_id || !is_record_id(po_id)) {
 		throw new Error('Se necesita el id de la orden de compra');
 	}
 	const po = await store.find_id('purchase-order', po_id);
@@ -167,7 +205,7 @@ export async function create_reception_from_purchase_order(
 			});
 	const articulos = source.map((line, index) => {
 		const producto = ref_id(line.producto);
-		if (!producto || !is_object_id(producto)) {
+		if (!producto || !is_record_id(producto)) {
 			throw new Error(`La línea ${index + 1} de la recepción necesita un producto válido`);
 		}
 		return {
@@ -194,7 +232,7 @@ export async function create_reception_from_purchase_order(
 		purchase_order_nombre: po.name,
 		purchase_order_folio: po.folio_interno,
 		proveedor: po.proveedor,
-		proveedor_nombre: po.proveedor_nombre ?? '',
+		proveedor_nombre: await supplier_display_name(store, po.proveedor_nombre, po.proveedor),
 		proveedor_rfc: po.proveedor_rfc ?? '',
 		uuid_xml: text(body.uuid_xml) || text(po.uuid_xml),
 		referencia: text(body.referencia) || text(po.referencia_origen),
@@ -335,7 +373,7 @@ export async function register_internal_transfer(
 	const cantidad = round_qty(params.cantidad);
 	if (!(cantidad > 0)) throw new Error('La cantidad a trasladar debe ser mayor a cero');
 	const producto_id = text(params.producto);
-	if (!producto_id || !is_object_id(producto_id)) {
+	if (!producto_id || !is_record_id(producto_id)) {
 		throw new Error('Debes indicar un producto válido');
 	}
 	const origen = await store.find_id('inventory-internal-location', params.ubicacion_origen);
@@ -421,7 +459,7 @@ export async function acomodar_reception(
 	const producto_id = text(body.producto);
 	let codigo = text(body.ubicacion_destino_codigo).toUpperCase();
 	const cantidad = round_qty(Number(body.cantidad ?? 0));
-	if (!producto_id || !is_object_id(producto_id)) {
+	if (!producto_id || !is_record_id(producto_id)) {
 		throw new Error('Se necesita un producto válido');
 	}
 	if (!(cantidad > 0)) throw new Error('La cantidad a acomodar debe ser mayor que cero');
@@ -472,7 +510,7 @@ export async function reservar_reception(
 	const documento_tipo = text(body.documento_tipo);
 	const documento_id = text(body.documento_id);
 	const documento_nombre = text(body.documento_nombre);
-	if (!producto_id || !is_object_id(producto_id)) {
+	if (!producto_id || !is_record_id(producto_id)) {
 		throw new Error('Se necesita un producto válido');
 	}
 	if (!(cantidad > 0)) throw new Error('La cantidad a reservar debe ser mayor que cero');
@@ -502,7 +540,7 @@ export async function in_transit_for_product(
 	producto_id: string,
 ): Promise<ImperiumDoc> {
 	const id = text(producto_id);
-	if (!id || !is_object_id(id)) throw new Error('Se necesita el id del producto');
+	if (!id || !is_record_id(id)) throw new Error('Se necesita el id del producto');
 	let en_camino = 0;
 	let recepciones = 0;
 	for await (const page of store.scan('inventory-reception', {
@@ -532,7 +570,7 @@ export async function list_pending_for_product(
 	producto_id: string,
 ): Promise<ImperiumDoc[]> {
 	const id = text(producto_id);
-	if (!id || !is_object_id(id)) throw new Error('Se necesita el id del producto');
+	if (!id || !is_record_id(id)) throw new Error('Se necesita el id del producto');
 	const out: ImperiumDoc[] = [];
 	for await (const page of store.scan('inventory-reception', {
 		where: { estado: { in: ['pendiente', 'parcial'] } },

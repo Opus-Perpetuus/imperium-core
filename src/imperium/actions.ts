@@ -7,10 +7,12 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { as_array, as_object, fail, ok, type ImperiumDoc } from './envelope.ts';
 import { internal_route } from './internal-route.ts';
+import { lookup_reverse_geocode } from './reverse-geocode.ts';
 import { apply_missing_configuration_seeds } from './configuration-seed-sync.ts';
 import { plan_documentation_sync } from './documentation-sync.ts';
 import { serve_attachment_bytes } from './media.ts';
 import { query_list, read_imperium_body } from './body.ts';
+import { is_record_id } from './record-id.ts';
 import { is_unique_violation, type ImperiumStore } from './store.ts';
 import { SearchEngine, search_text_from_doc } from './search-engine.ts';
 import { assert_pos_pin, verify_user_pin } from './user-pin.ts';
@@ -255,6 +257,7 @@ import { resolve_delivery_gps } from './delivery-gps.ts';
 import {
 	assert_new_serials,
 	ensure_inventory_lot,
+	product_tracking,
 	split_receipt_lots,
 } from './inventory-lot-flow.ts';
 import {
@@ -285,6 +288,7 @@ import { apply_purchase_receipt_stock } from './purchase-order-flow.ts';
 import { list_instance_type, project_list_docs } from './list-projection.ts';
 import {
 	acomodar_reception,
+	apply_receipt_to_open_reception,
 	create_reception_backorder,
 	create_reception_from_purchase_order,
 	ensure_pending_reception_from_purchase_order,
@@ -1994,7 +1998,7 @@ async function read_chofer_queue(ctx: Ctx) {
 	if (!employee) {
 		return ok(
 			[],
-			'El usuario no tiene un empleado vinculado. Pide a admin ligar el usuario al empleado chofer.',
+			'El usuario no tiene un empleado vinculado. Configúralo en Usuarios → campo «Empleado vinculado».',
 		);
 	}
 	const vehicles = (
@@ -2199,7 +2203,7 @@ async function delivery_chofer_routes(ctx: Ctx) {
 			? ref_id(employee_raw)
 			: String(employee_raw ?? '').trim();
 	if (!employee_id) {
-		return ok([], 'El usuario no tiene un empleado vinculado para identificar al chofer.');
+		return ok([], 'El usuario no tiene un empleado vinculado para identificar al chofer. Configúralo en Usuarios → campo «Empleado vinculado».');
 	}
 	const vehicles = ctx.store.has('vehicle')
 		? await collect_scan(ctx.store, 'vehicle', {
@@ -3523,6 +3527,7 @@ async function confirm_reception(ctx: Ctx) {
 			false,
 			`reception-${rec._id}-${Date.now()}`,
 			String(ctx.body.referencia ?? rec.referencia ?? ''),
+			false,
 		);
 	}
 	const updated = await ctx.store.update('inventory-reception', String(rec._id), {
@@ -3569,7 +3574,7 @@ async function apply_stock_in(
 async function picking_route(ctx: Ctx) {
 	const producto = String(ctx.url.searchParams.get('producto') ?? ctx.body.producto ?? '').trim();
 	const cantidad = Number(ctx.url.searchParams.get('cantidad') ?? ctx.body.cantidad ?? 0);
-	if (!producto || !/^[a-f0-9]{24}$/i.test(producto)) {
+	if (!producto || !is_record_id(producto)) {
 		throw new Error('Debes indicar un producto válido');
 	}
 	if (!(cantidad > 0)) {
@@ -3643,6 +3648,11 @@ async function stock_consistency(ctx: Ctx) {
 	}
 	let reparados = 0;
 	if (reparar) {
+		await assert_http_access(ctx.store, ctx.actor, 'inventory-stock-quant', 'GET', {
+			extra: true,
+			action: 'validar_consistencia',
+			search: 'reparar=1',
+		});
 		for (const fila of filas) {
 			if (fila.consistente) continue;
 			await ctx.store.update('products', String(fila.producto_id), {
@@ -4272,7 +4282,7 @@ async function reclamar_surtir(ctx: Ctx) {
 	const employee_id = session_employee_id(ctx);
 	if (!employee_id || !/^[a-f0-9]{24}$/i.test(employee_id)) {
 		throw new Error(
-			'Tu usuario no tiene un empleado vinculado. Configúralo en Usuarios antes de surtir.',
+			'Tu usuario no tiene un empleado vinculado. Configúralo en Usuarios → campo «Empleado vinculado».',
 		);
 	}
 	const id = String(ctx.params.id ?? '').trim();
@@ -4357,6 +4367,9 @@ async function asignar_empleado(ctx: Ctx) {
 	if (!employee_id || !is_object_id(employee_id)) {
 		throw new Error('Empleado no válido.');
 	}
+	const employee = await ctx.store.find_id('employee', employee_id);
+	if (!employee) throw new Error('No se encontró el empleado indicado.');
+	if (employee.is_active === false) throw new Error('El empleado está inactivo.');
 	const id = String(ctx.params.id ?? '').trim();
 	if (!id || !is_object_id(id)) {
 		throw new Error('Identificador de pedido no válido.');
@@ -4532,6 +4545,20 @@ async function po_approve(ctx: Ctx) {
 	return ok([updated], 'Orden de compra aprobada correctamente');
 }
 
+const RECEIVABLE_PO_STATES = new Set(['aprobada', 'parcialmente_recibida']);
+const LOT_RECEPTION_ERROR =
+	'Los productos con lote o número de serie se reciben desde Recepciones';
+
+function has_receipt_quantity(line: { cantidad: number }): boolean {
+	return !Number.isFinite(line.cantidad) || Math.abs(line.cantidad) > 1e-6;
+}
+
+/** Las partidas en cero se omiten; si todas vienen en cero se conservan para que la validación diga cuál. */
+function receipt_lines_with_quantity<T extends { cantidad: number }>(lines: T[]): T[] {
+	const with_quantity = lines.filter(has_receipt_quantity);
+	return with_quantity.length ? with_quantity : lines;
+}
+
 async function po_receive(ctx: Ctx, confirm_all: boolean) {
 	const po = await need(
 		ctx,
@@ -4540,30 +4567,44 @@ async function po_receive(ctx: Ctx, confirm_all: boolean) {
 		'No se encontró la orden de compra indicada',
 		'Se necesita el id de la orden de compra',
 	);
-	if (String(po.estado) === 'archivada') throw new Error('No puedes recibir una orden archivada');
-	if (String(po.estado) === 'confirmada') throw new Error('La orden de compra ya fue recibida por completo');
+	const estado = String(po.estado ?? '');
+	if (estado === 'archivada') throw new Error('No puedes recibir una orden archivada');
+	if (estado === 'confirmada') throw new Error('La orden de compra ya fue recibida por completo');
+	if (!RECEIVABLE_PO_STATES.has(estado)) {
+		throw new Error('Solo puedes recibir una orden aprobada o con recepción parcial');
+	}
 	const articulos = as_array(po.articulos).map(as_object);
 	if (!articulos.length) throw new Error('La orden de compra no tiene partidas para recibir');
-	const requested = confirm_all && !as_array(ctx.body.articulos).length
+	const from_pending = confirm_all && !as_array(ctx.body.articulos).length;
+	const requested_raw = from_pending
 		? articulos.map((a) => ({
 				producto: a.producto ?? a.product_id,
 				cantidad: Number(a.cantidad ?? 0) - Number(a.cantidad_recibida ?? 0),
 				costo_unitario: Number(a.costo_unitario ?? 0),
 			}))
 		: as_array(ctx.body.articulos).map(as_object);
-	if (!requested.length) throw new Error('La orden de compra no tiene cantidades pendientes por recibir');
-	const receipt_key = String(ctx.body.receipt_key ?? '').trim() || `receipt-${po._id}-${Date.now()}`;
-	const updated = await po_apply_receipt(
-		ctx,
-		String(po._id),
-		requested.map((l) => ({
+	const lines = requested_raw
+		.map((l) => ({
 			producto: String(l.producto ?? l.product_id ?? ''),
 			cantidad: Number(l.cantidad ?? 0),
 			costo_unitario: Number(l.costo_unitario ?? 0),
 			ubicacion_destino: String(l.ubicacion_destino ?? ''),
 			ubicacion_destino_nombre: String(l.ubicacion_destino_nombre ?? ''),
 			lotes: l.lotes,
-		})),
+		}));
+	const requested = from_pending ? lines.filter(has_receipt_quantity) : receipt_lines_with_quantity(lines);
+	if (!requested.length) throw new Error('La orden de compra no tiene cantidades pendientes por recibir');
+	for (const line of requested) {
+		if (!(line.cantidad > 0)) continue;
+		const product = await ctx.store.find_id('products', line.producto);
+		const tracking = product_tracking(product);
+		if (tracking.lote || tracking.serial) throw new Error(LOT_RECEPTION_ERROR);
+	}
+	const receipt_key = String(ctx.body.receipt_key ?? '').trim() || `receipt-${po._id}-${Date.now()}`;
+	const updated = await po_apply_receipt(
+		ctx,
+		String(po._id),
+		requested,
 		confirm_all,
 		receipt_key,
 		String(ctx.body.referencia ?? ''),
@@ -4589,15 +4630,23 @@ async function po_apply_receipt(
 	force_confirm: boolean,
 	receipt_key = `receipt-${po_id}-${Date.now()}`,
 	referencia = '',
+	sync_open_reception = true,
 ): Promise<ImperiumDoc> {
 	const po = await need(ctx, 'purchase-order', po_id, 'No se encontró la orden de compra indicada');
+	const active = receipt_lines_with_quantity(lines);
+	if (!active.length) throw new Error('La orden de compra no tiene cantidades pendientes por recibir');
 	const articulos = as_array(po.articulos).map(as_object);
 	// Todo se valida (pendiente y lotes) antes de mover existencias: el store
 	// no tiene transacciones y una línea inválida dejaría la recepción a medias.
 	const planned = [];
-	for (const line of lines) {
+	for (const line of active) {
 		const item = articulos.find((a) => String(a.producto ?? a.product_id) === line.producto);
 		if (!item) throw new Error('El producto de la recepción no existe en la orden');
+		if (!Number.isFinite(line.cantidad) || !(line.cantidad > 0)) {
+			throw new Error(
+				`La cantidad recibida de ${item.producto_nombre ?? line.producto} debe ser mayor que cero`,
+			);
+		}
 		const pending = Number(item.cantidad ?? 0) - Number(item.cantidad_recibida ?? 0);
 		if (line.cantidad > pending + 1e-6) {
 			throw new Error(`La recepción de ${item.producto_nombre ?? line.producto} excede la cantidad pendiente`);
@@ -4637,7 +4686,7 @@ async function po_apply_receipt(
 	const rec = articulos.reduce((s, a) => s + Number(a.cantidad_recibida ?? 0), 0);
 	const estado = rec >= total || force_confirm ? 'confirmada' : rec > 0 ? 'parcialmente_recibida' : String(po.estado ?? 'aprobada');
 	const recepciones = as_array(po.recepciones);
-	recepciones.push({ fecha: now(), articulos: lines, usuario: actor_name(ctx) });
+	recepciones.push({ fecha: now(), articulos: active, usuario: actor_name(ctx) });
 	const saved = (await ctx.store.update('purchase-order', po_id, {
 		articulos,
 		recepciones,
@@ -4646,6 +4695,16 @@ async function po_apply_receipt(
 		total_recibido: rec,
 		fecha_confirmacion: estado === 'confirmada' ? now() : po.fecha_confirmacion,
 	}))!;
+	if (sync_open_reception) {
+		await apply_receipt_to_open_reception(
+			ctx.store,
+			po_id,
+			active.filter((line) => line.cantidad > 0).map((line) => ({
+				producto: line.producto,
+				cantidad: line.cantidad,
+			})),
+		);
+	}
 	await revalidate_po_invoices(ctx.store, po_id);
 	return saved;
 }
@@ -6008,22 +6067,10 @@ async function end_attending_turn(ctx: Ctx) {
 }
 
 async function reverse_geocode(ctx: Ctx) {
-	const lat = String(ctx.url.searchParams.get('lat') ?? '').trim();
-	const lon = String(ctx.url.searchParams.get('lon') ?? '').trim();
-	if (!lat || !lon) {
-		return Response.json({ error: 'lat y lon son requeridos' }, { status: 400 });
-	}
-	const url = new URL('https://nominatim.openstreetmap.org/reverse');
-	url.searchParams.set('format', 'jsonv2');
-	url.searchParams.set('lat', lat);
-	url.searchParams.set('lon', lon);
-	url.searchParams.set('addressdetails', '1');
-	url.searchParams.set('accept-language', 'es');
-	const upstream = await fetch(url, {
-		headers: { 'user-agent': 'ImperiumSIC-modular/1.0' },
-	});
-	const payload = await upstream.json().catch(() => ({ error: 'geocode falló' }));
-	return Response.json(payload, { status: upstream.ok ? 200 : upstream.status });
+	const lat = String(ctx.url.searchParams.get('lat') ?? '');
+	const lon = String(ctx.url.searchParams.get('lon') ?? '');
+	const result = await lookup_reverse_geocode(lat, lon);
+	return Response.json(result.body, { status: result.status });
 }
 
 async function mark_attendance(ctx: Ctx) {

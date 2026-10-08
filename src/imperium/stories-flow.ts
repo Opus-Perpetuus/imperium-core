@@ -13,6 +13,7 @@ import {
 	upload_info,
 } from './chat-flow.ts';
 import { chat_settings, type ChatSettings } from './chat-settings.ts';
+import { actor_id, CHAT_ID, defined, invalid, invalid_cursor, json_field, str } from './chat-shared.ts';
 import { as_array, as_object, ok, type ImperiumDoc } from './envelope.ts';
 import { outside_history_context } from './history.ts';
 import { rate_limited_response, take_token } from './rate-bucket.ts';
@@ -40,27 +41,9 @@ const KINDS = new Set(['text', 'image', 'video']);
 const AUDIENCES = new Set(['organization', 'contacts', 'users']);
 /** La llave de un color del tema; nunca un color suelto. */
 const BACKGROUND_KEY = /^[a-z][a-z0-9-]{0,39}$/;
-const CHAT_ID = /^[a-f0-9]{24}$/i;
-
-function str(value: unknown): string {
-	return value == null ? '' : String(value).trim();
-}
-
-function defined<T extends Record<string, unknown>>(rec: T): T {
-	for (const key of Object.keys(rec)) if (rec[key] === undefined) delete rec[key];
-	return rec;
-}
-
-function invalid(message = 'La petición no es válida.'): ChatError {
-	return new ChatError(422, 'invalid_request', message);
-}
 
 function story_not_found(): ChatError {
 	return new ChatError(404, 'story_not_found', 'Esa historia ya no está disponible.');
-}
-
-function actor_id(ctx: StoryCtx): string {
-	return str(ctx.actor?._id);
 }
 
 async function stories_settings(store: ImperiumStore): Promise<ChatSettings> {
@@ -70,16 +53,6 @@ async function stories_settings(store: ImperiumStore): Promise<ChatSettings> {
 	}
 	if (!settings.stories_enabled) throw new ChatError(403, 'feature_disabled', 'Tu organización desactivó esta función.');
 	return settings;
-}
-
-/** Multipart manda los objetos como texto JSON. */
-function json_field(value: unknown): unknown {
-	if (typeof value !== 'string') return value;
-	try {
-		return JSON.parse(value);
-	} catch {
-		throw invalid();
-	}
 }
 
 function user_ids(value: unknown): string[] {
@@ -172,7 +145,7 @@ function decode_cursor(raw: string): FeedCursor {
 	if (typeof cursor.muted === 'boolean' && typeof cursor.at === 'string' && typeof cursor.id === 'string' && cursor.id) {
 		return { muted: cursor.muted, at: cursor.at, id: cursor.id };
 	}
-	throw new ChatError(400, 'invalid_cursor', 'La página solicitada ya no es válida; recarga la lista.');
+	throw invalid_cursor();
 }
 
 function limit_param(url: URL): number {

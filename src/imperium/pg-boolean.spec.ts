@@ -9,5 +9,10 @@ describe('pg_boolean', () => {
 		expect(pg_boolean(true)).toBe(true);
 		expect(pg_boolean('0')).toBe(false);
 		expect(pg_boolean('1')).toBe(true);
+		expect(pg_boolean('true')).toBe(true);
+		expect(pg_boolean('TRUE')).toBe(true);
+		expect(pg_boolean('false')).toBe(false);
+		expect(pg_boolean('')).toBe(false);
+		expect(pg_boolean(null)).toBe(null);
 	});
 });

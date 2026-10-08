@@ -62,7 +62,19 @@ import {
 	type ChatCtx,
 	type ChatGuest,
 } from './chat-flow.ts';
-import { chat_settings, type ChatSettings } from './chat-settings.ts';
+import { chat_settings } from './chat-settings.ts';
+import {
+	actor_id,
+	calls_enabled_settings,
+	CHAT_ID,
+	decode_cursor,
+	defined,
+	encode_cursor,
+	invalid,
+	new_id,
+	quoted_csv_cell,
+	str,
+} from './chat-shared.ts';
 import { print_console_log } from './debug-request-log.ts';
 import { as_array, as_object, ok, type ImperiumDoc } from './envelope.ts';
 import { outside_history_context } from './history.ts';
@@ -147,7 +159,6 @@ type MeetingInput = {
 	settings?: Partial<MeetingSettings>;
 };
 
-const CHAT_ID = /^[a-f0-9]{24}$/i;
 // Sin 0/o, 1/i/l: el código se dicta y se copia a mano.
 const CODE_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
 const CODE_ATTEMPTS = 5;
@@ -213,21 +224,8 @@ const PROFILE_SETTINGS: Record<MeetingProfile, MeetingSettings> = {
 	},
 };
 
-function str(value: unknown): string {
-	return value == null ? '' : String(value).trim();
-}
-
-function strip<T extends Record<string, unknown>>(rec: T): T {
-	for (const key of Object.keys(rec)) if (rec[key] === undefined) delete rec[key];
-	return rec;
-}
-
 function report(err: unknown): void {
 	print_console_log('error', `Reuniones: ${err instanceof Error ? err.message : String(err)}`);
-}
-
-function invalid(message = 'La petición no es válida.'): ChatError {
-	return new ChatError(422, 'invalid_request', message);
 }
 
 export function meeting_not_found(): ChatError {
@@ -236,22 +234,6 @@ export function meeting_not_found(): ChatError {
 
 function not_host(): ChatError {
 	return new ChatError(403, 'not_host', 'Solo el anfitrión puede hacer esto.');
-}
-
-function new_id(): string {
-	return crypto.randomUUID().replace(/-/g, '').slice(0, 24);
-}
-
-function actor_id(ctx: MeetingCtx): string {
-	return str(ctx.actor?._id);
-}
-
-async function calls_enabled_settings(store: ImperiumStore): Promise<ChatSettings> {
-	const settings = await chat_settings(store);
-	if (!settings.calls_enabled) {
-		throw new ChatError(403, 'calls_disabled', 'Las llamadas están desactivadas en esta organización.');
-	}
-	return settings;
 }
 
 /** `xxx-xxxx-xxx` sin sesgo: se descartan los bytes que no caben enteros en el alfabeto. */
@@ -284,7 +266,7 @@ function settings_payload(settings: MeetingSettings): ImperiumDoc {
 function recurrence_from(raw: unknown): Recurrence | undefined {
 	if (!raw || typeof raw !== 'object') return undefined;
 	const rule = as_object(raw);
-	return strip({
+	return defined({
 		freq: str(rule.freq) as Recurrence['freq'],
 		interval: rule.interval == null ? undefined : Number(rule.interval),
 		by_day: rule.byDay == null ? undefined : as_array(rule.byDay).map(String),
@@ -296,7 +278,7 @@ function recurrence_from(raw: unknown): Recurrence | undefined {
 /** El payload se guarda en camelCase (contrato §0.1); el flujo trabaja con `MeetingDoc`. */
 export function meeting_from_row(row: ImperiumDoc): MeetingDoc {
 	const profile: MeetingProfile = row.profile === 'clase' ? 'clase' : 'reunion';
-	return strip({
+	return defined({
 		_id: str(row._id),
 		state: (str(row.state) || 'scheduled') as MeetingDoc['state'],
 		v: Number(row.v) || 0,
@@ -349,7 +331,7 @@ function meeting_write(doc: MeetingDoc) {
 			durationMin: doc.duration_min ?? null,
 			timezone: doc.timezone,
 			recurrence: doc.recurrence
-				? strip({
+				? defined({
 						freq: doc.recurrence.freq,
 						interval: doc.recurrence.interval,
 						byDay: doc.recurrence.by_day,
@@ -388,7 +370,7 @@ function meeting_view(doc: MeetingDoc, viewer_id: string, host: UserBrief | unde
 
 async function host_brief(store: ImperiumStore, host_id: string): Promise<UserBrief | undefined> {
 	const [user] = await store.chat_users_brief([host_id]);
-	return user ? strip({ _id: user._id, name: user.name, email: user.email, img: user.img }) : undefined;
+	return user ? defined({ _id: user._id, name: user.name, email: user.email, img: user.img }) : undefined;
 }
 
 /**
@@ -496,7 +478,7 @@ function recurrence_field(value: unknown): Recurrence | null {
 		}
 	}
 	if (rule.count != null && rule.until != null) throw invalid('Termina por número de veces o por fecha, no por las dos.');
-	return strip({
+	return defined({
 		freq: rule.freq as Recurrence['freq'],
 		interval: whole(rule.interval, RECURRENCE_LIMITS.interval, 'interval'),
 		by_day: by_day ? [...new Set(by_day as string[])] : undefined,
@@ -707,7 +689,7 @@ export async function create_meeting(ctx: MeetingCtx): Promise<unknown> {
 	});
 	draft.conversation_id = str(conversation._id);
 	const doc = meeting_from_row(await insert_with_code(ctx.store, draft, uid));
-	await post_meeting_notice(ctx, doc.conversation_id, 'meeting_scheduled', strip({
+	await post_meeting_notice(ctx, doc.conversation_id, 'meeting_scheduled', defined({
 		meetingId: doc._id,
 		title: doc.title,
 		startAt: doc.next_start_at,
@@ -764,7 +746,7 @@ export async function update_meeting(ctx: MeetingCtx): Promise<unknown> {
 		people: { cohost_ids: after.cohost_ids, invitee_ids: after.invitee_ids },
 		removed_ids: removed,
 	}).catch(report);
-	await post_meeting_notice(ctx, after.conversation_id, 'meeting_updated', strip({
+	await post_meeting_notice(ctx, after.conversation_id, 'meeting_updated', defined({
 		meetingId: after._id,
 		title: after.title,
 		startAt: after.next_start_at,
@@ -860,20 +842,6 @@ export async function meeting_ics(ctx: MeetingCtx): Promise<Response> {
 	});
 }
 
-function encode_cursor(at: string, id: string): string {
-	return Buffer.from(JSON.stringify({ at, id })).toString('base64url');
-}
-
-function decode_cursor(raw: string): { at: string; id: string } {
-	try {
-		const value = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) as Record<string, unknown>;
-		if (typeof value.at === 'string' && typeof value.id === 'string') return { at: value.at, id: value.id };
-	} catch {
-		/* cae al error de abajo */
-	}
-	throw new ChatError(400, 'invalid_cursor', 'La página solicitada ya no es válida; recarga la lista.');
-}
-
 const SCOPES = new Set<MeetingScope>(['proximas', 'salas', 'pasadas']);
 
 /** Mis reuniones por pestaña, con keyset; una que empezó hace poco sigue en «Próximas». */
@@ -898,7 +866,7 @@ export async function read_my_meetings(ctx: MeetingCtx): Promise<unknown> {
 	const hosts = new Map(
 		(await ctx.store.chat_users_brief([...new Set(docs.map((doc) => doc.host_id))])).map((user) => [
 			user._id,
-			strip({ _id: user._id, name: user.name, email: user.email, img: user.img }),
+			defined({ _id: user._id, name: user.name, email: user.email, img: user.img }),
 		]),
 	);
 	const last = page.at(-1);
@@ -1006,7 +974,7 @@ export async function public_summary(ctx: MeetingCtx): Promise<unknown> {
 	const host = await host_brief(ctx.store, doc.host_id);
 	return ok(
 		[
-			strip({
+			defined({
 				title: doc.title,
 				host_name: host?.name ?? '',
 				start_at: doc.next_start_at ?? doc.start_at,
@@ -1233,7 +1201,10 @@ async function after_room_events(
 					attendance_exit(call._id, leg.member_key, leg.leg_id, now);
 				}
 				if (event.outcome === 'expelled') {
-					await impose_on_sfu(store, call, { type: 'remove', member_key: event.member_key }).catch(report);
+					// La sala ya no tiene sus patas: sin `leg_id`, impose_on_sfu no encontraría a quién sacar.
+					for (const leg of event.legs) {
+						await impose_on_sfu(store, call, { type: 'remove', member_key: event.member_key, leg_id: leg.leg_id }).catch(report);
+					}
 					const user_id = event.member_key.startsWith('u:') ? event.member_key.slice(2) : '';
 					if (user_id && !doc.member_ids.includes(user_id)) await leave_meeting_conversation(store, doc.conversation_id, user_id).catch(report);
 				}
@@ -1562,7 +1533,7 @@ function not_admitted(principal: CallPrincipal): ChatError {
 /** `QuestionView` (contrato §3.6): el autor de una anónima solo lo ve quien modera; `mine` es la propia y `voted`, la que votó. */
 function question_view(row: ImperiumDoc, viewer: { member_key: string; staff: boolean }): ImperiumDoc {
 	const anonymous = row.anonymous === true;
-	return strip({
+	return defined({
 		_id: str(row._id),
 		call_id: str(row.call_id),
 		text: str(row.text),
@@ -1934,7 +1905,7 @@ type Interval = { in: string; out?: string; reason?: string };
 
 function attendance_view(row: ImperiumDoc, email?: string): ImperiumDoc {
 	const num = (value: unknown) => Number(value) || 0;
-	return strip({
+	return defined({
 		call_id: str(row.call_id),
 		meeting_id: str(row.meeting_id),
 		participant_key: str(row.participant_key),
@@ -2036,13 +2007,6 @@ function merge_attendance(rows: ImperiumDoc[], users: Map<string, UserBrief>): M
 	return lines;
 }
 
-/** Una celda CSV entre comillas; la que empieza con `= + - @` (o tabulador o salto) no se evalúa como fórmula. */
-function csv_cell(value: string | number): string {
-	const text = String(value);
-	const safe = /^[=+\-@\t\r\n]/.test(text) ? `'${text}` : text;
-	return `"${safe.replace(/"/g, '""')}"`;
-}
-
 function local_time(iso: string | undefined, timezone: string): string {
 	if (!iso) return '';
 	const parts = new Intl.DateTimeFormat('en-CA', {
@@ -2128,10 +2092,10 @@ export async function attendance_csv(ctx: MeetingCtx): Promise<Response> {
 			minutes_of(line.camera_s),
 			local_time(line.notice, doc.timezone),
 		]
-			.map(csv_cell)
+			.map(quoted_csv_cell)
 			.join(','),
 	);
-	return new Response(`\uFEFF${[header.map(csv_cell).join(','), ...body].join('\r\n')}\r\n`, {
+	return new Response(`\uFEFF${[header.map(quoted_csv_cell).join(','), ...body].join('\r\n')}\r\n`, {
 		headers: {
 			'content-type': 'text/csv; charset=utf-8',
 			'content-disposition': `attachment; filename="asistencia-${doc.code}.csv"`,

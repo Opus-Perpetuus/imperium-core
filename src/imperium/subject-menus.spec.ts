@@ -8,6 +8,7 @@ import {
 	filter_menus_for_access,
 	keep_reshaped_menus_for_access,
 } from './group-access.ts';
+import { plan_subject_menus } from './subject-menu-seed.ts';
 import { ImperiumStore, load_catalog_path } from './store.ts';
 
 describe('menu_path_is_disabled', () => {
@@ -581,6 +582,74 @@ describe('lanzador de almacén', () => {
 		expect(by_ref.get('inventory-movement-menu-management-0')?.name).toBe(
 			'Movimientos de inventario',
 		);
+	});
+
+	test('seriales muestra el nombre del catálogo aunque el menú guardado esté en inglés', () => {
+		const store = new ImperiumStore(
+			null as unknown as Bun.SQL,
+			load_catalog_path(),
+		);
+		const out = reshape_subject_menus(store, [
+			{
+				_id: 'root-conf',
+				_ref: 'module-management-menu-root-settings',
+				name: 'Configuración',
+				path: '/configuracion',
+				parent_id: null,
+			},
+			{
+				_id: 'counters',
+				_ref: 'auto-increment-control-menu-management-0',
+				name: 'Configuración de counters',
+				path: '/auto-increment-control',
+				parent_id: 'root-conf',
+			},
+			{
+				_id: 'pattern',
+				_ref: 'custom-pattern-condition-menu-management-0',
+				name: 'Custom pattern',
+				path: '/custom-pattern-condition',
+				parent_id: 'root-conf',
+			},
+		]);
+		const by_ref = new Map(out.map((m) => [String(m._ref ?? ''), m]));
+		expect(by_ref.get('auto-increment-control-menu-management-0')?.name).toBe(
+			'Configuración de contadores',
+		);
+		expect(by_ref.get('custom-pattern-condition-menu-management-0')?.name).toBe(
+			'Patrón personalizado',
+		);
+	});
+
+	test('un almacén ya instalado muestra Traslados aunque esa fila no esté guardada', () => {
+		const almacen = store.subjects.find((sub) => sub.slug === 'almacen');
+		expect(almacen?.menus?.some((menu) => menu.menu_ref === 'inventory-movement-traslado-menu-0')).toBe(
+			true,
+		);
+		const out = reshape_subject_menus(store, [
+			root,
+			{
+				_id: 'mov',
+				_ref: 'inventory-movement-menu-management-0',
+				name: 'Movimientos de inventario',
+				path: '/inventory-movement',
+				parent_id: 'root',
+			},
+		]);
+		const traslado = out.find((menu) => menu._ref === 'inventory-movement-traslado-menu-0');
+		expect(traslado?.name).toBe('Traslados');
+		expect(traslado?.path).toBe('/inventory-movement/traslado');
+		expect(String(traslado?.parent_id)).toBe('root');
+		const planned = plan_subject_menus(almacen!, [
+			{ _ref: 'menu-management-inventory' },
+			...almacen!.modules.map((mod) => ({ _ref: mod.menu_ref })),
+		]);
+		expect(planned.map((row) => row._ref)).toEqual(['inventory-movement-traslado-menu-0']);
+		expect(planned[0]).toMatchObject({
+			name: 'Traslados',
+			path: '/inventory-movement/traslado',
+			parent_ref: 'menu-management-inventory',
+		});
 	});
 
 	test('lotes y series no usa el círculo vacío', () => {

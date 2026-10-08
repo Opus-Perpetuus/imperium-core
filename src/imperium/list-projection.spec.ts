@@ -23,6 +23,16 @@ describe('proyección de lista de turnos', () => {
 		expect(row).not.toHaveProperty('time_box');
 	});
 
+	test('Es Proveedor de contacto se lista como Boolean y el nombre sigue texto', () => {
+		const tipo = list_instance_type('contacto');
+		expect(tipo?.esProveedor).toEqual({
+			nombre_encabezado: 'esProveedor',
+			tipo: 'Boolean',
+		});
+		expect(tipo?.name.tipo).toBe('string');
+		expect(tipo?.esCliente).toBeUndefined();
+	});
+
 	test('la lista de turnos no gana una columna nueva', () => {
 		expect(Object.keys(list_instance_type('ticketing-system-turn') ?? {})).toEqual([
 			'_id',

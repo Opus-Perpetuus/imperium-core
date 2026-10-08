@@ -34,6 +34,17 @@ import { assert_chat_member, chat_can, chat_role, ChatError, find_chat_conversat
 import { raw_json_body } from './body.ts';
 import { create_chat_message, post_call_message } from './chat-flow.ts';
 import { chat_settings, type ChatSettings } from './chat-settings.ts';
+import {
+	actor_id,
+	calls_enabled_settings,
+	CHAT_ID,
+	decode_cursor,
+	defined,
+	encode_cursor,
+	invalid,
+	new_id,
+	str,
+} from './chat-shared.ts';
 import { print_console_log } from './debug-request-log.ts';
 import { as_array, as_object, ok, type ImperiumDoc } from './envelope.ts';
 import {
@@ -67,7 +78,6 @@ export type CallPrincipal =
 	| { kind: 'guest'; guest_id: string; meeting_id: string; member_key: `g:${string}`; name: string };
 
 const GUEST_COOKIE = /(?:^|;\s*)imperium_invitado=([^;]+)/;
-const CHAT_ID = /^[a-f0-9]{24}$/i;
 const LEG_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const SFU_ROOM = /^imperium-([a-f0-9]{24})$/i;
 /** `<member_key>:<leg_id>`, la identidad que firma `sfu_token`. */
@@ -92,21 +102,8 @@ const CALL_ERRORS: Record<CallErrorCode, [status: number, message: string]> = {
 	invalid_request: [422, 'A una reunión se entra con su código.'],
 };
 
-function str(value: unknown): string {
-	return value == null ? '' : String(value).trim();
-}
-
-function strip<T extends Record<string, unknown>>(rec: T): T {
-	for (const key of Object.keys(rec)) if (rec[key] === undefined) delete rec[key];
-	return rec;
-}
-
 function report(err: unknown): void {
 	print_console_log('error', `Llamadas: ${err instanceof Error ? err.message : String(err)}`);
-}
-
-function invalid(message = 'La petición no es válida.'): ChatError {
-	return new ChatError(422, 'invalid_request', message);
 }
 
 function call_not_found(): ChatError {
@@ -116,14 +113,6 @@ function call_not_found(): ChatError {
 function call_error(code: CallErrorCode): ChatError {
 	const [status, message] = CALL_ERRORS[code];
 	return new ChatError(status, code, message);
-}
-
-async function enabled_settings(store: ImperiumStore): Promise<ChatSettings> {
-	const settings = await chat_settings(store);
-	if (!settings.calls_enabled) {
-		throw new ChatError(403, 'calls_disabled', 'Las llamadas están desactivadas en esta organización.');
-	}
-	return settings;
 }
 
 function limits(settings: ChatSettings): TopologyLimits {
@@ -173,7 +162,7 @@ export function guest_claims(req: Request): { gid: string; mid: string; name: st
 
 function leg_from(raw: unknown): CallLeg {
 	const leg = as_object(raw);
-	return strip({
+	return defined({
 		user_id: str(leg.userId),
 		state: str(leg.state) as CallLeg['state'],
 		device: str(leg.device) || undefined,
@@ -186,7 +175,7 @@ function leg_from(raw: unknown): CallLeg {
 }
 
 function leg_payload(leg: CallLeg): ImperiumDoc {
-	return strip({
+	return defined({
 		userId: leg.user_id,
 		state: leg.state,
 		device: leg.device,
@@ -201,7 +190,7 @@ function leg_payload(leg: CallLeg): ImperiumDoc {
 /** El payload se guarda en camelCase (contrato §0.1); la máquina trabaja con `CallDoc`. */
 export function call_from_row(row: ImperiumDoc): CallDoc {
 	const recording = row.recording ? as_object(row.recording) : null;
-	return strip({
+	return defined({
 		_id: str(row._id),
 		state: str(row.state) as CallDoc['state'],
 		v: Number(row.v) || 0,
@@ -236,7 +225,7 @@ function call_write(call: CallDoc) {
 			started_at: call.started_at,
 			ended_at: call.ended_at ?? null,
 		},
-		payload: strip({
+		payload: defined({
 			media: call.media,
 			topology: call.topology,
 			conversationKey: call.conversation_key,
@@ -430,7 +419,7 @@ async function save_attendance(store: ImperiumStore, call: CallDoc, user_ids: st
 				userId: user_id,
 				displayName: names.get(user_id) ?? '',
 				role: user_id === call.initiator_id ? 'host' : 'participant',
-				intervals: [strip({ in: leg.joined_at, out, reason: network ? 'network' : undefined })],
+				intervals: [defined({ in: leg.joined_at, out, reason: network ? 'network' : undefined })],
 				totalS: Math.max(0, Math.round((Date.parse(out) - Date.parse(leg.joined_at)) / 1000)),
 				waitedS: 0,
 				reconnections: network ? 1 : 0,
@@ -483,7 +472,7 @@ async function run_effects(store: ImperiumStore, call: CallDoc, effects: CallEff
 				case 'call_message':
 					message = await post_call_message(store, {
 						conversation_id: call.conversation_id,
-						call: strip({
+						call: defined({
 							callId: call._id,
 							kind: call.kind,
 							media: call.media,
@@ -516,10 +505,6 @@ async function run_effects(store: ImperiumStore, call: CallDoc, effects: CallEff
 	}
 }
 
-function actor_id(ctx: CallCtx): string {
-	return str(ctx.actor?._id);
-}
-
 export function media_of(value: unknown): CallMedia {
 	if (value !== 'audio' && value !== 'video') throw invalid('Elige llamada de voz o videollamada.');
 	return value;
@@ -529,10 +514,6 @@ export function leg_of(value: unknown): string {
 	const leg_id = str(value);
 	if (!LEG_ID.test(leg_id)) throw invalid('Falta el identificador de esta pestaña (leg_id).');
 	return leg_id;
-}
-
-function new_id(): string {
-	return crypto.randomUUID().replace(/-/g, '').slice(0, 24);
 }
 
 /** Solo un miembro activo de la conversación toca la llamada. */
@@ -558,7 +539,7 @@ function invitees(body: Record<string, unknown>, members: string[]): string[] {
 }
 
 export async function create_call(ctx: CallCtx): Promise<unknown> {
-	const settings = await enabled_settings(ctx.store);
+	const settings = await calls_enabled_settings(ctx.store);
 	const uid = actor_id(ctx);
 	const conversation = await find_chat_conversation(ctx.store, str(ctx.body.conversation_id));
 	const member = await assert_chat_member(ctx.store, conversation, uid);
@@ -670,7 +651,7 @@ async function close_meeting_call(store: ImperiumStore, call: CallDoc): Promise<
 }
 
 export async function accept_call(ctx: CallCtx): Promise<unknown> {
-	const settings = await enabled_settings(ctx.store);
+	const settings = await calls_enabled_settings(ctx.store);
 	const uid = actor_id(ctx);
 	const call = await load_call(ctx.store, str(ctx.params.id));
 	await assert_call_member(ctx.store, call, uid);
@@ -703,7 +684,7 @@ export async function cancel_call(ctx: CallCtx): Promise<unknown> {
 }
 
 export async function join_call(ctx: CallCtx): Promise<unknown> {
-	const settings = await enabled_settings(ctx.store);
+	const settings = await calls_enabled_settings(ctx.store);
 	const uid = actor_id(ctx);
 	const call = await load_call(ctx.store, str(ctx.params.id));
 	await assert_call_member(ctx.store, call, uid);
@@ -746,7 +727,7 @@ export async function end_call(ctx: CallCtx): Promise<unknown> {
 
 /** Para resincronizar: lo vivo donde el actor tiene pata o, en grupos, donde es miembro. */
 export async function read_active_calls(ctx: CallCtx): Promise<unknown> {
-	await enabled_settings(ctx.store);
+	await calls_enabled_settings(ctx.store);
 	const uid = actor_id(ctx);
 	const mine: CallDoc[] = [];
 	const by_conversation = new Map<string, CallDoc[]>();
@@ -774,23 +755,9 @@ export async function read_active_calls(ctx: CallCtx): Promise<unknown> {
 	return ok(mine.map(view_of), 'Llamadas en curso.');
 }
 
-function encode_cursor(row: ImperiumDoc): string {
-	return Buffer.from(JSON.stringify({ at: str(row.created_at), id: str(row._id) })).toString('base64url');
-}
-
-function decode_cursor(raw: string): { at: string; id: string } {
-	try {
-		const value = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) as Record<string, unknown>;
-		if (typeof value.at === 'string' && typeof value.id === 'string') return { at: value.at, id: value.id };
-	} catch {
-		/* cae al error de abajo */
-	}
-	throw new ChatError(400, 'invalid_cursor', 'La página solicitada ya no es válida; recarga la lista.');
-}
-
 /** Historial por keyset `(created_at, id)`, del más nuevo al más viejo. */
 export async function read_my_calls(ctx: CallCtx): Promise<unknown> {
-	await enabled_settings(ctx.store);
+	await calls_enabled_settings(ctx.store);
 	const raw = str(ctx.url.searchParams.get('cursor'));
 	const asked = Number(ctx.url.searchParams.get('limit'));
 	const limit = Number.isInteger(asked) && asked > 0 ? Math.min(asked, HISTORY_LIMIT.max) : HISTORY_LIMIT.fallback;
@@ -800,9 +767,10 @@ export async function read_my_calls(ctx: CallCtx): Promise<unknown> {
 		limit: limit + 1,
 	});
 	const page = rows.slice(0, limit);
+	const last = page.at(-1)!;
 	return {
 		...ok(page.map((row) => call_view(call_from_row(row))), 'Historial de llamadas.'),
-		next_cursor: rows.length > limit ? encode_cursor(page.at(-1)!) : null,
+		next_cursor: rows.length > limit ? encode_cursor(str(last.created_at), str(last._id)) : null,
 		server_time: new Date().toISOString(),
 	};
 }
@@ -831,7 +799,7 @@ export async function read_settings(ctx: CallCtx): Promise<unknown> {
 export async function ice_servers(ctx: CallCtx): Promise<unknown> {
 	const principal = meeting_principal(ctx, str(ctx.url.searchParams.get('meeting_id')));
 	if (principal.kind === 'guest' && !guest_admitted(principal.meeting_id, principal.guest_id)) throw guest_not_admitted();
-	const settings = await enabled_settings(ctx.store);
+	const settings = await calls_enabled_settings(ctx.store);
 	return ok(
 		[ice_servers_for({ stun_urls: settings.stun_urls, member_key: principal.member_key, now: Date.now() })],
 		'Servidores ICE.',
@@ -878,7 +846,7 @@ function live_leg(call: CallDoc, member_key: string, leg_id: string): boolean {
 export async function sfu_token(ctx: CallCtx): Promise<unknown> {
 	const call = await load_call(ctx.store, str(ctx.params.id));
 	const principal = meeting_principal(ctx, call.meeting_id ?? '');
-	await enabled_settings(ctx.store);
+	await calls_enabled_settings(ctx.store);
 	if (call.state === 'ended') throw call_error('call_ended');
 	const leg_id = leg_of(ctx.body.leg_id);
 	if (!live_leg(call, principal.member_key, leg_id)) throw principal.kind === 'guest' ? guest_not_admitted() : not_member();

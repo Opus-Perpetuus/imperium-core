@@ -4,6 +4,7 @@
  * cancelan, y la factura recalcula lo pagado.
  */
 import { ok, type ImperiumDoc } from './envelope.ts';
+import { supplier_display_name } from './purchase-order-flow.ts';
 import type { ImperiumStore } from './store.ts';
 import {
 	SUPPLIER_PAYMENT_APPLIED,
@@ -47,7 +48,11 @@ export async function apply_supplier_payment(
 		numero_factura: text(invoice.numero_factura),
 		purchase_order: ref_id(invoice.purchase_order) || undefined,
 		proveedor: ref_id(invoice.proveedor) || undefined,
-		proveedor_nombre: text(invoice.proveedor_nombre),
+		proveedor_nombre: await supplier_display_name(
+			store,
+			invoice.proveedor_nombre,
+			invoice.proveedor,
+		),
 		fecha_pago: text(body.fecha_pago) || new Date().toISOString(),
 		metodo_pago: metodo,
 		referencia: text(body.referencia),

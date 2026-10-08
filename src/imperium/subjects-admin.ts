@@ -210,11 +210,31 @@ export async function ensure_install_table(sql: Bun.SQL): Promise<void> {
       ADD COLUMN IF NOT EXISTS discovered_note TEXT,
       ADD COLUMN IF NOT EXISTS discovered_checked_at TIMESTAMPTZ
   `);
+	// Motivo del último intento fallido; el evento del job es efímero.
+	await sql.unsafe(`
+    ALTER TABLE public.subject_installs
+      ADD COLUMN IF NOT EXISTS last_error TEXT,
+      ADD COLUMN IF NOT EXISTS last_error_at TIMESTAMPTZ
+  `);
 	await sql.unsafe(`
     UPDATE public.subject_installs
        SET status = 'installed'
      WHERE installed IS TRUE AND status = 'not_installed'
   `);
+}
+
+/** Deja el motivo en la fila; el siguiente intento lo limpia al empezar. */
+export async function record_install_error(
+	sql: Bun.SQL,
+	technical_id: string,
+	message: string,
+): Promise<void> {
+	await sql.unsafe(
+		`UPDATE public.subject_installs
+        SET last_error = $2, last_error_at = NOW()
+      WHERE technical_id = $1`,
+		[technical_id, message.slice(0, 2000)],
+	);
 }
 
 /**
@@ -307,13 +327,15 @@ type InstallRec = {
 	discovered_image: string | null;
 	discovered_created_at: string | null;
 	discovered_note: string | null;
+	last_error: string | null;
+	last_error_at: string | null;
 };
 
 async function install_records(sql: Bun.SQL): Promise<Map<string, InstallRec>> {
 	await ensure_install_table(sql);
 	const rows = (await sql.unsafe(
 		`SELECT technical_id, installed, status, installed_at, uninstalled_at, version, installed_image,
-            discovered_image, discovered_created_at, discovered_note
+            discovered_image, discovered_created_at, discovered_note, last_error, last_error_at
      FROM public.subject_installs`,
 	)) as Array<{
 		technical_id: string;
@@ -326,6 +348,8 @@ async function install_records(sql: Bun.SQL): Promise<Map<string, InstallRec>> {
 		discovered_image?: string | null;
 		discovered_created_at?: string | null;
 		discovered_note?: string | null;
+		last_error?: string | null;
+		last_error_at?: Date | string | null;
 	}>;
 	const out = new Map<string, InstallRec>();
 	for (const row of rows) {
@@ -346,6 +370,8 @@ async function install_records(sql: Bun.SQL): Promise<Map<string, InstallRec>> {
 				? String(row.discovered_created_at)
 				: null,
 			discovered_note: row.discovered_note ? String(row.discovered_note) : null,
+			last_error: row.last_error ? String(row.last_error) : null,
+			last_error_at: row.last_error_at ? String(row.last_error_at) : null,
 		});
 	}
 	return out;
@@ -638,6 +664,8 @@ export function catalog_row(
 		// Lo más nuevo del registro, se tome o no (con el interruptor en NO solo se enseña).
 		discovered_tag: subject_image_tag(rec?.discovered_image),
 		discovered_note: rec?.discovered_note ?? null,
+		last_error: rec?.last_error ?? null,
+		last_error_at: rec?.last_error_at ?? null,
 		depends_on: [...(sub.depends_on ?? [])],
 		required_by: blocking_dependents(
 			deps.subjects,
@@ -820,7 +848,9 @@ async function upsert_subject_marker(
  * posicionales y casi ninguno sabe la imagen. Los que no la pasan NO deben
  * borrar la guardada, de ahí el `COALESCE` — el mismo patrón que `version`.
  */
-async function write_install_row(
+const ATTEMPT_STATUSES = `('installing', 'updating', 'uninstalling')`;
+
+export async function write_install_row(
 	sql: Bun.SQL,
 	technical_id: string,
 	installed: boolean,
@@ -846,7 +876,11 @@ async function write_install_row(
          installed_image = COALESCE(
            EXCLUDED.installed_image,
            public.subject_installs.installed_image
-         )`,
+         ),
+         last_error = CASE WHEN $3 IN ${ATTEMPT_STATUSES} THEN NULL
+           ELSE public.subject_installs.last_error END,
+         last_error_at = CASE WHEN $3 IN ${ATTEMPT_STATUSES} THEN NULL
+           ELSE public.subject_installs.last_error_at END`,
 			[technical_id, version, next_status, image_value],
 		);
 		return;
@@ -870,7 +904,11 @@ async function write_install_row(
        installed_image = CASE
          WHEN $3 = 'uninstalled' THEN NULL
          ELSE public.subject_installs.installed_image
-       END`,
+       END,
+       last_error = CASE WHEN $3 IN ${ATTEMPT_STATUSES} THEN NULL
+         ELSE public.subject_installs.last_error END,
+       last_error_at = CASE WHEN $3 IN ${ATTEMPT_STATUSES} THEN NULL
+         ELSE public.subject_installs.last_error_at END`,
 		[technical_id, version, next_status, stamp_uninstall],
 	);
 }
@@ -1443,6 +1481,11 @@ async function finish_subject_lifecycle(
 			ver.version,
 			'error',
 		);
+		await record_install_error(
+			sql,
+			technical_id,
+			`No se pudo instalar ${sub.name}: ${docker.error}`,
+		);
 		emit_subject_event(
 			{
 				technical_id: sub.technical_id,
@@ -1638,6 +1681,9 @@ async function cut_run(sql: Bun.SQL, run: ChainRun, message: string) {
 		}
 		if (run.kind === 'update' && run.queued_update) {
 			await write_install_row(sql, run.sub.technical_id, true, null, 'installed');
+		}
+		if (run.started || run.queued_update) {
+			await record_install_error(sql, run.sub.technical_id, message);
 		}
 	} catch {
 		// Sin job en vuelo, el listado reconcilia la fila transitoria que quede.
@@ -1836,6 +1882,13 @@ async function run_step(
 				installed,
 				run.started?.ver.version ?? null,
 				update ? 'installed' : 'error',
+			).catch(() => null);
+			await record_install_error(
+				sql,
+				technical_id,
+				update
+					? `No se pudo actualizar ${run.sub.name}: ${error_text(err)}`
+					: error_text(err),
 			).catch(() => null);
 			emit_subject_event(
 				{
@@ -2276,6 +2329,11 @@ export async function run_subject_update(
 			true,
 			ver.version,
 			'installed',
+		);
+		await record_install_error(
+			sql,
+			technical_id,
+			`No se pudo actualizar ${sub.name}: ${docker.error}`,
 		);
 		emit_subject_event(
 			{

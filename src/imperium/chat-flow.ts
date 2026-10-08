@@ -22,6 +22,19 @@ import {
 	type ChatRole,
 } from './chat-access.ts';
 import { chat_settings, type ChatSettings } from './chat-settings.ts';
+import {
+	actor_id,
+	CHAT_ID,
+	csv_cell,
+	decode_cursor,
+	defined,
+	encode_cursor,
+	invalid,
+	invalid_cursor,
+	json_field,
+	new_id,
+	str,
+} from './chat-shared.ts';
 import { as_array, as_object, ok, type ImperiumDoc } from './envelope.ts';
 import { outside_history_context } from './history.ts';
 import { internal_route } from './internal-route.ts';
@@ -80,34 +93,12 @@ const READ_RATE = { capacity: 120, refill_per_s: 120 / 60 };
 const DIRECT_KINDS = new Set(['direct', 'self']);
 const ATTACHMENT_KINDS = new Set<string>(['image', 'video', 'audio', 'voice', 'file']);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const CHAT_ID = /^[a-f0-9]{24}$/i;
 const SENT = 'Mensaje del chat enviado correctamente.';
-
-function str(value: unknown): string {
-	return value == null ? '' : String(value).trim();
-}
-
-function defined<T extends Record<string, unknown>>(rec: T): T {
-	for (const key of Object.keys(rec)) if (rec[key] === undefined) delete rec[key];
-	return rec;
-}
-
-function invalid(message = 'La petición no es válida.'): ChatError {
-	return new ChatError(422, 'invalid_request', message);
-}
 
 function assert_text_length(text: string): void {
 	if (text.length > TEXT_MAX_CHARS) {
 		throw new ChatError(422, 'text_too_long', `El mensaje supera los ${TEXT_MAX_CHARS} caracteres.`);
 	}
-}
-
-function new_id(): string {
-	return crypto.randomUUID().replace(/-/g, '').slice(0, 24);
-}
-
-function actor_id(ctx: ChatCtx): string {
-	return str(ctx.actor?._id);
 }
 
 function actor_name(ctx: ChatCtx): string {
@@ -124,16 +115,6 @@ async function enabled_settings(store: ImperiumStore): Promise<ChatSettings> {
 		throw new ChatError(403, 'messaging_disabled', 'El chat está desactivado en esta organización.');
 	}
 	return settings;
-}
-
-/** Multipart manda los objetos como texto JSON. */
-function json_field(value: unknown): unknown {
-	if (typeof value !== 'string') return value;
-	try {
-		return JSON.parse(value);
-	} catch {
-		throw invalid();
-	}
 }
 
 function id_list(value: unknown): string[] {
@@ -1274,20 +1255,10 @@ function is_listed_active(row: ChatInboxRow): boolean {
 	return str(row.member.state) === 'active' && row.conversation.is_active !== false;
 }
 
-function keyset_cursor(at: string, id: string): string {
-	return Buffer.from(JSON.stringify({ at, id })).toString('base64url');
-}
-
-function encode_cursor(row: ChatInboxRow): string {
-	return keyset_cursor(row.activity_at, str(row.conversation._id));
-}
-
-function decode_cursor(raw: string): { at: string; id: string } {
-	const cursor = as_object(Buffer.from(raw, 'base64url').toString('utf8'));
-	if (typeof cursor.at === 'string' && typeof cursor.id === 'string' && cursor.id) {
-		return { at: cursor.at, id: cursor.id };
-	}
-	throw new ChatError(400, 'invalid_cursor', 'La página solicitada ya no es válida; recarga la lista.');
+function chat_cursor(raw: string): { at: string; id: string } {
+	const cursor = decode_cursor(raw);
+	if (!cursor.id) throw invalid_cursor();
+	return cursor;
 }
 
 /** Lo listado ya llegó: entregado en lote y, con funciones en vivo, su delta a los miembros. */
@@ -1318,7 +1289,7 @@ export async function list_my_conversations(ctx: ChatCtx): Promise<unknown> {
 	const kind = str(params.get('kind'));
 	if (!INBOX_FILTERS.has(filter) || (kind && !CONVERSATION_KINDS.has(kind))) throw invalid();
 	const raw_cursor = str(params.get('cursor'));
-	const cursor = raw_cursor ? decode_cursor(raw_cursor) : undefined;
+	const cursor = raw_cursor ? chat_cursor(raw_cursor) : undefined;
 	const changed_since = changed_since_param(ctx.url);
 	const limit = limit_param(ctx.url, 'limit', INBOX_LIMIT);
 	const uid = actor_id(ctx);
@@ -1338,6 +1309,7 @@ export async function list_my_conversations(ctx: ChatCtx): Promise<unknown> {
 		limit: limit + 1,
 	});
 	const rows = page.slice(0, limit);
+	const last = rows.at(-1)!;
 	const listed = [...pinned, ...rows];
 	const users = await peers_of(ctx, listed);
 	const views = listed.map((row) =>
@@ -1345,7 +1317,7 @@ export async function list_my_conversations(ctx: ChatCtx): Promise<unknown> {
 	);
 	await deliver_listed(ctx, listed, settings);
 	return page_response(views, 'Conversaciones cargadas.', {
-		next_cursor: page.length > limit ? encode_cursor(rows.at(-1)!) : null,
+		next_cursor: page.length > limit ? encode_cursor(last.activity_at, str(last.conversation._id)) : null,
 		...(cursor ? {} : { counts: await ctx.store.chat_inbox_counts(uid, new Date().toISOString()) }),
 	});
 }
@@ -2314,7 +2286,7 @@ export async function read_message_reactions(ctx: ChatCtx): Promise<unknown> {
 	const { rows } = await ctx.store.find_many('chat-reactions', {
 		where: { message_id: str(message._id), kind: 'emoji', value: raw_emoji ? reaction_emoji(raw_emoji) : undefined },
 		sort: 'created_at:asc',
-		after_created: raw_cursor ? decode_cursor(raw_cursor) : undefined,
+		after_created: raw_cursor ? chat_cursor(raw_cursor) : undefined,
 		take: limit + 1,
 		populate: false,
 		skip_total: true,
@@ -2328,7 +2300,7 @@ export async function read_message_reactions(ctx: ChatCtx): Promise<unknown> {
 			return user ? [{ emoji: str(row.value), user: user_brief(user), at: str(row.created_at) }] : [];
 		}),
 		'Reacciones cargadas.',
-		{ next_cursor: rows.length > limit && last ? keyset_cursor(str(last.created_at), str(last._id)) : null },
+		{ next_cursor: rows.length > limit && last ? encode_cursor(str(last.created_at), str(last._id)) : null },
 	);
 }
 
@@ -2389,12 +2361,6 @@ export async function close_chat_poll(ctx: ChatCtx): Promise<unknown> {
 		tally,
 	);
 	return ok([poll_view(closed_poll, tally)], 'Encuesta cerrada.');
-}
-
-/** Una celda de CSV que una hoja de cálculo no ejecuta como fórmula. */
-function csv_cell(value: string): string {
-	const safe = /^[=+\-@\t\r\n]/.test(value) ? `'${value}` : value;
-	return /[",\n\r]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
 }
 
 /** Contrato §4.1: la vista para quien lo pide o, con `format=csv`, los resultados para quien la creó o administra. */
@@ -3446,7 +3412,7 @@ export async function read_conversation_members(ctx: ChatCtx): Promise<unknown> 
 		states: [state],
 		role: role || undefined,
 		q: str(params.get('q')) || undefined,
-		cursor: raw_cursor ? decode_cursor(raw_cursor) : undefined,
+		cursor: raw_cursor ? chat_cursor(raw_cursor) : undefined,
 		limit: limit + 1,
 	});
 	const page = rows.slice(0, limit);
@@ -3454,7 +3420,7 @@ export async function read_conversation_members(ctx: ChatCtx): Promise<unknown> 
 	return page_response(
 		page.map((row) => member_view(row.member, row.user)),
 		'Miembros cargados.',
-		{ next_cursor: rows.length > limit && last ? keyset_cursor(str(last.created_at), str(last._id)) : null },
+		{ next_cursor: rows.length > limit && last ? encode_cursor(str(last.created_at), str(last._id)) : null },
 	);
 }
 
@@ -4692,7 +4658,7 @@ export async function search_chat_messages(ctx: ChatCtx): Promise<unknown> {
 	const has = str(params.get('has'));
 	if (has && !SEARCH_HAS.has(has)) throw invalid();
 	const raw_cursor = str(params.get('cursor'));
-	const cursor = raw_cursor ? decode_cursor(raw_cursor) : undefined;
+	const cursor = raw_cursor ? chat_cursor(raw_cursor) : undefined;
 	const limit = limit_param(ctx.url, 'limit', SEARCH_LIMIT);
 	const allowed = take_token(`chat-search:${uid}`, SEARCH_RATE);
 	if (!allowed.ok) return rate_limited_response(allowed.retry_after_s);
@@ -4722,7 +4688,7 @@ export async function search_chat_messages(ctx: ChatCtx): Promise<unknown> {
 			snippet: search_snippet(page[index]!.message, needle),
 		})),
 		'Coincidencias del chat.',
-		{ next_cursor: rows.length > limit && last ? keyset_cursor(str(last.created_at), str(last._id)) : null },
+		{ next_cursor: rows.length > limit && last ? encode_cursor(str(last.created_at), str(last._id)) : null },
 	);
 }
 
@@ -5101,7 +5067,7 @@ export async function read_saved_messages(ctx: ChatCtx): Promise<unknown> {
 	const { rows } = await ctx.store.find_many('chat-saved', {
 		where: { user_id: actor_id(ctx), state: state || undefined },
 		sort: 'created_at:desc',
-		before_created: raw_cursor ? decode_cursor(raw_cursor) : undefined,
+		before_created: raw_cursor ? chat_cursor(raw_cursor) : undefined,
 		take: limit + 1,
 		populate: false,
 		skip_total: true,
@@ -5109,7 +5075,7 @@ export async function read_saved_messages(ctx: ChatCtx): Promise<unknown> {
 	const page = rows.slice(0, limit);
 	const last = page.at(-1);
 	return page_response(await saved_views(ctx, page), 'Mensajes guardados.', {
-		next_cursor: rows.length > limit && last ? keyset_cursor(str(last.created_at), str(last._id)) : null,
+		next_cursor: rows.length > limit && last ? encode_cursor(str(last.created_at), str(last._id)) : null,
 	});
 }
 

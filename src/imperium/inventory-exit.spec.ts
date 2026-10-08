@@ -189,6 +189,29 @@ describe('salidas de inventario por ubicación', () => {
 		expect(cantidades(store)).toEqual({ 'A-01': 0 });
 	});
 
+	test('la venta POS queda en movimientos de inventario', async () => {
+		const store = store_con(10, [quant(ANAQUEL_A, 'A-01', 10)]);
+		await register_pos_ticket_exit(store, {
+			_id: 'ticket-1',
+			name: 'SES-15-3',
+			ticket_type: 'VENTA',
+			items: [{ item_id: PRODUCTO, quantity: 3 }],
+		});
+		const [movimiento] = store.data['inventory-movement'];
+		expect(store.data['inventory-movement']).toHaveLength(1);
+		expect(movimiento).toMatchObject({
+			producto: PRODUCTO,
+			tipo_movimiento: 'salida_entrega',
+			documento_tipo: 'pos-ticket',
+			documento_id: 'ticket-1',
+			documento_nombre: 'SES-15-3',
+			ubicacion_origen: ALMACEN,
+			cantidad: 3,
+			stock_total_previo: 10,
+			stock_total_resultante: 7,
+		});
+	});
+
 	test('un ticket que no es venta no mueve existencias', async () => {
 		const store = store_con(2, [quant(ANAQUEL_A, 'A-01', 2)]);
 		await register_pos_ticket_exit(store, {

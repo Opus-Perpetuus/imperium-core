@@ -7,6 +7,7 @@ import {
 	apply_quant_delta,
 	recompute_product_existencia,
 } from './delivery-return-flow.ts';
+import { is_record_id } from './record-id.ts';
 import type { ImperiumStore } from './store.ts';
 
 export const COUNT_DRAFT = 'borrador';
@@ -69,7 +70,7 @@ async function find_product(store: ImperiumStore, raw: unknown): Promise<Imperiu
 	if (!store.has('products')) return null;
 	const row = as_object(raw);
 	const pid = ref_id(row.producto ?? raw);
-	if (pid && is_object_id(pid)) {
+	if (pid && is_record_id(pid)) {
 		const by_id = await store.find_id('products', pid);
 		if (by_id) return by_id;
 	}

@@ -37,4 +37,19 @@ describe('list_search_columns', () => {
 			'name',
 		]);
 	});
+
+	test('products busca por codigo además de name, description y search_field', () => {
+		const cols = list_search_columns(
+			'products',
+			new Set([
+				'name',
+				'description',
+				'search_field',
+				'codigo',
+				'codigos_proveedor',
+				'positional_code',
+			]),
+		);
+		expect(cols).toEqual(['name', 'description', 'search_field', 'codigo']);
+	});
 });

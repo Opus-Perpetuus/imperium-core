@@ -4,6 +4,7 @@
  * acciones de revalidar, autorizar diferencias y cancelar.
  */
 import { as_array, as_object, ok, type ImperiumDoc } from './envelope.ts';
+import { supplier_display_name } from './purchase-order-flow.ts';
 import { is_missing_relation, type ImperiumStore } from './store.ts';
 
 const EPS = 1e-6;
@@ -230,7 +231,7 @@ export async function draft_supplier_invoice_lines(store: ImperiumStore, po_id: 
 			{
 				purchase_order: String(po._id),
 				proveedor: ref_id(po.proveedor) || undefined,
-				proveedor_nombre: text(po.proveedor_nombre),
+				proveedor_nombre: await supplier_display_name(store, po.proveedor_nombre, po.proveedor),
 				proveedor_rfc: text(po.proveedor_rfc),
 				articulos: normalize_lines(po, [], previo),
 			},
@@ -303,7 +304,7 @@ export async function prepare_supplier_invoice_create(
 		purchase_order: String(po._id),
 		purchase_order_folio: text(po.folio_interno),
 		proveedor: ref_id(po.proveedor) || undefined,
-		proveedor_nombre: text(po.proveedor_nombre),
+		proveedor_nombre: await supplier_display_name(store, po.proveedor_nombre, po.proveedor),
 		proveedor_rfc,
 		emisor_rfc,
 		origen: text(incoming.origen) || 'manual',

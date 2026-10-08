@@ -1086,10 +1086,6 @@ const SESSION_SCOPED_EXTRAS = new Set([
 	'ticketing-system-turn:notify_turn',
 	'ticketing-system-turn:end_attending_turn',
 	'citizen-report:reverse_geocode',
-	'purchase-order:approve',
-	'purchase-order:register_receipt',
-	'purchase-order:register_invoice',
-	'purchase-order:confirm',
 	'purchase-order:replenish_from_order',
 	'purchase-order:parse_document',
 	'cfdi-catalog:lookup',
@@ -1116,17 +1112,8 @@ const SESSION_SCOPED_EXTRAS = new Set([
 	'lista-asistencia:mark_attendance',
 	'cobranza:lookup',
 	'cobranza:checkout',
-	'inventory-internal-location:import_tree',
-	'inventory-movement:register_transfer',
-	'inventory-physical-count:import_apertura',
-	'inventory-physical-count:aplicar',
 	'inventory-reception:read_in_transit',
 	'inventory-reception:read_pending_for_product',
-	'inventory-reception:create_from_purchase_order',
-	'inventory-reception:confirm_reception',
-	'inventory-reception:create_backorder',
-	'inventory-reception:acomodar',
-	'inventory-reception:reservar',
 	'inventory-stock-quant:read_picking_route',
 	'inventory-stock-quant:validar_consistencia',
 	'payroll-period:generate_drafts',
@@ -1322,7 +1309,7 @@ export async function assert_http_access(
 	actor: ImperiumDoc | null,
 	resource: string,
 	method: string,
-	opts: { action?: string; extra?: boolean; rest?: string } = {},
+	opts: { action?: string; extra?: boolean; rest?: string; search?: string } = {},
 ): Promise<void> {
 	if (opts.extra && is_public_extra_action(resource, opts.action)) return;
 	if (reports_pdf_setting_public_read(resource, method, opts.rest)) return;
@@ -1337,15 +1324,20 @@ export async function assert_http_access(
 	if (!can_enter_internal(actor)) {
 		throw new HttpAccessDeniedError('Solo usuarios internos');
 	}
-	if (opts.extra && is_session_scoped_extra(resource, opts.action)) return;
+	const repair =
+		Boolean(opts.extra) &&
+		opts.action === 'validar_consistencia' &&
+		new URLSearchParams(opts.search ?? '').get('reparar') === '1';
+	if (opts.extra && is_session_scoped_extra(resource, opts.action) && !repair) return;
 	if (!opts.extra && method === 'GET' && SESSION_READABLE_RESOURCES.has(resource)) return;
 	const access = await build_access(store, actor);
 	if (access.has_full_access) return;
 	const canonical = store.has(resource)
 		? store.loc(resource).resource
 		: resource;
-	const flag =
-		opts.extra && opts.action
+	const flag = repair
+		? 'allow_update'
+		: opts.extra && opts.action
 			? extra_flag(method, opts.action)
 			: crud_flag(method);
 	const { perms, model } = permissions_for_resource(access, canonical);
@@ -1446,18 +1438,6 @@ const GENERIC_MENU_ICONS = new Set([
 
 function is_generic_menu_icon(icon: unknown): boolean {
 	return GENERIC_MENU_ICONS.has(String(icon ?? '').trim());
-}
-
-function menu_label_collides(
-	modules: Array<{ resource: string; name: string }>,
-	resource: string,
-	stored: string,
-): boolean {
-	const label = stored.trim();
-	if (!label) return false;
-	return modules.some(
-		(other) => other.resource !== resource && other.name === label,
-	);
 }
 
 function apply_declared_subject_menus(
@@ -1589,17 +1569,7 @@ export function reshape_subject_menus(
 					m.parent_id = root._id;
 				}
 				if (mod.icon && is_generic_menu_icon(m.icon)) m.icon = mod.icon;
-				if (
-					by_ref_hit &&
-					mod.name &&
-					menu_label_collides(
-						sub.modules,
-						mod.resource,
-						String(m.name ?? ''),
-					)
-				) {
-					m.name = mod.name;
-				}
+				if (by_ref_hit && mod.name) m.name = mod.name;
 				found = true;
 			}
 			if (!found && mod.path && norm(mod.path) !== norm(root.path)) {

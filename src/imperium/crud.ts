@@ -946,7 +946,7 @@ export async function handle_crud(
 																							? 'Control de auto-incremento creado correctamente.'
 																							: resource === 'user-pin'
 																								? 'PIN creado correctamente'
-																								: 'Ruta creada';
+																								: 'Registro creado';
 		const created_body = notice
 			? { ...ok([populated], message), user_pin_notice: notice }
 			: ok([populated], message);
@@ -1572,7 +1572,7 @@ function detail_message(resource: string) {
 	if (is_physical_count_resource(resource)) return 'Conteo encontrado';
 	if (is_dashboard_resource(resource)) return 'Tablero encontrado';
 	if (is_view_preset_resource(resource)) return 'Configuración encontrada';
-	return 'Ruta encontrada';
+	return 'Registro encontrado';
 }
 
 function instance_type(

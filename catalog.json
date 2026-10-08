@@ -1792,6 +1792,15 @@
             }
           ]
         }
+      ],
+      "menus": [
+        {
+          "name": "Traslados",
+          "menu_ref": "inventory-movement-traslado-menu-0",
+          "path": "/inventory-movement/traslado",
+          "icon": "fa-dolly",
+          "parent_ref": "menu-management-inventory"
+        }
       ]
     },
     {
@@ -3089,7 +3098,7 @@
         {
           "resource": "custom-pattern-condition",
           "table": "custom_pattern_condition",
-          "name": "Custom pattern",
+          "name": "Patrón personalizado",
           "path": "/custom-pattern-condition",
           "collection": "__custom_pattern_conditions",
           "model_file": "components/custom-pattern-condition/custom-pattern-condition.model.ts",
@@ -3272,7 +3281,7 @@
         {
           "resource": "auto-increment-control",
           "table": "auto_increment_control",
-          "name": "Configuración de counters",
+          "name": "Configuración de contadores",
           "path": "/auto-increment-control",
           "collection": "__auto_increment_control",
           "model_file": "components/configuration/auto-increment-control/auto-increment-control.model.ts",
@@ -14698,17 +14707,17 @@
             {
               "name": "esCliente",
               "mongo": "esCliente",
-              "pg": "text",
-              "crud": "string",
-              "component": "input-text",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
               "label": "esCliente"
             },
             {
               "name": "esProveedor",
               "mongo": "esProveedor",
-              "pg": "text",
-              "crud": "string",
-              "component": "input-text",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
               "label": "esProveedor"
             },
             {

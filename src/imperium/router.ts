@@ -331,6 +331,7 @@ async function dispatch(
 						extra: Boolean(extra_hit),
 						action: extra_hit?.action,
 						rest: hit.rest,
+						search: url.searchParams.toString(),
 					});
 					await assert_subject_resource_access(store, sql, hit.resource);
 				}

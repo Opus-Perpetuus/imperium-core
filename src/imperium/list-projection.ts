@@ -17,6 +17,8 @@ const RESOURCE_ALIASES: Record<string, string> = {
 type ListProjection = {
 	rows: readonly string[];
 	tipo?: readonly string[];
+	/** Claves de `rows` que la tabla pinta como SI/NO. */
+	boolean?: readonly string[];
 };
 
 const LIST_PROJECTIONS: Record<string, ListProjection> = {
@@ -486,6 +488,7 @@ const LIST_PROJECTIONS: Record<string, ListProjection> = {
 			'ciudad',
 			'estado',
 		],
+		boolean: ['esProveedor'],
 	},
 	'payroll-receipt': {
 		rows: [
@@ -1250,10 +1253,14 @@ export function list_projection_keys(resource: string): string[] {
 
 function instance_map(
 	keys: readonly string[],
+	boolean_keys: ReadonlySet<string>,
 ): Record<string, { nombre_encabezado: string; tipo: string }> {
 	const out: Record<string, { nombre_encabezado: string; tipo: string }> = {};
 	for (const key of keys) {
-		out[key] = { nombre_encabezado: key.replace(/_/g, ' '), tipo: 'string' };
+		out[key] = {
+			nombre_encabezado: key.replace(/_/g, ' '),
+			tipo: boolean_keys.has(key) ? 'Boolean' : 'string',
+		};
 	}
 	return out;
 }
@@ -1263,7 +1270,7 @@ export function list_instance_type(
 ): Record<string, { nombre_encabezado: string; tipo: string }> | null {
 	const spec = projection_for(resource);
 	if (!spec) return null;
-	return instance_map(spec.tipo ?? spec.rows);
+	return instance_map(spec.tipo ?? spec.rows, new Set(spec.boolean ?? []));
 }
 
 export function project_list_docs(resource: string, rows: ImperiumDoc[]): ImperiumDoc[] {

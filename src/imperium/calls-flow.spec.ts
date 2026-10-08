@@ -10,6 +10,7 @@ import type { RoomRole } from './call-state.ts';
 import { call_from_row, impose_on_sfu, mark_leg_attached, mark_leg_detached, record_call, sweep_calls } from './calls-flow.ts';
 import type { ImperiumDoc } from './envelope.ts';
 import { sign_realtime_token } from './realtime-tokens.ts';
+import { run_host_command } from './meetings-flow.ts';
 import { ImperiumStore, load_catalog_path } from './store.ts';
 
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -584,6 +585,67 @@ describe.skipIf(!sql)('llamadas en Postgres', () => {
 			expect(sfu.seen).toHaveLength(4);
 			run_room_command(id, { type: 'detach', leg_id: `leg-${ana._id}` });
 			run_room_command(id, { type: 'detach', leg_id: `leg-${beto._id}` });
+		} finally {
+			sfu.stop();
+		}
+	});
+
+	test('con SFU, expulsar desde la reunión saca del servidor de medios cada pata de quien sale', async () => {
+		const sfu = fake_sfu();
+		try {
+			const meeting_id = track('chat-meetings', hex_id());
+			await st.insert('chat-meetings', {
+				_id: meeting_id,
+				name: 'Con expulsión en SFU',
+				state: 'live',
+				code: `exp-${hex_id().slice(0, 4)}-sfu`,
+				host_id: ana._id,
+				v: 0,
+			});
+			const id = track('chat-calls', hex_id());
+			await st.insert('chat-calls', {
+				_id: id,
+				name: '',
+				state: 'active',
+				conversation_id: group,
+				meeting_id,
+				kind: 'meeting',
+				started_at: new Date().toISOString(),
+				media: 'video',
+				topology: 'sfu',
+				initiatorId: ana._id,
+				participantIds: [],
+				legs: [],
+				v: 0,
+			});
+			const attach = (user: ImperiumDoc, leg_id: string, role: RoomRole) =>
+				run_room_command(
+					id,
+					{
+						type: 'attach',
+						member: {
+							member_key: `u:${user._id}`,
+							leg_id,
+							name: String(user.name),
+							role,
+							media: { mic: false, cam: false, screen: false, audio_only: false },
+							hard_muted: false,
+							speaker: false,
+							session_id: `s-${leg_id}`,
+						},
+					},
+					{ meeting_id },
+				);
+			attach(ana, `leg-${ana._id}`, 'host');
+			attach(beto, 'beto-1', 'participant');
+			attach(beto, 'beto-2', 'participant');
+			await run_host_command(st, id, { member_key: `u:${ana._id}`, role: 'host' }, { type: 'kick', member_key: `u:${beto._id}`, block: false });
+			await sfu.until('RemoveParticipant');
+			expect(sfu.seen.filter((item) => item.method === 'RemoveParticipant').map((item) => item.body)).toEqual([
+				{ room: `imperium-${id}`, identity: `u:${beto._id}:beto-1` },
+				{ room: `imperium-${id}`, identity: `u:${beto._id}:beto-2` },
+			]);
+			run_room_command(id, { type: 'detach', leg_id: `leg-${ana._id}` });
 		} finally {
 			sfu.stop();
 		}
