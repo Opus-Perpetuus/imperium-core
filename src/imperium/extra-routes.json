@@ -852,6 +852,216 @@
     "action": "reply_to_story"
   },
   {
+    "resource": "chat-calls",
+    "method": "get",
+    "path": "/settings",
+    "action": "read_settings"
+  },
+  {
+    "resource": "chat-calls",
+    "method": "get",
+    "path": "/ice-servers",
+    "action": "ice_servers"
+  },
+  {
+    "resource": "chat-calls",
+    "method": "get",
+    "path": "/active",
+    "action": "read_active_calls"
+  },
+  {
+    "resource": "chat-calls",
+    "method": "get",
+    "path": "/mine",
+    "action": "read_my_calls"
+  },
+  {
+    "resource": "chat-calls",
+    "method": "post",
+    "path": "/",
+    "action": "create_call"
+  },
+  {
+    "resource": "chat-calls",
+    "method": "post",
+    "path": "/:id/accept",
+    "action": "accept_call"
+  },
+  {
+    "resource": "chat-calls",
+    "method": "post",
+    "path": "/:id/decline",
+    "action": "decline_call"
+  },
+  {
+    "resource": "chat-calls",
+    "method": "post",
+    "path": "/:id/cancel",
+    "action": "cancel_call"
+  },
+  {
+    "resource": "chat-calls",
+    "method": "post",
+    "path": "/:id/join",
+    "action": "join_call"
+  },
+  {
+    "resource": "chat-calls",
+    "method": "post",
+    "path": "/:id/leave",
+    "action": "leave_call"
+  },
+  {
+    "resource": "chat-calls",
+    "method": "post",
+    "path": "/:id/end",
+    "action": "end_call"
+  },
+  {
+    "resource": "chat-calls",
+    "method": "post",
+    "path": "/:id/sfu-token",
+    "action": "sfu_token"
+  },
+  {
+    "resource": "chat-calls",
+    "method": "post",
+    "path": "/sfu-webhook",
+    "action": "sfu_webhook"
+  },
+  {
+    "resource": "chat-meetings",
+    "method": "get",
+    "path": "/mine",
+    "action": "read_my_meetings"
+  },
+  {
+    "resource": "chat-meetings",
+    "method": "post",
+    "path": "/",
+    "action": "create_meeting"
+  },
+  {
+    "resource": "chat-meetings",
+    "method": "get",
+    "path": "/:id",
+    "action": "read_meeting"
+  },
+  {
+    "resource": "chat-meetings",
+    "method": "put",
+    "path": "/:id",
+    "action": "update_meeting"
+  },
+  {
+    "resource": "chat-meetings",
+    "method": "post",
+    "path": "/:id/cancel",
+    "action": "cancel_meeting"
+  },
+  {
+    "resource": "chat-meetings",
+    "method": "get",
+    "path": "/:id/invite.ics",
+    "action": "meeting_ics"
+  },
+  {
+    "resource": "chat-meetings",
+    "method": "get",
+    "path": "/code/:code",
+    "action": "public_summary"
+  },
+  {
+    "resource": "chat-meetings",
+    "method": "post",
+    "path": "/code/:code/guest",
+    "action": "guest_join"
+  },
+  {
+    "resource": "chat-meetings",
+    "method": "post",
+    "path": "/code/:code/join",
+    "action": "join_meeting"
+  },
+  {
+    "resource": "chat-meetings",
+    "method": "post",
+    "path": "/guest/ticket",
+    "action": "guest_ticket"
+  },
+  {
+    "resource": "chat-meetings",
+    "method": "get",
+    "path": "/:id/chat",
+    "action": "guest_read_chat"
+  },
+  {
+    "resource": "chat-meetings",
+    "method": "post",
+    "path": "/:id/chat",
+    "action": "guest_chat_message"
+  },
+  {
+    "resource": "chat-meetings",
+    "method": "get",
+    "path": "/:id/questions",
+    "action": "read_questions"
+  },
+  {
+    "resource": "chat-meetings",
+    "method": "post",
+    "path": "/:id/questions",
+    "action": "create_question"
+  },
+  {
+    "resource": "chat-meetings",
+    "method": "post",
+    "path": "/:id/questions/:qid/vote",
+    "action": "vote_question"
+  },
+  {
+    "resource": "chat-meetings",
+    "method": "patch",
+    "path": "/:id/questions/:qid",
+    "action": "moderate_question"
+  },
+  {
+    "resource": "chat-meetings",
+    "method": "get",
+    "path": "/:id/transcript.vtt",
+    "action": "transcript_vtt"
+  },
+  {
+    "resource": "chat-meetings",
+    "method": "post",
+    "path": "/:id/recordings",
+    "action": "start_recording"
+  },
+  {
+    "resource": "chat-meetings",
+    "method": "post",
+    "path": "/:id/recordings/:rid/chunk",
+    "action": "recording_chunk"
+  },
+  {
+    "resource": "chat-meetings",
+    "method": "post",
+    "path": "/:id/recordings/:rid/finish",
+    "action": "finish_recording"
+  },
+  {
+    "resource": "chat-meetings",
+    "method": "get",
+    "path": "/:id/attendance",
+    "action": "read_attendance"
+  },
+  {
+    "resource": "chat-meetings",
+    "method": "get",
+    "path": "/:id/attendance.csv",
+    "action": "attendance_csv"
+  },
+  {
     "resource": "module-management",
     "method": "post",
     "path": "/recreate-indexes",

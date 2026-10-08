@@ -22,6 +22,7 @@ import { handle_db_admin, is_db_admin_path } from './db-admin.ts';
 import { handle_mcp_agent, seed_mcp_access } from './mcp-agent.ts';
 import { ChatError, media_token_actor } from './chat-access.ts';
 import { serve_media } from './media.ts';
+import { guest_media_reader } from './meetings-flow.ts';
 import { recover_orphan_processing_uploads } from './uploads.ts';
 import { ImperiumStore, load_catalog_path } from './store.ts';
 import { caught_http_error, fail } from './envelope.ts';
@@ -236,7 +237,8 @@ async function dispatch(
 				const id = path.slice('/media/'.length).split('/')[0] ?? '';
 				const token_actor = media_token_actor(url.searchParams.get('mt'), decodeURIComponent(id));
 				const actor = (await current_user(sql, req)) ?? token_actor;
-				if (!actor) {
+				const guest = actor ? null : guest_media_reader(req);
+				if (!actor && !guest) {
 					return add_cors(
 						req,
 						Response.json(
@@ -270,6 +272,7 @@ async function dispatch(
 						req,
 						actor,
 						token_user_id: token_actor ? String(token_actor._id) : undefined,
+						guest,
 					}),
 				);
 			}

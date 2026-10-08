@@ -17,6 +17,8 @@ import {
 	ensure_session_table,
 	user_for_session_id,
 } from './imperium/auth.ts';
+import { start_call_sweeper } from './imperium/calls-flow.ts';
+import { register_call_socket_handlers } from './imperium/calls-realtime.ts';
 import { start_chat_jobs } from './imperium/chat-jobs.ts';
 import { start_chat_realtime } from './imperium/chat-realtime.ts';
 import { start_subject_auto_update } from './imperium/subject-auto-update.ts';
@@ -160,6 +162,7 @@ bind_socket_identity_resolver(async (session_id) => {
 	return user && can_enter_internal(user) ? String(user._id) : null;
 });
 start_chat_realtime(imperium.store);
+register_call_socket_handlers(imperium.store);
 const shares = share_deps(imperium.store, sql);
 /** Overrides de desarrollo (`POST /api/subjects/dev-attach`). Gana a env/DNS. */
 const subject_url_overrides = new Map<string, string>();
@@ -1000,3 +1003,6 @@ start_support_sync(imperium.store);
 
 // Caducidad de los mensajes temporales y limpieza de subidas del chat sin ligar.
 start_chat_jobs(imperium.store);
+
+// Timbres vencidos, patas sin socket y llamadas que un reinicio dejó a medias.
+start_call_sweeper(imperium.store);

@@ -2,7 +2,15 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { field_values_from_distinct } from './field-values.ts';
 import { MASS_QUERY_MAX_IDS } from './crud.ts';
-import { chat_activity_page_sql, chat_inbox_sql, chat_message_page_sql, chat_search_sql } from './store.ts';
+import {
+	calls_page_for_user_sql,
+	chat_activity_page_sql,
+	chat_contact_owners_sql,
+	chat_inbox_sql,
+	chat_index_sqls,
+	chat_message_page_sql,
+	chat_search_sql,
+} from './store.ts';
 
 describe('scale contracts', () => {
 	test('ensure unwraps string-wrapped jsonb so payload ->> can use the btree', () => {
@@ -408,6 +416,35 @@ describe('scale contracts', () => {
 		}
 		expect(sql).not.toContain('OFFSET');
 		expect(params[1]).toBe('%50\\%\\_x%');
+	});
+
+	test('story contacts ask the (sender_user_id, conversation_id) index once per owner, never scanning the direct', () => {
+		const sql = chat_contact_owners_sql({ conversations: '"c"', messages: '"m"' });
+		expect(sql).toContain('EXISTS (');
+		expect(sql).toContain('dm.conversation_id = d.id AND dm.sender_user_id = o.id::text');
+		for (const forbidden of ['COUNT(', 'ORDER BY', 'OFFSET']) expect(sql).not.toContain(forbidden);
+		const indexes = chat_index_sqls({ resource: 'messages', quoted_table: '"m"', table_key: 'messages' });
+		expect(indexes).toContain('CREATE INDEX IF NOT EXISTS "ix_messages_sender_conversation" ON "m" (sender_user_id, conversation_id)');
+	});
+
+	test('call history pages by keyset in SQL and live calls come from the live partial index', () => {
+		const flow = readFileSync(new URL('./calls-flow.ts', import.meta.url), 'utf8');
+		const handler = (name: string) => {
+			const start = flow.indexOf(`export async function ${name}(`);
+			expect(start).toBeGreaterThan(-1);
+			const next = flow.indexOf('\nexport ', start + 1);
+			return flow.slice(start, next === -1 ? undefined : next);
+		};
+		for (const name of ['read_my_calls', 'read_active_calls', 'sweep_calls']) {
+			const body = handler(name);
+			for (const forbidden of ['store.scan(', 'take: 20000', 'OFFSET', 'skip:']) expect(body).not.toContain(forbidden);
+		}
+		expect(handler('read_my_calls')).toContain('ctx.store.calls_page_for_user(');
+		expect(handler('read_active_calls')).toContain('ctx.store.live_calls(');
+		expect(handler('sweep_calls')).toContain('store.live_calls(');
+		const { sql } = calls_page_for_user_sql('"c"', { user_id: 'u', cursor: { at: 'a', id: 'i' }, limit: 21 });
+		expect(sql).toContain('ORDER BY created_at DESC, id DESC LIMIT $2');
+		expect(sql).not.toContain('OFFSET');
 	});
 
 	test('the Activity inbox pages by keyset in SQL and counts unread in SQL', () => {

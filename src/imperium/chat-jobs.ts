@@ -1,13 +1,16 @@
 /**
  * Lo que el chat hace con el tiempo: cada 30 s caducan los mensajes temporales y las historias,
- * salen los programados, llegan los recordatorios de lo guardado y se borran las subidas que nadie
- * ligó en 24 h. Lo vencido se reclama con `FOR UPDATE SKIP LOCKED`; lo que una corrida anterior dejó
- * reclamado vuelve a pendiente al arrancar, cuando nada sigue en curso.
+ * salen los programados, llegan los recordatorios de lo guardado y de las reuniones, las series de
+ * reuniones pasan a su siguiente ocurrencia y se borran las subidas que nadie ligó en 24 h, igual
+ * que las partes de grabaciones que nadie terminó. Lo vencido se reclama con `FOR UPDATE SKIP
+ * LOCKED`; lo que una corrida anterior dejó reclamado vuelve a pendiente al arrancar, cuando nada
+ * sigue en curso.
  */
 import { publish_expired, remove_unused_files, send_scheduled } from './chat-flow.ts';
 import { chat_settings } from './chat-settings.ts';
 import { print_console_log } from './debug-request-log.ts';
 import { as_object } from './envelope.ts';
+import { advance_recurring_meetings, discard_stale_recordings, remind_due_meetings } from './meetings-flow.ts';
 import { insert_notification } from './notifications.ts';
 import { is_missing_relation, type ImperiumStore } from './store.ts';
 
@@ -120,13 +123,16 @@ async function drain(batch: () => Promise<number>): Promise<void> {
 	for (let i = 0; i < BATCHES_PER_PASS; i++) if ((await batch()) < BATCH) return;
 }
 
-export async function run_chat_jobs_pass(store: ImperiumStore, now = new Date()): Promise<void> {
+async function run_chat_jobs_pass(store: ImperiumStore, now = new Date()): Promise<void> {
 	const settings = await chat_settings(store);
 	await drain(() => expire_due_messages(store, now, settings.legal_hold));
 	await drain(() => send_due_scheduled(store, now));
 	await drain(() => remind_due_saved(store, now));
 	await drain(() => purge_expired_stories(store, now));
+	await drain(() => advance_recurring_meetings(store, now));
+	await drain(() => remind_due_meetings(store, now));
 	await drain(() => discard_orphan_uploads(store, now));
+	discard_stale_recordings(now);
 }
 
 let timer: ReturnType<typeof setInterval> | null = null;

@@ -1,8 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import { mongo_match_to_sql } from './record-rules.ts';
 import {
+	calls_page_for_user_sql,
 	chat_backfill_sqls,
 	chat_index_sqls,
+	meetings_page_for_member_sql,
+	payload_set_toggle_sql,
+	update_versioned_sql,
 	created_at_keyset_sql,
 	fecha_entrada_keyset_sql,
 	history_page_index_sqls,
@@ -177,7 +181,7 @@ describe('chat_index_sqls', () => {
 	const sqls_for = (resource: string, table_key: string) =>
 		chat_index_sqls({ resource, quoted_table: `"subject_configuracion"."${table_key}"`, table_key });
 
-	test('messages: sync by conversation, expiry sweep, guest idempotency and quotes of a deleted message', () => {
+	test('messages: sync by conversation, expiry sweep, guest idempotency, quotes of a deleted message and story contacts', () => {
 		expect(sqls_for('messages', 'messages')).toEqual([
 			'CREATE INDEX IF NOT EXISTS "ix_messages_conversation_updated" ON "subject_configuracion"."messages" (conversation_id, updated_at)',
 			'CREATE INDEX IF NOT EXISTS "ix_messages_expires" ON "subject_configuracion"."messages" (expires_at) WHERE expires_at IS NOT NULL',
@@ -185,6 +189,7 @@ describe('chat_index_sqls', () => {
 			'CREATE UNIQUE INDEX IF NOT EXISTS "uq_messages_guest_client" ON "subject_configuracion"."messages" (conversation_id, client_id) WHERE sender_user_id IS NULL',
 			`CREATE INDEX IF NOT EXISTS "ix_messages_reply_to" ON "subject_configuracion"."messages" ((payload ->> 'replyToMessageId')) WHERE (payload ->> 'replyToMessageId') IS NOT NULL`,
 			`CREATE INDEX IF NOT EXISTS "ix_messages_backfill_pending" ON "subject_configuracion"."messages" ((payload ->> 'conversationKey')) WHERE conversation_id IS NULL AND is_active IS DISTINCT FROM false AND payload ->> 'sourceType' = 'chat' AND payload ->> 'conversationKey' <> ''`,
+			'CREATE INDEX IF NOT EXISTS "ix_messages_sender_conversation" ON "subject_configuracion"."messages" (sender_user_id, conversation_id)',
 		]);
 	});
 
@@ -231,9 +236,85 @@ describe('chat_index_sqls', () => {
 		]);
 	});
 
+	test('calls: the live partial, one live call per conversation, participants by GIN, conversation, meeting and history', () => {
+		expect(sqls_for('chat-calls', 'chat_calls')).toEqual([
+			`CREATE INDEX IF NOT EXISTS "ix_chat_calls_live" ON "subject_configuracion"."chat_calls" (state) WHERE state IN ('ringing', 'active')`,
+			`CREATE UNIQUE INDEX IF NOT EXISTS "uq_chat_calls_live_conversation" ON "subject_configuracion"."chat_calls" (conversation_id) WHERE state IN ('ringing', 'active') AND meeting_id IS NULL`,
+			`CREATE INDEX IF NOT EXISTS "ix_chat_calls_participants" ON "subject_configuracion"."chat_calls" USING gin ((payload -> 'participantIds') jsonb_path_ops)`,
+			'CREATE INDEX IF NOT EXISTS "ix_chat_calls_conversation_started" ON "subject_configuracion"."chat_calls" (conversation_id, started_at DESC)',
+			'CREATE INDEX IF NOT EXISTS "ix_chat_calls_meeting" ON "subject_configuracion"."chat_calls" (meeting_id)',
+			'CREATE INDEX IF NOT EXISTS "ix_chat_calls_created" ON "subject_configuracion"."chat_calls" (created_at DESC, id DESC)',
+		]);
+	});
+
+	test('meetings, attendance, questions and transcripts', () => {
+		const all = [
+			...sqls_for('chat-meetings', 'chat_meetings'),
+			...sqls_for('chat-meeting-attendance', 'chat_meeting_attendance'),
+			...sqls_for('chat-meeting-questions', 'chat_meeting_questions'),
+			...sqls_for('chat-meeting-transcripts', 'chat_meeting_transcripts'),
+		].map((sql) => sql.replace(/^CREATE INDEX IF NOT EXISTS "([^"]+)" ON "[^"]+"\."([^"]+)" /, '$1 $2 '));
+		expect(all).toEqual([
+			`ix_chat_meetings_members chat_meetings USING gin ((payload -> 'memberIds') jsonb_path_ops)`,
+			'ix_chat_meetings_next_start chat_meetings (next_start_at)',
+			'ix_chat_meetings_host chat_meetings (host_id)',
+			`ix_chat_meetings_recurring_due chat_meetings (next_start_at, id) WHERE state IS DISTINCT FROM 'cancelled' AND is_active IS DISTINCT FROM false AND jsonb_typeof(payload -> 'recurrence') = 'object' AND COALESCE(payload ->> 'recurrenceDone', 'false') <> 'true'`,
+			'ix_chat_meeting_attendance_meeting chat_meeting_attendance (meeting_id)',
+			'ix_chat_meeting_questions_call_created chat_meeting_questions (call_id, created_at)',
+			'ix_chat_meeting_transcripts_call_seq chat_meeting_transcripts (call_id, seq)',
+		]);
+	});
+
 	test('other resources get nothing', () => {
 		expect(sqls_for('products', 'products')).toEqual([]);
 		expect(sqls_for('chat-reactions', 'chat_reactions')).toEqual([]);
+	});
+});
+
+describe('escritura versionada y páginas de llamadas y reuniones', () => {
+	test('update_versioned compara v, lo sube y escribe las columnas físicas en orden', () => {
+		const sql = update_versioned_sql('"c"', ['ended_at', 'started_at']);
+		expect(sql).toContain('state = COALESCE($3::text, state), "ended_at" = $6, "started_at" = $7,');
+		expect(sql).toContain("payload = COALESCE(payload, '{}'::jsonb) || $4::jsonb || jsonb_build_object('v', $2::int + 1)");
+		expect(sql).toContain("WHERE id = $1 AND COALESCE((payload ->> 'v')::int, 0) = $2::int AND is_active IS DISTINCT FROM false");
+		expect(update_versioned_sql('"c"', [])).toContain('state = COALESCE($3::text, state), \n');
+	});
+
+	test('payload_set_toggle cambia el arreglo sobre la fila vigente y cuenta su largo si se pide', () => {
+		const plain = payload_set_toggle_sql('"q"', null);
+		expect(plain).toContain("COALESCE($4::boolean, NOT (COALESCE(payload -> $2::text, '[]'::jsonb) ? $3::text))");
+		expect(plain).toContain("COALESCE(payload -> $2::text, '[]'::jsonb) - $3::text");
+		expect(plain).not.toContain('jsonb_array_length');
+		expect(payload_set_toggle_sql('"q"', 'votes')).toContain(", 'votes', jsonb_array_length(");
+	});
+
+	test('el historial de llamadas filtra por el GIN de participantIds y pagina por keyset, sin OFFSET', () => {
+		const first = calls_page_for_user_sql('"c"', { user_id: 'u', limit: 21 });
+		expect(first.sql).toBe(
+			`SELECT * FROM "c" WHERE (payload -> 'participantIds') @> jsonb_build_array($1::text) AND is_active IS DISTINCT FROM false ORDER BY created_at DESC, id DESC LIMIT $2`,
+		);
+		expect(first.params).toEqual(['u', 21]);
+		const next = calls_page_for_user_sql('"c"', { user_id: 'u', cursor: { at: 'a', id: 'i' }, limit: 21 });
+		expect(next.sql).toContain('(created_at, id) < ($3, $4)');
+		expect(next.params).toEqual(['u', 21, 'a', 'i']);
+		expect(next.sql).not.toContain('OFFSET');
+	});
+
+	test('las reuniones de un miembro: próximas ascendentes; salas y pasadas descendentes', () => {
+		const query = { user_id: 'u', since: 's', cursor: { at: 'a', id: 'i' }, limit: 11 };
+		const proximas = meetings_page_for_member_sql('"m"', { ...query, scope: 'proximas' }).sql;
+		expect(proximas).toContain(`(payload -> 'memberIds') @> jsonb_build_array($1::text)`);
+		expect(proximas).toContain('next_start_at >= $3');
+		expect(proximas).toContain('(next_start_at, id) > ($4, $5)');
+		expect(proximas).toContain('ORDER BY next_start_at ASC, id ASC LIMIT $2');
+		const salas = meetings_page_for_member_sql('"m"', { ...query, scope: 'salas' }).sql;
+		expect(salas).toContain(`payload ->> 'persistent' = 'true'`);
+		expect(salas).toContain('(created_at, id) < ($3, $4)');
+		expect(salas).toContain('ORDER BY created_at DESC, id DESC LIMIT $2');
+		const pasadas = meetings_page_for_member_sql('"m"', { ...query, scope: 'pasadas' }).sql;
+		expect(pasadas).toContain(`(state = 'cancelled' OR next_start_at IS NULL OR next_start_at < $3)`);
+		expect(pasadas).toContain('(COALESCE(next_start_at, created_at), id) < ($4, $5)');
+		for (const sql of [proximas, salas, pasadas]) expect(sql).not.toContain('OFFSET');
 	});
 });
 

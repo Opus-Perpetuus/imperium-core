@@ -272,6 +272,11 @@ describe('motor de búsqueda', () => {
 			'chat-saved',
 			'chat-stories',
 			'chat-story-views',
+			'chat-calls',
+			'chat-meetings',
+			'chat-meeting-attendance',
+			'chat-meeting-questions',
+			'chat-meeting-transcripts',
 		];
 		const deleted = requests.filter((line) => line.startsWith('DELETE'));
 		expect(deleted.sort()).toEqual(chat.map((collection) => `DELETE /indexes/imp_${collection}/documents`).sort());
@@ -705,6 +710,14 @@ describe('matriz de roles (contrato §9)', () => {
 		expect(chat_can('member', { membersCanPin: true }, 'pin')).toBe(true);
 		expect(chat_can('member', DIRECT_CONVERSATION_SETTINGS, 'pin')).toBe(true);
 		expect(chat_can('guest', { membersCanPin: true }, 'pin')).toBe(false);
+	});
+
+	test('iniciar llamada: quien modera, o un miembro si el grupo lo permite (en un directo, siempre)', () => {
+		for (const role of ['owner', 'admin', 'moderator'] as const) expect(chat_can(role, {}, 'call')).toBe(true);
+		expect(chat_can('member', {}, 'call')).toBe(false);
+		expect(chat_can('member', { membersCanCall: true }, 'call')).toBe(true);
+		expect(chat_can('member', DIRECT_CONVERSATION_SETTINGS, 'call')).toBe(true);
+		expect(chat_can('guest', { membersCanCall: true }, 'call')).toBe(false);
 	});
 
 	test('un enlace sirve mientras no se revoque, no caduque y le queden usos', () => {

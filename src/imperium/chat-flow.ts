@@ -6,6 +6,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import { existsSync, unlinkSync } from 'node:fs';
 import { assert_target_record_read, HttpAccessDeniedError } from './auth.ts';
+import { guest_sessions_of_conversation } from './call-room.ts';
 import {
 	assert_attachment_access,
 	assert_can_send,
@@ -24,11 +25,12 @@ import { chat_settings, type ChatSettings } from './chat-settings.ts';
 import { as_array, as_object, ok, type ImperiumDoc } from './envelope.ts';
 import { outside_history_context } from './history.ts';
 import { internal_route } from './internal-route.ts';
+import { sfu_available, turn_configured } from './media-credentials.ts';
 import { insert_notification, register_chat_activity, retire_chat_activity } from './notifications.ts';
 import { rate_limited_response, take_token } from './rate-bucket.ts';
 import { RecordRuleDeniedError } from './record-rules.ts';
 import { sign_realtime_token } from './realtime-tokens.ts';
-import { emit_messages_refresh, emit_to_users, online_user_ids } from './socket-stub.ts';
+import { emit_messages_refresh, emit_to_session, emit_to_users, online_user_ids } from './socket-stub.ts';
 import {
 	CHAT_SERVER_KINDS,
 	is_unique_violation,
@@ -419,6 +421,7 @@ function message_view(
 ): ImperiumDoc {
 	const sender_id = str(doc.sender_user_id);
 	const user = users.get(sender_id);
+	const guest = doc.guestSender ? as_object(doc.guestSender) : null;
 	const reply = as_object(doc.replyPreview);
 	const deleted = doc.deleted ? as_object(doc.deleted) : null;
 	const poll = doc.poll ? as_object(doc.poll) : null;
@@ -427,6 +430,7 @@ function message_view(
 	const voice = doc.voice ? as_object(doc.voice) : null;
 	const view_once = doc.viewOnce ? as_object(doc.viewOnce) : null;
 	const story = doc.storyRef ? as_object(doc.storyRef) : null;
+	const call = doc.call ? as_object(doc.call) : null;
 	return defined({
 		_id: str(doc._id),
 		client_id: str(doc.client_id) || undefined,
@@ -435,14 +439,18 @@ function message_view(
 		seq: Number(doc.seq),
 		rev: Number(doc.rev) || 0,
 		kind: str(doc.kind) || 'text',
-		sender: sender_id ? defined({ _id: sender_id, name: user?.name || str(doc.senderName), img: user?.img }) : null,
+		sender: sender_id
+			? defined({ _id: sender_id, name: user?.name || str(doc.senderName), img: user?.img })
+			: guest
+				? { guest: true, participant_key: str(guest.participantKey), name: str(guest.name) }
+				: null,
 		text: String(doc.message ?? ''),
 		mentions: mentions_view(doc),
 		reply_to: reply.messageId ? reply_view(reply) : undefined,
 		forwarded: forwarded ? { sender_name: str(forwarded.senderName), at: str(forwarded.at) } : undefined,
 		attachments: as_array(doc.attachments).map((info) => attachment_view(info, !view_once || sender_id === viewer_id)),
 		voice: voice ? { duration_ms: Number(voice.durationMs) || 0, peaks: as_array(voice.peaks).map(Number) } : undefined,
-		poll: poll && !deleted ? poll_view(poll, tally) : undefined,
+		poll: poll && !deleted ? poll_view(message_poll(doc), tally) : undefined,
 		record_card: card
 			? defined({
 					model_name: str(card.modelName),
@@ -450,6 +458,16 @@ function message_view(
 					label: str(card.label),
 					route: str(card.route),
 					status: str(card.status) || undefined,
+				})
+			: undefined,
+		call: call
+			? defined({
+					call_id: str(call.callId),
+					kind: str(call.kind),
+					media: str(call.media),
+					outcome: str(call.outcome),
+					duration_s: call.durationS == null ? undefined : Number(call.durationS),
+					initiator_id: str(call.initiatorId),
 				})
 			: undefined,
 		system: doc.system ? system_view(doc.system) : undefined,
@@ -466,12 +484,26 @@ function message_view(
 		edit_count: Number(doc.editCount) || undefined,
 		deleted: deleted ? { at: str(deleted.at), by_role: str(deleted.byRole) } : undefined,
 		expires_at: str(doc.expires_at) || undefined,
-		view_once: view_once ? { opened: as_array(view_once.openedByUserIds).map(String).includes(viewer_id) } : undefined,
+		view_once: view_once ? view_once_view(view_once, sender_id, viewer_id) : undefined,
 		scheduled: doc.scheduled === true ? true : undefined,
 		reactions: deleted ? [] : reactions,
 		created_at: str(doc.created_at),
 		updated_at: str(doc.updated_at),
 	});
+}
+
+/**
+ * Quien lo envió ve quién lo abrió y cuándo (en un directo, cuándo lo abrió el otro); los demás
+ * solo si lo abrieron ellos, para que en un grupo nadie más sepa quién lo vio.
+ */
+function view_once_view(view_once: ImperiumDoc, sender_id: string, viewer_id: string): ImperiumDoc {
+	const opened = as_array(view_once.openedByUserIds).map(String);
+	if (!sender_id || sender_id !== viewer_id) return { opened: opened.includes(viewer_id) };
+	const at = as_object(view_once.openedAt);
+	return {
+		opened: opened.length > 0,
+		opened_by: opened.map((user_id) => defined({ user_id, at: str(at[user_id]) || undefined })),
+	};
 }
 
 /** Minúsculas y sin diacríticos, como el respaldo y la búsqueda del chat. */
@@ -710,12 +742,11 @@ async function publish_message(
 	const message_id = str(message._id);
 	const seq = Number(message.seq);
 	const members = await store.chat_member_ids(conversation_id);
-	emit_to_users(members, 'update', {
-		action: 'chat_delta',
-		data: [{ conversation_id, op: 'message', seq, message_id, message: view }],
-	});
-	// Un build viejo no sabe pintar un mensaje de sistema.
-	if (DIRECT_KINDS.has(str(conversation.kind)) && str(message.kind) !== 'system') {
+	const delta = { conversation_id, op: 'message', seq, message_id, message: view };
+	emit_to_users(members, 'update', { action: 'chat_delta', data: [delta] });
+	emit_to_meeting_guests(conversation_id, [{ seq, delta }]);
+	// Un build viejo no sabe pintar los mensajes del servidor.
+	if (DIRECT_KINDS.has(str(conversation.kind)) && !(CHAT_SERVER_KINDS as readonly string[]).includes(str(message.kind))) {
 		emit_messages_refresh(members, {
 			reason: 'created',
 			conversation_key: str(conversation.conversation_key),
@@ -986,20 +1017,30 @@ async function message_views(
 	rows: ImperiumDoc[],
 	key_of: (row: ImperiumDoc) => string,
 ): Promise<ImperiumDoc[]> {
+	return views_for(ctx.store, actor_id(ctx), rows, key_of);
+}
+
+/** `viewer_id`: el usuario, o `g:<id>` de un invitado, para sus reacciones y votos propios. */
+async function views_for(
+	store: ImperiumStore,
+	viewer_id: string,
+	rows: ImperiumDoc[],
+	key_of: (row: ImperiumDoc) => string,
+): Promise<ImperiumDoc[]> {
 	if (!rows.length) return [];
 	const users = new Map(
-		(await ctx.store.chat_users_brief(rows.map((row) => str(row.sender_user_id)))).map((user) => [user._id, user]),
+		(await store.chat_users_brief(rows.map((row) => str(row.sender_user_id)))).map((user) => [user._id, user]),
 	);
-	const reactions = await ctx.store.chat_reaction_summary(
+	const reactions = await store.chat_reaction_summary(
 		rows.map((row) => str(row._id)),
-		actor_id(ctx),
+		viewer_id,
 	);
-	const tallies = await ctx.store.chat_poll_tally(
+	const tallies = await store.chat_poll_tally(
 		rows.filter((row) => row.poll && !row.deleted).map((row) => str(row._id)),
-		actor_id(ctx),
+		viewer_id,
 	);
 	return rows.map((row) =>
-		message_view(row, key_of(row), users, reactions.get(str(row._id)), tallies.get(str(row._id)), actor_id(ctx)),
+		message_view(row, key_of(row), users, reactions.get(str(row._id)), tallies.get(str(row._id)), viewer_id),
 	);
 }
 
@@ -1179,6 +1220,12 @@ async function peers_of(ctx: ChatCtx, rows: ChatInboxRow[]): Promise<Map<string,
 	return new Map((await ctx.store.chat_users_brief(ids)).map((user) => [user._id, user]));
 }
 
+function active_call_view(raw: unknown): ImperiumDoc | undefined {
+	const call = as_object(raw);
+	if (!call.callId) return undefined;
+	return { call_id: str(call.callId), media: str(call.media), participant_count: Number(call.participantCount) || 0 };
+}
+
 /** `ChatConversationView` (contrato §3.3) para quien la pide. */
 function conversation_view(
 	ctx: ChatCtx,
@@ -1213,6 +1260,7 @@ function conversation_view(
 		prefs: prefs_view(member),
 		settings: settings_view(conversation.settings),
 		live_features: live_features(conversation, settings),
+		active_call: active_call_view(conversation.activeCall),
 		updated_at: [str(conversation.updated_at), str(member.updated_at)].sort().at(-1),
 	});
 }
@@ -1385,7 +1433,6 @@ export async function read_conversation_detail(ctx: ChatCtx): Promise<unknown> {
 /** `ChatConfigView` (contrato §3.4), sin secretos. Responde aunque la mensajería esté apagada. */
 export async function read_chat_config(ctx: ChatCtx): Promise<unknown> {
 	const settings = await chat_settings(ctx.store);
-	const env = process.env;
 	return page_response(
 		[
 			{
@@ -1424,8 +1471,8 @@ export async function read_chat_config(ctx: ChatCtx): Promise<unknown> {
 					mesh_max: settings.mesh_max,
 					class_max: settings.class_max,
 					ring_timeout_seconds: settings.ring_timeout_seconds,
-					sfu_available: Boolean(env.IMPERIUM_SFU_URL && env.IMPERIUM_SFU_API_KEY && env.IMPERIUM_SFU_API_SECRET),
-					turn_configured: Boolean(env.IMPERIUM_TURN_URLS && env.IMPERIUM_TURN_SECRET),
+					sfu_available: sfu_available(),
+					turn_configured: turn_configured(),
 				},
 			},
 		],
@@ -1530,7 +1577,17 @@ function legacy_doc(doc: ImperiumDoc, uid: string): ImperiumDoc {
 	return defined({
 		...Object.fromEntries(LEGACY_FIELDS.filter((key) => key in doc).map((key) => [key, doc[key]])),
 		hiddenForUserIds: doc.hiddenForUserIds === undefined ? undefined : own(doc.hiddenForUserIds),
-		viewOnce: doc.viewOnce ? { ...as_object(doc.viewOnce), openedByUserIds: own(as_object(doc.viewOnce).openedByUserIds) } : undefined,
+		viewOnce: doc.viewOnce ? legacy_view_once(as_object(doc.viewOnce), own, uid) : undefined,
+	});
+}
+
+/** Solo la apertura propia, con su hora; las de los demás no salen por las rutas heredadas. */
+function legacy_view_once(view_once: ImperiumDoc, own: (ids: unknown) => string[], uid: string): ImperiumDoc {
+	const at = as_object(view_once.openedAt)[uid];
+	return defined({
+		...view_once,
+		openedByUserIds: own(view_once.openedByUserIds),
+		openedAt: view_once.openedAt === undefined ? undefined : at === undefined ? {} : { [uid]: at },
 	});
 }
 
@@ -1711,6 +1768,12 @@ function hidden_for(message: ImperiumDoc, uid: string): boolean {
 	return as_array(message.hiddenForUserIds).map(String).includes(uid);
 }
 
+/** Sigue siendo miembro activo, el mensaje cae en lo que ve y no lo ocultó para sí. */
+async function still_sees(store: ImperiumStore, message: ImperiumDoc, user_id: string): Promise<boolean> {
+	const member = await find_member(store, str(message.conversation_id), user_id);
+	return member?.state === 'active' && Number(message.seq) > (Number(member.visibleFromSeq) || 0) && !hidden_for(message, user_id);
+}
+
 /** `minutes` en `null`: el parámetro está en 0, sin límite. */
 function window_closed(message: ImperiumDoc, minutes: number | null, now: number): boolean {
 	return minutes !== null && Date.parse(str(message.created_at)) + minutes * 60_000 < now;
@@ -1762,12 +1825,15 @@ async function publish_change(
 		seq,
 		delta: { conversation_id, op: 'message_updated', seq, message_id, patch },
 	});
-	const deltas = [
-		updated(Number(message.seq), str(message._id), {
-			...patch,
-			rev: Number(message.rev) || 0,
-			updated_at: str(message.updated_at),
-		}),
+	const deltas: Array<{ seq: number; delta: ImperiumDoc; hidden_for?: unknown }> = [
+		{
+			...updated(Number(message.seq), str(message._id), {
+				...patch,
+				rev: Number(message.rev) || 0,
+				updated_at: str(message.updated_at),
+			}),
+			hidden_for: message.hiddenForUserIds,
+		},
 		...change.quoting.map((quote) =>
 			updated(quote.seq, quote.id, { reply_to: reply_view(quote.reply_preview), rev: quote.rev, updated_at: quote.updated_at }),
 		),
@@ -1782,13 +1848,14 @@ async function publish_change(
 }
 
 /** Lo que caducó deja de verse: `removed` por mensaje, las citas sin texto y la vista previa de la bandeja. */
+/** Lo que caducó, anunciado a quien veía cada mensaje (desde su `visibleFromSeq`), como cualquier cambio. */
 export async function publish_expired(store: ImperiumStore, purge: ChatPurge): Promise<void> {
-	const deltas = new Map<string, ImperiumDoc[]>();
-	const add = (conversation_id: string, delta: ImperiumDoc) =>
-		deltas.set(conversation_id, [...(deltas.get(conversation_id) ?? []), { conversation_id, ...delta }]);
-	for (const row of purge.purged) add(row.conversation_id, { op: 'removed', message_id: row.id, patch: { reason: 'deleted' } });
+	const deltas = new Map<string, Array<{ seq: number; delta: ImperiumDoc }>>();
+	const add = (conversation_id: string, seq: number, delta: ImperiumDoc) =>
+		deltas.set(conversation_id, [...(deltas.get(conversation_id) ?? []), { seq, delta: { conversation_id, ...delta } }]);
+	for (const row of purge.purged) add(row.conversation_id, row.seq, { op: 'removed', message_id: row.id, patch: { reason: 'deleted' } });
 	for (const quote of purge.quoting) {
-		add(quote.conversation_id, {
+		add(quote.conversation_id, quote.seq, {
 			op: 'message_updated',
 			seq: quote.seq,
 			message_id: quote.id,
@@ -1796,9 +1863,11 @@ export async function publish_expired(store: ImperiumStore, purge: ChatPurge): P
 		});
 	}
 	for (const last of purge.last_messages) {
-		add(last.conversation_id, { op: 'conversation', patch: { last_message: last_message_view(last.last_message) } });
+		const view = last_message_view(last.last_message);
+		// Sin último mensaje la bandeja queda vacía para todos.
+		add(last.conversation_id, Number(view?.seq) || Number.POSITIVE_INFINITY, { op: 'conversation', patch: { last_message: view } });
 	}
-	for (const [conversation_id, list] of deltas) emit_chat_deltas(await store.chat_member_ids(conversation_id), list);
+	for (const [conversation_id, list] of deltas) await emit_seen_deltas(store, conversation_id, list);
 	for (const row of purge.purged) await retire_chat_activity(store, { message_id: row.id });
 }
 
@@ -2128,7 +2197,28 @@ function poll_broadcast(poll: ImperiumDoc, tally?: ChatPollTally): ImperiumDoc {
 
 function poll_of(message: ImperiumDoc): ImperiumDoc {
 	if (!message.poll) throw invalid('Ese mensaje no es una encuesta.');
-	return as_object(message.poll);
+	return message_poll(message);
+}
+
+/**
+ * La encuesta del mensaje. La copia reenviada de un cuestionario lleva `quizFrom` cuando puede
+ * conservar la respuesta (la reenvió su autor o el original ya había cerrado); una copia sin esa
+ * marca, de antes de la regla, va sin respuesta: si no, quien la reenvió a su propio chat la leería
+ * en el CSV, al cerrarla o al votarla y contestaría bien el original.
+ */
+function message_poll(message: ImperiumDoc): ImperiumDoc {
+	const poll = as_object(message.poll);
+	if (!message.forwardedFrom || !poll.quiz || poll.quizFrom) return poll;
+	const { quiz: _hidden, ...rest } = poll;
+	return rest;
+}
+
+/** La copia que se reenvía se reabre; la respuesta del cuestionario solo viaja según `message_poll`. */
+function forwarded_poll(source: ImperiumDoc, uid: string): ImperiumDoc {
+	const poll = message_poll(source);
+	const { closesAt: _closes, closedAt: _closed, quiz, quizFrom: _from, ...rest } = poll;
+	const quiz_from = !quiz ? undefined : str(source.sender_user_id) === uid ? 'author' : poll_closed_at(poll) ? 'closed' : undefined;
+	return defined({ ...rest, ...(quiz_from ? { quiz, quizFrom: quiz_from } : {}) });
 }
 
 async function publish_poll(
@@ -2150,6 +2240,7 @@ async function publish_poll(
 				message_id: str(message._id),
 				patch: { poll: poll_broadcast(poll, tally), rev: change.rev, updated_at: change.updated_at },
 			},
+			hidden_for: message.hiddenForUserIds,
 		},
 	]);
 }
@@ -2189,6 +2280,7 @@ export async function toggle_chat_reaction(ctx: ChatCtx): Promise<unknown> {
 					user_id: uid,
 					patch: { emoji, op: result.mine ? 'add' : 'remove', count: result.count, rev: result.rev },
 				},
+				hidden_for: message.hiddenForUserIds,
 			},
 		]);
 		const author = str(message.sender_user_id);
@@ -2287,7 +2379,7 @@ export async function close_chat_poll(ctx: ChatCtx): Promise<unknown> {
 	const message_id = str(message._id);
 	const closed = await ctx.store.chat_close_poll(message_id, new Date().toISOString());
 	if (!closed) throw poll_closed();
-	const closed_poll = as_object(closed.poll);
+	const closed_poll = message_poll(closed);
 	const tally = (await ctx.store.chat_poll_tally([message_id], uid)).get(message_id);
 	await publish_poll(
 		ctx.store,
@@ -2301,7 +2393,7 @@ export async function close_chat_poll(ctx: ChatCtx): Promise<unknown> {
 
 /** Una celda de CSV que una hoja de cálculo no ejecuta como fórmula. */
 function csv_cell(value: string): string {
-	const safe = /^[=+\-@]/.test(value) ? `'${value}` : value;
+	const safe = /^[=+\-@\t\r\n]/.test(value) ? `'${value}` : value;
 	return /[",\n\r]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
 }
 
@@ -2504,16 +2596,39 @@ async function members_by_visibility(store: ImperiumStore, conversation_id: stri
  * mensaje `seq` que toca. El seq va aparte porque en `reaction` y `conversation` el cliente
  * leería un hueco.
  */
+const GUEST_DELTAS = new Set(['message', 'message_updated', 'reaction']);
+
+/**
+ * Contrato §5.4: los invitados admitidos de una reunión reciben los mensajes, sus cambios y sus
+ * reacciones, solo desde su admisión. No tienen fila de miembro: van por su sesión.
+ */
+function emit_to_meeting_guests(conversation_id: string, deltas: Array<{ seq: number; delta: ImperiumDoc }>): void {
+	for (const guest of guest_sessions_of_conversation(conversation_id)) {
+		const visible = deltas
+			.filter((item) => item.seq > guest.visible_from_seq && GUEST_DELTAS.has(str(item.delta.op)))
+			.map((item) => item.delta);
+		if (visible.length) emit_to_session(guest.session_id, 'update', { action: 'chat_delta', data: visible });
+	}
+}
+
 async function emit_seen_deltas(
 	store: ImperiumStore,
 	conversation_id: string,
-	deltas: Array<{ seq: number; delta: ImperiumDoc }>,
+	deltas: Array<{ seq: number; delta: ImperiumDoc; hidden_for?: unknown }>,
 ): Promise<void> {
+	emit_to_meeting_guests(conversation_id, deltas);
+	const hiders = (item: { hidden_for?: unknown }) => as_array(item.hidden_for).map(String);
 	for (const [visible_from, user_ids] of await members_by_visibility(store, conversation_id)) {
+		const seen = deltas.filter((item) => item.seq > visible_from);
+		// Quien ocultó el mensaje para sí ya no lo tiene: tampoco recibe sus cambios.
+		const hiding = new Set(seen.flatMap(hiders));
 		emit_chat_deltas(
-			user_ids,
-			deltas.filter((item) => item.seq > visible_from).map((item) => item.delta),
+			user_ids.filter((user_id) => !hiding.has(user_id)),
+			seen.map((item) => item.delta),
 		);
+		for (const user_id of user_ids.filter((id) => hiding.has(id))) {
+			emit_chat_deltas([user_id], seen.filter((item) => !hiders(item).includes(user_id)).map((item) => item.delta));
+		}
 	}
 }
 
@@ -2626,6 +2741,14 @@ function system_text(event: SystemEvent, actor: string, targets: string[]): stri
 			return `${actor} se unió con un enlace`;
 		case 'pinned':
 			return `${actor} fijó un mensaje`;
+		case 'meeting_scheduled':
+			return `${actor} programó la reunión «${str(data.title)}»`;
+		case 'meeting_updated':
+			return `${actor} cambió la reunión «${str(data.title)}»`;
+		case 'meeting_cancelled':
+			return `${actor} canceló la reunión «${str(data.title)}»`;
+		case 'recording':
+			return `${actor} compartió la grabación de «${str(data.title)}»`;
 		default:
 			return `${actor} cambió los ajustes`;
 	}
@@ -2679,6 +2802,399 @@ async function post_system_message(
 	if (!result) return;
 	const view = message_view(result.message, str(conversation.conversation_key), new Map());
 	await publish_message(ctx.store, conversation, result.message, view, settings);
+}
+
+/** Lo de la reunión manda: sus miembros no invitan ni cambian el título por su cuenta. */
+const MEETING_SETTINGS = { ...GROUP_SETTINGS, membersCanInvite: false, membersCanEditInfo: false, membersCanCall: false };
+
+export type MeetingPeople = { cohost_ids: string[]; invitee_ids: string[] };
+
+function meeting_roles(people: MeetingPeople): Map<string, 'admin' | 'member'> {
+	const roles = new Map<string, 'admin' | 'member'>(people.invitee_ids.map((id) => [id, 'member']));
+	for (const id of people.cohost_ids) roles.set(id, 'admin');
+	return roles;
+}
+
+/**
+ * La conversación `meeting` de una reunión (contrato §4.4): quien organiza es dueño, los
+ * coanfitriones administran y los invitados internos son miembros.
+ */
+export async function open_meeting_conversation(
+	ctx: ChatCtx,
+	input: { meeting_id: string; title: string; description: string; people: MeetingPeople; now: string },
+): Promise<ImperiumDoc> {
+	const uid = actor_id(ctx);
+	const id = new_id();
+	const roles = meeting_roles(input.people);
+	roles.delete(uid);
+	const members = [
+		{ user_id: uid, role: 'owner' },
+		...[...roles].map(([user_id, role]) => ({ user_id, role, invited_by: uid })),
+	];
+	const conversation = await ctx.store.chat_create_group({
+		id,
+		kind: 'meeting',
+		title: input.title,
+		description: input.description,
+		created_by: uid,
+		payload: {
+			createdById: uid,
+			memberCount: members.length,
+			settings: MEETING_SETTINGS,
+			pins: [],
+			invites: [],
+			meetingId: input.meeting_id,
+		},
+		members,
+		now: input.now,
+	});
+	for (const member of members) {
+		emit_chat_deltas([member.user_id], [membership_delta(id, member.user_id, { state: 'active', role: member.role })]);
+	}
+	return conversation;
+}
+
+/**
+ * Pone la conversación al día con la reunión editada: entran los nuevos, cambian los roles y salen
+ * solo quienes la edición quitó (`removed_ids`): quien entró por el código sin invitación se queda.
+ * El dueño (quien organiza) no se toca.
+ */
+export async function sync_meeting_conversation(
+	ctx: ChatCtx,
+	conversation_id: string,
+	input: { title: string; description: string; people: MeetingPeople; removed_ids: string[] },
+): Promise<void> {
+	const settings = await chat_settings(ctx.store);
+	const now = new Date().toISOString();
+	const uid = actor_id(ctx);
+	const wanted = meeting_roles(input.people);
+	const { rows } = await ctx.store.find_many('chat-members', {
+		where: { conversation_id, state: 'active' },
+		take: settings.max_group_members,
+		populate: false,
+		skip_total: true,
+	});
+	const current = new Map(rows.map((row) => [str(row.user_id), chat_role(row.role)]));
+	const entering = [...wanted.keys()].filter((id) => !current.has(id));
+	if (entering.length) {
+		const joined = await ctx.store.chat_join_members({
+			conversation_id,
+			user_ids: entering,
+			state: 'active',
+			invited_by: uid,
+			max_members: settings.max_group_members,
+			now,
+		});
+		if (joined.status === 'ok') {
+			await publish_joined(ctx.store, joined.conversation, joined.joined);
+			for (const id of entering) current.set(id, 'member');
+		}
+	}
+	const deltas: ImperiumDoc[] = [];
+	for (const [user_id, role] of current) {
+		if (role === 'owner') continue;
+		const target = wanted.get(user_id);
+		if (!target && input.removed_ids.includes(user_id)) {
+			const removed = await ctx.store.chat_remove_member({ conversation_id, user_id, expected_role: role, state: 'removed', now });
+			if (removed) {
+				deltas.push(membership_delta(conversation_id, user_id, { state: 'removed' }));
+				emit_chat_deltas([user_id], [{ conversation_id, op: 'removed', patch: { reason: 'removed' } }]);
+			}
+		} else if (target && target !== role) {
+			const updated = await ctx.store.chat_update_member({ conversation_id, user_id, expected_role: role, role: target, now });
+			if (updated) deltas.push(membership_delta(conversation_id, user_id, { role: target }));
+		}
+	}
+	const changed = await ctx.store.chat_update_conversation({
+		id: conversation_id,
+		title: input.title,
+		description: input.description,
+		merge: {},
+		unset: [],
+		now,
+	});
+	if (changed) {
+		deltas.push({
+			conversation_id,
+			op: 'conversation',
+			patch: {
+				title: str(changed.conversation.name),
+				description: str(changed.conversation.description),
+				member_count: Number(changed.conversation.memberCount) || 0,
+			},
+		});
+	}
+	emit_chat_deltas(await ctx.store.chat_member_ids(conversation_id), deltas);
+}
+
+/** Quien entra por el código sin estar invitado queda como miembro al ser admitido (contrato §4.4). */
+export async function join_meeting_conversation(store: ImperiumStore, conversation_id: string, user_id: string): Promise<void> {
+	const settings = await chat_settings(store);
+	const joined = await store.chat_join_members({
+		conversation_id,
+		user_ids: [user_id],
+		state: 'active',
+		max_members: settings.max_group_members,
+		now: new Date().toISOString(),
+	});
+	if (joined.status === 'ok' && joined.joined.length) await publish_joined(store, joined.conversation, joined.joined);
+}
+
+/**
+ * Quien entró por el código y el anfitrión expulsó deja la conversación: sin esto seguiría leyendo
+ * el historial, la transcripción y las grabaciones de la reunión de la que lo sacaron.
+ */
+export async function leave_meeting_conversation(store: ImperiumStore, conversation_id: string, user_id: string): Promise<void> {
+	const result = await store.chat_remove_member({ conversation_id, user_id, expected_role: 'member', state: 'removed', now: new Date().toISOString() });
+	if (!result) return;
+	emit_chat_deltas([user_id], [{ conversation_id, op: 'removed', patch: { reason: 'removed' } }]);
+	emit_chat_deltas(await store.chat_member_ids(conversation_id), [
+		membership_delta(conversation_id, user_id, { state: 'removed' }),
+		{ conversation_id, op: 'conversation', patch: { member_count: Number(result.conversation.memberCount) || 0 } },
+	]);
+}
+
+export type ChatGuest = { guest_id: string; name: string; visible_from_seq: number };
+
+/** El chat de la reunión para un invitado admitido (contrato §4.4): solo lo de después de su admisión. */
+export async function guest_message_page(store: ImperiumStore, conversation: ImperiumDoc, guest: ChatGuest, url: URL) {
+	const limit = limit_param(url, 'limit', PAGE_LIMIT);
+	const page = { conversation_id: str(conversation._id), visible_from: guest.visible_from_seq, viewer_id: `g:${guest.guest_id}` };
+	const before = seq_param(url, 'before_seq');
+	const after = seq_param(url, 'after_seq');
+	const result =
+		after !== undefined
+			? await store.chat_message_page({ ...page, direction: 'after', seq: after, limit })
+			: before !== undefined
+				? await store.chat_message_page({ ...page, direction: 'before', seq: before, limit })
+				: await store.chat_message_page({ ...page, direction: 'tail', limit });
+	const has_more_before = after !== undefined ? after > page.visible_from : result.more;
+	const views = await views_for(store, page.viewer_id, result.rows, () => str(conversation.conversation_key));
+	return page_response(views, 'Mensajes cargados.', { has_more_before });
+}
+
+/** Contrato §9: un invitado solo escribe texto; responde, pero no adjunta, no menciona ni hace encuestas. */
+export async function post_guest_message(
+	store: ImperiumStore,
+	conversation: ImperiumDoc,
+	guest: ChatGuest,
+	body: Record<string, unknown>,
+): Promise<unknown> {
+	const settings = await chat_settings(store);
+	const conversation_id = str(conversation._id);
+	const participant_key = `g:${guest.guest_id}`;
+	const client_id = str(body.client_id);
+	if (!UUID.test(client_id)) throw invalid('Falta el identificador del mensaje (client_id).');
+	if (body.attachment_ids != null || body.poll != null || body.record_ref != null || body.files != null) {
+		throw new ChatError(403, 'chat_send_denied', 'No puedes enviar mensajes en esta conversación.');
+	}
+	if (!chat_can('guest', as_object(conversation.settings), 'send')) {
+		throw new ChatError(403, 'chat_send_denied', 'No puedes enviar mensajes en esta conversación.');
+	}
+	const text = typeof body.text === 'string' ? body.text.trim() : '';
+	if (!text) throw invalid('Debes escribir un mensaje.');
+	assert_text_length(text);
+	const key = str(conversation.conversation_key);
+	const sent = (message: ImperiumDoc) => {
+		if (str(as_object(message.guestSender).participantKey) !== participant_key) throw invalid('Ese client_id ya se usó.');
+		return ok([message_view(message, key, new Map())], SENT);
+	};
+	const existing = async () => {
+		const { rows } = await store.find_many('messages', {
+			where: { conversation_id, client_id },
+			take: 1,
+			populate: false,
+			skip_total: true,
+		});
+		return rows[0] ?? null;
+	};
+	const before = await existing();
+	if (before) return sent(before);
+	const allowed = take_token(`chat-send:${participant_key}`, SEND_RATE);
+	if (!allowed.ok) return rate_limited_response(allowed.retry_after_s);
+	const reply_id = str(body.reply_to_message_id);
+	const reply = reply_id ? await reply_preview(store, reply_id, conversation, { visibleFromSeq: guest.visible_from_seq }) : undefined;
+	const now = Date.now();
+	const at = new Date(now).toISOString();
+	const id = new_id();
+	let result: Awaited<ReturnType<ImperiumStore['chat_insert_message']>>;
+	try {
+		result = await store.chat_insert_message({
+			id,
+			conversation_id,
+			sender_user_id: null,
+			client_id,
+			kind: 'text',
+			name: str(conversation.name),
+			search_field: search_text([text]),
+			payload: defined({
+				message: text,
+				senderName: guest.name,
+				guestSender: { participantKey: participant_key, name: guest.name },
+				sourceType: 'chat',
+				conversationId: conversation_id,
+				rev: 0,
+				replyToMessageId: reply ? reply_id : undefined,
+				replyPreview: reply,
+			}),
+			preview: { messageId: id, senderId: null, senderName: guest.name, kind: 'text', textPreview: text.slice(0, 160), at },
+			expires_at: expiry_of(conversation, settings, now),
+			share_read: false,
+			attachment_ids: [],
+			now: at,
+		});
+	} catch (err) {
+		const repeated = is_unique_violation(err) ? await existing() : null;
+		if (!repeated) throw err;
+		return sent(repeated);
+	}
+	if (!result) throw new ChatError(404, 'conversation_not_found', 'No encontramos esa conversación.');
+	const view = message_view(result.message, key, new Map());
+	await publish_message(store, conversation, result.message, view, settings);
+	return ok([view], SENT);
+}
+
+/** El aviso de la reunión en su conversación: programada, cambiada o cancelada. */
+export async function post_meeting_notice(
+	ctx: ChatCtx,
+	conversation_id: string,
+	type: 'meeting_scheduled' | 'meeting_updated' | 'meeting_cancelled',
+	data: ImperiumDoc,
+): Promise<void> {
+	const conversation = await find_chat_conversation(ctx.store, conversation_id);
+	await post_system_message(ctx, conversation, { type, data }, await chat_settings(ctx.store));
+}
+
+/**
+ * El mensaje de sistema `recording` (contrato §4.4) con su adjunto ya ligado: la fila del archivo
+ * apunta a `message_id` antes de escribirlo, así que la membresía y el Range de `/api/media` lo
+ * cubren como a cualquier adjunto del chat.
+ */
+export async function post_recording_message(
+	store: ImperiumStore,
+	input: { conversation_id: string; message_id: string; actor: { _id: string; name: string }; attachment: ImperiumDoc; data: ImperiumDoc },
+): Promise<ImperiumDoc> {
+	const settings = await chat_settings(store);
+	const conversation = await find_chat_conversation(store, input.conversation_id);
+	const conversation_id = str(conversation._id);
+	const at = new Date().toISOString();
+	const event: SystemEvent = { type: 'recording', data: input.data };
+	const result = await store.chat_insert_message({
+		id: input.message_id,
+		conversation_id,
+		sender_user_id: null,
+		reader_user_id: input.actor._id,
+		client_id: null,
+		kind: 'system',
+		name: str(conversation.name),
+		search_field: null,
+		payload: {
+			message: '',
+			sourceType: 'chat',
+			conversationId: conversation_id,
+			rev: 0,
+			attachments: [input.attachment],
+			system: { type: event.type, actorId: input.actor._id, data: input.data },
+		},
+		preview: {
+			messageId: input.message_id,
+			senderId: null,
+			senderName: input.actor.name,
+			kind: 'system',
+			textPreview: system_text(event, input.actor.name, []).slice(0, 160),
+			at,
+		},
+		expires_at: null,
+		share_read: shares_read_receipts(await store.chat_privacy(input.actor._id)),
+		attachment_ids: [],
+		now: at,
+	});
+	if (!result) throw new ChatError(404, 'conversation_not_found', 'No encontramos esa conversación.');
+	const view = message_view(result.message, str(conversation.conversation_key), new Map());
+	await publish_message(store, conversation, result.message, view, settings);
+	return view;
+}
+
+/**
+ * El mensaje `call` de una llamada (contrato §6.1): sin remitente y con `client_id` `call:<id>`, así
+ * que no se repite. Lo lee quien llamó y, de `read_by`, quien iba al día; los demás lo tienen sin leer.
+ * `null` si ya existía.
+ */
+export async function post_call_message(
+	store: ImperiumStore,
+	input: { conversation_id: string; call: ImperiumDoc; text_preview: string; read_by: string[] },
+): Promise<ImperiumDoc | null> {
+	const settings = await chat_settings(store);
+	const conversation = await find_chat_conversation(store, input.conversation_id);
+	const conversation_id = str(conversation._id);
+	const initiator = str(input.call.initiatorId);
+	const now = Date.now();
+	const at = new Date(now).toISOString();
+	const id = new_id();
+	const [caller] = await store.chat_users_brief([initiator]);
+	let result: Awaited<ReturnType<ImperiumStore['chat_insert_message']>>;
+	try {
+		result = await store.chat_insert_message({
+			id,
+			conversation_id,
+			sender_user_id: null,
+			reader_user_id: initiator,
+			client_id: `call:${str(input.call.callId)}`,
+			kind: 'call',
+			name: str(conversation.name),
+			search_field: null,
+			payload: { message: '', sourceType: 'chat', conversationId: conversation_id, rev: 0, call: input.call },
+			preview: {
+				messageId: id,
+				senderId: null,
+				senderName: caller?.name ?? '',
+				kind: 'call',
+				textPreview: input.text_preview,
+				at,
+			},
+			expires_at: expiry_of(conversation, settings, now),
+			share_read: shares_read_receipts(await store.chat_privacy(initiator)),
+			attachment_ids: [],
+			now: at,
+		});
+	} catch (err) {
+		if (is_unique_violation(err)) return null;
+		throw err;
+	}
+	if (!result) return null;
+	const message = result.message;
+	const view = message_view(message, str(conversation.conversation_key), new Map());
+	await publish_message(store, conversation, message, view, settings);
+	const seq = Number(message.seq);
+	const readers = [...new Set(input.read_by)].filter((user_id) => user_id !== initiator);
+	const privacy = await store.chat_privacy_many(readers);
+	const caught = await store.chat_catch_up_read({
+		conversation_id,
+		seq,
+		user_ids: readers,
+		sharing_ids: readers.filter((user_id) => shares_read_receipts(privacy.get(user_id)?.privacy ?? {})),
+		now: at,
+	});
+	for (const row of caught) {
+		emit_chat_deltas(
+			[row.user_id],
+			[
+				{
+					conversation_id,
+					op: 'read',
+					user_id: row.user_id,
+					seq,
+					patch: {
+						last_read_seq: seq,
+						unread_count: Math.max(row.last_seq - seq, 0),
+						unread_mentions: row.mentions,
+						marked_unread: false,
+					},
+				},
+			],
+		);
+	}
+	return message;
 }
 
 /** Quien entra recibe su membresía (y con ella lee la conversación); los demás, la suya y el nuevo total. */
@@ -3220,18 +3736,42 @@ function prefs_patch(body: Record<string, unknown>, now: string): { merge: Imper
 	return { merge, pinned: body.pinned as boolean | undefined };
 }
 
+function wallpaper_upload(wallpaper: unknown): string {
+	const value = as_object(wallpaper);
+	return str(value.kind) === 'attachment' ? str(value.value) : '';
+}
+
+/**
+ * La imagen de fondo se liga a la conversación para que la limpieza de 24 h no la borre: una
+ * subida propia de esta conversación, sin ligar o ya ligada aquí como fondo.
+ */
+async function bind_wallpaper(store: ImperiumStore, id: string, uid: string, conversation_id: string, now: string): Promise<void> {
+	const row = await store.find_id('attachment-management', id);
+	const ours =
+		row?.is_active !== false &&
+		Boolean(row?.chatUpload) &&
+		str(row?.created_by_id) === uid &&
+		str(as_object(row?.chatUpload).conversationId) === conversation_id;
+	const bound_here = str(row?.related_model) === 'ChatConversation' && str(row?.related_record_id) === conversation_id;
+	if (ours && (bound_here || (await store.chat_bind_uploads([id], uid, 'ChatConversation', conversation_id, now)))) return;
+	throw new ChatError(422, 'invalid_attachment', 'Uno de los archivos no es válido o ya no está disponible.');
+}
+
 /** Contrato §4.2: las preferencias propias de una conversación; sus otros dispositivos las reciben por `prefs`. */
 export async function update_conversation_prefs(ctx: ChatCtx): Promise<unknown> {
 	await enabled_settings(ctx.store);
 	const uid = actor_id(ctx);
 	const conversation = await find_chat_conversation(ctx.store, str(ctx.params.id));
-	await assert_chat_member(ctx.store, conversation, uid);
+	const member = await assert_chat_member(ctx.store, conversation, uid);
 	const now = new Date().toISOString();
 	const { merge, pinned } = prefs_patch(ctx.body, now);
 	if (!Object.keys(merge).length && pinned === undefined) throw invalid();
 	const allowed = take_token(`chat-prefs:${uid}`, PREFS_RATE);
 	if (!allowed.ok) return rate_limited_response(allowed.retry_after_s);
 	const conversation_id = str(conversation._id);
+	const old_upload = merge.wallpaper === undefined ? '' : wallpaper_upload(member.wallpaper);
+	const new_upload = wallpaper_upload(merge.wallpaper);
+	if (new_upload) await bind_wallpaper(ctx.store, new_upload, uid, conversation_id, now);
 	const updated = await ctx.store.chat_update_prefs({
 		conversation_id,
 		user_id: uid,
@@ -3240,7 +3780,13 @@ export async function update_conversation_prefs(ctx: ChatCtx): Promise<unknown> 
 		max_pinned: PINNED_MAX,
 		now,
 	});
-	if (!updated) throw invalid(`Puedes fijar hasta ${PINNED_MAX} conversaciones.`);
+	const release = (id: string) =>
+		ctx.store.chat_release_upload({ id, owner_id: uid, model: 'ChatConversation', record_id: conversation_id, now });
+	if (!updated) {
+		if (new_upload && new_upload !== old_upload) await release(new_upload);
+		throw invalid(`Puedes fijar hasta ${PINNED_MAX} conversaciones.`);
+	}
+	if (old_upload && old_upload !== new_upload) await release(old_upload);
 	const prefs = prefs_view(updated);
 	emit_chat_deltas([uid], [{ conversation_id, op: 'prefs', user_id: uid, patch: prefs }]);
 	return ok([prefs], 'Preferencias guardadas.');
@@ -3863,7 +4409,7 @@ export async function forward_chat_messages(ctx: ChatCtx): Promise<unknown> {
 			const origin = source.forwardedFrom
 				? as_object(source.forwardedFrom)
 				: { senderName: source.senderName, at: source.created_at };
-			const poll = source.poll ? { ...as_object(source.poll), closesAt: undefined, closedAt: undefined } : undefined;
+			const poll = source.poll ? forwarded_poll(source, uid) : undefined;
 			const attachments = await copy_attachments(ctx.store, source, {
 				uid,
 				conversation_id,
@@ -3880,7 +4426,7 @@ export async function forward_chat_messages(ctx: ChatCtx): Promise<unknown> {
 					attachments,
 					search_field: (source.search_field as string | null) ?? null,
 					content: defined({
-						poll: poll ? defined(poll) : undefined,
+						poll,
 						voice: source.voice,
 						recordCard: source.recordCard,
 						links: source.links,
@@ -4021,7 +4567,8 @@ export async function issue_media_tokens(ctx: ChatCtx): Promise<unknown> {
 
 /**
  * Contrato §4.1: quien recibe una foto o un video de ver una vez lo abre una sola vez y tiene
- * 2 minutos para verlo; quien lo envió no lo gasta. Abrirlo solo cambia la vista de quien abre.
+ * 2 minutos para verlo; quien lo envió no lo gasta. Abrirlo cambia la vista de quien abre y la
+ * de quien lo envió, que se entera de quién lo abrió y cuándo; nadie más.
  */
 export async function open_view_once(ctx: ChatCtx): Promise<unknown> {
 	await enabled_settings(ctx.store);
@@ -4030,20 +4577,24 @@ export async function open_view_once(ctx: ChatCtx): Promise<unknown> {
 	assert_live(message);
 	if (!message.viewOnce) throw new ChatError(409, 'not_view_once', 'Este mensaje no es de ver una vez.');
 	if (str(message.sender_user_id) !== uid) {
-		const opened = await ctx.store.chat_open_view_once(str(message._id), uid, new Date().toISOString());
+		// Recíproco como el resto de los acuses: quien no los comparte deja saber que lo abrió, no cuándo.
+		const record_at = shares_read_receipts(await ctx.store.chat_privacy(uid));
+		const opened = await ctx.store.chat_open_view_once(str(message._id), uid, new Date().toISOString(), record_at);
 		if (!opened) throw new ChatError(410, 'view_once_opened', 'Ya abriste este mensaje.');
-		emit_chat_deltas(
-			[uid],
-			[
-				{
-					conversation_id: str(opened.conversation_id),
-					op: 'message_updated',
-					seq: Number(opened.seq),
-					message_id: str(opened._id),
-					patch: { view_once: { opened: true }, rev: Number(opened.rev) || 0, updated_at: str(opened.updated_at) },
-				},
-			],
-		);
+		const sender_id = str(opened.sender_user_id);
+		const opened_for = (viewer_id: string): ImperiumDoc => ({
+			conversation_id: str(opened.conversation_id),
+			op: 'message_updated',
+			seq: Number(opened.seq),
+			message_id: str(opened._id),
+			patch: {
+				view_once: view_once_view(as_object(opened.viewOnce), sender_id, viewer_id),
+				rev: Number(opened.rev) || 0,
+				updated_at: str(opened.updated_at),
+			},
+		});
+		emit_chat_deltas([uid], [opened_for(uid)]);
+		if (sender_id && (await still_sees(ctx.store, opened, sender_id))) emit_chat_deltas([sender_id], [opened_for(sender_id)]);
 	}
 	const exp = Math.floor(Date.now() / 1000) + VIEW_ONCE_TOKEN_TTL_S;
 	return ok(

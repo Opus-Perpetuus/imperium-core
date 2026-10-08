@@ -8,7 +8,7 @@ import { verify_realtime_token } from './realtime-tokens.ts';
 import type { ImperiumStore } from './store.ts';
 
 /** notifications y mentions llevan extractos de los chats y son de un solo destinatario. */
-export const CHAT_PRIVATE_RESOURCES = new Set(['messages', 'notifications', 'mentions']);
+const CHAT_PRIVATE_RESOURCES = new Set(['messages', 'notifications', 'mentions']);
 
 /** Todos los recursos nuevos del chat llevan el prefijo `chat-`. */
 export function is_chat_private_resource(resource: string): boolean {
@@ -136,7 +136,8 @@ export type ChatVerb =
 	| 'revoke_invite'
 	| 'revoke_own_invite'
 	| 'approve_join'
-	| 'pin';
+	| 'pin'
+	| 'call';
 
 const CHAT_ROLES = new Set<ChatRole>(['owner', 'admin', 'moderator', 'member', 'guest']);
 const RANK: Record<ChatRole, number> = { owner: 4, admin: 3, moderator: 2, member: 1, guest: 0 };
@@ -184,6 +185,8 @@ export function chat_can(
 			return staff || (role === 'member' && settings.membersCanInvite === true);
 		case 'pin':
 			return staff || (role === 'member' && settings.membersCanPin === true);
+		case 'call':
+			return staff || (role === 'member' && settings.membersCanCall === true);
 		case 'restrict':
 		case 'remove_member':
 			return staff && RANK[target] < RANK[role];
@@ -295,21 +298,29 @@ async function active_member(
 	return rows[0]?.state === 'active' ? rows[0] : null;
 }
 
+/** Un invitado admitido: la conversación de su reunión y el `seq` desde el que la ve. */
+export type GuestReader = { conversation_id: string; visible_from_seq: number };
+
 /**
  * Contrato §6.7: quien sigue en la conversación y desde lo que ve; quien salió o fue expulsado, ya
  * no. `token_user_id`: a quién se emitió el `?mt=` de la petición para este adjunto; el de ver una
- * vez solo lo da `POST /message/:id/open`.
+ * vez solo lo da `POST /message/:id/open`. `guest`: sin sesión, el invitado admitido de una reunión.
  */
 export async function assert_attachment_access(
 	store: Pick<ImperiumStore, 'find_id' | 'find_many' | 'chat_contact_owners'>,
 	actor: ImperiumDoc | null,
 	attachment: ImperiumDoc,
-	opts: { token_user_id?: string } = {},
+	opts: { token_user_id?: string; guest?: GuestReader | null } = {},
 ): Promise<void> {
 	const model = String(attachment.related_model ?? '');
+	const record_id = String(attachment.related_record_id ?? '').trim();
+	// Un invitado no tiene sesión: solo alcanza el chat de su reunión, nunca otro archivo.
+	if (!actor && opts.guest) {
+		if (model !== 'Message' || !record_id) throw attachment_forbidden();
+		return assert_guest_access(store, opts.guest, record_id);
+	}
 	if (!CHAT_ATTACHMENT_MODELS.has(model)) return;
 	const actor_id = String(actor?._id ?? '');
-	const record_id = String(attachment.related_record_id ?? '').trim();
 	if (actor_id && record_id && model === 'ChatConversation') {
 		if (await active_member(store, record_id, actor_id)) return;
 		throw attachment_forbidden();
@@ -340,6 +351,22 @@ export async function assert_attachment_access(
 	const member = await active_member(store, conversation_id, actor_id);
 	if (!member || Number(message.seq) <= (Number(member.visibleFromSeq) || 0)) throw attachment_forbidden();
 	if (message.viewOnce && String(message.sender_user_id ?? '') !== actor_id && opts.token_user_id !== actor_id) {
+		throw attachment_forbidden();
+	}
+}
+
+/** Lo del chat de su reunión que llegó después de su admisión; "ver una vez" nunca. */
+async function assert_guest_access(store: Pick<ImperiumStore, 'find_id'>, guest: GuestReader, message_id: string): Promise<void> {
+	const message = await store.find_id('messages', message_id);
+	const expired = Boolean(message?.expires_at) && String(message?.expires_at) <= new Date().toISOString();
+	if (!message || message.is_active === false || message.deleted || expired) {
+		throw new ChatError(410, 'message_gone', 'Este mensaje se borró o caducó.');
+	}
+	if (
+		String(message.conversation_id ?? '') !== guest.conversation_id ||
+		Number(message.seq) <= guest.visible_from_seq ||
+		message.viewOnce
+	) {
 		throw attachment_forbidden();
 	}
 }

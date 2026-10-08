@@ -3,7 +3,7 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { assert_attachment_access, ChatError } from './chat-access.ts';
+import { assert_attachment_access, ChatError, type GuestReader } from './chat-access.ts';
 import { fail, type ImperiumDoc } from './envelope.ts';
 import type { ImperiumStore } from './store.ts';
 import { resolve_upload_folders, upload_file_path } from './uploads.ts';
@@ -35,11 +35,14 @@ function missing_image_placeholder(): Response | null {
 	});
 }
 
-/** Sin `actor`, un adjunto del chat se niega: solo los demás se sirven a cualquier sesión. */
+/**
+ * Sin `actor`, un adjunto del chat se niega: solo los demás se sirven a cualquier sesión. Un
+ * invitado (`guest`) solo alcanza los del chat de su reunión.
+ */
 export async function serve_media(
 	store: ImperiumStore,
 	id: string,
-	opts: { req?: Request; actor?: ImperiumDoc | null; token_user_id?: string } = {},
+	opts: { req?: Request; actor?: ImperiumDoc | null; token_user_id?: string; guest?: GuestReader | null } = {},
 ): Promise<Response> {
 	if (!id || !store.has('attachment-management')) {
 		return media_missing(ATTACHMENT_NOT_FOUND, 'attachment_not_found');
@@ -47,7 +50,7 @@ export async function serve_media(
 	const doc = await store.find_id('attachment-management', id);
 	if (!doc) return media_missing(ATTACHMENT_NOT_FOUND, 'attachment_not_found');
 	try {
-		await assert_attachment_access(store, opts.actor ?? null, doc, { token_user_id: opts.token_user_id });
+		await assert_attachment_access(store, opts.actor ?? null, doc, { token_user_id: opts.token_user_id, guest: opts.guest });
 	} catch (err) {
 		if (!(err instanceof ChatError)) throw err;
 		return Response.json(fail(err.message, err.status, { code: err.code }).body, {

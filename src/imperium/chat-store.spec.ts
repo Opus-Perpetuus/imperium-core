@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import { handle_action } from './actions.ts';
 import type { ImperiumDoc } from './envelope.ts';
 import { register_chat_activity } from './notifications.ts';
-import { chat_backfill_sqls, chat_media_page_sql, ImperiumStore, is_unique_violation, load_catalog_path } from './store.ts';
+import { chat_backfill_sqls, chat_media_page_sql, ImperiumStore, is_unique_violation, load_catalog_path, meetings_due_to_advance_sql } from './store.ts';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const sql = DATABASE_URL ? new Bun.SQL(DATABASE_URL) : null;
@@ -83,6 +83,18 @@ describe.skipIf(!sql)('modelo del chat en Postgres', () => {
 			chat_saved: { user_id: 'text', message_id: 'text', remind_at: 'text', state: 'text' },
 			chat_stories: { author_id: 'text', expires_at: 'text' },
 			chat_story_views: { story_id: 'text', viewer_id: 'text', viewed_at: 'text' },
+			chat_calls: {
+				conversation_id: 'text',
+				meeting_id: 'text',
+				kind: 'text',
+				started_at: 'text',
+				ended_at: 'text',
+				state: 'text',
+			},
+			chat_meetings: { code: 'text', host_id: 'text', next_start_at: 'text', state: 'text' },
+			chat_meeting_attendance: { call_id: 'text', meeting_id: 'text', participant_key: 'text' },
+			chat_meeting_questions: { call_id: 'text', meeting_id: 'text', state: 'text' },
+			chat_meeting_transcripts: { call_id: 'text', meeting_id: 'text', seq: 'double precision' },
 		};
 		const rows = (await db.unsafe(
 			`SELECT table_name, column_name, data_type FROM information_schema.columns
@@ -112,6 +124,9 @@ describe.skipIf(!sql)('modelo del chat en Postgres', () => {
 			'uq_chat_reactions_message_id_user_id_kind_value',
 			'uq_chat_saved_user_id_message_id',
 			'uq_chat_story_views_story_id_viewer_id',
+			'uq_chat_meetings_code',
+			'uq_chat_meeting_attendance_call_id_participant_key',
+			'uq_chat_calls_live_conversation',
 		]) {
 			expect({ name, unique: unique.has(name) }).toEqual({ name, unique: true });
 		}
@@ -125,6 +140,18 @@ describe.skipIf(!sql)('modelo del chat en Postgres', () => {
 			'ix_chat_audit_conversation_created',
 			'ix_chat_stories_author_expires',
 			'ix_notifications_recipient_created',
+			'ix_chat_calls_live',
+			'ix_chat_calls_participants',
+			'ix_chat_calls_conversation_started',
+			'ix_chat_calls_meeting',
+			'ix_chat_calls_created',
+			'ix_chat_meetings_members',
+			'ix_chat_meetings_next_start',
+			'ix_chat_meetings_host',
+			'ix_chat_meetings_recurring_due',
+			'ix_chat_meeting_attendance_meeting',
+			'ix_chat_meeting_questions_call_created',
+			'ix_chat_meeting_transcripts_call_seq',
 		]) {
 			expect({ name, exists: names.has(name) }).toEqual({ name, exists: true });
 		}
@@ -236,15 +263,35 @@ describe.skipIf(!sql)('modelo del chat en Postgres', () => {
 		expect(await rejects_duplicate({ conversation_id, client_id })).toBe(true);
 	});
 
+	/**
+	 * Sobre un hilo largo y con estadísticas al día: con un hilo vacío cualquier índice que empiece
+	 * por la conversación cuesta lo mismo y el planificador elige según las estadísticas del
+	 * momento. Las filas se revierten; la estimación de filas de ANALYZE queda hasta el siguiente.
+	 */
 	test('la página de un hilo usa el único (conversation_id, seq)', async () => {
-		const plan = await db.begin(async (tx) => {
-			await tx.unsafe('SET LOCAL enable_seqscan = off');
-			return (await tx.unsafe(
-				`EXPLAIN SELECT id FROM ${st.qt('messages')}
-				 WHERE conversation_id = '${hex_id()}' AND seq < 100 ORDER BY seq DESC LIMIT 50`,
-			)) as Array<Record<string, string>>;
-		});
-		expect(plan.map((row) => Object.values(row)[0]).join('\n')).toContain('uq_messages_conversation_id_seq');
+		const rollback = new Error('rollback');
+		let plan = '';
+		await db
+			.begin(async (tx) => {
+				const conversation_id = hex_id();
+				await tx.unsafe(
+					`INSERT INTO ${st.qt('messages')} (id, name, is_active, conversation_id, seq, sender_user_id, client_id, kind, payload, created_at, updated_at)
+					 SELECT left(md5($1 || g::text), 24), '', true, $1, g, 'ana', md5($1 || g::text), 'text', '{}'::jsonb, '2026-01-01', '2026-01-01'
+					 FROM generate_series(1, 5000) AS g`,
+					[conversation_id],
+				);
+				await tx.unsafe(`ANALYZE ${st.qt('messages')}`);
+				const rows = (await tx.unsafe(
+					`EXPLAIN SELECT id FROM ${st.qt('messages')} WHERE conversation_id = $1 AND seq < 4000 ORDER BY seq DESC LIMIT 50`,
+					[conversation_id],
+				)) as Array<Record<string, string>>;
+				plan = rows.map((row) => Object.values(row)[0]).join('\n');
+				throw rollback;
+			})
+			.catch((err) => {
+				if (err !== rollback) throw err;
+			});
+		expect(plan).toContain('uq_messages_conversation_id_seq');
 	});
 
 	test('find_many pagina del más nuevo al más viejo con before_created', async () => {
@@ -459,6 +506,28 @@ describe.skipIf(!sql)('envío con secuencia por conversación', () => {
 		expect(by_id[foreign]?.related_record_id).toBe('');
 	});
 
+	test('un fondo ligado a la conversación no es huérfano; desligado vuelve a serlo', async () => {
+		const id = track('attachment-management', hex_id());
+		const conversation_id = hex_id();
+		const old = '2001-01-01T00:00:00.000Z';
+		await db.unsafe(
+			`INSERT INTO ${st.qt('attachment-management')} (id, name, is_active, name_stored, created_by_id, related_model, related_record_id, payload, created_at, updated_at)
+			 VALUES ($1, 'fondo', true, $2, $3, 'Message', '', $4::jsonb, $5, $5)`,
+			[id, crypto.randomUUID(), ana, { chatUpload: { ownerUserId: ana, conversationId: conversation_id, kind: 'image' } }, old],
+		);
+		const orphans = async () => (await st.chat_discard_orphan_uploads('2001-01-02T00:00:00.000Z', now(), 50)).map((row) => row.id);
+		expect(await st.chat_bind_uploads([id], ana, 'ChatConversation', conversation_id, now())).toBe(true);
+		expect(await orphans()).not.toContain(id);
+		const release = (owner_id: string, record_id: string) =>
+			st.chat_release_upload({ id, owner_id, model: 'ChatConversation', record_id, now: now() });
+		expect(await release(beto, conversation_id)).toBe(false);
+		expect(await release(ana, hex_id())).toBe(false);
+		expect(await release(ana, conversation_id)).toBe(true);
+		const [row] = (await db.unsafe(`SELECT related_model, related_record_id FROM ${st.qt('attachment-management')} WHERE id = $1`, [id])) as ImperiumDoc[];
+		expect(row).toEqual({ related_model: 'Message', related_record_id: '' });
+		expect(await orphans()).toContain(id);
+	});
+
 	test('una subida se encuentra por su client_upload_id y no se repite', async () => {
 		const client_upload_id = crypto.randomUUID();
 		const insert = () => {
@@ -606,25 +675,28 @@ describe.skipIf(!sql)('páginas, bandeja y marcas de agua', () => {
 		const archived = await conversation({ last_seq: 1, last_message_at: at(25), members: { [beto]: { archived: true } } });
 		const pinned = await conversation({ last_seq: 1, last_message_at: at(1), members: { [beto]: { last_read_seq: 1, pinnedOrder: 1, markedUnread: true } } });
 		const empty = await conversation({ kind: 'direct', key: `${beto}::${carla}`, created_at: at(15), members: { [beto]: {} } });
+		const self = await conversation({ kind: 'self', created_at: at(15), members: { [beto]: {} } });
 		await conversation({ last_seq: 5, last_message_at: at(30), members: { [beto]: { state: 'left' } } });
 		const page = (query: Partial<Parameters<typeof st.chat_conversation_page>[0]> = {}) =>
 			st.chat_conversation_page({ user_id: beto, limit: 10, ...query });
 		const ids = (rows: Awaited<ReturnType<typeof page>>) => rows.map((row) => String(row.conversation._id));
 		const all = await page({ filter: 'all' });
-		expect(ids(all)).toEqual([busy, empty, quiet, pinned]);
+		expect(ids(all)).toEqual([busy, self, quiet, pinned]);
 		expect(all[0]).toMatchObject({ unread_count: 5, unread_mention_seqs: [6, 8], member: { last_read_seq: 4 } });
 		expect(all.find((row) => row.conversation._id === quiet)?.unread_count).toBe(0);
 		expect(ids(await page({ filter: 'unread' }))).toEqual([busy, pinned]);
 		expect(ids(await page({ filter: 'mentions' }))).toEqual([busy]);
 		expect(ids(await page({ filter: 'archived' }))).toEqual([archived]);
-		expect(ids(await page({ filter: 'direct' }))).toEqual([empty]);
+		expect(ids(await page({ filter: 'direct' }))).toEqual([self]);
+		expect(ids(await page({ conversation_ids: [empty] }))).toEqual([empty]);
+		expect(ids(await page({ changed_since: '2026-01-01T00:00:00.000Z' }))).not.toContain(empty);
 		expect(ids(await page({ filter: 'all', pinned: true }))).toEqual([pinned]);
-		expect(ids(await page({ filter: 'all', pinned: false }))).toEqual([busy, empty, quiet]);
+		expect(ids(await page({ filter: 'all', pinned: false }))).toEqual([busy, self, quiet]);
 		expect(ids(await page()).length).toBe(5);
 		const first = await page({ filter: 'all', limit: 2 });
 		const last = first.at(-1)!;
 		const next = await page({ filter: 'all', limit: 2, cursor: { at: last.activity_at, id: String(last.conversation._id) } });
-		expect([...ids(first), ...ids(next)]).toEqual([busy, empty, quiet, pinned]);
+		expect([...ids(first), ...ids(next)]).toEqual([busy, self, quiet, pinned]);
 		expect(await st.chat_inbox_counts(beto, at(40))).toEqual({
 			all: 4,
 			unread: 2,
@@ -1401,8 +1473,16 @@ describe.skipIf(!sql)('editar, borrar y ocultar mensajes', () => {
 		const opens = await Promise.all([1, 2, 3].map(() => st.chat_open_view_once(id, beto, now())));
 		expect(opens.filter(Boolean)).toHaveLength(1);
 		expect((await row(id)).payload).toMatchObject({ rev: 1, viewOnce: { openedByUserIds: [beto] } });
-		expect(await st.chat_open_view_once(id, ana, now())).toMatchObject({ viewOnce: { openedByUserIds: [beto, ana] }, rev: 2 });
+		const at = now();
+		expect(await st.chat_open_view_once(id, ana, at)).toMatchObject({ viewOnce: { openedByUserIds: [beto, ana] }, rev: 2 });
+		expect(((await row(id)).payload as ImperiumDoc).viewOnce).toEqual({
+			openedByUserIds: [beto, ana],
+			openedAt: { [beto]: expect.any(String), [ana]: at },
+		});
 		expect(await st.chat_open_view_once(String(plain._id), beto, now())).toBeNull();
+		const private_open = await send(conversation_id, { viewOnce: { openedByUserIds: [] } });
+		await st.chat_open_view_once(String(private_open._id), beto, now(), false);
+		expect(((await row(String(private_open._id))).payload as ImperiumDoc).viewOnce).toEqual({ openedByUserIds: [beto], openedAt: {} });
 	});
 
 	test('leído y entregado salen de las marcas de agua, sin contar al remitente', async () => {
@@ -2288,5 +2368,239 @@ describe.skipIf(!sql)('búsqueda del chat en Postgres', () => {
 		expect(await texts(beto!)).toHaveLength(2);
 		await st.chat_leave_conversation({ conversation_id: id, user_id: String(beto!._id), now: new Date().toISOString() });
 		expect(await texts(beto!)).toEqual([]);
+	});
+});
+
+describe.skipIf(!sql)('llamadas y reuniones: escritura versionada y páginas', () => {
+	const db = sql!;
+	const st = store!;
+	const user = hex_id();
+	const other = hex_id();
+
+	beforeAll(async () => {
+		await st.ensure_orphan_tables();
+		await st.ensure_unique_indexes();
+	}, 120_000);
+
+	async function insert_call(input: { state: string; created_at: string; participants: string[]; v?: number }) {
+		const id = track('chat-calls', hex_id());
+		await db.unsafe(
+			`INSERT INTO ${st.qt('chat-calls')} (id, name, is_active, state, conversation_id, kind, started_at, payload, created_at, updated_at)
+			 VALUES ($1, '', true, $2, $3, 'direct', $4, $5::jsonb, $4, $4)`,
+			[id, input.state, hex_id(), input.created_at, { v: input.v ?? 0, participantIds: input.participants, legs: [] }],
+		);
+		return id;
+	}
+
+	async function plan(query: string, params: unknown[]): Promise<string> {
+		const rows = (await db.begin(async (tx) => {
+			await tx.unsafe('SET LOCAL enable_seqscan = off');
+			return tx.unsafe(`EXPLAIN ${query}`, params);
+		})) as Array<{ 'QUERY PLAN': string }>;
+		return rows.map((row) => row['QUERY PLAN']).join('\n');
+	}
+
+	/**
+	 * El plan con lo que el índice parcial de lo vivo existe para saltar: miles de llamadas
+	 * terminadas, con estadísticas al día. Todo se revierte; con la tabla casi vacía el planificador
+	 * elige cualquier índice y el plan no dice nada.
+	 */
+	async function plan_over_ended(query: string, params: unknown[]): Promise<string> {
+		const rollback = new Error('rollback');
+		let text = '';
+		await db
+			.begin(async (tx) => {
+				await tx.unsafe(
+					`INSERT INTO ${st.qt('chat-calls')} (id, name, is_active, state, conversation_id, kind, started_at, payload, created_at, updated_at)
+					 SELECT left(md5($1 || g::text), 24), '', true, 'ended', md5(g::text), 'direct', '2026-01-01', '{}'::jsonb, '2026-01-01', '2026-01-01'
+					 FROM generate_series(1, 5000) AS g`,
+					[hex_id()],
+				);
+				await tx.unsafe(`ANALYZE ${st.qt('chat-calls')}`);
+				const rows = (await tx.unsafe(`EXPLAIN ${query}`, params)) as Array<{ 'QUERY PLAN': string }>;
+				text = rows.map((row) => row['QUERY PLAN']).join('\n');
+				throw rollback;
+			})
+			.catch((err) => {
+				if (err !== rollback) throw err;
+			});
+		return text;
+	}
+
+	test('los recursos de llamadas y reuniones no tienen historial, búsqueda ni CRUD genérico', async () => {
+		const { is_chat_private_resource } = await import('./chat-access.ts');
+		for (const resource of [
+			'chat-calls',
+			'chat-meetings',
+			'chat-meeting-attendance',
+			'chat-meeting-questions',
+			'chat-meeting-transcripts',
+		]) {
+			expect({ resource, has: st.has(resource), private: is_chat_private_resource(resource) }).toEqual({
+				resource,
+				has: true,
+				private: true,
+			});
+		}
+	});
+
+	test('update_versioned: con el v leído escribe y lo sube; con uno viejo no toca nada', async () => {
+		const id = await insert_call({ state: 'ringing', created_at: '2026-01-01T00:00:00.000Z', participants: [user] });
+		const now = '2026-01-01T00:00:05.000Z';
+		const done = await st.update_versioned(
+			'chat-calls',
+			id,
+			0,
+			{ state: 'active', columns: { ended_at: null, started_at: now }, payload: { answeredAt: now } },
+			now,
+		);
+		expect(done).toMatchObject({ _id: id, state: 'active', v: 1, answeredAt: now, started_at: now, participantIds: [user] });
+		expect(await st.update_versioned('chat-calls', id, 0, { state: 'ended', payload: {} }, now)).toBeNull();
+		expect(await st.find_id('chat-calls', id)).toMatchObject({ state: 'active', v: 1 });
+		await expect(st.update_versioned('chat-calls', id, 1, { columns: { nope: 'x' }, payload: {} }, now)).rejects.toThrow(
+			'chat-calls no tiene las columnas nope',
+		);
+	});
+
+	test('update_versioned: de diez escrituras con el mismo v gana una', async () => {
+		const id = await insert_call({ state: 'ringing', created_at: '2026-01-02T00:00:00.000Z', participants: [user], v: 4 });
+		const results = await Promise.all(
+			Array.from({ length: 10 }, (_, i) =>
+				st.update_versioned('chat-calls', id, 4, { state: 'active', payload: { winner: i } }, '2026-01-02T00:00:01.000Z'),
+			),
+		);
+		const winners = results.filter(Boolean);
+		expect(winners).toHaveLength(1);
+		expect(await st.find_id('chat-calls', id)).toMatchObject({ v: 5, winner: winners[0]!.winner });
+	});
+
+	test('payload_set_toggle: conmuta, fuerza y cuenta sin perder votos en paralelo', async () => {
+		const id = track('chat-meeting-questions', hex_id());
+		await db.unsafe(
+			`INSERT INTO ${st.qt('chat-meeting-questions')} (id, name, is_active, state, call_id, payload, created_at, updated_at)
+			 VALUES ($1, '', true, 'visible', $2, '{"voterKeys": [], "votes": 0}'::jsonb, $3, $3)`,
+			[id, hex_id(), '2026-01-03T00:00:00.000Z'],
+		);
+		const vote = (value: string, on?: boolean) =>
+			st.payload_set_toggle(
+				'chat-meeting-questions',
+				id,
+				{ field: 'voterKeys', value, on, count_field: 'votes' },
+				'2026-01-03T00:00:01.000Z',
+			);
+		expect(await vote('u:a')).toMatchObject({ on: true, doc: { voterKeys: ['u:a'], votes: 1 } });
+		expect(await vote('u:a', true)).toMatchObject({ on: true, doc: { voterKeys: ['u:a'], votes: 1 } });
+		expect(await vote('u:a')).toMatchObject({ on: false, doc: { voterKeys: [], votes: 0 } });
+		await Promise.all(Array.from({ length: 12 }, (_, i) => vote(`g:${i}`)));
+		const row = await st.find_id('chat-meeting-questions', id);
+		expect(row?.votes).toBe(12);
+		expect(new Set(row?.voterKeys as string[]).size).toBe(12);
+		expect(await st.payload_set_toggle('chat-meeting-questions', hex_id(), { field: 'voterKeys', value: 'x' }, 'n')).toBeNull();
+	});
+
+	test('el historial de llamadas pagina por keyset solo con las propias y usa sus índices', async () => {
+		const [user, other] = [hex_id(), hex_id()];
+		const ids = [];
+		for (let i = 0; i < 5; i++) {
+			ids.push(await insert_call({ state: 'ended', created_at: `2026-02-0${i + 1}T00:00:00.000Z`, participants: [user, other] }));
+		}
+		await insert_call({ state: 'ended', created_at: '2026-02-09T00:00:00.000Z', participants: [other] });
+		const first = await st.calls_page_for_user({ user_id: user, limit: 2 });
+		expect(first.map((row) => row._id)).toEqual([ids[4], ids[3]]);
+		const last = first.at(-1)!;
+		const next = await st.calls_page_for_user({ user_id: user, limit: 10, cursor: { at: String(last.created_at), id: String(last._id) } });
+		expect(next.map((row) => row._id)).toEqual([ids[2], ids[1], ids[0]]);
+		const { calls_page_for_user_sql } = await import('./store.ts');
+		const page = calls_page_for_user_sql(st.qt('chat-calls'), { user_id: user, limit: 20, cursor: { at: 'z', id: 'z' } });
+		expect(await plan(page.sql, page.params)).toMatch(/ix_chat_calls_(participants|created)/);
+	});
+
+	test('live_calls lee lo vivo por el índice parcial, en lotes por id', async () => {
+		const live = [
+			await insert_call({ state: 'ringing', created_at: '2026-03-01T00:00:00.000Z', participants: [user] }),
+			await insert_call({ state: 'active', created_at: '2026-03-01T00:00:00.000Z', participants: [user] }),
+		].sort();
+		const ended = await insert_call({ state: 'ended', created_at: '2026-03-01T00:00:00.000Z', participants: [user] });
+		const seen: string[] = [];
+		let after_id = '';
+		for (;;) {
+			const batch = await st.live_calls({ after_id, limit: 50 });
+			if (!batch.length) break;
+			seen.push(...batch.map((row) => String(row._id)));
+			after_id = String(batch.at(-1)!._id);
+		}
+		expect(live.every((id) => seen.includes(id))).toBe(true);
+		expect(seen).not.toContain(ended);
+		expect(
+			await plan_over_ended(`SELECT * FROM ${st.qt('chat-calls')} WHERE state IN ('ringing', 'active') AND id > $1 ORDER BY id LIMIT 50`, ['']),
+		).toContain('ix_chat_calls_live');
+	});
+
+	test('las series por avanzar salen de su índice parcial, sin recorrer las reuniones pasadas', async () => {
+		const rollback = new Error('rollback');
+		let text = '';
+		await db
+			.begin(async (tx) => {
+				// Una reunión sin recurrencia conserva su next_start_at para siempre: el historial crece y la pasada de 30 s no debe recorrerlo.
+				await tx.unsafe(
+					`INSERT INTO ${st.qt('chat-meetings')} (id, name, is_active, state, code, host_id, next_start_at, payload, created_at, updated_at)
+					 SELECT left(md5($1 || g::text), 24), 'Pasada', true, 'scheduled', 'p-' || md5($1 || g::text), $2, '2026-01-01T10:00:00.000Z', '{}'::jsonb, '2026-01-01', '2026-01-01'
+					 FROM generate_series(1, 5000) AS g`,
+					[hex_id(), user],
+				);
+				await tx.unsafe(`ANALYZE ${st.qt('chat-meetings')}`);
+				const rows = (await tx.unsafe(`EXPLAIN ${meetings_due_to_advance_sql(st.qt('chat-meetings'))}`, [
+					'2026-06-01T00:00:00.000Z',
+					50,
+				])) as Array<{ 'QUERY PLAN': string }>;
+				text = rows.map((row) => row['QUERY PLAN']).join('\n');
+				throw rollback;
+			})
+			.catch((err) => {
+				if (err !== rollback) throw err;
+			});
+		expect(text).toContain('ix_chat_meetings_recurring_due');
+	});
+
+	test('las reuniones de un miembro: próximas, salas y pasadas, cada una con su cursor', async () => {
+		const meeting = async (input: { next?: string; persistent?: boolean; state?: string; members: string[]; created: string }) => {
+			const id = track('chat-meetings', hex_id());
+			await db.unsafe(
+				`INSERT INTO ${st.qt('chat-meetings')} (id, name, is_active, state, code, host_id, next_start_at, payload, created_at, updated_at)
+				 VALUES ($1, 'Reunión', true, $2, $3, $4, $5, $6::jsonb, $7, $7)`,
+				[
+					id,
+					input.state ?? 'scheduled',
+					`c-${id}`,
+					input.members[0],
+					input.next ?? null,
+					{ v: 0, memberIds: input.members, persistent: input.persistent === true },
+					input.created,
+				],
+			);
+			return id;
+		};
+		const soon = await meeting({ next: '2026-05-02T10:00:00.000Z', members: [user], created: '2026-04-01T00:00:00.000Z' });
+		const later = await meeting({ next: '2026-05-09T10:00:00.000Z', members: [user, other], created: '2026-04-02T00:00:00.000Z' });
+		const room = await meeting({ persistent: true, members: [user], created: '2026-04-03T00:00:00.000Z' });
+		const past = await meeting({ next: '2026-04-20T10:00:00.000Z', members: [user], created: '2026-04-04T00:00:00.000Z' });
+		const cancelled = await meeting({
+			next: '2026-05-05T10:00:00.000Z',
+			state: 'cancelled',
+			members: [user],
+			created: '2026-04-05T00:00:00.000Z',
+		});
+		await meeting({ next: '2026-05-03T10:00:00.000Z', members: [other], created: '2026-04-06T00:00:00.000Z' });
+		const page = (scope: 'proximas' | 'salas' | 'pasadas', cursor?: { at: string; id: string }, limit = 10) =>
+			st.meetings_page_for_member({ user_id: user, scope, since: '2026-05-01T00:00:00.000Z', cursor, limit });
+		const first = await page('proximas', undefined, 1);
+		expect(first.map((row) => row._id)).toEqual([soon]);
+		const rest = await page('proximas', { at: String(first[0]!.page_key), id: soon });
+		expect(rest.map((row) => row._id)).toEqual([later]);
+		expect((await page('salas')).map((row) => row._id)).toEqual([room]);
+		expect((await page('pasadas')).map((row) => row._id).filter((id) => [past, cancelled].includes(String(id)))).toEqual([
+			cancelled,
+			past,
+		]);
 	});
 });

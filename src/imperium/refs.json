@@ -480,6 +480,8 @@
     "timesheets": "time-sheets",
     "chatconversation": "chat-conversations",
     "chatstory": "chat-stories",
-    "chatscheduled": "chat-scheduled"
+    "chatscheduled": "chat-scheduled",
+    "chatcall": "chat-calls",
+    "chatmeeting": "chat-meetings"
   }
 }

@@ -10,7 +10,7 @@ import { handle_action } from './actions.ts';
 import { purge_expired_stories } from './chat-jobs.ts';
 import type { ImperiumDoc } from './envelope.ts';
 import { serve_media } from './media.ts';
-import { ImperiumStore, load_catalog_path } from './store.ts';
+import { chat_contact_owners_sql, ImperiumStore, load_catalog_path } from './store.ts';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const sql = DATABASE_URL ? new Bun.SQL(DATABASE_URL) : null;
@@ -252,6 +252,43 @@ describe.skipIf(!sql)('historias en Postgres', () => {
 		expect(media).toEqual([]);
 		expect(await st.chat_contact_owners(String(beto._id), [String(ana._id)])).toEqual([String(ana._id)]);
 		expect(await st.chat_contact_owners(String(ana._id), [String(beto._id)])).toEqual([]);
+	}, 60_000);
+
+	/**
+	 * El peor caso de `contact_sql`: quien publica escribió miles de mensajes fuera del directo y el
+	 * lector miles dentro. Sin el índice de (remitente, conversación) saber si ella le escribió
+	 * cruza unos con otros; con él es una sola búsqueda. Todo se revierte.
+	 */
+	test('saber si quien publica escribió por el directo es una búsqueda por índice, no un recorrido de mensajes', async () => {
+		const rollback = new Error('rollback');
+		let plan = '';
+		await db
+			.begin(async (tx) => {
+				const now = new Date().toISOString();
+				const [direct_row] = (await tx.unsafe(`SELECT id FROM ${st.qt('chat-conversations')} WHERE conversation_key = $1`, [
+					direct,
+				])) as Array<{ id: string }>;
+				const insert = (conversation_id: string, sender: unknown) =>
+					tx.unsafe(
+						`INSERT INTO ${st.qt('messages')} (id, name, is_active, conversation_id, seq, sender_user_id, client_id, kind, payload, created_at, updated_at)
+						 SELECT left(md5($1 || g::text), 24), '', true, $2, 1000 + g, $3, md5($1 || g::text), 'text', '{}'::jsonb, $4, $4
+						 FROM generate_series(1, 5000) AS g`,
+						[hex_id(), conversation_id, sender, now],
+					);
+				await insert(direct_row!.id, beto._id);
+				await insert(hex_id(), ana._id);
+				const tables = { conversations: st.qt('chat-conversations'), messages: st.qt('messages') };
+				const rows = (await tx.unsafe(`EXPLAIN ${chat_contact_owners_sql(tables)}`, [
+					String(beto._id),
+					[String(ana._id)],
+				])) as Array<{ 'QUERY PLAN': string }>;
+				plan = rows.map((row) => row['QUERY PLAN']).join('\n');
+				throw rollback;
+			})
+			.catch((err) => {
+				if (err !== rollback) throw err;
+			});
+		expect(plan).toContain('ix_messages_sender_conversation');
 	}, 60_000);
 
 	test('los silenciados van al final y el feed pagina por keyset', async () => {

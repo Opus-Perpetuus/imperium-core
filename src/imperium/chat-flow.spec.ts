@@ -9,9 +9,10 @@ import { join } from 'node:path';
 import { handle_action } from './actions.ts';
 import { remember_socket_ip } from './auth-rate-limit.ts';
 import { ACTIVITY_CONTEXTS, DIRECT_CONVERSATION_SETTINGS, invite_state, media_token_actor } from './chat-access.ts';
+import { publish_expired } from './chat-flow.ts';
 import type { ImperiumDoc } from './envelope.ts';
 import { serve_media } from './media.ts';
-import { bind_socket_identity_resolver, handle_socket_io } from './socket-stub.ts';
+import { bind_socket_identity_resolver, emit_to_users, handle_socket_io } from './socket-stub.ts';
 import { when_deferred_image_optimize_idle } from './uploads.ts';
 import { CHAT_SERVER_KINDS } from './store.ts';
 import type {
@@ -372,6 +373,7 @@ function chat_store(config: Record<string, unknown> = {}) {
 				})
 				.filter(({ c, m }) => {
 					if (query.conversation_ids && !query.conversation_ids.includes(String(c._id))) return false;
+					if (!query.conversation_ids && c.kind === 'direct' && !(Number(c.last_seq) > 0)) return false;
 					if (query.changed_since) {
 						return (
 							['active', 'left', 'removed', 'banned'].includes(String(m.state)) &&
@@ -703,12 +705,13 @@ function chat_store(config: Record<string, unknown> = {}) {
 			message.hiddenForUserIds = [...((message.hiddenForUserIds as string[] | undefined) ?? []), user_id];
 			return true;
 		},
-		async chat_open_view_once(message_id: string, user_id: string, now: string) {
+		async chat_open_view_once(message_id: string, user_id: string, now: string, record_at = true) {
 			const message = live_message(message_id);
 			const opened = ((message?.viewOnce as ImperiumDoc | undefined)?.openedByUserIds as string[] | undefined) ?? [];
 			if (!message?.viewOnce || opened.includes(user_id)) return null;
+			const opened_at = ((message.viewOnce as ImperiumDoc).openedAt as ImperiumDoc | undefined) ?? {};
 			Object.assign(message, {
-				viewOnce: { openedByUserIds: [...opened, user_id] },
+				viewOnce: { openedByUserIds: [...opened, user_id], openedAt: record_at ? { ...opened_at, [user_id]: now } : opened_at },
 				rev: (Number(message.rev) || 0) + 1,
 				updated_at: now,
 			});
@@ -1000,6 +1003,25 @@ function chat_store(config: Record<string, unknown> = {}) {
 			if (input.settings) conversation.settings = { ...(conversation.settings as ImperiumDoc), ...input.settings };
 			conversation.updated_at = input.now;
 			return { conversation, before };
+		},
+		async chat_bind_uploads(ids: string[], owner_id: string, model: string, record_id: string, now: string) {
+			const rows = tables['attachment-management']!.filter((row) => ids.includes(String(row._id)));
+			const free = rows.filter((row) => row.created_by_id === owner_id && !row.related_record_id && row.is_active !== false);
+			if (free.length !== ids.length) return false;
+			for (const row of free) Object.assign(row, { related_model: model, related_record_id: record_id, updated_at: now });
+			return true;
+		},
+		async chat_release_upload(input: { id: string; owner_id: string; model: string; record_id: string; now: string }) {
+			const row = tables['attachment-management']!.find(
+				(item) =>
+					item._id === input.id &&
+					item.created_by_id === input.owner_id &&
+					item.related_model === input.model &&
+					item.related_record_id === input.record_id &&
+					item.is_active !== false,
+			);
+			if (row) Object.assign(row, { related_model: 'Message', related_record_id: '', updated_at: input.now });
+			return Boolean(row);
 		},
 		async chat_update_prefs(input: {
 			conversation_id: string;
@@ -1432,6 +1454,47 @@ describe('subidas del chat', () => {
 		});
 	}
 
+	test('el fondo propio de un chat queda ligado a la conversación; cambiarlo o quitarlo desliga el anterior', async () => {
+		const store = chat_store();
+		const ana = add_user(store, 'Ana');
+		const beto = add_user(store, 'Beto');
+		const group = add_group(store, [[ana, 'member'], [beto, 'member']]);
+		const other = add_group(store, [[ana, 'member']]);
+		const id = String(group._id);
+		const image = async (conversation_id = id, actor = ana) =>
+			String((await upload(store, actor, conversation_id, { kind: 'image' }, new File([PNG], 'fondo.png', { type: 'image/png' }))).body.data[0]!.attachment_id);
+		const row = (attachment_id: string) => store.tables['attachment-management']!.find((item) => item._id === attachment_id)!;
+		const wallpaper = (value: string, dim = 0.2) => ({ wallpaper: { kind: 'attachment', value, dim } });
+		const first = await image();
+		expect((await update_prefs(store, ana, id, wallpaper(first))).status).toBe(200);
+		expect(row(first)).toMatchObject({ related_model: 'ChatConversation', related_record_id: id });
+		expect((await update_prefs(store, ana, id, wallpaper(first, 0.4))).status).toBe(200);
+		expect(row(first)).toMatchObject({ related_model: 'ChatConversation', related_record_id: id });
+		const refused = async (actor: ImperiumDoc, attachment_id: string) => {
+			const reply = await update_prefs(store, actor, id, wallpaper(attachment_id));
+			expect([reply.status, reply.body.code]).toEqual([422, 'invalid_attachment']);
+		};
+		await refused(beto, first);
+		const elsewhere = await image(String(other._id));
+		await refused(ana, elsewhere);
+		expect(row(elsewhere).related_record_id).toBe('');
+		await refused(ana, await image(id, beto));
+		expect(member_row(store, group, ana).wallpaper).toEqual({ kind: 'attachment', value: first, dim: 0.4 });
+		const second = await image();
+		expect((await update_prefs(store, ana, id, wallpaper(second))).status).toBe(200);
+		expect(row(second)).toMatchObject({ related_model: 'ChatConversation', related_record_id: id });
+		expect(row(first)).toMatchObject({ related_model: 'Message', related_record_id: '' });
+		const third = await image();
+		const saves = store.chat_update_prefs;
+		store.chat_update_prefs = async () => null;
+		expect((await update_prefs(store, ana, id, { ...wallpaper(third), pinned: true })).status).toBe(422);
+		store.chat_update_prefs = saves;
+		expect(row(third)).toMatchObject({ related_model: 'Message', related_record_id: '' });
+		expect(row(second)).toMatchObject({ related_model: 'ChatConversation', related_record_id: id });
+		expect((await update_prefs(store, ana, id, { wallpaper: null })).status).toBe(200);
+		expect(row(second)).toMatchObject({ related_model: 'Message', related_record_id: '' });
+	});
+
 	test('una subida con metadatos, idempotente por client_upload_id, se liga al enviar', async () => {
 		const store = chat_store();
 		const ana = add_user(store, 'Ana');
@@ -1678,6 +1741,24 @@ describe('bandeja de conversaciones', () => {
 	const mine = (store: ChatStore, actor: ImperiumDoc, query = '') =>
 		get(store, actor, 'list_my_conversations', `/mine${query}`, {}, 'chat-conversations');
 
+	test('un directo sin mensajes no sale en la bandeja de nadie; el self sí; con el primer mensaje aparece', async () => {
+		const store = chat_store();
+		const ana = add_user(store, 'Ana');
+		const beto = add_user(store, 'Beto');
+		const open = (user_id: unknown) => in_conversation(store, ana, 'open_direct_conversation', { path: '/direct', json: { user_id } });
+		const direct = (await open(beto._id)).body.data[0]!;
+		const self = (await open(ana._id)).body.data[0]!;
+		const listed = async (actor: ImperiumDoc) => (await mine(store, actor)).body.data.map((row) => row._id);
+		expect(await listed(ana)).toEqual([self._id]);
+		expect(await listed(beto)).toEqual([]);
+		expect((await mine(store, beto)).body.counts).toMatchObject({ all: 0, direct: 0 });
+		const id = String(direct._id);
+		expect((await get(store, ana, 'read_conversation_summary', `/${id}`, { id }, 'chat-conversations')).body.data[0]!._id).toBe(id);
+		expect((await send(store, ana, { conversation_id: id, client_id: crypto.randomUUID(), text: 'Hola' })).status).toBe(200);
+		expect(await listed(beto)).toEqual([id]);
+		expect((await listed(ana)).sort()).toEqual([id, self._id].sort());
+	});
+
 	test('vista por espectador, fijadas primero, cursor opaco y conteos en la primera página', async () => {
 		const store = chat_store();
 		const ana = add_user(store, 'Ana', { img: '/ana.png' });
@@ -1895,9 +1976,9 @@ describe('rutas heredadas', () => {
 		const conversation = await chat_between(store, ana, beto, 1);
 		const message = store.tables.messages!.find((row) => row.conversation_id === conversation._id)!;
 		expect((await remove(store, beto, message._id, 'me')).status).toBe(200);
-		message.viewOnce = { openedByUserIds: [beto._id] };
+		message.viewOnce = { openedByUserIds: [beto._id], openedAt: { [String(beto._id)]: '2026-10-08T12:00:00.000Z' } };
 		const leaks = (doc: ImperiumDoc | undefined) =>
-			JSON.stringify([doc?.hiddenForUserIds, (doc?.viewOnce as ImperiumDoc | undefined)?.openedByUserIds]).includes(String(beto._id));
+			JSON.stringify([doc?.hiddenForUserIds, doc?.viewOnce]).includes(String(beto._id));
 		const thread = await get(store, ana, 'read_conversation', `/conversation/${beto._id}`, { participantId: String(beto._id) });
 		expect(thread.body.data).toHaveLength(1);
 		expect(thread.body.data.some(leaks)).toBe(false);
@@ -2378,6 +2459,19 @@ describe('encuestas', () => {
 		expect(csv.text).toBe('\uFEFFPregunta,¿Cuándo nos vemos?\r\nOpción,Votos\r\nLunes,2\r\nMartes,0\r\nMiércoles,0\r\n');
 	});
 
+	test('el CSV también neutraliza una fórmula que empieza tras un tabulador o un salto de línea', async () => {
+		const store = chat_store();
+		const [ana, tab, salto] = ['Ana', '\t=HYPERLINK(1)', '\n+Salto'].map((name) => add_user(store, name)) as ImperiumDoc[];
+		const group = add_group(store, [[ana!, 'admin'], [tab!, 'member'], [salto!, 'member']]);
+		const view = await poll_in(store, ana!, group);
+		await vote(store, tab!, view._id, ['o1']);
+		await vote(store, salto!, view._id, ['o2']);
+		const csv = await raw(store, ana!, 'read_chat_poll', `/message/${view._id}/poll?format=csv`, { id: String(view._id) });
+		const filas = csv.text.split('\r\n');
+		expect(filas[2]).toBe("Lunes,1,'\t=HYPERLINK(1)");
+		expect(filas[3]).toBe('Martes,1,"\'\n+Salto"');
+	});
+
 	test('cerrar: quien la creó o administra; ya cerrada 409; el CSV solo para ellos, con votantes y sin fórmulas', async () => {
 		const store = chat_store();
 		const [ana, beto, moni, adan] = ['Ana', '=Beto', 'Moni', 'Adán'].map((name) => add_user(store, name)) as ImperiumDoc[];
@@ -2415,6 +2509,39 @@ describe('encuestas', () => {
 		expect((await read_poll(store, carla!, view._id)).body.data[0]!.quiz).toEqual({});
 		await close_poll(store, ana!, view._id);
 		expect((await read_poll(store, carla!, view._id)).body.data[0]!.quiz).toEqual({ correct_option_id: 'o2', explanation: 'Es martes.' });
+	});
+
+	test('reenviar un cuestionario abierto: la copia va sin respuesta salvo que lo reenvíe su autor o ya haya cerrado', async () => {
+		const store = chat_store();
+		const [ana, beto, carla] = ['Ana', 'Beto', 'Carla'].map((name) => add_user(store, name)) as ImperiumDoc[];
+		const group = add_group(store, [[ana!, 'member'], [beto!, 'member'], [carla!, 'member']]);
+		const mine = add_group(store, [[beto!, 'owner'], [carla!, 'member']]);
+		const view = await poll_in(store, ana!, group, { quiz: { correct_option_index: 1, explanation: 'Es martes.' } });
+		const copy_of = async (actor: ImperiumDoc, target: ImperiumDoc) => {
+			const sent = await forward(store, actor, { message_ids: [view._id], conversation_ids: [target._id] });
+			expect(sent.status).toBe(200);
+			return sent.body.data[0]!;
+		};
+		const csv = (actor: ImperiumDoc, id: unknown) => raw(store, actor, 'read_chat_poll', `/message/${id}/poll?format=csv`, { id: String(id) });
+
+		const copy = await copy_of(beto!, mine);
+		expect(stored(store, copy._id).poll.quiz).toBeUndefined();
+		expect((await csv(beto!, copy._id)).text).not.toContain('Correcta');
+		expect((await close_poll(store, beto!, copy._id)).body.data[0]!.quiz).toBeUndefined();
+		expect((await read_poll(store, beto!, view._id)).body.data[0]!.quiz).toEqual({});
+
+		// Su autora sí lo reenvía como cuestionario; quien la recibe ve la respuesta al votar.
+		const by_author = await copy_of(ana!, group);
+		expect((await vote(store, carla!, by_author._id, ['o1'])).body.data[0]!.quiz).toEqual({ correct_option_id: 'o2', explanation: 'Es martes.' });
+		// Una copia de antes de esta regla (con respuesta y sin marca) tampoco la revela.
+		const legacy = await copy_of(beto!, mine);
+		stored(store, legacy._id).poll.quiz = { correctOptionId: 'o2', explanation: 'Es martes.' };
+		expect((await csv(beto!, legacy._id)).text).not.toContain('Correcta');
+		expect((await close_poll(store, beto!, legacy._id)).body.data[0]!.quiz).toBeUndefined();
+		// Cerrado el original, la respuesta ya es pública y la copia la conserva.
+		await close_poll(store, ana!, view._id);
+		const after_close = await copy_of(beto!, mine);
+		expect((await csv(beto!, after_close._id)).text).toContain('Correcta');
 	});
 });
 
@@ -2766,6 +2893,53 @@ describe('envío en tiempo real', () => {
 		expect(deltas(await poll(ana_sid)).map((delta) => delta.op)).toEqual(['message', 'delivered']);
 	});
 
+	test('ver una vez: quien lo envió sabe quién lo abrió y cuándo; los demás solo saben si lo abrieron ellos', async () => {
+		const store = chat_store();
+		const [ana, beto, carla, dani] = ['Ana', 'Beto', 'Carla', 'Dani'].map((name) => add_user(store, name));
+		const group = add_group(store, [[ana!, 'member'], [beto!, 'member'], [carla!, 'member'], [dani!, 'member']]);
+		const once = await said(store, ana!, group, 'mira');
+		stored(store, once._id).viewOnce = { openedByUserIds: [] };
+		const sids = await Promise.all([ana, beto, carla, dani].map((user) => socket_of(String(user!._id))));
+		const open = (actor: ImperiumDoc) =>
+			call(store, actor, 'open_view_once', { path: `/message/${once._id}/open`, params: { id: String(once._id) } });
+		expect((await open(beto!)).status).toBe(200);
+		expect((await open(carla!)).status).toBe(200);
+		// Un mensaje al final para que el sondeo de quien no recibe nada no se quede esperando.
+		await said(store, dani!, group, 'fin');
+		const deltas = async (sid: string) =>
+			updates(await poll(sid))
+				.filter((update) => update.action === 'chat_delta')
+				.flatMap((update) => update.data)
+				.filter((delta) => delta.message_id === once._id);
+		const [to_ana, to_beto, to_carla, to_dani] = await Promise.all(sids.map(deltas));
+		const opened_by = [
+			{ user_id: beto!._id, at: expect.any(String) },
+			{ user_id: carla!._id, at: expect.any(String) },
+		];
+		const update = (patch: ImperiumDoc, rev: number) => ({
+			conversation_id: group._id,
+			op: 'message_updated',
+			seq: once.seq,
+			message_id: once._id,
+			patch: { ...patch, rev, updated_at: expect.any(String) },
+		});
+		expect(to_ana).toEqual([
+			update({ view_once: { opened: true, opened_by: opened_by.slice(0, 1) } }, 1),
+			update({ view_once: { opened: true, opened_by } }, 2),
+		]);
+		expect(to_beto).toEqual([update({ view_once: { opened: true } }, 1)]);
+		expect(to_carla).toEqual([update({ view_once: { opened: true } }, 2)]);
+		expect(to_dani).toEqual([]);
+		const at = (to_ana![1]!.patch as ImperiumDoc).view_once as { opened_by: Array<{ at: string }> };
+		expect(Number.isNaN(Date.parse(at.opened_by[0]!.at))).toBe(false);
+		const id = String(group._id);
+		const seen_by = async (actor: ImperiumDoc) =>
+			(await get(store, actor, 'read_message_page', `/history/${id}`, { conversationId: id })).body.data.find((row) => row._id === once._id)!.view_once;
+		expect(await seen_by(ana!)).toEqual({ opened: true, opened_by });
+		expect(await seen_by(beto!)).toEqual({ opened: true });
+		expect(await seen_by(dani!)).toEqual({ opened: false });
+	});
+
 	test('reaccionar y votar avisan con rev; el delta de una encuesta nunca lleva votantes anónimos ni conteos ocultos', async () => {
 		const store = chat_store();
 		const ana = add_user(store, 'Ana');
@@ -2833,6 +3007,107 @@ describe('envío en tiempo real', () => {
 		expect(refreshes).toEqual([
 			{ recipient_id: beto!._id, reason: 'activity_created', activity_ids: [store.tables.mentions![0]!._id] },
 		]);
+	});
+
+	test('ver una vez: quién lo abrió solo llega al remitente que aún lo ve, y sin la hora si quien abre no comparte acuses', async () => {
+		const store = chat_store();
+		const [ana, beto, carla] = ['Ana', 'Beto', 'Carla'].map((name) => add_user(store, name)) as ImperiumDoc[];
+		const group = add_group(store, [[ana!, 'member'], [beto!, 'member'], [carla!, 'member']]);
+		const id = String(group._id);
+		store.tables['user-settings']!.push({ user_id: carla!._id, chat_preferences: { privacy: { read_receipts: false } } });
+		const view_once = async () => {
+			const clip = new File([new Uint8Array(16)], 'clip.mp4', { type: 'video/mp4' });
+			const up = await call(store, ana!, 'create_chat_upload', { path: '/uploads', form: upload_form({ conversation_id: id, client_upload_id: crypto.randomUUID() }, clip) });
+			const attachment_ids = [String(up.body.data[0]!.attachment_id)];
+			return String((await send(store, ana!, { conversation_id: id, client_id: crypto.randomUUID(), attachment_ids, view_once: true })).body.data[0]!._id);
+		};
+		const open = (actor: ImperiumDoc, message_id: string) =>
+			call(store, actor, 'open_view_once', { path: `/message/${message_id}/open`, params: { id: message_id } });
+		const ana_sid = await socket_of(String(ana!._id));
+		const notices = async () => {
+			emit_to_users([String(ana!._id)], 'update', { action: 'chat_delta', data: [{ op: 'sentinel' }] });
+			return updates(await poll(ana_sid))
+				.filter((update) => update.action === 'chat_delta')
+				.flatMap((update) => update.data)
+				.filter((delta) => delta.op === 'message_updated')
+				.map((delta) => (delta.patch as ImperiumDoc).view_once);
+		};
+
+		const first = await view_once();
+		await notices();
+		await open(carla!, first);
+		await open(beto!, first);
+		expect(await notices()).toEqual([
+			{ opened: true, opened_by: [{ user_id: carla!._id }] },
+			{ opened: true, opened_by: [{ user_id: carla!._id }, { user_id: beto!._id, at: expect.any(String) }] },
+		]);
+		const page = await get(store, ana!, 'read_message_page', `/history/${id}`, { conversationId: id });
+		expect(page.body.data.find((row) => row._id === first)!.view_once).toEqual({
+			opened: true,
+			opened_by: [{ user_id: carla!._id }, { user_id: beto!._id, at: expect.any(String) }],
+		});
+
+		const hidden = await view_once();
+		stored(store, hidden).hiddenForUserIds = [ana!._id];
+		await notices();
+		await open(beto!, hidden);
+		expect(await notices()).toEqual([]);
+
+		const after_leaving = await view_once();
+		member_row(store, group, ana!).state = 'left';
+		await notices();
+		await open(beto!, after_leaving);
+		expect(await notices()).toEqual([]);
+	});
+
+	test('quien ocultó un mensaje para sí ya no recibe sus votos, reacciones ni cambios', async () => {
+		const store = chat_store();
+		const [ana, beto, carla] = ['Ana', 'Beto', 'Carla'].map((name) => add_user(store, name)) as ImperiumDoc[];
+		const group = add_group(store, [[ana!, 'member'], [beto!, 'member'], [carla!, 'member']]);
+		const survey = await poll_in(store, ana!, group);
+		const text = await said(store, ana!, group, 'Hola');
+		for (const message of [survey, text]) expect((await remove(store, beto!, message._id, 'me')).status).toBe(200);
+		const [beto_sid, carla_sid] = await Promise.all([beto!, carla!].map((user) => socket_of(String(user._id))));
+		const about = async (sid: string, user: ImperiumDoc) => {
+			emit_to_users([String(user._id)], 'update', { action: 'chat_delta', data: [{ op: 'sentinel' }] });
+			return updates(await poll(sid))
+				.filter((update) => update.action === 'chat_delta')
+				.flatMap((update) => update.data)
+				.filter((delta) => [survey._id, text._id].includes(delta.message_id))
+				.map((delta) => delta.op);
+		};
+		await Promise.all([about(beto_sid, beto!), about(carla_sid, carla!)]);
+		await vote(store, carla!, survey._id, ['o2']);
+		await react(store, carla!, text._id, { emoji: '👍' });
+		await edit(store, ana!, text._id, { text: 'Hola a todos' });
+		expect(await about(beto_sid, beto!)).toEqual([]);
+		expect(await about(carla_sid, carla!)).toEqual(['message_updated', 'reaction', 'message_updated']);
+	});
+
+	test('lo que caduca solo se anuncia a quien veía esos mensajes', async () => {
+		const store = chat_store();
+		const [ana, eva, dora] = ['Ana', 'Eva', 'Dora'].map((name) => add_user(store, name)) as ImperiumDoc[];
+		const group = add_group(store, [[ana!, 'member'], [eva!, 'member', { visibleFromSeq: 2 }], [dora!, 'member', { visibleFromSeq: 5 }]]);
+		const id = String(group._id);
+		const sids = await Promise.all([ana!, eva!, dora!].map((user) => socket_of(String(user._id))));
+		const at = new Date().toISOString();
+		await publish_expired(store as unknown as ImperiumStore, {
+			purged: [{ id: 'caducado', conversation_id: id, seq: 2 }],
+			quoting: [{ id: 'cita', conversation_id: id, seq: 3, rev: 1, reply_preview: { messageId: 'caducado', deleted: true }, updated_at: at }],
+			last_messages: [{ conversation_id: id, last_message: { messageId: 'cita', seq: 3, senderName: 'Ana', textPreview: 'ok', at } }],
+			files: [],
+		});
+		const ops = async (user: ImperiumDoc, sid: string) => {
+			emit_to_users([String(user._id)], 'update', { action: 'chat_delta', data: [{ op: 'sentinel' }] });
+			return updates(await poll(sid))
+				.filter((update) => update.action === 'chat_delta')
+				.flatMap((update) => update.data)
+				.filter((delta) => delta.conversation_id === id)
+				.map((delta) => delta.op);
+		};
+		expect(await ops(ana!, sids[0]!)).toEqual(['removed', 'message_updated', 'conversation']);
+		expect(await ops(eva!, sids[1]!)).toEqual(['message_updated', 'conversation']);
+		expect(await ops(dora!, sids[2]!)).toEqual([]);
 	});
 
 	test('un grupo no emite messages_refresh', async () => {
@@ -3952,7 +4227,7 @@ describe('notas de voz, ver una vez y temporales', () => {
 		const again = await open(beto);
 		expect([again.status, again.body.code]).toEqual([410, 'view_once_opened']);
 		expect((await open(ana)).status).toBe(200);
-		expect(stored(store, message_id).viewOnce).toEqual({ openedByUserIds: [beto._id] });
+		expect(stored(store, message_id).viewOnce).toEqual({ openedByUserIds: [beto._id], openedAt: { [String(beto._id)]: expect.any(String) } });
 		const plain = await said(store, ana, group, 'Hola');
 		const not_once = await open(beto, String(plain._id));
 		expect([not_once.status, not_once.body.code]).toEqual([409, 'not_view_once']);

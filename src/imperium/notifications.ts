@@ -978,7 +978,7 @@ export async function mark_mentions_read(ctx: NotificationCtx) {
 
 export type ChatActivityInput = {
 	user_id: string;
-	context_type: 'chat-message' | 'chat-reply' | 'chat-reaction';
+	context_type: 'chat-message' | 'chat-reply' | 'chat-reaction' | 'chat-missed-call';
 	conversation_id: string;
 	/** El título del grupo al momento: es lo que ve quien después ya no es miembro. */
 	conversation_title?: string;

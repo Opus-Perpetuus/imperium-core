@@ -14,6 +14,7 @@ import {
 import type { ImperiumStore, SubjectInfo } from './store.ts';
 import { plan_escritorio_menu } from './escritorio-menu-seed.ts';
 import { plan_portal_menus } from './portal-menu-seed.ts';
+import { plan_reuniones_menu } from './reuniones-menu-seed.ts';
 import { ensure_installed_subject_menus } from './subject-menu-seed.ts';
 
 function backend_src_root(): string {
@@ -94,6 +95,16 @@ async function ensure_escritorio_menu(store: ImperiumStore): Promise<void> {
 	if (plan.insert) await store.insert('menu-management', plan.row);
 }
 
+async function ensure_reuniones_menu(store: ImperiumStore): Promise<void> {
+	if (!store.has('menu-management')) return;
+	const menus = await collect_scan(store, 'menu-management', {
+		include_inactive: true,
+		fields: ['_id', '_ref'],
+	});
+	const plan = plan_reuniones_menu(menus);
+	if (plan.insert) await store.insert('menu-management', plan.row);
+}
+
 export async function apply_missing_configuration_seeds(
 	store: ImperiumStore,
 ): Promise<{ created: string[]; patched: string[]; message: string }> {
@@ -130,6 +141,7 @@ export async function apply_missing_configuration_seeds(
 	}
 	await ensure_portal_landing_menu(store);
 	await ensure_escritorio_menu(store);
+	await ensure_reuniones_menu(store);
 	await ensure_installed_subject_menus(
 		store,
 		installed_subjects_from_markers(store, modules),

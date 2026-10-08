@@ -6,6 +6,8 @@
  * - por **email** (identidad del intento): desbloqueable por admin
  * - por **IP**: protección NAT / multi-cuenta; no se resetea con el email
  */
+import { take_token } from './rate-bucket.ts';
+
 const LOGIN_BLOCKED =
 	'Demasiados intentos de inicio de sesión. Intenta más tarde o contacta a un administrador.';
 const RESET_BLOCKED =
@@ -237,4 +239,20 @@ export async function reset_auth_rate_limits_for_email(
 		deleted += Array.isArray(rows) ? rows.length : 0;
 	}
 	return deleted;
+}
+
+/**
+ * Cubos por IP de las rutas públicas de reuniones (contrato §10): en memoria, como el resto del
+ * tiempo real. El resumen por código frena que se adivinen códigos; el alta de invitado, que se
+ * fabriquen invitados.
+ */
+const MEETING_CODE_IP = { capacity: 30, refill_per_s: 30 / 60 };
+const MEETING_GUEST_IP = { capacity: 10, refill_per_s: 10 / 600 };
+
+export function take_meeting_code_ip(req: Request): { ok: true } | { ok: false; retry_after_s: number } {
+	return take_token(`mc:code-ip:${request_ip(req)}`, MEETING_CODE_IP);
+}
+
+export function take_meeting_guest_ip(req: Request): { ok: true } | { ok: false; retry_after_s: number } {
+	return take_token(`mg:guest-ip:${request_ip(req)}`, MEETING_GUEST_IP);
 }

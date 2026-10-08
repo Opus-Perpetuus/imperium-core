@@ -153,6 +153,45 @@ import {
 	reply_to_story,
 	view_story,
 } from './stories-flow.ts';
+import {
+	accept_call,
+	cancel_call,
+	create_call,
+	decline_call,
+	end_call,
+	ice_servers as call_ice_servers,
+	join_call,
+	leave_call,
+	read_active_calls,
+	read_my_calls,
+	read_settings as read_call_settings,
+	sfu_token as call_sfu_token,
+	sfu_webhook as call_sfu_webhook,
+} from './calls-flow.ts';
+import {
+	attendance_csv,
+	cancel_meeting,
+	create_meeting,
+	create_question,
+	finish_recording,
+	guest_chat_message,
+	guest_join,
+	guest_read_chat,
+	guest_ticket,
+	join_meeting,
+	meeting_ics,
+	moderate_question,
+	public_summary,
+	read_attendance,
+	read_meeting,
+	read_my_meetings,
+	read_questions,
+	recording_chunk,
+	start_recording,
+	transcript_vtt,
+	update_meeting,
+	vote_question,
+} from './meetings-flow.ts';
 import { rate_limited_response, take_token } from './rate-bucket.ts';
 import { sign_realtime_token, SOCKET_TICKET_TTL_S } from './realtime-tokens.ts';
 import { SubjectNotInstalledError } from './subjects-admin.ts';
@@ -461,6 +500,76 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return read_story_viewers(ctx);
 		case 'chat-stories:reply_to_story':
 			return reply_to_story(ctx);
+		case 'chat-calls:read_settings':
+			return read_call_settings(ctx);
+		case 'chat-calls:ice_servers':
+			return call_ice_servers(ctx);
+		case 'chat-calls:read_active_calls':
+			return read_active_calls(ctx);
+		case 'chat-calls:read_my_calls':
+			return read_my_calls(ctx);
+		case 'chat-calls:create_call':
+			return create_call(ctx);
+		case 'chat-calls:accept_call':
+			return accept_call(ctx);
+		case 'chat-calls:decline_call':
+			return decline_call(ctx);
+		case 'chat-calls:cancel_call':
+			return cancel_call(ctx);
+		case 'chat-calls:join_call':
+			return join_call(ctx);
+		case 'chat-calls:leave_call':
+			return leave_call(ctx);
+		case 'chat-calls:end_call':
+			return end_call(ctx);
+		case 'chat-calls:sfu_token':
+			return call_sfu_token(ctx);
+		case 'chat-calls:sfu_webhook':
+			return call_sfu_webhook(ctx);
+		case 'chat-meetings:read_my_meetings':
+			return read_my_meetings(ctx);
+		case 'chat-meetings:create_meeting':
+			return create_meeting(ctx);
+		case 'chat-meetings:read_meeting':
+			return read_meeting(ctx);
+		case 'chat-meetings:update_meeting':
+			return update_meeting(ctx);
+		case 'chat-meetings:cancel_meeting':
+			return cancel_meeting(ctx);
+		case 'chat-meetings:meeting_ics':
+			return meeting_ics(ctx);
+		case 'chat-meetings:public_summary':
+			return public_summary(ctx);
+		case 'chat-meetings:guest_join':
+			return guest_join(ctx);
+		case 'chat-meetings:join_meeting':
+			return join_meeting(ctx);
+		case 'chat-meetings:guest_ticket':
+			return guest_ticket(ctx);
+		case 'chat-meetings:guest_read_chat':
+			return guest_read_chat(ctx);
+		case 'chat-meetings:guest_chat_message':
+			return guest_chat_message(ctx);
+		case 'chat-meetings:read_questions':
+			return read_questions(ctx);
+		case 'chat-meetings:create_question':
+			return create_question(ctx);
+		case 'chat-meetings:vote_question':
+			return vote_question(ctx);
+		case 'chat-meetings:moderate_question':
+			return moderate_question(ctx);
+		case 'chat-meetings:transcript_vtt':
+			return transcript_vtt(ctx);
+		case 'chat-meetings:start_recording':
+			return start_recording(ctx);
+		case 'chat-meetings:recording_chunk':
+			return recording_chunk(ctx);
+		case 'chat-meetings:finish_recording':
+			return finish_recording(ctx);
+		case 'chat-meetings:read_attendance':
+			return read_attendance(ctx);
+		case 'chat-meetings:attendance_csv':
+			return attendance_csv(ctx);
 		case 'auto-increment-control:increment':
 			return increment_counter(ctx);
 		case 'auto-increment-control:preview':

@@ -1062,4 +1062,32 @@ describe('front-used Imperium contract via shipped create_imperium_layer', () =>
 		expect(Array.isArray(users.json?.data)).toBe(true);
 		expect(Number(users.json?.total_elementos ?? 0)).toBeGreaterThan(0);
 	});
+
+	test('el webhook del SFU llega sin sesión a su handler: 404 sin SFU, 401 con una firma que no vale', async () => {
+		const keys = ['IMPERIUM_SFU_URL', 'IMPERIUM_SFU_API_KEY', 'IMPERIUM_SFU_API_SECRET'] as const;
+		const saved = keys.map((key) => process.env[key]);
+		const webhook = async () => {
+			const res = await layer.handle(
+				new Request('http://imperium.test/api/chat-calls/sfu-webhook', {
+					method: 'POST',
+					headers: { authorization: 'no.es.firma', 'content-type': 'application/webhook+json' },
+					body: JSON.stringify({ event: 'participant_joined' }),
+				}),
+			);
+			return { status: res?.status, json: (await res?.json()) as Record<string, unknown> };
+		};
+		try {
+			for (const key of keys) delete process.env[key];
+			expect((await webhook()).status).toBe(404);
+			Object.assign(process.env, {
+				IMPERIUM_SFU_URL: 'wss://sfu.empresa.test',
+				IMPERIUM_SFU_API_KEY: 'clave',
+				IMPERIUM_SFU_API_SECRET: 'secreto',
+			});
+			const forged = await webhook();
+			expect([forged.status, forged.json.code]).toEqual([401, 'invalid_signature']);
+		} finally {
+			keys.forEach((key, i) => (saved[i] === undefined ? delete process.env[key] : (process.env[key] = saved[i])));
+		}
+	});
 });

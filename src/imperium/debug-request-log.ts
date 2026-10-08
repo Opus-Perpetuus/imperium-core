@@ -345,10 +345,12 @@ export function should_read_response_body(content_type: string | null): boolean 
 
 /**
  * Rutas calientes del chat; la búsqueda dejaría sus términos en la bitácora y el
- * hilo heredado (`conversation/:participantId`), con quién habla cada quien.
+ * hilo heredado (`conversation/:participantId`), con quién habla cada quien. El
+ * código de una reunión basta para entrar como invitado, y las descargas de
+ * asistencia y transcripción dirían a todos quién baja qué.
  */
 const CHAT_QUIET_PATH =
-	/^\/(messages\/(search|socket-ticket|media-tokens|history\/[^/]+|sync\/[^/]+|conversation\/[^/]+)|chat-conversations\/(mine|[^/]+\/read)|chat-calls\/ice-servers)\/?$/;
+	/^\/(messages\/(search|socket-ticket|media-tokens|history\/[^/]+|sync\/[^/]+|conversation\/[^/]+)|chat-conversations\/(mine|[^/]+\/read)|chat-calls\/ice-servers|chat-meetings\/(code\/[^/]+(\/(guest|join))?|[^/]+\/(attendance\.csv|transcript\.vtt)))\/?$/;
 
 export function is_noisy_path(pathname: string): boolean {
 	const raw = pathname.split('?')[0] ?? pathname;

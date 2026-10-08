@@ -889,6 +889,24 @@ const PUBLIC_EXTRA_ACTIONS = new Set([
 	// lleva cookie, así que esta tiene que seguir abierta. Lee un adjunto por
 	// id y nada más.
 	'reports:get_image_base64',
+	// Llamadas y reuniones (contrato §0.4): el handler exige `meeting_principal`, que solo acepta
+	// una sesión interna o la cookie de invitado firmada para esa reunión.
+	'chat-calls:ice_servers',
+	'chat-calls:leave_call',
+	'chat-calls:sfu_token',
+	// Aviso del servidor de medios; el handler exige su firma (JWT con IMPERIUM_SFU_API_SECRET).
+	'chat-calls:sfu_webhook',
+	'chat-meetings:join_meeting',
+	'chat-meetings:guest_ticket',
+	'chat-meetings:guest_read_chat',
+	'chat-meetings:guest_chat_message',
+	'chat-meetings:read_questions',
+	'chat-meetings:create_question',
+	'chat-meetings:vote_question',
+	// Sin principal: lo mínimo de la pantalla previa, con tope por IP.
+	'chat-meetings:public_summary',
+	// Crea al principal invitado (su cookie firmada); exige invitados encendidos, tope por IP.
+	'chat-meetings:guest_join',
 ]);
 
 /** Extras del original que solo exigen sesión (el handler acota al usuario). */
@@ -965,6 +983,28 @@ const SESSION_SCOPED_EXTRAS = new Set([
 	'chat-stories:view_story',
 	'chat-stories:read_story_viewers',
 	'chat-stories:reply_to_story',
+	'chat-calls:read_settings',
+	'chat-calls:read_active_calls',
+	'chat-calls:read_my_calls',
+	'chat-calls:create_call',
+	'chat-calls:accept_call',
+	'chat-calls:decline_call',
+	'chat-calls:cancel_call',
+	'chat-calls:join_call',
+	'chat-calls:end_call',
+	'chat-meetings:read_my_meetings',
+	'chat-meetings:create_meeting',
+	'chat-meetings:read_meeting',
+	'chat-meetings:update_meeting',
+	'chat-meetings:cancel_meeting',
+	'chat-meetings:meeting_ics',
+	'chat-meetings:moderate_question',
+	'chat-meetings:transcript_vtt',
+	'chat-meetings:start_recording',
+	'chat-meetings:recording_chunk',
+	'chat-meetings:finish_recording',
+	'chat-meetings:read_attendance',
+	'chat-meetings:attendance_csv',
 	'interactive-manual:board',
 	'view-config-preset:available',
 	'view-config-preset:baseline',

@@ -53,6 +53,21 @@ describe('is_noisy_path', () => {
 		}
 	});
 
+	test('el código de la reunión y las descargas de la reunión no van a la bitácora', () => {
+		for (const path of [
+			'/api/chat-meetings/code/abc-defg-hjk',
+			'/api/chat-meetings/code/abc-defg-hjk/guest',
+			'/api/chat-meetings/code/abc-defg-hjk/join',
+			'/api/chat-meetings/m1/attendance.csv?call_id=c1',
+			'/api/chat-meetings/m1/transcript.vtt?call_id=c1',
+		]) {
+			expect(is_noisy_path(path)).toBe(true);
+		}
+		for (const path of ['/api/chat-meetings/mine', '/api/chat-meetings/m1/attendance', '/api/chat-meetings/m1', '/api/chat-meetings/guest/ticket']) {
+			expect(is_noisy_path(path)).toBe(false);
+		}
+	});
+
 	test('un adjunto pedido con token de medios no deja el token en la bitácora', () => {
 		expect(is_noisy_path('/api/media/abc?mt=v1.x.y')).toBe(true);
 		expect(is_noisy_path('/api/media/abc?v=2&mt=v1.x.y')).toBe(true);

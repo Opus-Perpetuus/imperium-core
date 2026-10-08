@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
 import { is_public_extra_action } from './auth.ts';
 import extra_routes from './extra-routes.json';
 
@@ -64,7 +65,55 @@ describe('extras públicos', () => {
 			'messages:receive_interinstance_message',
 			'reports:get_image_base64',
 			'tickets:receive_support_comment',
+			'chat-calls:ice_servers',
+			'chat-calls:leave_call',
+			'chat-calls:sfu_token',
+			'chat-calls:sfu_webhook',
+			'chat-meetings:public_summary',
+			'chat-meetings:guest_join',
+			'chat-meetings:join_meeting',
+			'chat-meetings:guest_ticket',
+			'chat-meetings:guest_read_chat',
+			'chat-meetings:guest_chat_message',
+			'chat-meetings:read_questions',
+			'chat-meetings:create_question',
+			'chat-meetings:vote_question',
 		];
 		for (const clave of publicas) expect(declaradas.has(clave)).toBe(true);
+	});
+
+	test('las rutas públicas de llamadas y reuniones exigen al principal de la reunión en su handler', () => {
+		const actions = readFileSync(new URL('./actions.ts', import.meta.url), 'utf8');
+		// El resumen por código y el alta del invitado crean al principal: no lo pueden exigir. El
+		// webhook del SFU no tiene principal: exige la firma del servidor de medios.
+		const sin_exigir_principal = new Set(['chat-meetings:public_summary', 'chat-meetings:guest_join', 'chat-calls:sfu_webhook']);
+		const publicas = EXTRAS.filter(
+			(e) =>
+				(e.resource === 'chat-calls' || e.resource === 'chat-meetings') &&
+				is_public_extra_action(e.resource, e.action) &&
+				!sin_exigir_principal.has(`${e.resource}:${e.action}`),
+		);
+		expect(publicas.length).toBeGreaterThan(0);
+		for (const { resource, action } of publicas) {
+			const file = resource === 'chat-calls' ? 'calls-flow.ts' : 'meetings-flow.ts';
+			const flows = readFileSync(new URL(`./${file}`, import.meta.url), 'utf8');
+			const aliases = new Map<string, string>();
+			for (const [, list] of actions.matchAll(new RegExp(`import \\{([^}]*)\\} from '\\./${file.replace('.', '\\.')}';`, 'g'))) {
+				for (const item of list!.split(',').map((part) => part.trim()).filter(Boolean)) {
+					const [original, alias] = item.split(/\s+as\s+/) as [string, string | undefined];
+					aliases.set(alias ?? original, original);
+				}
+			}
+			const handler = actions.match(new RegExp(`case '${resource}:${action}':\\s*return (\\w+)\\(ctx\\);`))?.[1];
+			const name = aliases.get(handler ?? '') ?? '';
+			const start = flows.indexOf(`export async function ${name}(`);
+			const end = flows.indexOf('\nexport ', start + 1);
+			const body = flows.slice(start, end < 0 ? undefined : end);
+			expect({ action, has_handler: start > -1, principal: body.includes('meeting_principal(') }).toEqual({
+				action,
+				has_handler: true,
+				principal: true,
+			});
+		}
 	});
 });

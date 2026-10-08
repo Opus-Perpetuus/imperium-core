@@ -769,6 +769,15 @@ export function emit_to_users(user_ids: Iterable<string>, event: string, data: u
 	}
 }
 
+/** Las sesiones de un invitado, adjuntas o no a una sala (quien espera aún no lo está). */
+export function emit_to_guest(guest_id: string, event: string, data: unknown): void {
+	const packet = packet_event(event, data);
+	const ephemeral = is_ephemeral(event, data);
+	for (const session of sessions.values()) {
+		if (session.identity?.kind === 'guest' && session.identity.guest_id === guest_id) deliver(session, packet, ephemeral);
+	}
+}
+
 export function emit_to_session(session_id: string, event: string, data: unknown): void {
 	const session = sessions.get(session_id);
 	if (session) deliver(session, packet_event(event, data), is_ephemeral(event, data));

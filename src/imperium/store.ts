@@ -192,6 +192,7 @@ const UNIQUE_FIELDS: Record<string, string[]> = {
 	'mcp-user-token': ['token_hash'],
 	'epson-ticket-template': ['template_key'],
 	'chat-conversations': ['conversation_key', 'join_code'],
+	'chat-meetings': ['code'],
 };
 
 /** Unique solo entre activos (`partialFilterExpression: { is_active: { $ne: false } }`). */
@@ -214,6 +215,7 @@ const UNIQUE_COMPOSITES: Record<string, string[][]> = {
 	'chat-reactions': [['message_id', 'user_id', 'kind', 'value']],
 	'chat-saved': [['user_id', 'message_id']],
 	'chat-story-views': [['story_id', 'viewer_id']],
+	'chat-meeting-attendance': [['call_id', 'participant_key']],
 };
 
 /** Unique compuesto solo entre activos. */
@@ -360,10 +362,20 @@ const legacy_pending = (m = '') =>
 	`${m}conversation_id IS NULL AND ${m}is_active IS DISTINCT FROM false AND ${m}payload ->> 'sourceType' = 'chat' AND ${m}payload ->> 'conversationKey' <> ''`;
 /** Lo que aún puede vencer: el mismo filtro que el reclamo de `expire` y de `story`. */
 const DUE_PENDING = 'expires_at IS NOT NULL AND state IS NULL AND is_active IS DISTINCT FROM false';
+/** Una serie viva que aún tiene ocurrencias: el filtro de `meetings_due_to_advance` y de su índice. */
+const RECURRING_PENDING = [
+	"state IS DISTINCT FROM 'cancelled'",
+	'is_active IS DISTINCT FROM false',
+	"jsonb_typeof(payload -> 'recurrence') = 'object'",
+	"COALESCE(payload ->> 'recurrenceDone', 'false') <> 'true'",
+].join(' AND ');
 const CHAT_FILE_MODELS = `related_model IN (${[...CHAT_ATTACHMENT_MODELS].map((model) => `'${model}'`).join(', ')})`;
 
 /** Índices de las páginas del chat (contrato §1) que no son un único simple. */
-const CHAT_INDEXES: Record<string, Array<{ suffix: string; on: string; where?: string; unique?: true }>> = {
+const CHAT_INDEXES: Record<
+	string,
+	Array<{ suffix: string; on: string; where?: string; unique?: true; using?: 'gin' }>
+> = {
 	messages: [
 		{ suffix: 'conversation_updated', on: 'conversation_id, updated_at' },
 		{ suffix: 'expires', on: 'expires_at', where: 'expires_at IS NOT NULL' },
@@ -379,6 +391,10 @@ const CHAT_INDEXES: Record<string, Array<{ suffix: string; on: string; where?: s
 		},
 		// Los lotes del respaldo leen solo lo pendiente, ya en orden de llave; migrado, queda vacío.
 		{ suffix: 'backfill_pending', on: "(payload ->> 'conversationKey')", where: legacy_pending() },
+		// El contacto de historias (contact_sql) pregunta si el dueño escribió por un directo: sin
+		// esto se cruzan todos sus mensajes con todos los del directo. El remitente va primero para
+		// que las páginas de un hilo sigan tomando (conversation_id, seq).
+		{ suffix: 'sender_conversation', on: 'sender_user_id, conversation_id' },
 	],
 	'chat-conversations': [{ suffix: 'inbox', on: 'last_message_at DESC, id DESC' }],
 	'chat-members': [
@@ -393,6 +409,31 @@ const CHAT_INDEXES: Record<string, Array<{ suffix: string; on: string; where?: s
 		{ suffix: 'expire_due', on: 'expires_at, id', where: DUE_PENDING },
 		{ suffix: 'author_expires', on: 'author_id, expires_at' },
 	],
+	// El barrido y la resincronización solo recorren lo vivo.
+	'chat-calls': [
+		{ suffix: 'live', on: 'state', where: "state IN ('ringing', 'active')" },
+		// Dos personas que se llaman a la vez no abren dos llamadas en la misma conversación.
+		{
+			suffix: 'live_conversation',
+			on: 'conversation_id',
+			where: "state IN ('ringing', 'active') AND meeting_id IS NULL",
+			unique: true,
+		},
+		{ suffix: 'participants', on: "(payload -> 'participantIds') jsonb_path_ops", using: 'gin' },
+		{ suffix: 'conversation_started', on: 'conversation_id, started_at DESC' },
+		{ suffix: 'meeting', on: 'meeting_id' },
+		{ suffix: 'created', on: 'created_at DESC, id DESC' },
+	],
+	'chat-meetings': [
+		{ suffix: 'members', on: "(payload -> 'memberIds') jsonb_path_ops", using: 'gin' },
+		{ suffix: 'next_start', on: 'next_start_at' },
+		{ suffix: 'host', on: 'host_id' },
+		// La pasada de trabajos busca cada 30 s las series por avanzar; sin esto recorre todo el historial.
+		{ suffix: 'recurring_due', on: 'next_start_at, id', where: RECURRING_PENDING },
+	],
+	'chat-meeting-attendance': [{ suffix: 'meeting', on: 'meeting_id' }],
+	'chat-meeting-questions': [{ suffix: 'call_created', on: 'call_id, created_at' }],
+	'chat-meeting-transcripts': [{ suffix: 'call_seq', on: 'call_id, seq' }],
 	// La bandeja de Actividad de cada persona, del más nuevo al más viejo.
 	mentions: [
 		{ suffix: 'recipient_created', on: "(payload ->> 'mentionedUserId'), created_at DESC, id DESC" },
@@ -424,7 +465,8 @@ export function chat_index_sqls(input: {
 		const name = index_name(input.table_key, index.suffix);
 		const idx = qident(index.unique ? name : name.replace(/^uq_/, 'ix_'));
 		const where = index.where ? ` WHERE ${index.where}` : '';
-		return `CREATE ${index.unique ? 'UNIQUE ' : ''}INDEX IF NOT EXISTS ${idx} ON ${input.quoted_table} (${index.on})${where}`;
+		const using = index.using ? `USING ${index.using} ` : '';
+		return `CREATE ${index.unique ? 'UNIQUE ' : ''}INDEX IF NOT EXISTS ${idx} ON ${input.quoted_table} ${using}(${index.on})${where}`;
 	});
 }
 
@@ -884,13 +926,18 @@ export function chat_hide_message_sql(messages: string): string {
 }
 
 /**
- * Abrir un mensaje de ver una vez: agrega al lector y sube `rev`, una sola vez por persona. Sin
- * fila: ya lo abrió o el mensaje ya no está vivo. `$1` mensaje, `$2` lector, `$3` hora.
+ * Abrir un mensaje de ver una vez: agrega al lector y, si comparte acuses, su hora (quien lo envió
+ * la ve), y sube `rev`, una sola vez por persona. Sin fila: ya lo abrió o el mensaje ya no está
+ * vivo. `$1` mensaje, `$2` lector, `$3` hora, `$4` si se guarda la hora.
  */
 export function chat_open_view_once_sql(messages: string): string {
 	const opened = `COALESCE(payload #> '{viewOnce,openedByUserIds}', '[]'::jsonb)`;
+	const opened_at = `COALESCE(payload #> '{viewOnce,openedAt}', '{}'::jsonb)`;
 	return `UPDATE ${messages} m SET
-			payload = jsonb_set(m.payload, '{viewOnce,openedByUserIds}', ${opened} || to_jsonb($2::text)) || ${next_rev('m')},
+			payload = jsonb_set(
+				jsonb_set(m.payload, '{viewOnce,openedByUserIds}', ${opened} || to_jsonb($2::text)),
+				'{viewOnce,openedAt}', CASE WHEN $4::boolean THEN ${opened_at} || jsonb_build_object($2::text, $3::text) ELSE ${opened_at} END
+			) || ${next_rev('m')},
 			updated_at = $3
 		WHERE id = $1 AND is_active IS DISTINCT FROM false AND NOT (COALESCE(payload, '{}'::jsonb) ? 'deleted')
 			AND jsonb_typeof(payload -> 'viewOnce') = 'object' AND NOT (${opened} ? $2)
@@ -1116,6 +1163,8 @@ const UNREAD = 'GREATEST(COALESCE(c.last_seq, 0) - COALESCE(m.last_read_seq, 0),
 const ARCHIVED = `COALESCE(m.payload ->> 'archived', '') = 'true'`;
 const MARKED_UNREAD = `COALESCE(m.payload ->> 'markedUnread', '') = 'true'`;
 const ACTIVITY = 'COALESCE(c.last_message_at, c.created_at)';
+/** Un directo sin mensajes no sale en la bandeja: abrirlo no lo pone en la de la otra persona. */
+const NOT_EMPTY_DIRECT = `NOT (c.kind = 'direct' AND COALESCE(c.last_seq, 0) = 0)`;
 
 export type ChatInboxFilter = 'all' | 'unread' | 'mentions' | 'direct' | 'groups' | 'archived';
 
@@ -1171,6 +1220,8 @@ export function chat_inbox_sql(
 	}
 	if (query.conversation_ids) {
 		where.push(`m.conversation_id IN (SELECT jsonb_array_elements_text(${param(query.conversation_ids)}::jsonb))`);
+	} else {
+		where.push(NOT_EMPTY_DIRECT);
 	}
 	if (query.cursor) where.push(`(${ACTIVITY}, c.id) < (${param(query.cursor.at)}, ${param(query.cursor.id)})`);
 	const order = query.pinned
@@ -1209,7 +1260,7 @@ export function chat_inbox_counts_sql(tables: { conversations: string; members: 
 				(SELECT count(*) FROM ${MENTION_SEQS} WHERE (s #>> '{}')::numeric > COALESCE(m.last_read_seq, 0)) AS mentions
 			FROM ${tables.members} m JOIN ${tables.conversations} c ON c.id = m.conversation_id
 			WHERE m.user_id = $1 AND m.state = 'active' AND m.is_active IS DISTINCT FROM false
-				AND c.is_active IS DISTINCT FROM false
+				AND c.is_active IS DISTINCT FROM false AND ${NOT_EMPTY_DIRECT}
 		) t`;
 }
 
@@ -1582,6 +1633,17 @@ export function chat_bind_uploads_sql(attachments: string): string {
 }
 
 /**
+ * Devolver a pendiente una subida propia ligada a ese registro, como la dejó `create_chat_upload`:
+ * sin ligar, la limpieza de 24 h la da de baja. `$1` id, `$2` dueño, `$3` modelo, `$4` registro, `$5` hora.
+ */
+export function chat_release_upload_sql(attachments: string): string {
+	return `UPDATE ${attachments} SET related_model = 'Message', related_record_id = '', updated_at = $5
+		WHERE id = $1 AND created_by_id = $2 AND related_model = $3 AND related_record_id = $4
+			AND payload -> 'chatUpload' IS NOT NULL AND is_active IS DISTINCT FROM false
+		RETURNING id`;
+}
+
+/**
  * Un programado que sigue en el estado esperado: editarlo o cancelarlo mientras está pendiente, o
  * cerrarlo tras el envío. `$1` id, `$2` remitente (o nulo), `$3` estado esperado, `$4` estado nuevo
  * (o nulo), `$5` `send_at` nuevo (o nulo), `$6` lo que se mezcla al payload, `$7` hora.
@@ -1625,6 +1687,11 @@ function contact_sql(owner: string, viewer: string, tables: { conversations: str
 			WHERE d.kind = 'direct' AND d.is_active IS DISTINCT FROM false
 				AND d.conversation_key = CASE WHEN ${owner}::text COLLATE "C" < ${viewer}::text COLLATE "C"
 					THEN ${owner}::text || '::' || ${viewer}::text ELSE ${viewer}::text || '::' || ${owner}::text END)`;
+}
+
+/** De los dueños `$2` (arreglo JSON), quienes tienen al lector `$1` por contacto. */
+export function chat_contact_owners_sql(tables: { conversations: string; messages: string }): string {
+	return `SELECT o.id FROM jsonb_array_elements_text($2::jsonb) AS o(id) WHERE ${contact_sql('o.id', '$1', tables)}`;
 }
 
 /**
@@ -1984,6 +2051,201 @@ export function chat_member_page_sql(
 			LIMIT ${param(query.limit)}`,
 		params,
 	};
+}
+
+/**
+ * Escritura con compare-and-swap sobre `payload.v` (contrato §1.9): solo cambia la fila si nadie
+ * la escribió desde que se leyó, y sube `v`. `$1` id, `$2` el `v` leído, `$3` state (o null),
+ * `$4` lo que se mezcla en el payload, `$5` la hora y desde `$6`, las columnas físicas en orden.
+ */
+export function update_versioned_sql(table: string, columns: readonly string[]): string {
+	const sets = columns.map((column, i) => `${qident(column)} = $${6 + i}, `).join('');
+	return `UPDATE ${table} SET
+			state = COALESCE($3::text, state), ${sets}
+			payload = COALESCE(payload, '{}'::jsonb) || $4::jsonb || jsonb_build_object('v', $2::int + 1),
+			updated_at = $5
+		WHERE id = $1 AND COALESCE((payload ->> 'v')::int, 0) = $2::int AND is_active IS DISTINCT FROM false
+		RETURNING *`;
+}
+
+/**
+ * Pone o quita un texto de un arreglo del payload en una sentencia, sobre la versión vigente de la
+ * fila: dos votos a la vez no se pisan. `$1` id, `$2` campo, `$3` valor, `$4` true pone, false quita
+ * y null conmuta, `$5` la hora; con `count_field`, ese campo guarda el largo del arreglo.
+ */
+export function payload_set_toggle_sql(table: string, count_field: string | null): string {
+	const list = `COALESCE(payload -> $2::text, '[]'::jsonb)`;
+	const on = `COALESCE($4::boolean, NOT (${list} ? $3::text))`;
+	const next = `CASE WHEN ${on}
+			THEN (CASE WHEN ${list} ? $3::text THEN ${list} ELSE ${list} || to_jsonb($3::text) END)
+			ELSE ${list} - $3::text END`;
+	const count = count_field ? `, '${count_field.replace(/'/g, "''")}', jsonb_array_length(${next})` : '';
+	return `UPDATE ${table} SET
+			payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object($2::text, ${next}${count}),
+			updated_at = $5
+		WHERE id = $1 AND is_active IS DISTINCT FROM false
+		RETURNING *`;
+}
+
+/** Historial de llamadas de una persona, del más nuevo al más viejo, por el GIN de `participantIds`. */
+export function calls_page_for_user_sql(
+	calls: string,
+	query: { user_id: string; cursor?: { at: string; id: string }; limit: number },
+): { sql: string; params: unknown[] } {
+	const params: unknown[] = [query.user_id, query.limit];
+	const where = [`(payload -> 'participantIds') @> jsonb_build_array($1::text)`, 'is_active IS DISTINCT FROM false'];
+	if (query.cursor) {
+		params.push(query.cursor.at, query.cursor.id);
+		where.push('(created_at, id) < ($3, $4)');
+	}
+	return {
+		sql: `SELECT * FROM ${calls} WHERE ${where.join(' AND ')} ORDER BY created_at DESC, id DESC LIMIT $2`,
+		params,
+	};
+}
+
+export type MeetingScope = 'proximas' | 'salas' | 'pasadas';
+
+const NOT_PERSISTENT = `COALESCE(payload ->> 'persistent', 'false') <> 'true'`;
+
+/**
+ * Reuniones de un miembro por pestaña: las próximas por inicio ascendente; las salas
+ * persistentes y las pasadas, de la más nueva a la más vieja. `since` separa próximas de
+ * pasadas; el cursor es la llave de orden de la última fila y su id.
+ */
+export function meetings_page_for_member_sql(
+	meetings: string,
+	query: { user_id: string; scope: MeetingScope; since: string; cursor?: { at: string; id: string }; limit: number },
+): { sql: string; params: unknown[] } {
+	const params: unknown[] = [query.user_id, query.limit];
+	const param = (value: unknown) => {
+		params.push(value);
+		return `$${params.length}`;
+	};
+	const where = [`(payload -> 'memberIds') @> jsonb_build_array($1::text)`, 'is_active IS DISTINCT FROM false'];
+	let key: string;
+	let order: 'ASC' | 'DESC';
+	if (query.scope === 'proximas') {
+		// Una reunión en curso sigue en próximas aunque su inicio ya haya pasado.
+		where.push(NOT_PERSISTENT, `state IS DISTINCT FROM 'cancelled'`, `(state = 'live' OR next_start_at >= ${param(query.since)})`);
+		key = 'next_start_at';
+		order = 'ASC';
+	} else if (query.scope === 'salas') {
+		where.push(`payload ->> 'persistent' = 'true'`, `state IS DISTINCT FROM 'cancelled'`);
+		key = 'created_at';
+		order = 'DESC';
+	} else {
+		where.push(
+			NOT_PERSISTENT,
+			`state IS DISTINCT FROM 'live'`,
+			`(state = 'cancelled' OR next_start_at IS NULL OR next_start_at < ${param(query.since)})`,
+		);
+		key = 'COALESCE(next_start_at, created_at)';
+		order = 'DESC';
+	}
+	if (query.cursor) {
+		where.push(`(${key}, id) ${order === 'ASC' ? '>' : '<'} (${param(query.cursor.at)}, ${param(query.cursor.id)})`);
+	}
+	return {
+		sql: `SELECT *, ${key} AS page_key FROM ${meetings} WHERE ${where.join(' AND ')}
+			ORDER BY ${key} ${order}, id ${order} LIMIT $2`,
+		params,
+	};
+}
+
+/**
+ * Reclama el recordatorio de las reuniones que empiezan en (`$1`, `$2`] y no se avisaron para ese
+ * inicio. Sube `v`: una edición leída antes del reclamo no pisa `remindedFor`. `$3` tope, `$4` hora.
+ */
+export function meetings_claim_reminders_sql(meetings: string): string {
+	return `UPDATE ${meetings} SET
+			payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object(
+				'remindedFor', next_start_at, 'v', COALESCE((payload ->> 'v')::int, 0) + 1),
+			updated_at = $4
+		WHERE id IN (
+			SELECT id FROM ${meetings}
+			WHERE next_start_at > $1 AND next_start_at <= $2 AND state = 'scheduled'
+				AND payload ->> 'remindedFor' IS DISTINCT FROM next_start_at AND is_active IS DISTINCT FROM false
+			ORDER BY next_start_at, id
+			LIMIT $3
+			FOR UPDATE SKIP LOCKED
+		)
+		RETURNING *`;
+}
+
+/** Reuniones con recurrencia cuya ocurrencia vigente ya terminó a la hora `$1`; `$2` tope. */
+export function meetings_due_to_advance_sql(meetings: string): string {
+	return `SELECT * FROM ${meetings}
+		WHERE next_start_at < $1 AND ${RECURRING_PENDING}
+			AND next_start_at::timestamptz + make_interval(mins => COALESCE((payload ->> 'durationMin')::int, 60))
+				<= $1::timestamptz
+		ORDER BY next_start_at, id
+		LIMIT $2`;
+}
+
+/**
+ * Las preguntas de una llamada, de la más votada a la menos y, a igual voto, por llegada. `$1`
+ * llamada, `$2` los estados que se ven, `$3` quien ve además las suyas aunque no se vean, `$4` tope.
+ */
+export function meeting_questions_sql(questions: string): string {
+	return `SELECT * FROM ${questions}
+		WHERE call_id = $1 AND is_active IS DISTINCT FROM false
+			AND (state IN (SELECT jsonb_array_elements_text($2::jsonb)) OR (state = 'pending' AND payload ->> 'authorKey' = $3))
+		ORDER BY COALESCE((payload ->> 'votes')::int, 0) DESC, created_at, id
+		LIMIT $4`;
+}
+
+/**
+ * Marca leído el mensaje `$2` solo a quien ya iba al día (`last_read_seq = $2 − 1`): un mensaje
+ * del servidor que no le toca leer no le salta lo que tenía pendiente. `$3` a quiénes, `$4` quiénes
+ * comparten acuses, `$5` la hora.
+ */
+export function chat_catch_up_read_sql(tables: { conversations: string; members: string }): string {
+	return `UPDATE ${tables.members} m SET
+			last_read_seq = $2,
+			delivered_seq = GREATEST(COALESCE(m.delivered_seq, 0), $2),
+			public_read_seq = CASE WHEN m.user_id IN (SELECT jsonb_array_elements_text($4::jsonb))
+				THEN GREATEST(COALESCE(m.public_read_seq, 0), $2) ELSE m.public_read_seq END,
+			updated_at = $5
+		FROM ${tables.conversations} c
+		WHERE m.conversation_id = $1 AND c.id = m.conversation_id AND m.state = 'active'
+			AND m.user_id IN (SELECT jsonb_array_elements_text($3::jsonb))
+			AND COALESCE(m.last_read_seq, 0) = $2 - 1
+		RETURNING m.user_id, c.last_seq, jsonb_array_length(COALESCE(m.payload -> 'mentionSeqs', '[]'::jsonb)) AS mentions`;
+}
+
+/** La llamada viva de la conversación, o se quita si sigue siendo `$3` (una más nueva no se borra). */
+export function chat_set_active_call_sql(conversations: string): string {
+	return `UPDATE ${conversations} SET
+			payload = CASE WHEN $2::jsonb IS NULL THEN COALESCE(payload, '{}'::jsonb) - 'activeCall'
+				ELSE COALESCE(payload, '{}'::jsonb) || jsonb_build_object('activeCall', $2::jsonb) END,
+			updated_at = GREATEST(COALESCE(updated_at, ''), $4)
+		WHERE id = $1 AND ($2::jsonb IS NOT NULL OR payload #>> '{activeCall,callId}' = $3)
+		RETURNING id`;
+}
+
+/** Lo que la asistencia acumula entre escrituras; lo demás de `$6` (rol, nombre, resultado) reemplaza. */
+const ATTENDANCE_SUMS = ['totalS', 'waitedS', 'reconnections', 'hands', 'reactions', 'questions', 'cameraS'];
+
+/**
+ * Asistencia de una persona en una llamada: la primera salida crea la fila y las siguientes suman
+ * sus intervalos (los últimos 50), tiempos y contadores. `$6` trae lo de esta salida.
+ */
+export function call_attendance_upsert_sql(attendance: string): string {
+	const intervals = `COALESCE(a.payload -> 'intervals', '[]'::jsonb) || COALESCE($6::jsonb -> 'intervals', '[]'::jsonb)`;
+	const add = (field: string) =>
+		`'${field}', COALESCE((a.payload ->> '${field}')::numeric, 0) + COALESCE(($6::jsonb ->> '${field}')::numeric, 0)`;
+	const replaced = ['intervals', ...ATTENDANCE_SUMS].map((field) => `'${field}'`).join(', ');
+	return `INSERT INTO ${attendance} AS a (id, name, is_active, call_id, meeting_id, participant_key, payload, created_at, updated_at)
+		VALUES ($1, $2, true, $3, $4, $5, $6::jsonb, $7, $7)
+		ON CONFLICT (call_id, participant_key) DO UPDATE SET
+			payload = a.payload || ($6::jsonb - ARRAY[${replaced}]) || jsonb_build_object(
+				'intervals', (SELECT COALESCE(jsonb_agg(x ORDER BY n), '[]'::jsonb)
+					FROM jsonb_array_elements(${intervals}) WITH ORDINALITY AS t(x, n)
+					WHERE n > jsonb_array_length(${intervals}) - 50),
+				${ATTENDANCE_SUMS.map(add).join(',\n\t\t\t\t')}),
+			updated_at = $7
+		RETURNING *`;
 }
 
 export type ChatJoinResult =
@@ -2848,6 +3110,11 @@ const CHAT_ORPHANS = [
 	'chat-saved',
 	'chat-stories',
 	'chat-story-views',
+	'chat-calls',
+	'chat-meetings',
+	'chat-meeting-attendance',
+	'chat-meeting-questions',
+	'chat-meeting-transcripts',
 ];
 
 const physical_cols = (types: Record<string, 'text' | 'real'>): ExtraCol[] =>
@@ -2900,6 +3167,17 @@ const ORPHAN_COLUMNS: Record<string, ExtraCol[]> = {
 	'chat-saved': physical_cols({ user_id: 'text', message_id: 'text', remind_at: 'text' }),
 	'chat-stories': physical_cols({ author_id: 'text', expires_at: 'text' }),
 	'chat-story-views': physical_cols({ story_id: 'text', viewer_id: 'text', viewed_at: 'text' }),
+	'chat-calls': physical_cols({
+		conversation_id: 'text',
+		meeting_id: 'text',
+		kind: 'text',
+		started_at: 'text',
+		ended_at: 'text',
+	}),
+	'chat-meetings': physical_cols({ code: 'text', host_id: 'text', next_start_at: 'text' }),
+	'chat-meeting-attendance': physical_cols({ call_id: 'text', meeting_id: 'text', participant_key: 'text' }),
+	'chat-meeting-questions': physical_cols({ call_id: 'text', meeting_id: 'text' }),
+	'chat-meeting-transcripts': physical_cols({ call_id: 'text', meeting_id: 'text', seq: 'real' }),
 };
 
 export class ImperiumStore {
@@ -3815,8 +4093,8 @@ export class ImperiumStore {
 	}
 
 	/** `null`: esa persona ya lo abrió o el mensaje ya no está vivo. */
-	async chat_open_view_once(message_id: string, user_id: string, now: string): Promise<ImperiumDoc | null> {
-		const [row] = (await this.sql.unsafe(chat_open_view_once_sql(this.qt('messages')), [message_id, user_id, now])) as Array<
+	async chat_open_view_once(message_id: string, user_id: string, now: string, record_at = true): Promise<ImperiumDoc | null> {
+		const [row] = (await this.sql.unsafe(chat_open_view_once_sql(this.qt('messages')), [message_id, user_id, now, record_at])) as Array<
 			Record<string, unknown>
 		>;
 		return this.flatten(row ?? null, 'messages');
@@ -4121,6 +4399,18 @@ export class ImperiumStore {
 		return rows.length === ids.length;
 	}
 
+	/** `false` si no estaba ligada a ese registro o no es de ese dueño. */
+	async chat_release_upload(input: { id: string; owner_id: string; model: string; record_id: string; now: string }): Promise<boolean> {
+		const rows = await this.sql.unsafe(chat_release_upload_sql(this.qt('attachment-management')), [
+			input.id,
+			input.owner_id,
+			input.model,
+			input.record_id,
+			input.now,
+		]);
+		return rows.length > 0;
+	}
+
 	/** `null`: no existe, no es de ese remitente o ya no está en el estado esperado. */
 	async chat_update_scheduled(input: {
 		id: string;
@@ -4211,11 +4501,8 @@ export class ImperiumStore {
 	async chat_contact_owners(viewer_id: string, owner_ids: string[]): Promise<string[]> {
 		const owners = [...new Set(owner_ids)].filter((id) => id && id !== viewer_id);
 		if (!viewer_id || !owners.length) return [];
-		const rows = (await this.sql.unsafe(
-			`SELECT o.id FROM jsonb_array_elements_text($2::jsonb) AS o(id)
-			 WHERE ${contact_sql('o.id', '$1', { conversations: this.qt('chat-conversations'), messages: this.qt('messages') })}`,
-			[viewer_id, owners],
-		)) as Array<{ id: string }>;
+		const tables = { conversations: this.qt('chat-conversations'), messages: this.qt('messages') };
+		const rows = (await this.sql.unsafe(chat_contact_owners_sql(tables), [viewer_id, owners])) as Array<{ id: string }>;
 		return rows.map((row) => row.id);
 	}
 
@@ -4524,6 +4811,244 @@ export class ImperiumStore {
 							is_active: user_active !== false,
 						},
 		}));
+	}
+
+	/** `null`: alguien la escribió desde que se leyó (`v` cambió) o ya no está activa. */
+	async update_versioned(
+		resource: string,
+		id: string,
+		expected_v: number,
+		patch: { state?: string; columns?: Record<string, string | number | null>; payload: ImperiumDoc },
+		now: string,
+	): Promise<ImperiumDoc | null> {
+		const columns = Object.keys(patch.columns ?? {});
+		const known = this.column_names(resource);
+		const unknown = columns.filter((column) => !known.has(column));
+		if (unknown.length) throw new Error(`${resource} no tiene las columnas ${unknown.join(', ')}`);
+		const [row] = (await this.sql.unsafe(update_versioned_sql(this.qt(resource), columns), [
+			id,
+			expected_v,
+			patch.state ?? null,
+			patch.payload,
+			now,
+			...columns.map((column) => patch.columns![column]),
+		])) as Array<Record<string, unknown>>;
+		return this.flatten(row ?? null, resource);
+	}
+
+	/** `on`: si el valor quedó en el arreglo; `null` si la fila no existe o está inactiva. */
+	async payload_set_toggle(
+		resource: string,
+		id: string,
+		input: { field: string; value: string; on?: boolean; count_field?: string },
+		now: string,
+	): Promise<{ doc: ImperiumDoc; on: boolean } | null> {
+		const [row] = (await this.sql.unsafe(payload_set_toggle_sql(this.qt(resource), input.count_field ?? null), [
+			id,
+			input.field,
+			input.value,
+			input.on ?? null,
+			now,
+		])) as Array<Record<string, unknown>>;
+		const doc = this.flatten(row ?? null, resource);
+		if (!doc) return null;
+		return { doc, on: as_array(doc[input.field]).map(String).includes(input.value) };
+	}
+
+	async calls_page_for_user(query: {
+		user_id: string;
+		cursor?: { at: string; id: string };
+		limit: number;
+	}): Promise<ImperiumDoc[]> {
+		const { sql, params } = calls_page_for_user_sql(this.qt('chat-calls'), query);
+		const rows = (await this.sql.unsafe(sql, params)) as Array<Record<string, unknown>>;
+		return rows.map((row) => this.flatten(row, 'chat-calls')!);
+	}
+
+	/** Cada fila lleva `page_key`, la llave de orden con la que sigue el cursor. */
+	async meetings_page_for_member(query: {
+		user_id: string;
+		scope: MeetingScope;
+		since: string;
+		cursor?: { at: string; id: string };
+		limit: number;
+	}): Promise<ImperiumDoc[]> {
+		const { sql, params } = meetings_page_for_member_sql(this.qt('chat-meetings'), query);
+		const rows = (await this.sql.unsafe(sql, params)) as Array<Record<string, unknown>>;
+		return rows.map((row) => this.flatten(row, 'chat-meetings')!);
+	}
+
+	async meetings_claim_reminders(input: { now: string; until: string; limit: number }): Promise<ImperiumDoc[]> {
+		const rows = (await this.sql.unsafe(meetings_claim_reminders_sql(this.qt('chat-meetings')), [
+			input.now,
+			input.until,
+			input.limit,
+			input.now,
+		])) as Array<Record<string, unknown>>;
+		return rows.map((row) => this.flatten(row, 'chat-meetings')!);
+	}
+
+	async meetings_due_to_advance(input: { now: string; limit: number }): Promise<ImperiumDoc[]> {
+		const rows = (await this.sql.unsafe(meetings_due_to_advance_sql(this.qt('chat-meetings')), [
+			input.now,
+			input.limit,
+		])) as Array<Record<string, unknown>>;
+		return rows.map((row) => this.flatten(row, 'chat-meetings')!);
+	}
+
+	async meeting_questions(input: { call_id: string; states: string[]; author_key: string; limit: number }): Promise<ImperiumDoc[]> {
+		const rows = (await this.sql.unsafe(meeting_questions_sql(this.qt('chat-meeting-questions')), [
+			input.call_id,
+			input.states,
+			input.author_key,
+			input.limit,
+		])) as Array<Record<string, unknown>>;
+		return rows.map((row) => this.flatten(row, 'chat-meeting-questions')!);
+	}
+
+	/** La asistencia de una reunión (o de esas llamadas) en lotes por id (keyset). */
+	async meeting_attendance_page(input: { meeting_id: string; call_ids: string[] | null; after_id: string; limit: number }): Promise<ImperiumDoc[]> {
+		const rows = (await this.sql.unsafe(
+			`SELECT * FROM ${this.qt('chat-meeting-attendance')}
+			 WHERE meeting_id = $1 AND is_active IS DISTINCT FROM false AND id > $3
+			   AND ($2::jsonb IS NULL OR call_id IN (SELECT jsonb_array_elements_text($2::jsonb)))
+			 ORDER BY id LIMIT $4`,
+			[input.meeting_id, input.call_ids, input.after_id, input.limit],
+		)) as Array<Record<string, unknown>>;
+		return rows.map((row) => this.flatten(row, 'chat-meeting-attendance')!);
+	}
+
+	/** Las salas pequeñas que tuvo una llamada de reunión. */
+	async meeting_breakout_call_ids(input: { meeting_id: string; parent_call_id: string; limit: number }): Promise<string[]> {
+		const rows = (await this.sql.unsafe(
+			`SELECT id FROM ${this.qt('chat-calls')}
+			 WHERE meeting_id = $1 AND payload ->> 'parentCallId' = $2 AND is_active IS DISTINCT FROM false
+			 ORDER BY id LIMIT $3`,
+			[input.meeting_id, input.parent_call_id, input.limit],
+		)) as Array<{ id: string }>;
+		return rows.map((row) => String(row.id));
+	}
+
+	/** Bytes de las grabaciones guardadas (y no borradas) de una reunión, para su tope total. */
+	async meeting_recorded_bytes(input: { meeting_id: string; conversation_id: string }): Promise<number> {
+		const [row] = (await this.sql.unsafe(
+			`SELECT COALESCE(sum(CASE WHEN size_in_kb ~ '^[0-9.]+$' THEN size_in_kb::numeric END), 0) * 1024 AS bytes
+			 FROM ${this.qt('attachment-management')}
+			 WHERE payload #>> '{chatUpload,meetingId}' = $1 AND payload #>> '{chatUpload,conversationId}' = $2
+			   AND is_active IS DISTINCT FROM false`,
+			[input.meeting_id, input.conversation_id],
+		)) as Array<{ bytes: number | string }>;
+		return Math.round(Number(row?.bytes ?? 0));
+	}
+
+	/** El `seq` que sigue al último bloque guardado de esa llamada; 0 si no hay. */
+	async meeting_transcript_next_seq(call_id: string): Promise<number> {
+		const [row] = (await this.sql.unsafe(
+			`SELECT COALESCE(max(seq), -1) + 1 AS next FROM ${this.qt('chat-meeting-transcripts')} WHERE call_id = $1`,
+			[call_id],
+		)) as Array<{ next: number | string }>;
+		return Number(row?.next ?? 0);
+	}
+
+	/** La transcripción de una llamada por bloques, en orden de `seq` (keyset). */
+	async meeting_transcript_page(input: { call_id: string; after_seq: number; limit: number }): Promise<ImperiumDoc[]> {
+		const rows = (await this.sql.unsafe(
+			`SELECT * FROM ${this.qt('chat-meeting-transcripts')}
+			 WHERE call_id = $1 AND seq > $2 AND is_active IS DISTINCT FROM false
+			 ORDER BY seq LIMIT $3`,
+			[input.call_id, input.after_seq, input.limit],
+		)) as Array<Record<string, unknown>>;
+		return rows.map((row) => this.flatten(row, 'chat-meeting-transcripts')!);
+	}
+
+	async live_call_for_conversation(conversation_id: string): Promise<ImperiumDoc | null> {
+		const [row] = (await this.sql.unsafe(
+			`SELECT * FROM ${this.qt('chat-calls')}
+			 WHERE conversation_id = $1 AND state IN ('ringing', 'active') AND meeting_id IS NULL
+			   AND is_active IS DISTINCT FROM false
+			 LIMIT 1`,
+			[conversation_id],
+		)) as Array<Record<string, unknown>>;
+		return this.flatten(row ?? null, 'chat-calls');
+	}
+
+	/** Las llamadas vivas donde aparece alguna de esas personas; lo vivo es poco y tiene índice parcial. */
+	async live_calls_with(user_ids: string[]): Promise<ImperiumDoc[]> {
+		if (!user_ids.length) return [];
+		const rows = (await this.sql.unsafe(
+			`SELECT * FROM ${this.qt('chat-calls')}
+			 WHERE state IN ('ringing', 'active') AND is_active IS DISTINCT FROM false
+			   AND (payload -> 'participantIds') ?| ARRAY(SELECT jsonb_array_elements_text($1::jsonb))`,
+			[user_ids],
+		)) as Array<Record<string, unknown>>;
+		return rows.map((row) => this.flatten(row, 'chat-calls')!);
+	}
+
+	/** `false` si ya no estaba esa llamada (otra más nueva ocupa su lugar). */
+	async chat_set_active_call(input: {
+		conversation_id: string;
+		call_id: string;
+		value: ImperiumDoc | null;
+		now: string;
+	}): Promise<boolean> {
+		const rows = await this.sql.unsafe(chat_set_active_call_sql(this.qt('chat-conversations')), [
+			input.conversation_id,
+			input.value,
+			input.call_id,
+			input.now,
+		]);
+		return rows.length > 0;
+	}
+
+	/** A quién le quedó leído y lo que su bandeja necesita para ponerse al día. */
+	async chat_catch_up_read(input: {
+		conversation_id: string;
+		seq: number;
+		user_ids: string[];
+		sharing_ids: string[];
+		now: string;
+	}): Promise<Array<{ user_id: string; last_seq: number; mentions: number }>> {
+		if (!input.user_ids.length) return [];
+		const rows = (await this.sql.unsafe(
+			chat_catch_up_read_sql({ conversations: this.qt('chat-conversations'), members: this.qt('chat-members') }),
+			[input.conversation_id, input.seq, input.user_ids, input.sharing_ids, input.now],
+		)) as Array<Record<string, unknown>>;
+		return rows.map((row) => ({
+			user_id: String(row.user_id),
+			last_seq: Number(row.last_seq ?? 0),
+			mentions: Number(row.mentions ?? 0),
+		}));
+	}
+
+	async upsert_call_attendance(input: {
+		call_id: string;
+		meeting_id: string | null;
+		participant_key: string;
+		name: string;
+		payload: ImperiumDoc;
+		now: string;
+	}): Promise<ImperiumDoc> {
+		const [row] = (await this.sql.unsafe(call_attendance_upsert_sql(this.qt('chat-meeting-attendance')), [
+			crypto.randomUUID().replace(/-/g, '').slice(0, 24),
+			input.name,
+			input.call_id,
+			input.meeting_id,
+			input.participant_key,
+			input.payload,
+			input.now,
+		])) as Array<Record<string, unknown>>;
+		return this.flatten(row!, 'chat-meeting-attendance')!;
+	}
+
+	/** Las llamadas que suenan o siguen, por el índice parcial de lo vivo y en lotes por id. */
+	async live_calls(input: { after_id?: string; limit: number }): Promise<ImperiumDoc[]> {
+		const rows = (await this.sql.unsafe(
+			`SELECT * FROM ${this.qt('chat-calls')}
+			 WHERE state IN ('ringing', 'active') AND is_active IS DISTINCT FROM false AND id > $1
+			 ORDER BY id LIMIT $2`,
+			[input.after_id ?? '', input.limit],
+		)) as Array<Record<string, unknown>>;
+		return rows.map((row) => this.flatten(row, 'chat-calls')!);
 	}
 
 	async ensure_object_json_cells(): Promise<void> {

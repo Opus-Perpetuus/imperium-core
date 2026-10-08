@@ -3,7 +3,7 @@
  * El front manda multipart (`File` + `imperium-sic__data__`); sin esto el SQL
  * serializa el File a `{}` y GET /media no tiene bytes.
  */
-import { existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import sharp from 'sharp';
 import { CHAT_ATTACHMENT_MODELS, is_chat_attachment } from './chat-access.ts';
@@ -94,6 +94,54 @@ export function upload_file_path(folder: string, stored: string): string | null 
 	const root = resolve(folder);
 	const full = resolve(root, stored);
 	return dirname(full) === root ? full : null;
+}
+
+const RECORDING_PART = /^[a-f0-9]{24}\.part$/;
+
+/** Una grabación por fragmentos se arma en `<carpeta>/recordings/<rid>.part` hasta terminarla. */
+function recording_part_path(recording_id: string): string {
+	return join(writable_upload_folder(), 'recordings', `${recording_id}.part`);
+}
+
+export function start_recording_part(recording_id: string): void {
+	const path = recording_part_path(recording_id);
+	mkdirSync(dirname(path), { recursive: true });
+	writeFileSync(path, new Uint8Array());
+}
+
+export function append_recording_part(recording_id: string, bytes: Uint8Array): void {
+	appendFileSync(recording_part_path(recording_id), bytes);
+}
+
+/**
+ * La grabación terminada pasa a la carpeta de subidas como cualquier archivo (`name_stored`) sin
+ * cargarla en memoria: se renombra en el mismo disco.
+ */
+export function finish_recording_part(recording_id: string): { name_stored: string; bytes: number } {
+	const name_stored = crypto.randomUUID();
+	const target = join(writable_upload_folder(), name_stored);
+	renameSync(recording_part_path(recording_id), target);
+	return { name_stored, bytes: statSync(target).size };
+}
+
+export function discard_recording_part(recording_id: string): void {
+	const path = recording_part_path(recording_id);
+	if (existsSync(path)) unlinkSync(path);
+}
+
+/** Las partes que nadie terminó: más viejas que `before_ms` y fuera de `live`. */
+export function discard_stale_recording_parts(before_ms: number, live: Set<string>): number {
+	const folder = join(writable_upload_folder(), 'recordings');
+	if (!existsSync(folder)) return 0;
+	let removed = 0;
+	for (const name of readdirSync(folder)) {
+		if (!RECORDING_PART.test(name) || live.has(name.slice(0, -'.part'.length))) continue;
+		const path = join(folder, name);
+		if (statSync(path).mtimeMs >= before_ms) continue;
+		unlinkSync(path);
+		removed++;
+	}
+	return removed;
 }
 
 export function is_upload(value: unknown): value is Blob {
