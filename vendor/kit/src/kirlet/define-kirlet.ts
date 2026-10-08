@@ -59,6 +59,8 @@ export type KirletDefinitionInput = {
   public_files?: Array<{ resource: string; access?: KirletPublicAccess }>;
   /** Other kirlets that must be installed first (technical ids). */
   dependsOn?: string[];
+  /** Minimum product version this app needs (`X.Y.Z`); the core won't auto-apply it on an older core. */
+  requires?: { core?: string };
   /** Mobile widgets this kirlet contributes when installed. */
   widgets?: KirletManifestWidget[];
 };
@@ -348,6 +350,9 @@ export function define_kirlet(def: KirletDefinitionInput): KirletDefinition {
 
     if (def.dependsOn?.length) {
       raw.dependsOn = [...def.dependsOn];
+    }
+    if (def.requires?.core) {
+      raw.requires = { core: def.requires.core };
     }
     if (def.widgets?.length) {
       raw.widgets = def.widgets.map((w) => ({ ...w }));

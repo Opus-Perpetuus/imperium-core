@@ -357,6 +357,16 @@ export function validate_kirlet_manifest(input: unknown): KirletManifestValidati
     );
   }
 
+  let requires: { core: string } | undefined;
+  if (input["requires"] !== undefined && input["requires"] !== null) {
+    const core = (input["requires"] as { core?: unknown }).core;
+    if (typeof core === "string" && /^\d+\.\d+\.\d+$/.test(core.trim())) {
+      requires = { core: core.trim() };
+    } else {
+      issues.push({ path: "$.requires.core", message: "requires.core must be a version X.Y.Z" });
+    }
+  }
+
   let widgets: KirletManifestWidget[] | undefined;
   if (input["widgets"] !== undefined) {
     widgets = validate_widgets(input["widgets"], page_ids, slug, issues);
@@ -432,6 +442,7 @@ export function validate_kirlet_manifest(input: unknown): KirletManifestValidati
   }
   if (widgets?.length) manifest.widgets = widgets;
   if (depends_on?.length) manifest.dependsOn = depends_on;
+  if (requires) manifest.requires = requires;
 
   return { ok: true, manifest };
 }

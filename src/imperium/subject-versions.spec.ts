@@ -5,6 +5,9 @@ import {
 	is_newer_same_major,
 	manifest_fits_catalog,
 	NEEDS_CATALOG,
+	NEEDS_CORE,
+	core_satisfies,
+	required_core,
 	newest_same_major,
 	parse_version_holds,
 	soaked,
@@ -192,5 +195,33 @@ describe('¿cabe la versión nueva en el catálogo del servidor?', () => {
 			dependencies: [],
 			resources: ['store'],
 		});
+	});
+});
+
+describe('núcleo mínimo que pide una versión', () => {
+	const img = (tag: string) => `ghcr.io/opus-perpetuus/subject-tienda:${tag}`;
+
+	test('lee requires.core del manifiesto', () => {
+		expect(required_core({ requires: { core: '13.80.0' } })).toBe('13.80.0');
+		expect(required_core({ requires: { core: '>=13.80.0' } })).toBe('13.80.0');
+		expect(required_core({ compat: { kit: '^0.5.0' } })).toBeNull();
+		expect(required_core({ requires: { core: 'latest' } })).toBeNull();
+	});
+
+	test('el núcleo cumple si es igual o más nuevo, también entre majors', () => {
+		expect(core_satisfies('13.80.0', '13.80.0')).toBe(true);
+		expect(core_satisfies('13.80.0', '13.81.2')).toBe(true);
+		expect(core_satisfies('13.80.0', '14.0.0')).toBe(true);
+		expect(core_satisfies('13.80.0', '13.79.9')).toBe(false);
+		expect(core_satisfies('13.80.0', 'desconocida')).toBe(false);
+	});
+
+	test('una descubierta marcada needs_core no se aplica: sigue el pin', () => {
+		expect(
+			subject_update_target({
+				pin: img('0.2.0'),
+				discovered: { image: img('0.3.0'), created_at: null, note: NEEDS_CORE },
+			}),
+		).toMatchObject({ image: img('0.2.0'), source: 'catalog' });
 	});
 });

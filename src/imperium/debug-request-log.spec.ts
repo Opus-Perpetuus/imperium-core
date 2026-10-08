@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { remember_socket_ip } from './auth-rate-limit.ts';
 import {
+	bind_log_reader_resolver,
 	format_console_log,
 	is_noisy_path,
 	persist_app_log,
@@ -109,7 +110,10 @@ describe('request_result', () => {
 
 describe('bitácora en vivo (new_log)', () => {
 	const POLLING = 'http://imperium.test/api/socket.io/?EIO=4&transport=polling';
-	bind_socket_identity_resolver(async (session_id) => (session_id === 'sesion-bitacora' ? 'lector' : null));
+	bind_socket_identity_resolver(async (session_id) =>
+		session_id === 'sesion-bitacora' ? 'lector' : session_id === 'sesion-ventas' ? 'vendedor' : null,
+	);
+	bind_log_reader_resolver(async (_store, user_id) => user_id === 'lector');
 
 	/** Socket por polling ya conectado y unido a una sala pública que sirve de testigo. */
 	async function socket(headers: Record<string, string>, ip: string): Promise<string> {
@@ -126,9 +130,10 @@ describe('bitácora en vivo (new_log)', () => {
 		return ((await handle_socket_io(new Request(`${POLLING}&sid=${sid}`))) as Response).text();
 	}
 
-	test('solo la reciben las sesiones internas: un socket anónimo de otro origen no', async () => {
+	test('solo la reciben administradores: ni un socket anónimo ni un usuario interno cualquiera', async () => {
 		const anonymous = await socket({ origin: 'https://evil.example' }, '192.0.2.71');
 		const internal = await socket({ cookie: 'connect.sid=sesion-bitacora' }, '192.0.2.72');
+		const seller = await socket({ cookie: 'connect.sid=sesion-ventas' }, '192.0.2.73');
 		const store = {
 			has: (resource: string) => resource === 'debug-log',
 			insert: async (_resource: string, doc: ImperiumDoc) => ({ ...doc, _id: crypto.randomUUID() }),
@@ -144,6 +149,9 @@ describe('bitácora en vivo (new_log)', () => {
 		const seen = await poll(anonymous);
 		expect(seen).toContain('testigo');
 		expect(seen).not.toContain('new_log');
+		const seller_seen = await poll(seller);
+		expect(seller_seen).toContain('testigo');
+		expect(seller_seen).not.toContain('new_log');
 		const logs = await poll(internal);
 		expect(logs).toContain('/api/media/adjunto-del-chat');
 		expect(logs).toContain('se negó la sala');

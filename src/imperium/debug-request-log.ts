@@ -5,6 +5,7 @@
  */
 import type { ImperiumDoc } from './envelope.ts';
 import type { ImperiumStore } from './store.ts';
+import { build_access } from './auth.ts';
 import { emit_to_users, online_user_ids } from './socket-stub.ts';
 import { share_binding_of } from './share-binding.ts';
 
@@ -132,12 +133,41 @@ export function print_console_log(level: string, message: string): void {
 
 let bound_store: ImperiumStore | null = null;
 
+const ADMIN_CACHE_MS = 60_000;
+const admin_cache = new Map<string, { admin: boolean; at: number }>();
+
+async function is_admin_user(store: ImperiumStore, user_id: string): Promise<boolean> {
+	const hit = admin_cache.get(user_id);
+	if (hit && Date.now() - hit.at < ADMIN_CACHE_MS) return hit.admin;
+	let admin = false;
+	try {
+		const user = store.has('user') ? await store.find_id('user', user_id) : null;
+		admin = user ? (await build_access(store, user)).has_full_access : false;
+	} catch {
+		admin = false;
+	}
+	admin_cache.set(user_id, { admin, at: Date.now() });
+	return admin;
+}
+
 /**
- * La bitácora la lee cualquier sesión interna (`debug-log:read_logs` solo pide
- * sesión): en vivo va a los sockets con usuario, nunca a anónimos ni invitados.
+ * Cada petición lleva ruta, query, nombre, correo, IP y user-agent de quien la
+ * hizo: en vivo solo va a administradores, nunca a cualquier sesión abierta.
  */
-function emit_new_log(logged: ImperiumDoc): void {
-	emit_to_users(online_user_ids(), 'new_log', logged);
+let is_log_reader: (store: ImperiumStore, user_id: string) => Promise<boolean> = is_admin_user;
+
+export function bind_log_reader_resolver(
+	fn: (store: ImperiumStore, user_id: string) => Promise<boolean>,
+): void {
+	is_log_reader = fn;
+}
+
+async function emit_new_log(store: ImperiumStore, logged: ImperiumDoc): Promise<void> {
+	const readers: string[] = [];
+	for (const user_id of online_user_ids()) {
+		if (await is_log_reader(store, user_id).catch(() => false)) readers.push(user_id);
+	}
+	if (readers.length) emit_to_users(readers, 'new_log', logged);
 }
 
 export function bind_debug_store(store: ImperiumStore): void {
@@ -217,7 +247,7 @@ export async function persist_app_log(
 			},
 			search_field: [level, label, message].join(' ').toLowerCase(),
 		});
-		emit_new_log(logged);
+		await emit_new_log(store, logged);
 	} catch {
 		/* logging must never fail the request */
 	}
@@ -323,7 +353,7 @@ export async function persist_request_log(
 				.join(' ')
 				.toLowerCase(),
 		});
-		emit_new_log(logged);
+		await emit_new_log(store, logged);
 	} catch {
 		/* logging must never fail the request */
 	}

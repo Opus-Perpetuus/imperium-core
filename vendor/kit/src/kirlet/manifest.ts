@@ -120,6 +120,8 @@ export interface KirletManifest {
   public?: KirletManifestPublic;
   /** Other kirlets that must be installed first (technical ids). */
   dependsOn?: string[];
+  /** Minimum product (core) version, `X.Y.Z`. */
+  requires?: { core?: string };
   /**
    * Widgets this kirlet offers the mobile host (in-app + launcher).
    * Absent ⇒ no kirlet widgets (NOX defaults still apply).

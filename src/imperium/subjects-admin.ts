@@ -2,6 +2,7 @@
  * Instalar / desinstalar apps del catálogo: SQL is_enable, menús y permisos,
  * corte de acceso inmediato y ciclo Docker (imagen/contenedor) vía el operador.
  */
+import { CORE_VERSION } from './health.ts';
 import { pg_schema_name } from '@opus-perpetuus/imperium-core-kit';
 import {
 	background_job_progress,
@@ -30,6 +31,9 @@ import {
 	image_with_tag,
 	manifest_fits_catalog,
 	NEEDS_CATALOG,
+	NEEDS_CORE,
+	core_satisfies,
+	required_core,
 	read_update_policy,
 	subject_update_target,
 	update_wanted,
@@ -2183,6 +2187,14 @@ async function check_image_fits_catalog(
 			message: `No se pudo revisar la versión ${tag} de ${sub.name}: ${next.error}`,
 		};
 	}
+	const core_min = required_core(next.manifest);
+	if (core_min && !core_satisfies(core_min, CORE_VERSION)) {
+		return {
+			ok: false,
+			code: NEEDS_CORE,
+			message: `La versión ${tag} de ${sub.name} necesita el núcleo ${core_min} o más nuevo (este es ${CORE_VERSION}); sigue en la actual`,
+		};
+	}
 	let current = await fetch(`${subject_base_url(sub.technical_id)}/manifest`, {
 		signal: AbortSignal.timeout(10_000),
 	})
@@ -2256,8 +2268,8 @@ export async function run_subject_update(
 	) {
 		const fits = await check_image_fits_catalog(sub, target_image, running);
 		if (!fits.ok) {
-			if (fits.code === NEEDS_CATALOG) {
-				await mark_discovered_note(sql, technical_id, target_image, NEEDS_CATALOG);
+			if (fits.code === NEEDS_CATALOG || fits.code === NEEDS_CORE) {
+				await mark_discovered_note(sql, technical_id, target_image, fits.code);
 			}
 			// Una descubierta que no se pudo revisar no deja a la app sin el
 			// pin, si el pin es más nuevo (operador viejo, app reiniciándose).

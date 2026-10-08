@@ -451,3 +451,22 @@ describe("dependsOn", () => {
     expect(() => def(["subject-ventas"]).manifest()).toThrow(/dependsOn/);
   });
 });
+
+describe("requires.core", () => {
+  test("una versión X.Y.Z pasa al manifiesto", () => {
+    const result = validate_kirlet_manifest({ ...hr_manifest_0_3, requires: { core: "13.80.0" } });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.manifest.requires).toEqual({ core: "13.80.0" });
+  });
+
+  test("sin requires el manifiesto no trae la clave", () => {
+    const result = validate_kirlet_manifest({ ...hr_manifest_0_3 });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect("requires" in result.manifest).toBe(false);
+  });
+
+  test("una versión que no es X.Y.Z se rechaza", () => {
+    const result = validate_kirlet_manifest({ ...hr_manifest_0_3, requires: { core: "latest" } });
+    expect(result.ok).toBe(false);
+  });
+});

@@ -9,6 +9,22 @@ import type { ImperiumStore, SubjectInfo } from './store.ts';
 
 /** Nota de una versión descubierta que trae dependencias o recursos que el catálogo no conoce. */
 export const NEEDS_CATALOG = 'needs_catalog';
+/** Nota de una versión descubierta que pide un núcleo más nuevo que el que corre. */
+export const NEEDS_CORE = 'needs_core';
+
+/** Núcleo mínimo que declara el manifiesto (`requires.core`, admite `>=`); `null` si no declara uno válido. */
+export function required_core(manifest: Record<string, unknown> | null | undefined): string | null {
+	const requires = manifest?.requires as { core?: unknown } | undefined;
+	const raw = typeof requires?.core === 'string' ? requires.core.trim().replace(/^>=\s*/, '') : '';
+	return parse_semver(raw) ? raw : null;
+}
+
+/** ¿El núcleo `current` es igual o más nuevo que `required`? Una versión ilegible no cumple. */
+export function core_satisfies(required: string, current: string): boolean {
+	const need = parse_semver(required);
+	const have = parse_semver(current);
+	return Boolean(need && have && compare_semver(have, need) >= 0);
+}
 
 export const SUBJECT_VERSION_HOLD_REF = 'configuration-subject-version-hold';
 export const SUBJECT_AUTO_UPDATE_DISCOVERED_REF =
@@ -142,7 +158,7 @@ export type DiscoveredVersion = {
 
 /**
  * La imagen a la que debe ir una app. La descubierta gana al pin solo si es
- * más nueva en el mismo major, no está marcada como `needs_catalog` y
+ * más nueva en el mismo major, no está marcada como `needs_catalog` ni `needs_core` y
  * `accept_discovered` la acepta (la pasada automática exige su espera; la
  * pantalla y el botón la aceptan siempre).
  */
@@ -164,6 +180,7 @@ export function subject_update_target(input: {
 		pin &&
 		found?.image &&
 		found.note !== NEEDS_CATALOG &&
+		found.note !== NEEDS_CORE &&
 		image_parts(found.image)?.repo === image_parts(pin)?.repo &&
 		is_newer_same_major(image_parts(found.image)?.tag, image_parts(pin)?.tag) &&
 		(input.accept_discovered?.(found.created_at) ?? true)
