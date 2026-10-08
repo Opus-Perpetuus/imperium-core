@@ -14,7 +14,8 @@ import {
 	record_rule_lookup_keys,
 	record_rule_scope_from_access,
 } from './record-rules.ts';
-import { history_find_many_opts, history_page_limits } from './history.ts';
+import { history_find_many_opts, history_page_limits, run_with_history_context } from './history.ts';
+import { handle_crud } from './crud.ts';
 import { ATTACHMENT_SERVER_FIELDS } from './uploads.ts';
 
 const MODEL_ID = 'McpAgent';
@@ -815,11 +816,42 @@ async function create_record(
 ) {
 	const resource = resolve_resource(store, model_id);
 	require_perm(access, resource, 'create');
-	const created = await store.insert(resource, {
-		...writable(resource, values),
-		created_by: String(user._id),
-	});
+	const created = await crud_write(store, user, resource, 'POST', '', writable(resource, values));
 	return ok([created], 'Registro creado');
+}
+
+/**
+ * La misma ruta que `POST` / `PATCH /api/<recurso>`: folios, `prepare_*` y
+ * `after_*`, validación, record rules e historial con el usuario del token.
+ */
+export async function crud_write(
+	store: ImperiumStore,
+	user: ImperiumDoc,
+	resource: string,
+	method: 'POST' | 'PATCH',
+	id: string,
+	values: Record<string, unknown>,
+	handle: typeof handle_crud = handle_crud,
+): Promise<ImperiumDoc> {
+	const path = id ? `/${resource}/${encodeURIComponent(id)}` : `/${resource}`;
+	const url = new URL(`http://mcp-agent${path}`);
+	const req = new Request(url, {
+		method,
+		headers: { 'content-type': 'application/json', 'user-agent': 'mcp-agent' },
+		body: JSON.stringify(values),
+	});
+	const res = await run_with_history_context(
+		{ actor: user, method, path, user_agent: 'mcp-agent' },
+		() => handle(store, req, url, resource, id ? `/${id}` : '/', user),
+	);
+	if (!res) deny(404, 'not_found', 'Recurso no encontrado');
+	const body = as_object(await res.json().catch(() => ({})));
+	if (!res.ok) {
+		deny(res.status, 'crud_error', String(body.message ?? body.error ?? 'No se pudo guardar'));
+	}
+	const [doc] = Array.isArray(body.data) ? body.data : [];
+	if (!doc) deny(404, 'not_found', 'Registro no encontrado');
+	return as_object(doc);
 }
 
 async function update_record(
@@ -841,8 +873,7 @@ async function update_record(
 		'allow_update',
 	);
 	await assert_record_in_scope(store, resource, id, scope, 'PATCH');
-	const updated = await store.update(resource, id, writable(resource, values));
-	if (!updated) deny(404, 'not_found', 'Registro no encontrado');
+	const updated = await crud_write(store, user, resource, 'PATCH', id, writable(resource, values));
 	return ok([updated], 'Actualizado correctamente');
 }
 

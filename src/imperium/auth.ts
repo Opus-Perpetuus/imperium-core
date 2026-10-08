@@ -1309,7 +1309,13 @@ export async function assert_http_access(
 	actor: ImperiumDoc | null,
 	resource: string,
 	method: string,
-	opts: { action?: string; extra?: boolean; rest?: string; search?: string } = {},
+	opts: {
+		action?: string;
+		extra?: boolean;
+		rest?: string;
+		search?: string;
+		access?: Awaited<ReturnType<typeof build_access>>;
+	} = {},
 ): Promise<void> {
 	if (opts.extra && is_public_extra_action(resource, opts.action)) return;
 	if (reports_pdf_setting_public_read(resource, method, opts.rest)) return;
@@ -1330,7 +1336,7 @@ export async function assert_http_access(
 		new URLSearchParams(opts.search ?? '').get('reparar') === '1';
 	if (opts.extra && is_session_scoped_extra(resource, opts.action) && !repair) return;
 	if (!opts.extra && method === 'GET' && SESSION_READABLE_RESOURCES.has(resource)) return;
-	const access = await build_access(store, actor);
+	const access = opts.access ?? (await build_access(store, actor));
 	if (access.has_full_access) return;
 	const canonical = store.has(resource)
 		? store.loc(resource).resource

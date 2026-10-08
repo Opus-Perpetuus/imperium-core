@@ -12,6 +12,7 @@ import {
 } from '@opus-perpetuus/imperium-core-kit';
 import { handle_service_plane, service_plane_match } from './service-plane.ts';
 import { add_cors, create_imperium_layer } from './imperium/router.ts';
+import { CORE_VERSION, health_status, probe_database } from './imperium/health.ts';
 import {
 	current_user,
 	ensure_session_table,
@@ -625,12 +626,18 @@ const server = Bun.serve({
 			if (socket) return socket;
 
 			if (path === '/health' || path === '/api/health') {
+				const boot = imperium.boot_state();
+				const db_ok = await probe_database(sql);
+				const status = health_status(boot, db_ok);
 				// Con CORS: el navegador lo usa como sonda de conectividad desde
 				// el sitio publico, que corre en otro origen en desarrollo.
 				return add_cors(
 					req,
 					Response.json({
-						ok: true,
+						ok: status === 200,
+						boot,
+						db: db_ok,
+						version: CORE_VERSION,
 						unit: 'imperium-core',
 						subjects: catalog.subjects.length,
 						catalog_hash: CATALOG_HASH,
@@ -638,7 +645,7 @@ const server = Bun.serve({
 						// Solo el modo, nunca material secreto: dev-local elige
 						// con él si la app recibe el maestro o su derivado.
 						secret_mode: subject_secret_mode(),
-					}),
+					}, { status }),
 				)!;
 			}
 
@@ -979,6 +986,14 @@ const server = Bun.serve({
 			await record_share_scope(sql, shared.share.id, scope_entry_of(url));
 		}
 		log_api(req, path, res.status, started_ms, accepted_caller);
+		// Clientes fuera del navegador (MCP, TUI) comparan contra esto su compatibilidad.
+		if (res.status !== 101) {
+			try {
+				res.headers.set('X-Imperium-Version', CORE_VERSION);
+			} catch {
+				/* respuesta reenviada con cabeceras inmutables */
+			}
+		}
 		return res;
 	},
 });

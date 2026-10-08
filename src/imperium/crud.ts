@@ -1594,7 +1594,7 @@ function instance_type(
 	return out;
 }
 
-const USER_SECRET_KEYS = new Set([
+export const USER_SECRET_KEYS = new Set([
 	'password',
 	'reset_password_token_hash',
 	'reset_password_expires',
@@ -1603,7 +1603,7 @@ const USER_SECRET_KEYS = new Set([
 	'recovery_expires',
 ]);
 /** El original nunca selecciona `pin_hash` en list/detalle; solo en verify. */
-const ALWAYS_SECRET_KEYS = new Set(['pin_hash']);
+export const ALWAYS_SECRET_KEYS = new Set(['pin_hash']);
 const PASSWORD_MIN_LENGTH = 12;
 const PASSWORD_MAX_LENGTH = 1024;
 const PASSWORD_TOO_SHORT_MESSAGE = `La contraseña debe tener al menos ${PASSWORD_MIN_LENGTH} caracteres`;

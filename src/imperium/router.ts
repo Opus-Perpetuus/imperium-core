@@ -2,6 +2,7 @@
  * Enruta el contrato HTTP original de Imperium sobre SQL.
  */
 import extra from './extra-routes.json';
+import type { BootState } from './health.ts';
 import {
 	assert_http_access,
 	current_user,
@@ -17,6 +18,7 @@ import {
 	PUBLIC_LANDING_ENABLED_REF,
 } from '@opus-perpetuus/imperium-core-kit';
 import { handle_crud } from './crud.ts';
+import { meta_http_response } from './meta.ts';
 import { handle_action } from './actions.ts';
 import { handle_db_admin, is_db_admin_path } from './db-admin.ts';
 import { handle_mcp_agent, seed_mcp_access } from './mcp-agent.ts';
@@ -100,6 +102,7 @@ export function create_imperium_layer(sql: Bun.SQL) {
 	const store = new ImperiumStore(sql, load_catalog_path());
 	const portal_store = create_postgres_portal_store(sql);
 	let ready: Promise<void> | null = null;
+	let boot_state: BootState = 'idle';
 	const load_installed_subjects = async () => {
 		try {
 			store.set_installed_subjects(await installed_technical_ids(store, sql));
@@ -115,6 +118,7 @@ export function create_imperium_layer(sql: Bun.SQL) {
 	 */
 	const boot = () => {
 		ready ??= (async () => {
+			boot_state = 'running';
 			const started = Date.now();
 			// El logger no escribe hasta tener el store enlazado.
 			bind_debug_store(store);
@@ -156,8 +160,10 @@ export function create_imperium_layer(sql: Bun.SQL) {
 			debug_info(
 				`imperium-core: arranque listo en ${Date.now() - started} ms`,
 			);
+			boot_state = 'ready';
 		})().catch((err) => {
 			ready = null;
+			boot_state = 'failed';
 			throw err;
 		});
 		return ready;
@@ -168,6 +174,11 @@ export function create_imperium_layer(sql: Bun.SQL) {
 		// El gateway de apps lo necesita para vestir sus páginas públicas con la
 		// personalización que se haya publicado desde la GUI.
 		portal_store,
+		/** La sonda lo arranca si nadie lo ha pedido: si no, un núcleo sin tráfico nunca quedaría sano. */
+		boot_state(): BootState {
+			if (boot_state === 'idle' || boot_state === 'failed') void boot().catch(() => null);
+			return boot_state;
+		},
 		async handle(req: Request): Promise<Response | null> {
 			const started_ms = Date.now();
 			const url = new URL(req.url);
@@ -312,6 +323,21 @@ async function dispatch(
 			}
 			if (path === '/compartir' || path.startsWith('/compartir/')) {
 				return add_cors(req, await handle_share_api(store, sql, req, url, path));
+			}
+			// Antes del CRUD genérico: un recurso llamado «meta» no puede comerse esta ruta.
+			if (path === '/meta' || path === '/meta/') {
+				try {
+					const actor = await current_user(sql, req);
+					return add_cors(req, await meta_http_response(store, actor, req));
+				} catch (err) {
+					const humanized = humanize_caught_error(err);
+					const status = (err as { status?: number }).status ?? 400;
+					debug_error(humanized.message);
+					return add_cors(
+						req,
+						Response.json(fail(humanized.message, status).body, { status }),
+					);
+				}
 			}
 			const hit = split_resource(path, store);
 			if (!hit) return null;
@@ -734,6 +760,7 @@ function looks_imperium(path: string, store: ImperiumStore): boolean {
 	if (p === '/mcp-agent' || p.startsWith('/mcp-agent/')) return true;
 	if (p === '/subjects' || p.startsWith('/subjects/')) return true;
 	if (p === '/compartir' || p.startsWith('/compartir/')) return true;
+	if (p === '/meta' || p === '/meta/') return true;
 	if (portal_route_path(path)) return true;
 	return split_resource(p, store) != null;
 }

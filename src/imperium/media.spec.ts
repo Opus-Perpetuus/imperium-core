@@ -451,6 +451,8 @@ describe('archivo de un adjunto: solo nombres que pone el servidor', () => {
 			}),
 			find_id: async (resource: string) =>
 				resource === 'user' ? { _id: 'admin', _ref: 'user-menu-management-0' } : existing,
+			find_many: async () => ({ rows: [existing], total: 1 }),
+			populate_docs: async (_resource: string, docs: ImperiumDoc[]) => docs,
 			insert: async (_resource: string, doc: ImperiumDoc) => {
 				writes.push(doc);
 				return { ...doc, _id: 'b'.repeat(24) };
@@ -461,21 +463,23 @@ describe('archivo de un adjunto: solo nombres que pone el servidor', () => {
 			},
 		} as unknown as ImperiumStore;
 		const ajenos = { name_stored: AJENO, filename: AJENO, base64: 'eA==', data: 'eA==' };
-		for (const [method, path] of [
-			['POST', '/api/mcp-agent/v1/records/attachment-management'],
-			['PATCH', `/api/mcp-agent/v1/records/attachment-management/${id}`],
-		] as const) {
+		const send = (method: 'POST' | 'PATCH', path: string) => {
 			const url = new URL(`http://imperium.test${path}`);
 			const req = new Request(url, {
 				method,
 				headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
 				body: JSON.stringify({ values: { name: 'acta firmada', ...ajenos } }),
 			});
-			expect((await handle_mcp_agent(store, {} as Bun.SQL, req, url)).status).toBe(200);
-		}
-		expect(writes.length).toBe(2);
+			return handle_mcp_agent(store, {} as Bun.SQL, req, url);
+		};
+		// El MCP pasa por el CRUD: un adjunto sin archivo subido no nace.
+		const created = await send('POST', '/api/mcp-agent/v1/records/attachment-management');
+		expect(created.status).toBe(400);
+		expect(writes.length).toBe(0);
+		const patched = await send('PATCH', `/api/mcp-agent/v1/records/attachment-management/${id}`);
+		expect(patched.status).toBe(200);
+		expect(writes[0]).toEqual({ name: 'acta firmada' });
 		for (const doc of writes) {
-			expect(doc.name).toBe('acta firmada');
 			for (const key of Object.keys(ajenos)) expect(doc[key]).toBeUndefined();
 		}
 	});
