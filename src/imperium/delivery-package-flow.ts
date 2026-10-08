@@ -320,6 +320,7 @@ async function normalize_payload(
 	payload: ImperiumDoc,
 	current_record_id?: string,
 	existing_record?: { codigo_bulto?: string | null; name?: string | null } | null,
+	opts?: { permitir_inventario_inconsistente?: boolean },
 ): Promise<ImperiumDoc> {
 	const pedido_id = text(payload.pedido);
 	if (!pedido_id) throw new Error('Debes seleccionar un pedido');
@@ -366,6 +367,7 @@ async function normalize_payload(
 		order_snapshot.pedido,
 		estado === 'entregado' || estado === 'cancelado' ? [] : contenido,
 		current_record_id,
+		{ permitir_inventario_inconsistente: opts?.permitir_inventario_inconsistente === true },
 	);
 	const numero_bulto =
 		payload.numero_bulto && Number(payload.numero_bulto) > 0
@@ -407,10 +409,14 @@ async function normalize_payload(
 export async function prepare_delivery_package_create(
 	store: ImperiumStore,
 	doc: ImperiumDoc,
+	opts?: { confirmar_inventario_inconsistente?: boolean },
 ): Promise<ImperiumDoc> {
 	const out = { ...doc };
 	delete out._id;
-	return normalize_payload(store, out);
+	delete out.confirmar_inventario_inconsistente;
+	return normalize_payload(store, out, undefined, undefined, {
+		permitir_inventario_inconsistente: opts?.confirmar_inventario_inconsistente === true,
+	});
 }
 
 export async function prepare_delivery_package_update(
@@ -436,14 +442,23 @@ export async function prepare_delivery_package_update(
 	);
 }
 
+type PackageMutateOpts = { permitir_inventario_inconsistente?: boolean };
+
+function is_mutate_opts(value: unknown): value is PackageMutateOpts {
+	return Boolean(value) && typeof value === 'object';
+}
+
 export async function after_delivery_package_mutate(
 	store: ImperiumStore,
-	...pedido_ids: Array<string | undefined>
+	...args: Array<string | undefined | PackageMutateOpts>
 ): Promise<void> {
+	const last = args.at(-1);
+	const opts = is_mutate_opts(last) ? last : undefined;
+	const pedido_ids = (opts ? args.slice(0, -1) : args) as Array<string | undefined>;
 	const unique = [...new Set(pedido_ids.map((id) => text(id)).filter(Boolean))];
 	for (const pedido_id of unique) {
 		await sync_order_state_from_packages(store, pedido_id);
-		await sync_order_logistics_reservation(store, pedido_id);
+		await sync_order_logistics_reservation(store, pedido_id, opts);
 	}
 }
 

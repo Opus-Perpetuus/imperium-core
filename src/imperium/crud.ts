@@ -34,6 +34,7 @@ import {
 	prepare_delivery_package_create,
 	prepare_delivery_package_update,
 } from './delivery-package-flow.ts';
+import { list_delivery_package_inventory_inconsistencies } from './inventory-logistics-flow.ts';
 import {
 	decorate_inventory_stock_quant_list,
 	prepare_delivery_return_create,
@@ -691,6 +692,7 @@ export async function handle_crud(
 	}
 	if (method === 'POST' && segs.length === 0) {
 		assert_inventory_ledger_write(resource, 'create');
+		let confirmar_inventario_inconsistente = false;
 		let incoming = await prepare_user_write(
 			resource,
 			await apply_uploads(store, resource, await body(), actor, {
@@ -702,7 +704,39 @@ export async function handle_crud(
 			incoming = await prepare_pedido_create(store, incoming, actor);
 		}
 		if (resource === 'delivery-package') {
-			incoming = await prepare_delivery_package_create(store, incoming);
+			const raw_flag = incoming.confirmar_inventario_inconsistente;
+			confirmar_inventario_inconsistente = raw_flag === true || raw_flag === 'true';
+			delete incoming.confirmar_inventario_inconsistente;
+			if (!confirmar_inventario_inconsistente) {
+				const pedido_id = String(incoming.pedido ?? '').trim();
+				const pedido = pedido_id ? await store.find_id('pedidos', pedido_id) : null;
+				if (pedido && pedido.is_active !== false) {
+					const inconsistencias = await list_delivery_package_inventory_inconsistencies(
+						store,
+						pedido,
+						incoming.contenido,
+					);
+					if (inconsistencias.length) {
+						const message =
+							'El inventario registrado no alcanza para apartar. Confirma si en físico sí está.';
+						return json(
+							resource,
+							{
+								data: [],
+								total_elementos: 0,
+								message,
+								error: message,
+								requiere_confirmacion_inventario: true,
+								inconsistencias,
+							},
+							409,
+						);
+					}
+				}
+			}
+			incoming = await prepare_delivery_package_create(store, incoming, {
+				confirmar_inventario_inconsistente,
+			});
 		}
 		if (resource === 'delivery-return') {
 			incoming = await prepare_delivery_return_create(store, incoming);
@@ -841,7 +875,13 @@ export async function handle_crud(
 			}
 		}
 		if (resource === 'delivery-package') {
-			await after_delivery_package_mutate(store, String(created.pedido ?? ''));
+			await after_delivery_package_mutate(
+				store,
+				String(created.pedido ?? ''),
+				confirmar_inventario_inconsistente
+					? { permitir_inventario_inconsistente: true }
+					: undefined,
+			);
 			result = (await store.find_id(resource, String(created._id))) ?? created;
 		}
 		if (is_project_resource(resource)) {

@@ -93,9 +93,20 @@ async function insert_movement(store: ImperiumStore, record: ImperiumDoc) {
 	});
 }
 
+export type InventoryInconsistency = {
+	product: string;
+	producto: string;
+	cantidad_a_apartar: number;
+	cantidad_registrada: number;
+};
+
 type PackageOverride = {
 	exclude_package_id?: string;
 	contenido?: unknown[];
+	/** El alta de bulto ya fue confirmada: el apartado se escribe aunque no alcance. */
+	permitir_inventario_inconsistente?: boolean;
+	/** Arma la lista y no lanza. No escribe. */
+	recoger_inconsistencias?: boolean;
 };
 
 /**
@@ -153,6 +164,7 @@ async function plan_order_logistics_reservation(
 		stock_apartado_previo: number;
 		stock_apartado_resultante: number;
 	}> = [];
+	const inconsistencias: InventoryInconsistency[] = [];
 	for (const product_id of affected) {
 		const product = await store.find_id('products', product_id);
 		if (!product || product.is_active === false) {
@@ -168,9 +180,21 @@ async function plan_order_logistics_reservation(
 		if (difference > 0) {
 			const available = round_qty(stock_total_previo - stock_apartado_previo);
 			if (difference > available) {
-				throw new Error(
-					`No hay inventario suficiente para apartar ${difference} de ${product.name}`,
-				);
+				const item: InventoryInconsistency = {
+					product: product_id,
+					producto: text(product.name) || 'Producto',
+					cantidad_a_apartar: difference,
+					cantidad_registrada: stock_total_previo,
+				};
+				if (override?.recoger_inconsistencias) {
+					inconsistencias.push(item);
+					continue;
+				}
+				if (!override?.permitir_inventario_inconsistente) {
+					throw new Error(
+						`No hay inventario suficiente para apartar ${difference} de ${product.name}`,
+					);
+				}
 			}
 		}
 		const stock_apartado_resultante = round_qty(stock_apartado_previo + difference);
@@ -188,7 +212,7 @@ async function plan_order_logistics_reservation(
 			stock_apartado_resultante,
 		});
 	}
-	return { pedido, normalized_order_id, steps };
+	return { pedido, normalized_order_id, steps, inconsistencias };
 }
 
 /**
@@ -200,20 +224,41 @@ export async function assert_logistics_reservation_capacity(
 	pedido: ImperiumDoc,
 	contenido: unknown[],
 	exclude_package_id?: string,
+	opts?: { permitir_inventario_inconsistente?: boolean },
 ): Promise<void> {
 	const estado = text(pedido.estado);
 	if (['por_surtir', 'surtiendo', 'surtido', 'enviado'].includes(estado)) return;
 	await plan_order_logistics_reservation(store, text(pedido._id), {
 		exclude_package_id,
 		contenido,
+		permitir_inventario_inconsistente: opts?.permitir_inventario_inconsistente,
 	});
+}
+
+export async function list_delivery_package_inventory_inconsistencies(
+	store: ImperiumStore,
+	pedido: ImperiumDoc,
+	contenido: unknown,
+	exclude_package_id?: string,
+): Promise<InventoryInconsistency[]> {
+	const estado = text(pedido.estado);
+	if (['por_surtir', 'surtiendo', 'surtido', 'enviado'].includes(estado)) return [];
+	const plan = await plan_order_logistics_reservation(store, text(pedido._id), {
+		exclude_package_id,
+		contenido: as_array(contenido),
+		recoger_inconsistencias: true,
+	});
+	return plan?.inconsistencias ?? [];
 }
 
 export async function sync_order_logistics_reservation(
 	store: ImperiumStore,
 	pedido_id: string,
+	opts?: { permitir_inventario_inconsistente?: boolean },
 ): Promise<void> {
-	const plan = await plan_order_logistics_reservation(store, pedido_id);
+	const plan = await plan_order_logistics_reservation(store, pedido_id, {
+		permitir_inventario_inconsistente: opts?.permitir_inventario_inconsistente,
+	});
 	if (!plan) return;
 	const { pedido, normalized_order_id, steps } = plan;
 

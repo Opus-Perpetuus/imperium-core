@@ -5,7 +5,10 @@ import {
 	prepare_delivery_package_create,
 	prepare_delivery_package_update,
 } from './delivery-package-flow.ts';
-import { sync_order_logistics_reservation } from './inventory-logistics-flow.ts';
+import {
+	list_delivery_package_inventory_inconsistencies,
+	sync_order_logistics_reservation,
+} from './inventory-logistics-flow.ts';
 
 const PEDIDO = '507f1f77bcf86cd799439011';
 const BULTO = '507f1f77bcf86cd799439012';
@@ -183,5 +186,96 @@ describe('bultos: el apartado se valida antes de guardar', () => {
 		);
 		expect(store.data.products.map((p) => p.existenciaApartada)).toEqual([0, 0]);
 		expect(store.data['inventory-movement']).toEqual([]);
+	});
+
+	test('sin confirmación lista el faltante y no aparta ni consume folio', async () => {
+		const store = memory_store({
+			pedidos: [pedido('confirmado')],
+			products: [{ _id: TORNILLO, name: 'Tornillo' }],
+			'delivery-package': [],
+			'inventory-movement': [],
+		});
+		const gaps = await list_delivery_package_inventory_inconsistencies(
+			store,
+			pedido('confirmado'),
+			[{ product: TORNILLO, quantity: 2 }],
+		);
+		expect(gaps).toEqual([
+			{
+				product: TORNILLO,
+				producto: 'Tornillo',
+				cantidad_a_apartar: 2,
+				cantidad_registrada: 0,
+			},
+		]);
+		expect(store.folios).toEqual([]);
+		expect(store.data['inventory-movement']).toEqual([]);
+	});
+
+	test('la confirmación deja seguir el alta y registra el apartado', async () => {
+		const store = memory_store({
+			pedidos: [pedido('confirmado')],
+			products: productos(),
+			'delivery-package': [
+				{
+					_id: BULTO,
+					pedido: PEDIDO,
+					estado: 'pendiente',
+					contenido: [{ product: TORNILLO, quantity: 8 }],
+				},
+			],
+			'inventory-movement': [],
+		});
+		await expect(
+			prepare_delivery_package_create(
+				store,
+				{
+					pedido: PEDIDO,
+					contenido: [{ product: TORNILLO, quantity: 8 }],
+					confirmar_inventario_inconsistente: true,
+				},
+				{ confirmar_inventario_inconsistente: true },
+			),
+		).rejects.toThrow('folio consumido');
+		await sync_order_logistics_reservation(store, PEDIDO, {
+			permitir_inventario_inconsistente: true,
+		});
+		expect(store.data.products.find((row) => row._id === TORNILLO)?.existenciaApartada).toBe(8);
+		expect(store.data['inventory-movement']).toHaveLength(1);
+	});
+
+	test('sin la marca, editar sigue rechazando el faltante', async () => {
+		const bulto = {
+			_id: BULTO,
+			pedido: PEDIDO,
+			estado: 'pendiente',
+			codigo_bulto: 'BULTO-000001',
+			name: 'BULTO-000001',
+			contenido: [{ product: TORNILLO, quantity: 4 }],
+		};
+		const store = memory_store({
+			pedidos: [pedido('confirmado')],
+			products: [{ _id: TORNILLO, name: 'Tornillo', existencia: 5, existenciaApartada: 4 }],
+			'delivery-package': [bulto],
+			'inventory-movement': [
+				{
+					documento_tipo: 'pedido',
+					documento_id: PEDIDO,
+					tipo_movimiento: 'apartado_logistica',
+					producto: TORNILLO,
+					cantidad: 4,
+				},
+			],
+		});
+		await expect(
+			prepare_delivery_package_update(
+				store,
+				{
+					contenido: [{ product: TORNILLO, quantity: 8 }],
+					confirmar_inventario_inconsistente: true,
+				},
+				bulto,
+			),
+		).rejects.toThrow('No hay inventario suficiente para apartar 4 de Tornillo');
 	});
 });
