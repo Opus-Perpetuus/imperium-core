@@ -10,10 +10,20 @@ type Bucket = { tokens: number; at: number; full_at: number };
 
 const buckets = new Map<string, Bucket>();
 
+let rate_now = (): number => Date.now();
+
+export function pin_rate_clock(at: number | null): void {
+	rate_now = at === null ? () => Date.now() : () => at;
+}
+
+export function drop_rate_bucket(key: string): void {
+	buckets.delete(key);
+}
+
 export function take_token(
 	key: string,
 	rule: BucketRule,
-	now = Date.now(),
+	now = rate_now(),
 ): { ok: true } | { ok: false; retry_after_s: number } {
 	const prev = buckets.get(key);
 	const tokens = prev

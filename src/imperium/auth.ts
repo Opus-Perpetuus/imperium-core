@@ -26,8 +26,11 @@ import {
 import { read_public_registration } from './public-registration.ts';
 import { share_binding_of } from './share-binding.ts';
 import {
+	find_user_by_define_token,
 	find_user_by_reset_token,
 	generate_password_reset,
+	issue_password_define_grant,
+	PASSWORD_DEFINE_KIND,
 } from './password-reset.ts';
 import {
 	consume_login_limits,
@@ -128,6 +131,12 @@ export function is_public_login_post(req: Request): boolean {
 			path === '/auth/public/register' ||
 			path === '/auth/public/register/')
 	);
+}
+
+export function is_password_define_post(req: Request): boolean {
+	if (req.method.toUpperCase() !== 'POST') return false;
+	const path = auth_pathname(req).replace(/\/$/, '');
+	return path === '/auth/password-reset/definir';
 }
 
 export function is_auth_login_post(req: Request): boolean {
@@ -265,7 +274,9 @@ export async function handle_auth(
 		const body = await read_imperium_body(req);
 		const codigo = String(body.codigo ?? '').trim();
 		const user = await find_user_by_reset_token(store, codigo);
-		if (!user) {
+		// El token de definir no vuelve a abrir sesión: si lo hiciera, el wizard
+		// podría renovarse solo reenviando ese token a este login.
+		if (!user || user.reset_password_kind === PASSWORD_DEFINE_KIND) {
 			return Response.json(
 				{
 					message: 'El enlace no es válido o ya expiró.',
@@ -274,23 +285,46 @@ export async function handle_auth(
 				{ status: 400 },
 			);
 		}
-		await store.update('user', String(user._id), {
-			reset_password_token_hash: null,
-			reset_password_expires: null,
-			reset_password_kind: null,
-			recovery_token: null,
-			recovery_expires: null,
-		});
+		const grant = await issue_password_define_grant(store, user);
 		const safe = public_user(user);
 		const session = await create_session(sql, safe);
 		const access_rights = await build_access(store, safe);
 		const menus = await build_menus(store, sql, access_rights);
 		return with_cookie(
-			Response.json({ user: safe, menus, access_rights }),
+			Response.json({
+				user: safe,
+				menus,
+				access_rights,
+				puede_definir_contrasena: true,
+				token: grant.token,
+			}),
 			session.id,
 			false,
 			req,
 		);
+	}
+
+	if (method === 'POST' && rest.startsWith('/password-reset/definir')) {
+		const limited = await consume_password_reset_ip_limit(
+			sql,
+			request_ip(req),
+		);
+		if (limited) {
+			return Response.json(limited, { status: 429 });
+		}
+		const body = await read_imperium_body(req);
+		const defined = await define_password_with_grant(
+			store,
+			String(body.token ?? ''),
+			String(body.password ?? ''),
+		);
+		if (!defined.ok) {
+			return Response.json(
+				{ message: defined.message, error: defined.message },
+				{ status: 400 },
+			);
+		}
+		return Response.json({ message: 'Tu contraseña se actualizó.' });
 	}
 
 	if (
@@ -325,6 +359,37 @@ export async function current_user(
 ): Promise<ImperiumDoc | null> {
 	const s = await load_session(sql, req);
 	return s?.user ?? null;
+}
+
+const DEFINE_PASSWORD_INVALID =
+	'El enlace para definir la contraseña no es válido o ya expiró.';
+
+export async function define_password_with_grant(
+	store: ImperiumStore,
+	token: string,
+	password: string,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+	const user = await find_user_by_define_token(store, token);
+	if (!user) return { ok: false, message: DEFINE_PASSWORD_INVALID };
+	let prepared: ImperiumDoc;
+	try {
+		prepared = await prepare_user_write(
+			'user',
+			{ password } as ImperiumDoc,
+			true,
+		);
+	} catch (err) {
+		return { ok: false, message: String((err as Error).message) };
+	}
+	await store.update('user', String(user._id), {
+		password: prepared.password,
+		reset_password_token_hash: null,
+		reset_password_expires: null,
+		reset_password_kind: null,
+		recovery_token: null,
+		recovery_expires: null,
+	});
+	return { ok: true };
 }
 
 export function public_user(user: ImperiumDoc): ImperiumDoc {

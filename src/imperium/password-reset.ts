@@ -8,6 +8,9 @@ import { build_recovery_link, type EmailSettings } from './email.ts';
 
 const RECOVERY_TTL_MS = 2 * 60 * 60 * 1000;
 const INVITATION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/** Solo cubre el wizard que sigue al enlace. No abre otra sesión. */
+export const PASSWORD_DEFINE_KIND = 'definir';
+export const PASSWORD_DEFINE_TTL_MS = 15 * 60 * 1000;
 
 export function hash_reset_token(raw: string) {
 	return createHash('sha256').update(raw).digest('hex');
@@ -46,5 +49,30 @@ export async function find_user_by_reset_token(store: ImperiumStore, raw_token: 
 	if (!user || user.is_active === false) return null;
 	const expires_at = Date.parse(String(user.reset_password_expires ?? ''));
 	if (!expires_at || expires_at < Date.now()) return null;
+	return user;
+}
+
+export async function issue_password_define_grant(
+	store: ImperiumStore,
+	user: ImperiumDoc,
+) {
+	const raw = randomBytes(32).toString('hex');
+	const expires_at = new Date(Date.now() + PASSWORD_DEFINE_TTL_MS);
+	await store.update('user', String(user._id), {
+		reset_password_token_hash: hash_reset_token(raw),
+		reset_password_expires: expires_at.toISOString(),
+		reset_password_kind: PASSWORD_DEFINE_KIND,
+		recovery_token: null,
+		recovery_expires: null,
+	});
+	return { token: raw, expires_at };
+}
+
+export async function find_user_by_define_token(
+	store: ImperiumStore,
+	raw_token: string,
+) {
+	const user = await find_user_by_reset_token(store, raw_token);
+	if (!user || user.reset_password_kind !== PASSWORD_DEFINE_KIND) return null;
 	return user;
 }

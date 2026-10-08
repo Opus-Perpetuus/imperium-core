@@ -789,7 +789,8 @@
       "reset_password_kind": {
         "values": [
           "recovery",
-          "invitation"
+          "invitation",
+          "definir"
         ],
         "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
       }

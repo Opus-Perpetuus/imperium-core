@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { remember_socket_ip } from './auth-rate-limit.ts';
+import { drop_rate_bucket, pin_rate_clock } from './rate-bucket.ts';
 import { ChatError } from './chat-access.ts';
 import { sign_realtime_token } from './realtime-tokens.ts';
 import {
@@ -284,13 +285,25 @@ describe('límites del socket', () => {
 	});
 
 	test('60 handshakes por minuto por IP', async () => {
+		// La cubeta es del proceso: sin esto, lo que gastó otro spec cuenta como de esta IP.
+		const ip = '203.0.113.90';
+		const stamp = Date.now();
+		pin_rate_clock(stamp);
+		drop_rate_bucket('socket-handshake');
+		drop_rate_bucket(`socket-handshake:ip:${ip}`);
 		const handshake = () => {
 			const req = new Request(POLLING);
-			remember_socket_ip(req, '203.0.113.9');
+			remember_socket_ip(req, ip);
 			return handle_socket_io(req) as Response;
 		};
-		for (let i = 0; i < 60; i++) expect(handshake().status).toBe(200);
-		const limited = handshake();
+		const limited = (() => {
+			try {
+				for (let i = 0; i < 60; i++) expect(handshake().status).toBe(200);
+				return handshake();
+			} finally {
+				pin_rate_clock(null);
+			}
+		})();
 		expect(limited.status).toBe(429);
 		expect(Number(limited.headers.get('retry-after'))).toBeGreaterThan(0);
 		expect(((await limited.json()) as Record<string, unknown>).code).toBe('rate_limited');

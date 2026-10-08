@@ -8,6 +8,7 @@ import {
 	ensure_session_table,
 	handle_auth,
 	is_auth_login_post,
+	is_password_define_post,
 	is_public_auth_get,
 	is_public_extra_action,
 } from './auth.ts';
@@ -190,7 +191,7 @@ export function create_imperium_layer(sql: Bun.SQL) {
 			}
 			await ensure_session_table(sql);
 			const peek = await current_user(sql, req).catch(() => null);
-			if (peek && !can_enter_internal(peek)) {
+			if (peek && !can_enter_internal(peek) && !is_password_define_post(req)) {
 				return add_cors(
 					req,
 					Response.json(
