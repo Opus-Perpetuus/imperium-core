@@ -3,6 +3,7 @@ import { assert_required_fields } from './required-fields.ts';
 import { assert_objectid_refs } from './store.ts';
 import {
 	actor_can_restore_pos_session,
+	prepare_pos_session_create,
 	prepare_pos_session_update,
 } from './pos-session-flow.ts';
 import { issue_unlock_token, verify_unlock_token } from './user-pin.ts';
@@ -95,5 +96,32 @@ describe('POS session restore', () => {
 		};
 		const issued = issue_unlock_token(pin, String(actor._id));
 		expect(verify_unlock_token(issued.token, pin, String(actor._id))).toBe(true);
+	});
+});
+
+describe('POS session create', () => {
+	test('una sesión nueva nace abierta y sin fecha de cierre', async () => {
+		const create_store = {
+			has: () => false,
+			find_id: async () => null,
+			find_many: async () => ({ rows: [] }),
+			next_auto_increment: async () => 7,
+		} as never;
+		const opening = '2026-10-09T18:00:00.000Z';
+		const created = await prepare_pos_session_create(
+			create_store,
+			{
+				opening_date: opening,
+				closing_date: opening,
+				fecha_cierre: opening,
+				status: 'abierta',
+				on_use: true,
+			},
+			actor,
+		);
+		expect(created.status).toBe('abierta');
+		expect(created.opening_date).toBe(opening);
+		expect(created.closing_date).toBeUndefined();
+		expect(created.fecha_cierre).toBeUndefined();
 	});
 });

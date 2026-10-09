@@ -292,6 +292,8 @@ export async function prepare_pos_session_create(
 	delete out._id;
 	delete out.name;
 	delete out.consecutivo;
+	delete out.closing_date;
+	delete out.fecha_cierre;
 	const opening = out.opening_date ?? new Date().toISOString();
 	const branch_id = ref_id(out.branch_office) || text(out.branch_office);
 	const opening_money = round_money(Number(out.cash_register_opening_money ?? 0));
