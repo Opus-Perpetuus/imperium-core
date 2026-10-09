@@ -225,3 +225,70 @@ describe('delivery-package depart', () => {
 		expect(saved?.estado).toBe('cargado');
 	});
 });
+
+const RUTA = '111111111111111111111111';
+const BULTO = '222222222222222222222222';
+const PRODUCTO = '333333333333333333333333';
+
+function empaque_store(opts: { route?: string; vehicle?: string } = {}) {
+	const pack: ImperiumDoc = {
+		_id: BULTO,
+		pedido: PEDIDO,
+		estado: 'pendiente',
+		is_active: true,
+		codigo_bulto: 'BULTO-000001',
+		contenido: [{ articulo_index: 0, product: PRODUCTO, quantity: 2 }],
+	};
+	if (opts.route) pack.delivery_route = opts.route;
+	if (opts.vehicle) pack.vehicle = opts.vehicle;
+	return memory_store({
+		pedidos: [
+			{
+				_id: PEDIDO,
+				estado: 'surtido',
+				is_active: true,
+				articulos: [{ product: PRODUCTO, cantidad: 2, cantidad_surtida: 2 }],
+			},
+		],
+		'delivery-package': [pack],
+	});
+}
+
+async function post_close_empaque(store: ImperiumStore) {
+	const req = new Request(`http://local/api/delivery-package/close-empaque/${PEDIDO}`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: '{}',
+	});
+	return handle_action(
+		store,
+		null as never,
+		req,
+		new URL(req.url),
+		'delivery-package',
+		'close_empaque',
+		{ pedidoId: PEDIDO },
+		actor('user-group-almacen'),
+	);
+}
+
+describe('delivery-package close_empaque', () => {
+	test('cierra sin vehículo si el bulto tiene ruta', async () => {
+		const store = empaque_store({ route: RUTA });
+		const res = await post_close_empaque(store);
+		const body = await res.json();
+		expect(res.status).toBe(200);
+		expect(body.message).toContain('Empaque cerrado');
+		expect(body.data[0].estado).toBe('asignado');
+		expect(body.data[0].vehicle ?? '').toBe('');
+		const saved = await store.find_id('delivery-package', BULTO);
+		expect(saved?.estado).toBe('asignado');
+	});
+
+	test('sigue exigiendo ruta', async () => {
+		const store = empaque_store();
+		await expect(post_close_empaque(store)).rejects.toThrow(/Falta ruta en bulto/);
+		const saved = await store.find_id('delivery-package', BULTO);
+		expect(saved?.estado).toBe('pendiente');
+	});
+});

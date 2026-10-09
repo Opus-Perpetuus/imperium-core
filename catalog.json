@@ -4,7 +4,7 @@
   "kit": "@opus-perpetuus/imperium-core-kit",
   "core": "ghcr.io/opus-perpetuus/imperium-core:13.67.0",
   "forked_from": "@opus-perpetuus/kirel-nox-kit@0.5.18",
-  "count": 22,
+  "count": 26,
   "subjects": [
     {
       "slug": "almacen",
@@ -18073,6 +18073,111 @@
           ]
         }
       ]
+    },
+    {
+      "slug": "predial",
+      "name": "Predial",
+      "path": "/predial",
+      "kind": "module",
+      "menu_ref": "predial-menu-root",
+      "catalog_id": "SUBJECT-predial",
+      "technical_id": "subject-predial",
+      "depends_on": [],
+      "image": "ghcr.io/opus-perpetuus/subject-predial:0.1.0",
+      "repo": "Opus-Perpetuus/imperium-subject-predial",
+      "dir": "workspace/imperium-subject-predial",
+      "modules": [
+        {
+          "resource": "predio",
+          "table": "predio",
+          "name": "Predio",
+          "path": "/predio",
+          "collection": "predio",
+          "model_file": "plugins/predio/predio.model.ts",
+          "menu_ref": "predio-menu-management-0",
+          "icon": "fa-map",
+          "columns": []
+        }
+      ]
+    },
+    {
+      "slug": "ingresos",
+      "name": "Ingresos",
+      "path": "/ingresos",
+      "kind": "module",
+      "menu_ref": "ingresos-menu-root",
+      "catalog_id": "SUBJECT-ingresos",
+      "technical_id": "subject-ingresos",
+      "depends_on": [],
+      "image": "ghcr.io/opus-perpetuus/subject-ingresos:0.1.0",
+      "repo": "Opus-Perpetuus/imperium-subject-ingresos",
+      "dir": "workspace/imperium-subject-ingresos",
+      "modules": [
+        {
+          "resource": "contribuyente",
+          "table": "contribuyente",
+          "name": "Contribuyente",
+          "path": "/contribuyente",
+          "collection": "contribuyente",
+          "model_file": "plugins/contribuyente/contribuyente.model.ts",
+          "menu_ref": "contribuyente-menu-management-0",
+          "icon": "fa-id-card",
+          "columns": []
+        }
+      ]
+    },
+    {
+      "slug": "presupuesto",
+      "name": "Presupuesto",
+      "path": "/presupuesto",
+      "kind": "module",
+      "menu_ref": "presupuesto-menu-root",
+      "catalog_id": "SUBJECT-presupuesto",
+      "technical_id": "subject-presupuesto",
+      "depends_on": [],
+      "image": "ghcr.io/opus-perpetuus/subject-presupuesto:0.1.0",
+      "repo": "Opus-Perpetuus/imperium-subject-presupuesto",
+      "dir": "workspace/imperium-subject-presupuesto",
+      "modules": [
+        {
+          "resource": "partida",
+          "table": "partida",
+          "name": "Partida",
+          "path": "/partida",
+          "collection": "partida",
+          "model_file": "plugins/partida/partida.model.ts",
+          "menu_ref": "partida-menu-management-0",
+          "icon": "fa-scale-balanced",
+          "columns": []
+        }
+      ]
+    },
+    {
+      "slug": "tramites",
+      "name": "Trámites",
+      "path": "/tramites",
+      "kind": "module",
+      "menu_ref": "tramites-menu-root",
+      "catalog_id": "SUBJECT-tramites",
+      "technical_id": "subject-tramites",
+      "depends_on": [],
+      "image": "ghcr.io/opus-perpetuus/subject-tramites:0.1.0",
+      "repo": "Opus-Perpetuus/imperium-subject-tramites",
+      "dir": "workspace/imperium-subject-tramites",
+      "modules": [
+        {
+          "resource": "solicitud",
+          "table": "solicitud",
+          "name": "Solicitud",
+          "path": "/solicitud",
+          "collection": "solicitud",
+          "model_file": "plugins/solicitud/solicitud.model.ts",
+          "menu_ref": "solicitud-menu-management-0",
+          "icon": "fa-file-lines",
+          "columns": []
+        }
+      ]
     }
+
   ]
 }

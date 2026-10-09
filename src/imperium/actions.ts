@@ -1953,20 +1953,13 @@ async function close_empaque(ctx: Ctx) {
 		return ok(active, 'El empaque ya avanzó a carga/entrega; no se requiere cerrar de nuevo.');
 	}
 	const missing_route: string[] = [];
-	const missing_vehicle: string[] = [];
 	for (const pack of active) {
 		const code = String(pack.codigo_bulto ?? pack.name ?? pack._id);
 		if (!ref_id(pack.delivery_route)) missing_route.push(code);
-		if (!ref_id(pack.vehicle)) missing_vehicle.push(code);
 	}
 	if (missing_route.length) {
 		throw new Error(
 			`Falta ruta en bulto(s): ${missing_route.join(', ')}. Asigna ruta antes de cerrar.`,
-		);
-	}
-	if (missing_vehicle.length) {
-		throw new Error(
-			`Falta vehículo en bulto(s): ${missing_vehicle.join(', ')}. Asigna vehículo (o ponlo en la ruta) antes de cerrar.`,
 		);
 	}
 	if (active.every((p) => String(p.estado) === 'asignado')) {
