@@ -13193,7 +13193,7 @@
       "catalog_id": "SUBJECT-turnos",
       "technical_id": "subject-turnos",
       "depends_on": [],
-      "image": "ghcr.io/opus-perpetuus/subject-turnos:0.2.2",
+      "image": "ghcr.io/opus-perpetuus/subject-turnos:0.2.3",
       "repo": "Opus-Perpetuus/imperium-subject-turnos",
       "dir": "workspace/imperium-subject-turnos",
       "modules": [
