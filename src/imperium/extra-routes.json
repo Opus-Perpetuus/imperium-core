@@ -218,6 +218,12 @@
   {
     "resource": "delivery-package",
     "method": "post",
+    "path": "/corregir-surtido/:pedidoId",
+    "action": "correct_surtido"
+  },
+  {
+    "resource": "delivery-package",
+    "method": "post",
     "path": "/:id/logistics-event",
     "action": "apply_logistics_event"
   },

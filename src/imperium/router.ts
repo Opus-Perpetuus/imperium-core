@@ -18,6 +18,8 @@ import {
 	PUBLIC_LANDING_ENABLED_REF,
 } from '@opus-perpetuus/imperium-core-kit';
 import { handle_crud } from './crud.ts';
+import { imperium_sync_store, type ResourceStore } from './offline/durable.ts';
+import { handle_sync_http } from './offline/http.ts';
 import { meta_http_response } from './meta.ts';
 import { handle_action } from './actions.ts';
 import { handle_db_admin, is_db_admin_path } from './db-admin.ts';
@@ -244,6 +246,19 @@ async function dispatch(
 	url: URL,
 	path: string,
 ): Promise<Response | null> {
+			if (path === '/sync/v1/mutaciones' || path.startsWith('/sync/v1/')) {
+				const resources: ResourceStore = {
+					has: (resource) => store.has(resource),
+					find_id: (resource, id) => store.find_id(resource, id),
+					insert: (resource, doc) => store.insert(resource, doc),
+					update: async (resource, id, patch) =>
+						(await store.update(resource, id, patch)) ?? null,
+				};
+				return add_cors(
+					req,
+					await handle_sync_http(req, path, imperium_sync_store(sql, resources)),
+				);
+			}
 			if (path === '/media' || path.startsWith('/media/')) {
 				const id = path.slice('/media/'.length).split('/')[0] ?? '';
 				const token_actor = media_token_actor(url.searchParams.get('mt'), decodeURIComponent(id));

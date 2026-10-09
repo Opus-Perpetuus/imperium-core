@@ -260,7 +260,19 @@ export async function handle_auth(
 		if (rest.startsWith('/branding/logo')) {
 			return branding_logo(store);
 		}
-		return branding_json(store);
+		const background = login_background_target(rest);
+		if (background) {
+			return branding_image(
+				store,
+				background.ref,
+				'Fondo no configurado',
+				'Fondo no encontrado',
+			);
+		}
+		if (rest === '/branding' || rest === '/branding/') {
+			return branding_json(store);
+		}
+		return new Response('No encontrado', { status: 404 });
 	}
 
 	if (method === 'POST' && rest.startsWith('/password-reset/login')) {
@@ -1069,6 +1081,7 @@ const SESSION_SCOPED_EXTRAS = new Set([
 	'delivery-package:read_by_pedido',
 	'delivery-package:read_chofer_queue',
 	'delivery-package:close_empaque',
+	'delivery-package:correct_surtido',
 	'delivery-package:apply_logistics_event',
 	'delivery-package:cancel_package',
 	'pedidos:sync_offline',
@@ -1655,9 +1668,27 @@ export function menu_path_is_disabled(
 	return false;
 }
 
+const LOGIN_BACKGROUND_INTERNO_REF = 'configuration-login-background';
+const LOGIN_BACKGROUND_PUBLICO_REF = 'configuration-login-background-publico';
+
+/** El path no elige el adjunto: cada fondo lee un solo parámetro de sistema. */
+export function login_background_target(
+	rest: string,
+): { ref: string } | null {
+	if (rest.startsWith('/branding/background/publico')) {
+		return { ref: LOGIN_BACKGROUND_PUBLICO_REF };
+	}
+	if (rest.startsWith('/branding/background/interno')) {
+		return { ref: LOGIN_BACKGROUND_INTERNO_REF };
+	}
+	return null;
+}
+
 const BRANDING_REFS = [
 	'configuration-branding-mode',
 	'configuration-company-logo',
+	LOGIN_BACKGROUND_INTERNO_REF,
+	LOGIN_BACKGROUND_PUBLICO_REF,
 	'configuration-branding-logo-width',
 	'configuration-branding-logo-height',
 	'configuration-branding-logo-text-position',
@@ -1676,12 +1707,21 @@ async function branding_json(store: ImperiumStore): Promise<Response> {
 		if (doc) docs.set(ref, doc);
 	}
 	const logo = docs.get('configuration-company-logo');
+	const login_background = docs.get(LOGIN_BACKGROUND_INTERNO_REF);
+	const login_background_publico = docs.get(LOGIN_BACKGROUND_PUBLICO_REF);
 	const payload = {
 		branding_mode:
 			unwrap_config(docs.get('configuration-branding-mode')?.value) ??
 			'imperium',
 		company_logo: unwrap_config(logo?.value) ?? null,
 		company_logo_type: unwrap_config(logo?.type) ?? 'image',
+		login_background: unwrap_config(login_background?.value) ?? null,
+		login_background_type:
+			unwrap_config(login_background?.type) ?? 'image',
+		login_background_publico:
+			unwrap_config(login_background_publico?.value) ?? null,
+		login_background_publico_type:
+			unwrap_config(login_background_publico?.type) ?? 'image',
 		logo_width:
 			unwrap_config(
 				docs.get('configuration-branding-logo-width')?.value,
@@ -1718,32 +1758,46 @@ function unwrap_config(value: unknown): unknown {
 	}
 }
 
-async function branding_logo(store: ImperiumStore): Promise<Response> {
-	const logo = await config_by_ref(store, 'configuration-company-logo');
-	const type = String(logo?.type ?? 'image');
-	const reference = logo?.value;
+async function branding_image(
+	store: ImperiumStore,
+	ref: string,
+	empty_message: string,
+	missing_message: string,
+): Promise<Response> {
+	const row = await config_by_ref(store, ref);
+	const type = String(row?.type ?? 'image');
+	const reference = row?.value;
 	if (type !== 'image' || !reference) {
-		return new Response('Logo no configurado', { status: 404 });
+		return new Response(empty_message, { status: 404 });
 	}
 	if (!store.has('attachment-management')) {
-		return new Response('Logo no encontrado', { status: 404 });
+		return new Response(missing_message, { status: 404 });
 	}
 	const attachment = await store.find_id(
 		'attachment-management',
 		String(reference),
 	);
 	if (!attachment) {
-		return new Response('Logo no encontrado', { status: 404 });
+		return new Response(missing_message, { status: 404 });
 	}
 	const { serve_attachment_bytes } = await import('./media.ts');
 	const served = await serve_attachment_bytes(attachment);
-	if (!served) return new Response('Logo no encontrado', { status: 404 });
+	if (!served) return new Response(missing_message, { status: 404 });
 	return new Response(served.body, {
 		headers: {
 			'content-type': served.mime,
 			'cache-control': 'public, max-age=300',
 		},
 	});
+}
+
+async function branding_logo(store: ImperiumStore): Promise<Response> {
+	return branding_image(
+		store,
+		'configuration-company-logo',
+		'Logo no configurado',
+		'Logo no encontrado',
+	);
 }
 
 void ok;

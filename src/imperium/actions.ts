@@ -627,6 +627,8 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return read_chofer_queue(ctx);
 		case 'delivery-package:close_empaque':
 			return close_empaque(ctx);
+		case 'delivery-package:correct_surtido':
+			return correct_surtido(ctx);
 		case 'delivery-package:apply_logistics_event':
 			return logistics_event(ctx);
 		case 'delivery-package:cancel_package': {
@@ -1953,13 +1955,21 @@ async function close_empaque(ctx: Ctx) {
 		return ok(active, 'El empaque ya avanzó a carga/entrega; no se requiere cerrar de nuevo.');
 	}
 	const missing_route: string[] = [];
+	const missing_name: string[] = [];
 	for (const pack of active) {
 		const code = String(pack.codigo_bulto ?? pack.name ?? pack._id);
 		if (!ref_id(pack.delivery_route)) missing_route.push(code);
+		const route_name = String(pack.delivery_route_nombre ?? '').trim();
+		if (!route_name || route_name.toLowerCase() === 'sin ruta') missing_name.push(code);
 	}
 	if (missing_route.length) {
 		throw new Error(
 			`Falta ruta en bulto(s): ${missing_route.join(', ')}. Asigna ruta antes de cerrar.`,
+		);
+	}
+	if (missing_name.length) {
+		throw new Error(
+			`La etiqueta debe mostrar el nombre de la ruta. Falta en: ${missing_name.join(', ')}.`,
 		);
 	}
 	if (active.every((p) => String(p.estado) === 'asignado')) {
@@ -1983,6 +1993,65 @@ async function close_empaque(ctx: Ctx) {
 		updated.length ? updated : active,
 		'Empaque cerrado. Los bultos quedaron asignados para carga del chofer.',
 	);
+}
+
+async function correct_surtido(ctx: Ctx) {
+	const pedido_id = String(ctx.params.pedidoId ?? '').trim();
+	if (!pedido_id || !/^[a-f0-9]{24}$/i.test(pedido_id)) {
+		throw new Error('Debes indicar un pedido válido');
+	}
+	const index = Number(ctx.body.articulo_index);
+	const cantidad = Number(ctx.body.cantidad);
+	if (!Number.isInteger(index) || index < 0) {
+		throw new Error('Indica la línea del pedido');
+	}
+	if (!Number.isFinite(cantidad) || cantidad < 0) {
+		throw new Error('La cantidad corregida no puede ser negativa');
+	}
+	const pedido = await ctx.store.find_id('pedidos', pedido_id);
+	if (!pedido || pedido.is_active === false) {
+		throw new Error('No se encontró el pedido');
+	}
+	const estado = String(pedido.estado ?? '');
+	if (estado !== 'surtido') {
+		throw new Error(
+			`Solo se corrige el surtido de un pedido en «surtido» (ahora: ${estado || 'sin estado'})`,
+		);
+	}
+	const rows = await collect_scan(ctx.store, 'delivery-package', {
+		where: { pedido: String(pedido._id) },
+		include_inactive: true,
+	});
+	const active = rows.filter(
+		(p) => p.is_active !== false && String(p.estado) !== 'cancelado',
+	);
+	if (active.some((p) => ['asignado', 'cargado', 'en_ruta', 'entregado'].includes(String(p.estado)))) {
+		throw new Error('El empaque ya avanzó. No se modifica el pedido.');
+	}
+	const articulos = as_array(pedido.articulos).map((row) => as_object(row));
+	if (index >= articulos.length) throw new Error('Esa línea no está en el pedido');
+	let empacado = 0;
+	for (const pack of active) {
+		for (const raw of as_array(pack.contenido)) {
+			const item = as_object(raw);
+			const qty = Number(item.quantity ?? 0);
+			if (!(qty > 0)) continue;
+			if (item.articulo_index != null && String(item.articulo_index) !== '') {
+				if (Number(item.articulo_index) === index) empacado += qty;
+			}
+		}
+	}
+	if (empacado - cantidad > 1e-9) {
+		throw new Error(
+			`Ya hay ${empacado} empacadas de esa línea. La corrección no puede quedar por debajo.`,
+		);
+	}
+	const next = articulos.map((art, i) =>
+		i === index ? { ...art, cantidad, cantidad_surtida: cantidad } : art,
+	);
+	await ctx.store.update('pedidos', pedido_id, { articulos: next });
+	const saved = await ctx.store.find_id('pedidos', pedido_id);
+	return ok([saved ?? { ...pedido, articulos: next }], 'Línea de surtido corregida desde empaque.');
 }
 
 async function read_chofer_queue(ctx: Ctx) {

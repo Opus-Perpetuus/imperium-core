@@ -18096,7 +18096,32 @@
           "model_file": "plugins/predio/predio.model.ts",
           "menu_ref": "predio-menu-management-0",
           "icon": "fa-map",
-          "columns": []
+          "columns": [
+            {
+              "name": "clave_catastral",
+              "mongo": "clave_catastral",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "clave catastral"
+            },
+            {
+              "name": "avaluo_fiscal",
+              "mongo": "avaluo_fiscal",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "avaluo fiscal"
+            },
+            {
+              "name": "vigencia",
+              "mongo": "vigencia",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "vigencia"
+            }
+          ]
         }
       ]
     },
@@ -18122,7 +18147,116 @@
           "model_file": "plugins/contribuyente/contribuyente.model.ts",
           "menu_ref": "contribuyente-menu-management-0",
           "icon": "fa-id-card",
-          "columns": []
+          "columns": [
+            {
+              "name": "clave",
+              "mongo": "clave",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "clave"
+            }
+          ]
+        },
+        {
+          "resource": "concepto",
+          "table": "concepto",
+          "name": "Concepto",
+          "path": "/concepto",
+          "collection": "concepto",
+          "model_file": "plugins/concepto/concepto.model.ts",
+          "menu_ref": "concepto-menu-management-0",
+          "icon": "fa-tag",
+          "columns": [
+            {
+              "name": "clave",
+              "mongo": "clave",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "clave"
+            },
+            {
+              "name": "nombre",
+              "mongo": "nombre",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "nombre"
+            }
+          ]
+        },
+        {
+          "resource": "licencia",
+          "table": "licencia",
+          "name": "Licencia",
+          "path": "/licencia",
+          "collection": "licencia",
+          "model_file": "plugins/licencia/licencia.model.ts",
+          "menu_ref": "licencia-menu-management-0",
+          "icon": "fa-file-lines",
+          "columns": [
+            {
+              "name": "contribuyente_clave",
+              "mongo": "contribuyente_clave",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "clave de contribuyente"
+            },
+            {
+              "name": "folio",
+              "mongo": "folio",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "folio"
+            },
+            {
+              "name": "concepto_clave",
+              "mongo": "concepto_clave",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "clave de concepto"
+            }
+          ]
+        },
+        {
+          "resource": "adeudo",
+          "table": "adeudo",
+          "name": "Adeudo",
+          "path": "/adeudo",
+          "collection": "adeudo",
+          "model_file": "plugins/adeudo/adeudo.model.ts",
+          "menu_ref": "adeudo-menu-management-0",
+          "icon": "fa-file-invoice-dollar",
+          "columns": [
+            {
+              "name": "contribuyente_clave",
+              "mongo": "contribuyente_clave",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "clave de contribuyente"
+            },
+            {
+              "name": "concepto_clave",
+              "mongo": "concepto_clave",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "clave de concepto"
+            },
+            {
+              "name": "importe",
+              "mongo": "importe",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "importe"
+            }
+          ]
         }
       ]
     },
@@ -18148,7 +18282,92 @@
           "model_file": "plugins/partida/partida.model.ts",
           "menu_ref": "partida-menu-management-0",
           "icon": "fa-scale-balanced",
-          "columns": []
+          "columns": [
+            {
+              "name": "ejercicio",
+              "mongo": "ejercicio",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "ejercicio"
+            },
+            {
+              "name": "objeto_gasto",
+              "mongo": "objeto_gasto",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "objeto del gasto"
+            },
+            {
+              "name": "funcion_cofog",
+              "mongo": "funcion_cofog",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "funcion cofog"
+            },
+            {
+              "name": "origen_recurso",
+              "mongo": "origen_recurso",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "origen del recurso"
+            },
+            {
+              "name": "programatica",
+              "mongo": "programatica",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "programatica"
+            },
+            {
+              "name": "monto_aprobado",
+              "mongo": "monto_aprobado",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "monto aprobado"
+            }
+          ]
+        },
+        {
+          "resource": "orden-pago",
+          "table": "orden_pago",
+          "name": "Orden de pago",
+          "path": "/orden-pago",
+          "collection": "orden_pago",
+          "model_file": "plugins/orden-pago/orden-pago.model.ts",
+          "menu_ref": "orden-pago-menu-management-0",
+          "icon": "fa-file-invoice-dollar",
+          "columns": [
+            {
+              "name": "partida_clave",
+              "mongo": "partida_clave",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "partida"
+            },
+            {
+              "name": "momento",
+              "mongo": "momento",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "momento"
+            },
+            {
+              "name": "importe",
+              "mongo": "importe",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "importe"
+            }
+          ]
         }
       ]
     },
@@ -18174,7 +18393,32 @@
           "model_file": "plugins/solicitud/solicitud.model.ts",
           "menu_ref": "solicitud-menu-management-0",
           "icon": "fa-file-lines",
-          "columns": []
+          "columns": [
+            {
+              "name": "tipo",
+              "mongo": "tipo",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "tipo"
+            },
+            {
+              "name": "estado",
+              "mongo": "estado",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "estado"
+            },
+            {
+              "name": "origen",
+              "mongo": "origen",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "origen"
+            }
+          ]
         }
       ]
     }

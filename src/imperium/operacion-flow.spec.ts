@@ -230,7 +230,7 @@ const RUTA = '111111111111111111111111';
 const BULTO = '222222222222222222222222';
 const PRODUCTO = '333333333333333333333333';
 
-function empaque_store(opts: { route?: string; vehicle?: string } = {}) {
+function empaque_store(opts: { route?: string; vehicle?: string; route_name?: string } = {}) {
 	const pack: ImperiumDoc = {
 		_id: BULTO,
 		pedido: PEDIDO,
@@ -239,7 +239,10 @@ function empaque_store(opts: { route?: string; vehicle?: string } = {}) {
 		codigo_bulto: 'BULTO-000001',
 		contenido: [{ articulo_index: 0, product: PRODUCTO, quantity: 2 }],
 	};
-	if (opts.route) pack.delivery_route = opts.route;
+	if (opts.route) {
+		pack.delivery_route = opts.route;
+		pack.delivery_route_nombre = opts.route_name === undefined ? 'Ruta Norte' : opts.route_name;
+	}
 	if (opts.vehicle) pack.vehicle = opts.vehicle;
 	return memory_store({
 		pedidos: [
@@ -290,5 +293,52 @@ describe('delivery-package close_empaque', () => {
 		await expect(post_close_empaque(store)).rejects.toThrow(/Falta ruta en bulto/);
 		const saved = await store.find_id('delivery-package', BULTO);
 		expect(saved?.estado).toBe('pendiente');
+	});
+
+	test('la etiqueta no cierra si el bulto no trae el nombre de la ruta', async () => {
+		const store = empaque_store({ route: RUTA, route_name: '' });
+		await expect(post_close_empaque(store)).rejects.toThrow(/nombre de la ruta/);
+		const saved = await store.find_id('delivery-package', BULTO);
+		expect(saved?.estado).toBe('pendiente');
+	});
+});
+
+async function post_correct_surtido(store: ImperiumStore, cantidad: number) {
+	const req = new Request(`http://local/api/delivery-package/corregir-surtido/${PEDIDO}`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({ articulo_index: 0, cantidad }),
+	});
+	return handle_action(
+		store,
+		null as never,
+		req,
+		new URL(req.url),
+		'delivery-package',
+		'correct_surtido',
+		{ pedidoId: PEDIDO },
+		actor('user-group-almacen'),
+	);
+}
+
+describe('delivery-package correct_surtido', () => {
+	test('empaque corrige la cantidad surtida del pedido', async () => {
+		const store = empaque_store({ route: RUTA });
+		const res = await post_correct_surtido(store, 5);
+		const body = await res.json();
+		expect(res.status).toBe(200);
+		expect(body.message).toContain('corregida');
+		const saved = await store.find_id('pedidos', PEDIDO);
+		const line = (saved?.articulos as Array<{ cantidad: number; cantidad_surtida: number }>)[0];
+		expect(line.cantidad).toBe(5);
+		expect(line.cantidad_surtida).toBe(5);
+	});
+
+	test('no deja la corrección por debajo de lo ya empacado', async () => {
+		const store = empaque_store({ route: RUTA });
+		await expect(post_correct_surtido(store, 1)).rejects.toThrow(/empacadas/);
+		const saved = await store.find_id('pedidos', PEDIDO);
+		const line = (saved?.articulos as Array<{ cantidad: number }>)[0];
+		expect(line.cantidad).toBe(2);
 	});
 });

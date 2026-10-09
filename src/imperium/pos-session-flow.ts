@@ -37,6 +37,21 @@ function actor_id(actor: ImperiumDoc | null): string {
 	return text(actor?._id);
 }
 
+export const OFFLINE_POS_REPLAY_FLAG = '__offline_replay';
+
+export function offline_pos_ref(client_key: string): string {
+	const key = text(client_key);
+	if (!key) throw new Error('Falta la clave del ticket offline');
+	return `offline-pos:${key}`;
+}
+
+export function take_offline_pos_replay(doc: ImperiumDoc): ImperiumDoc | null {
+	if (doc[OFFLINE_POS_REPLAY_FLAG] !== true) return null;
+	const copy = { ...doc };
+	delete copy[OFFLINE_POS_REPLAY_FLAG];
+	return copy;
+}
+
 function normalize_branch_slug(name: string): string {
 	const normalized = String(name ?? '')
 		.normalize('NFD')
@@ -427,6 +442,16 @@ export async function prepare_pos_ticket_create(
 			'No se puede generar el ticket porque la sesión POS no pertenece al usuario actual',
 		);
 	}
+	const client_key = text(doc.offline_client_key);
+	if (client_key) {
+		const existing = await store.find_where('pos-tickets', { ref: offline_pos_ref(client_key) });
+		if (existing?._id) {
+			if (text(existing.pos_session) !== session_id) {
+				throw new Error('La clave offline ya pertenece a otra sesión POS');
+			}
+			return { ...existing, [OFFLINE_POS_REPLAY_FLAG]: true };
+		}
+	}
 	const ticket_type = text(doc.ticket_type).toUpperCase() || 'VENTA';
 	if (!TICKET_TYPES.has(ticket_type)) {
 		throw new Error('El tipo de ticket especificado no es válido');
@@ -438,6 +463,11 @@ export async function prepare_pos_ticket_create(
 		pos_session: session_id,
 		name: text(doc.name) || text(doc.ticket_sequence) || `Ticket ${new Date().toISOString()}`,
 	};
+	if (client_key) {
+		const ref = offline_pos_ref(client_key);
+		out.ref = ref;
+		out._ref = ref;
+	}
 	if (ticket_type !== 'RETIRO_MANUAL_CAJA') {
 		out.withdrawal_amount = 0;
 		out.withdrawal_reason = '';

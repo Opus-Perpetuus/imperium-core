@@ -65,6 +65,7 @@ import {
 	prepare_pos_session_create,
 	prepare_pos_session_update,
 	prepare_pos_ticket_create,
+	take_offline_pos_replay,
 } from './pos-session-flow.ts';
 import { decorate_product, prepare_product_write } from './products-flow.ts';
 import { decorate_vehicle, prepare_vehicle_write } from './vehicle-flow.ts';
@@ -761,6 +762,10 @@ export async function handle_crud(
 		}
 		if (resource === 'pos-tickets') {
 			incoming = await prepare_pos_ticket_create(store, incoming, actor);
+			const replayed = take_offline_pos_replay(incoming);
+			if (replayed) {
+				return json(resource, ok([replayed], 'Ticket ya registrado'), 200);
+			}
 			await assert_pos_pin(
 				store,
 				req,

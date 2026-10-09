@@ -123,6 +123,8 @@ describe('front-used Imperium contract via shipped create_imperium_layer', () =>
 		expect(row).toBeTruthy();
 		expect('branding_mode' in (row ?? {})).toBe(true);
 		expect('company_logo' in (row ?? {})).toBe(true);
+		expect('login_background' in (row ?? {})).toBe(true);
+		expect('login_background_publico' in (row ?? {})).toBe(true);
 	});
 
 	test('POST /auth/login returns user._id, L1 menus only for installed subjects, no recovery hashes', async () => {

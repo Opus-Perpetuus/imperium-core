@@ -2502,6 +2502,12 @@ function visit_objectid_path(
 /**
  * Replica el CastError de Mongoose 9 (ObjectId inválido → ValidationError + field_errors).
  */
+export function guard_store_insert(resource: string, doc: ImperiumDoc): void {
+	apply_schema_setters(resource, doc);
+	assert_required_fields(resource, doc);
+	assert_objectid_refs(resource, doc);
+}
+
 export function assert_objectid_refs(
 	resource: string,
 	doc: ImperiumDoc,
@@ -6253,11 +6259,9 @@ export class ImperiumStore {
 	}
 
 	async insert(resource: string, doc: ImperiumDoc): Promise<ImperiumDoc> {
-		apply_schema_setters(resource, doc);
+		guard_store_insert(resource, doc);
 		apply_inventory_movement_ledger(resource, doc);
 		ensure_sql_name(resource, doc);
-		assert_required_fields(resource, doc);
-		assert_objectid_refs(resource, doc);
 		await this.assert_unique_business_keys(resource, doc);
 		const cols = this.column_names(resource);
 		const jsons = this.json_cols(resource);

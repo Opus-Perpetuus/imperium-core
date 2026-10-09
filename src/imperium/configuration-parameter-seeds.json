@@ -55,11 +55,29 @@
 	},
 	{
 		"_ref": "configuration-branding-logo-text-position",
-		"description": "Posicion del texto junto al logo: right, bottom, top, hidden",
+		"description": "Posicion del texto junto al logo: right, left, above, below, hidden",
 		"is_system": true,
 		"module_id": "NA",
 		"name": "Posicion del texto del logo",
 		"type": "select",
+		"value": ""
+	},
+	{
+		"_ref": "configuration-login-background",
+		"description": "Imagen de fondo del inicio de sesión interno. Vacío conserva la fotografía de esa pantalla.",
+		"is_system": true,
+		"module_id": "NA",
+		"name": "Fondo del login interno",
+		"type": "image",
+		"value": ""
+	},
+	{
+		"_ref": "configuration-login-background-publico",
+		"description": "Imagen de fondo del inicio de sesión público. Vacío conserva la fotografía de esa pantalla.",
+		"is_system": true,
+		"module_id": "NA",
+		"name": "Fondo del login público",
+		"type": "image",
 		"value": ""
 	},
 	{
