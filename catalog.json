@@ -8692,7 +8692,7 @@
       "catalog_id": "SUBJECT-facturacion-electronica",
       "technical_id": "subject-facturacion-electronica",
       "depends_on": [],
-      "image": "ghcr.io/opus-perpetuus/subject-facturacion-electronica:0.2.2",
+      "image": "ghcr.io/opus-perpetuus/subject-facturacion-electronica:0.2.3",
       "repo": "Opus-Perpetuus/imperium-subject-facturacion-electronica",
       "dir": "workspace/imperium-subject-facturacion-electronica",
       "modules": [
