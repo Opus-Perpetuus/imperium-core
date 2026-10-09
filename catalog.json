@@ -12790,7 +12790,7 @@
       "catalog_id": "SUBJECT-planeacion",
       "technical_id": "subject-planeacion",
       "depends_on": [],
-      "image": "ghcr.io/opus-perpetuus/subject-planeacion:0.2.2",
+      "image": "ghcr.io/opus-perpetuus/subject-planeacion:0.2.3",
       "repo": "Opus-Perpetuus/imperium-subject-planeacion",
       "dir": "workspace/imperium-subject-planeacion",
       "modules": [
