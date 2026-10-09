@@ -15,7 +15,7 @@
       "catalog_id": "SUBJECT-almacen",
       "technical_id": "subject-almacen",
       "depends_on": [],
-      "image": "ghcr.io/opus-perpetuus/subject-almacen:0.3.0",
+      "image": "ghcr.io/opus-perpetuus/subject-almacen:0.3.1",
       "repo": "Opus-Perpetuus/imperium-subject-almacen",
       "dir": "workspace/imperium-subject-almacen",
       "modules": [
