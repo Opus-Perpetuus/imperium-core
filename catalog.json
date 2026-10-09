@@ -6913,7 +6913,7 @@
       "catalog_id": "SUBJECT-control-municipal",
       "technical_id": "subject-control-municipal",
       "depends_on": [],
-      "image": "ghcr.io/opus-perpetuus/subject-control-municipal:0.2.3",
+      "image": "ghcr.io/opus-perpetuus/subject-control-municipal:0.3.0",
       "repo": "Opus-Perpetuus/imperium-subject-control-municipal",
       "dir": "workspace/imperium-subject-control-municipal",
       "modules": [
@@ -18178,6 +18178,5 @@
         }
       ]
     }
-
   ]
 }
