@@ -12975,7 +12975,7 @@
       "catalog_id": "SUBJECT-tableros-dinamicos",
       "technical_id": "subject-tableros-dinamicos",
       "depends_on": [],
-      "image": "ghcr.io/opus-perpetuus/subject-tableros-dinamicos:0.2.2",
+      "image": "ghcr.io/opus-perpetuus/subject-tableros-dinamicos:0.2.3",
       "repo": "Opus-Perpetuus/imperium-subject-tableros-dinamicos",
       "dir": "workspace/imperium-subject-tableros-dinamicos",
       "modules": [
