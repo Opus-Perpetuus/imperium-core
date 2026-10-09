@@ -8498,7 +8498,7 @@
       "catalog_id": "SUBJECT-dispositivos-fisicos",
       "technical_id": "subject-dispositivos-fisicos",
       "depends_on": [],
-      "image": "ghcr.io/opus-perpetuus/subject-dispositivos-fisicos:0.2.2",
+      "image": "ghcr.io/opus-perpetuus/subject-dispositivos-fisicos:0.2.3",
       "repo": "Opus-Perpetuus/imperium-subject-dispositivos-fisicos",
       "dir": "workspace/imperium-subject-dispositivos-fisicos",
       "modules": [
