@@ -1812,7 +1812,7 @@
       "catalog_id": "SUBJECT-configuraciones-de-vista",
       "technical_id": "subject-configuraciones-de-vista",
       "depends_on": [],
-      "image": "ghcr.io/opus-perpetuus/subject-configuraciones-de-vista:0.2.2",
+      "image": "ghcr.io/opus-perpetuus/subject-configuraciones-de-vista:0.2.3",
       "repo": "Opus-Perpetuus/imperium-subject-configuraciones-de-vista",
       "dir": "workspace/imperium-subject-configuraciones-de-vista",
       "modules": [
