@@ -4970,7 +4970,7 @@
       "catalog_id": "SUBJECT-control-emergencias",
       "technical_id": "subject-control-emergencias",
       "depends_on": [],
-      "image": "ghcr.io/opus-perpetuus/subject-control-emergencias:0.2.2",
+      "image": "ghcr.io/opus-perpetuus/subject-control-emergencias:0.2.3",
       "repo": "Opus-Perpetuus/imperium-subject-control-emergencias",
       "dir": "workspace/imperium-subject-control-emergencias",
       "modules": [
