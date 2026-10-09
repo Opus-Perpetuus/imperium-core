@@ -9021,7 +9021,7 @@
         "subject-almacen",
         "subject-vehiculos"
       ],
-      "image": "ghcr.io/opus-perpetuus/subject-logistica:0.5.0",
+      "image": "ghcr.io/opus-perpetuus/subject-logistica:0.5.1",
       "repo": "Opus-Perpetuus/imperium-subject-logistica",
       "dir": "workspace/imperium-subject-logistica",
       "modules": [
