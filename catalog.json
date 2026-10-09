@@ -13488,7 +13488,7 @@
       "catalog_id": "SUBJECT-vehiculos",
       "technical_id": "subject-vehiculos",
       "depends_on": [],
-      "image": "ghcr.io/opus-perpetuus/subject-vehiculos:0.2.2",
+      "image": "ghcr.io/opus-perpetuus/subject-vehiculos:0.2.3",
       "repo": "Opus-Perpetuus/imperium-subject-vehiculos",
       "dir": "workspace/imperium-subject-vehiculos",
       "modules": [
