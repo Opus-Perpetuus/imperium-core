@@ -2375,6 +2375,23 @@ export function is_missing_relation(err: unknown): boolean {
 }
 
 /**
+ * Solo la tabla inexistente (42P01). A diferencia de `is_missing_relation`, una
+ * columna inexistente (42703) no cuenta: el borrado no puede saltarse un conteo
+ * de referencias porque a la tabla le falte la columna.
+ */
+export function is_undefined_table(err: unknown): boolean {
+	if (err === null || err === undefined || typeof err !== 'object') {
+		return /relation ".+" does not exist/i.test(String(err ?? ''));
+	}
+	const rec = err as { code?: string; errno?: string; message?: string };
+	const code = String(rec.code ?? '');
+	const errno = String(rec.errno ?? '');
+	if (code === '42703' || errno === '42703') return false;
+	if (code === '42P01' || errno === '42P01') return true;
+	return /relation ".+" does not exist/i.test(String(rec.message ?? ''));
+}
+
+/**
  * Bun.SQL pone el SQLSTATE en `errno` (`23505`) y `ERR_POSTGRES_SERVER_ERROR` en `code`.
  * El unwrap de jsonb string-wrapped choca unique si ya existe la fila objeto.
  */
@@ -5678,7 +5695,7 @@ export class ImperiumStore {
 					populate: false,
 				}));
 			} catch (err) {
-				if (is_missing_relation(err)) continue;
+				if (is_undefined_table(err)) continue;
 				throw err;
 			}
 			if (total > 0) hits.push({ ...incoming, conteo: total });

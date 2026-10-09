@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { ImperiumStore, is_missing_relation, load_catalog_path } from './store.ts';
+import { ImperiumStore, is_missing_relation, is_undefined_table, load_catalog_path } from './store.ts';
 
 const BASE = ['subject-configuracion', 'subject-configuraciones-de-vista', 'subject-planeacion'];
 
@@ -17,6 +17,13 @@ function missing_relation(table: string) {
 	return Object.assign(new Error(`relation "${table}" does not exist`), {
 		code: 'ERR_POSTGRES_SERVER_ERROR',
 		errno: '42P01',
+	});
+}
+
+function missing_column(column: string) {
+	return Object.assign(new Error(`column "${column}" does not exist`), {
+		code: 'ERR_POSTGRES_SERVER_ERROR',
+		errno: '42703',
 	});
 }
 
@@ -84,5 +91,25 @@ describe('borrado sin apps ajenas instaladas', () => {
 		expect(queried).not.toContain('pos-session');
 		expect(queried).not.toContain('delivery-route');
 		expect(queried).not.toContain('cfdi-document');
+	});
+
+	test('is_undefined_table solo acepta la tabla inexistente (42P01)', () => {
+		expect(is_undefined_table(missing_relation('subject_pos.pos_session'))).toBe(true);
+		expect(is_undefined_table({ code: '42P01' })).toBe(true);
+		expect(is_undefined_table(missing_column('usuario'))).toBe(false);
+		expect(is_undefined_table({ code: '42703' })).toBe(false);
+		expect(is_undefined_table({ message: 'syntax error' })).toBe(false);
+		expect(is_missing_relation(missing_column('usuario'))).toBe(true);
+	});
+
+	test('referencing_counts no salta una columna inexistente (42703): el borrado falla', async () => {
+		const store = store_with('ventas');
+		stub_find_many(store, async (resource) => {
+			if (resource === 'pedidos') throw missing_column('usuario');
+			return { rows: [], total: 0 };
+		});
+		await expect(store.referencing_counts('user', 'aaaaaaaaaaaaaaaaaaaaaaaa')).rejects.toThrow(
+			'column "usuario" does not exist',
+		);
 	});
 });
