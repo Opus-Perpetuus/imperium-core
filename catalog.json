@@ -13612,7 +13612,7 @@
       "depends_on": [
         "subject-almacen"
       ],
-      "image": "ghcr.io/opus-perpetuus/subject-ventas:0.4.0",
+      "image": "ghcr.io/opus-perpetuus/subject-ventas:0.4.1",
       "repo": "Opus-Perpetuus/imperium-subject-ventas",
       "dir": "workspace/imperium-subject-ventas",
       "modules": [
