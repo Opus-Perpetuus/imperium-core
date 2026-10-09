@@ -48,3 +48,22 @@ describe('proyección de lista de turnos', () => {
 		]);
 	});
 });
+
+describe('listas de Logística sin la columna del id interno', () => {
+	for (const resource of ['delivery-package', 'delivery-route']) {
+		test(`${resource}: el id viaja en la fila pero no es columna`, () => {
+			const tipo = list_instance_type(resource) ?? {};
+			expect(Object.keys(tipo)).not.toContain('_id');
+			expect(Object.keys(tipo)).toContain('name');
+			expect(list_projection_keys(resource)).toContain('_id');
+			const [row] = project_list_docs(resource, [{ _id: 'x1', name: 'B-1' }]);
+			expect(row?._id).toBe('x1');
+		});
+	}
+
+	test('Bultos sigue mostrando vehículo y ruta', () => {
+		const tipo = list_instance_type('delivery-package') ?? {};
+		expect(Object.keys(tipo)).toContain('vehicle_nombre');
+		expect(Object.keys(tipo)).toContain('delivery_route_nombre');
+	});
+});

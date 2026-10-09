@@ -126,9 +126,25 @@ const LIST_PROJECTIONS: Record<string, ListProjection> = {
 			'estado',
 			'is_active',
 		],
+		tipo: [
+			'name',
+			'codigo_bulto',
+			'numero_bulto',
+			'pedido_folio',
+			'pedido_folio_interno',
+			'pedido_contacto_nombre',
+			'delivery_route_nombre',
+			'vehicle_nombre',
+			'peso_kg',
+			'contenido_resumen',
+			'pedido_total_bultos',
+			'estado',
+			'is_active',
+		],
 	},
 	'delivery-route': {
 		rows: ['_id', 'name', 'description', 'vehicle_name', 'is_active'],
+		tipo: ['name', 'description', 'vehicle_name', 'is_active'],
 	},
 	'pos-session': {
 		rows: [
