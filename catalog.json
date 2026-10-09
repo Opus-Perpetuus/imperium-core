@@ -12591,7 +12591,7 @@
       "catalog_id": "SUBJECT-reportes",
       "technical_id": "subject-reportes",
       "depends_on": [],
-      "image": "ghcr.io/opus-perpetuus/subject-reportes:0.3.5",
+      "image": "ghcr.io/opus-perpetuus/subject-reportes:0.3.6",
       "repo": "Opus-Perpetuus/imperium-subject-reportes",
       "dir": "workspace/imperium-subject-reportes",
       "modules": [
