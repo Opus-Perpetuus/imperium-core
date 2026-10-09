@@ -3615,7 +3615,7 @@
       "catalog_id": "SUBJECT-control-hospitalario",
       "technical_id": "subject-control-hospitalario",
       "depends_on": [],
-      "image": "ghcr.io/opus-perpetuus/subject-control-hospitalario:0.2.2",
+      "image": "ghcr.io/opus-perpetuus/subject-control-hospitalario:0.2.3",
       "repo": "Opus-Perpetuus/imperium-subject-control-hospitalario",
       "dir": "workspace/imperium-subject-control-hospitalario",
       "modules": [
