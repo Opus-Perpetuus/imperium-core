@@ -6317,7 +6317,7 @@
       "catalog_id": "SUBJECT-control-escolar",
       "technical_id": "subject-control-escolar",
       "depends_on": [],
-      "image": "ghcr.io/opus-perpetuus/subject-control-escolar:0.5.1",
+      "image": "ghcr.io/opus-perpetuus/subject-control-escolar:0.5.2",
       "repo": "Opus-Perpetuus/imperium-subject-control-escolar",
       "dir": "workspace/imperium-subject-control-escolar",
       "modules": [
