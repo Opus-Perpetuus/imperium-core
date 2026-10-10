@@ -668,3 +668,132 @@ describe('lanzador de almacén', () => {
 		expect(String(lot?.icon ?? '')).toBe('fa-barcode');
 	});
 });
+
+describe('control de emergencias: submenú Categorías', () => {
+	const store = new ImperiumStore(
+		null as unknown as Bun.SQL,
+		load_catalog_path(),
+	);
+	const ce = store.subjects.find((sub) => sub.slug === 'control-emergencias');
+	const FOLDER = 'control-emergencias-nav-categorias';
+	const CATEGORIAS = [
+		['categoria-despensa-solidaria-menu-management-0', '/categoria-despensa-solidaria', 110],
+		['categoria-inventario-sanitario-menu-management-0', '/categoria-inventario-sanitario', 120],
+		['categoria-directorio-contactos-menu-management-0', '/categoria-directorio-contactos', 130],
+		['categoria-base-volcanica-menu-management-0', '/categoria-base-volcanica', 150],
+	] as const;
+	// Como están hoy en SEREM: las cuatro, sueltas bajo la raíz de la app.
+	const root = {
+		_id: 'ce-root',
+		_ref: 'control-emergencias-menu-root',
+		name: 'Control de emergencias',
+		path: '/control-emergencias',
+		parent_id: null,
+	};
+	const flat_rows = () => [
+		root,
+		{
+			_id: 'dir',
+			_ref: 'directorio-contactos-menu-management-0',
+			name: 'Directorio de contactos',
+			path: '/directorio-contactos',
+			parent_id: 'ce-root',
+			order: 50,
+			model: 'DirectorioContactos',
+		},
+		...CATEGORIAS.map(([ref, path, order]) => ({
+			_id: `id-${ref}`,
+			_ref: ref,
+			name: ref,
+			path,
+			parent_id: 'ce-root',
+			order,
+			model: '',
+		})),
+	];
+
+	test('el catálogo declara la carpeta y sus cuatro hijas', () => {
+		const menus = ce?.menus ?? [];
+		const folder = menus.find((m) => m.menu_ref === FOLDER);
+		expect(folder).toMatchObject({
+			name: 'Categorías',
+			path: '',
+			parent_ref: 'control-emergencias-menu-root',
+		});
+		const kids = menus.filter((m) => m.parent_ref === FOLDER);
+		expect(kids.map((m) => m.menu_ref).sort()).toEqual(
+			CATEGORIAS.map(([ref]) => ref).sort(),
+		);
+	});
+
+	test('un servidor ya instalado ve las cuatro dentro de Categorías', () => {
+		const out = reshape_subject_menus(store, flat_rows());
+		const folder = out.find((m) => m._ref === FOLDER);
+		expect(folder?.name).toBe('Categorías');
+		expect(String(folder?.parent_id)).toBe('ce-root');
+		for (const [ref, path] of CATEGORIAS) {
+			const row = out.find((m) => m._ref === ref);
+			expect(row?.path).toBe(path);
+			expect(String(row?.parent_id)).toBe(String(folder?._id));
+		}
+		const directorio = out.find(
+			(m) => m._ref === 'directorio-contactos-menu-management-0',
+		);
+		expect(String(directorio?.parent_id)).toBe('ce-root');
+	});
+
+	test('con la carpeta ya guardada se usa esa fila', () => {
+		const rows = [
+			...flat_rows(),
+			{
+				_id: 'folder-db',
+				_ref: FOLDER,
+				name: 'Categorías',
+				path: '',
+				parent_id: 'ce-root',
+				order: 160,
+				model: '',
+			},
+		];
+		const out = reshape_subject_menus(store, rows);
+		expect(out.filter((m) => m._ref === FOLDER)).toHaveLength(1);
+		for (const [ref] of CATEGORIAS) {
+			const row = out.find((m) => m._ref === ref);
+			expect(String(row?.parent_id)).toBe('folder-db');
+		}
+	});
+
+	test('el arranque solo inserta la carpeta; no toca las categorías guardadas', () => {
+		const existing = [
+			{ _ref: 'control-emergencias-menu-root' },
+			...ce!.modules.map((mod) => ({ _ref: mod.menu_ref })),
+		];
+		const planned = plan_subject_menus(ce!, existing);
+		expect(planned.map((row) => row._ref)).toEqual([FOLDER]);
+		expect(planned[0]).toMatchObject({
+			name: 'Categorías',
+			path: '',
+			parent_ref: 'control-emergencias-menu-root',
+			model: '',
+		});
+	});
+
+	test('un grupo con una sola categoría ve la carpeta que la contiene', () => {
+		const rows = flat_rows();
+		const ref = CATEGORIAS[3][0];
+		const filtered = filter_menus_for_access(rows, {
+			has_user_groups: true,
+			menu_ids: [`id-${ref}`],
+			models: [],
+		});
+		const out = keep_reshaped_menus_for_access(
+			filtered,
+			reshape_subject_menus(store, filtered),
+		);
+		const refs = out.map((m) => String(m._ref ?? ''));
+		expect(refs).toContain(ref);
+		expect(refs).toContain(FOLDER);
+		expect(refs).toContain('control-emergencias-menu-root');
+		expect(refs).not.toContain(CATEGORIAS[0][0]);
+	});
+});

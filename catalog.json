@@ -6306,6 +6306,43 @@
             }
           ]
         }
+      ],
+      "menus": [
+        {
+          "name": "Categorías",
+          "menu_ref": "control-emergencias-nav-categorias",
+          "path": "",
+          "icon": "fa-tags",
+          "parent_ref": "control-emergencias-menu-root"
+        },
+        {
+          "name": "Categorías de base volcánica",
+          "menu_ref": "categoria-base-volcanica-menu-management-0",
+          "path": "/categoria-base-volcanica",
+          "icon": "fa-tags",
+          "parent_ref": "control-emergencias-nav-categorias"
+        },
+        {
+          "name": "Categorías de despensa solidaria",
+          "menu_ref": "categoria-despensa-solidaria-menu-management-0",
+          "path": "/categoria-despensa-solidaria",
+          "icon": "fa-tags",
+          "parent_ref": "control-emergencias-nav-categorias"
+        },
+        {
+          "name": "Categorías de inventario sanitario",
+          "menu_ref": "categoria-inventario-sanitario-menu-management-0",
+          "path": "/categoria-inventario-sanitario",
+          "icon": "fa-tag",
+          "parent_ref": "control-emergencias-nav-categorias"
+        },
+        {
+          "name": "Categorías del directorio",
+          "menu_ref": "categoria-directorio-contactos-menu-management-0",
+          "path": "/categoria-directorio-contactos",
+          "icon": "fa-bookmark",
+          "parent_ref": "control-emergencias-nav-categorias"
+        }
       ]
     },
     {
