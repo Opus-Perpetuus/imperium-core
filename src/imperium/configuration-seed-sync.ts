@@ -15,6 +15,7 @@ import type { ImperiumStore, SubjectInfo } from './store.ts';
 import { plan_escritorio_menu } from './escritorio-menu-seed.ts';
 import { plan_portal_menus } from './portal-menu-seed.ts';
 import { plan_reuniones_menu } from './reuniones-menu-seed.ts';
+import { ensure_devoluciones_access } from './devoluciones-acceso-seed.ts';
 import { ensure_installed_subject_menus } from './subject-menu-seed.ts';
 
 function backend_src_root(): string {
@@ -142,6 +143,13 @@ export async function apply_missing_configuration_seeds(
 	await ensure_portal_landing_menu(store);
 	await ensure_escritorio_menu(store);
 	await ensure_reuniones_menu(store);
+	try {
+		await ensure_devoluciones_access(store);
+	} catch (err) {
+		console.warn(
+			`No se pudieron sembrar los permisos de Devoluciones: ${err instanceof Error ? err.message : String(err)}`,
+		);
+	}
 	await ensure_installed_subject_menus(
 		store,
 		installed_subjects_from_markers(store, modules),

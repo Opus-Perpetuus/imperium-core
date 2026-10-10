@@ -146,7 +146,7 @@ export function keep_reshaped_menus_for_access<
 	return reshaped.filter((row) => keep.has(String(row._id ?? '')));
 }
 
-function id_list(value: unknown): string[] {
+export function id_list(value: unknown): string[] {
 	return as_array(value)
 		.map((item) => {
 			if (item && typeof item === 'object') {
