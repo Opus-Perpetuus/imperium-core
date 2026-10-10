@@ -1,4 +1,5 @@
-import { DatabaseSync } from "node:sqlite";
+// La imagen del núcleo es oven/bun:1.3-alpine. Ese binario no incluye node:sqlite.
+import { Database as DatabaseSync } from "bun:sqlite";
 import { guard_store_insert } from "../store.ts";
 import { apply_mutation_batch } from "./apply";
 import { create_authority, row_key } from "./types";

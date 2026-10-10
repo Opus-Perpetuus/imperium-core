@@ -1,4 +1,5 @@
-import { DatabaseSync } from "node:sqlite";
+// La imagen del núcleo es oven/bun:1.3-alpine. Ese binario no incluye node:sqlite.
+import { Database as DatabaseSync } from "bun:sqlite";
 import { OFFLINE_PENDING_SQL, OFFLINE_ROW_SQL } from "./schema";
 
 export type NodeSqlite = {
