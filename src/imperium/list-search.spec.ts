@@ -52,4 +52,12 @@ describe('list_search_columns', () => {
 		);
 		expect(cols).toEqual(['name', 'description', 'search_field', 'codigo']);
 	});
+
+	test('pedidos busca por folio y folio interno', () => {
+		const cols = list_search_columns(
+			'pedidos',
+			new Set(['name', 'description', 'search_field', 'folio', 'folio_interno', 'contacto']),
+		);
+		expect(cols).toEqual(['name', 'description', 'search_field', 'folio', 'folio_interno']);
+	});
 });

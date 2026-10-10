@@ -1,6 +1,7 @@
 /**
  * CRUD Imperium: mismas rutas que `crud_routes()` del backend Express.
  */
+import { decorate_list_instance_type } from './list-headers.ts';
 import { apply_public_user_create } from '@opus-perpetuus/imperium-core-kit';
 import { as_array, as_object, fail, ok, type ImperiumDoc } from './envelope.ts';
 import { run_batch_import } from './batch-import.ts';
@@ -1586,7 +1587,7 @@ function instance_type(
 	_rows: ImperiumDoc[],
 ): Record<string, { nombre_encabezado: string; tipo: string }> {
 	const projected = list_instance_type(resource);
-	if (projected) return projected;
+	if (projected) return decorate_list_instance_type(resource, projected);
 	const keys = ['_id', 'name', 'description', 'is_active', '_ref'];
 	for (const col of store.loc(resource).columns) {
 		if (USER_SECRET_KEYS.has(col.name) || ALWAYS_SECRET_KEYS.has(col.name)) continue;
@@ -1596,7 +1597,7 @@ function instance_type(
 	for (const k of keys) {
 		out[k] = { nombre_encabezado: k.replace(/_/g, ' '), tipo: 'string' };
 	}
-	return out;
+	return decorate_list_instance_type(resource, out);
 }
 
 export const USER_SECRET_KEYS = new Set([

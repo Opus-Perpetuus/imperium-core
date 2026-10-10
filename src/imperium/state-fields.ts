@@ -306,6 +306,15 @@ const RAW_DEFAULTS: Record<
 			v('autorizada', 'primary', 'Diferencias autorizadas'),
 		], { read_only: true }),
 	],
+	'invoice-request': [
+		field('estado', [
+			v('pendiente_autorizacion_cobranza', 'warning', 'Pendiente de autorización de cobranza'),
+			v('listo_para_comercial', 'info', 'Lista para comercial'),
+			v('enviado_a_comercial', 'primary', 'Enviada a comercial'),
+			v('facturado', 'success', 'Facturada'),
+			v('cancelado', 'danger', 'Cancelada'),
+		], { read_only: true }),
+	],
 	'supplier-payment': [
 		field('status', [
 			v('APLICADO', 'success', 'Aplicado'),
