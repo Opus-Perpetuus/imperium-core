@@ -1,4 +1,4 @@
-import { confirmed_seqs } from "./durable";
+import { confirmed_seqs } from "./confirmed-seqs";
 import { enqueue_mutation, pending_for_server, type LocalSession } from "./device";
 import { create_device } from "./device";
 import { migrate_legacy_queue, type LegacyQueueName } from "./queues";

@@ -4,6 +4,8 @@ import { apply_mutation_batch } from "./apply";
 import { create_authority, row_key } from "./types";
 import type { MutationResult, NamedMutation } from "./types";
 
+export { confirmed_seqs } from "./confirmed-seqs";
+
 export type SyncTx = {
 	get_row(resource: string, id: string): Promise<Record<string, unknown> | null>;
 	put_row(resource: string, id: string, row: Record<string, unknown>): Promise<void>;
@@ -241,21 +243,6 @@ export function imperium_sync_store(sql: SqlDatabase, resources: ResourceStore):
 
 export function postgres_sync_store(sql: SqlDatabase): SyncStore {
 	return sql_sync_store(sql, "postgres");
-}
-
-const TERMINAL = new Set(["applied", "adjusted", "rejected", "conflict"]);
-
-export function confirmed_seqs(
-	results: { status?: string }[] | null | undefined,
-	mutations: { seq: number }[],
-): number[] {
-	if (!Array.isArray(results)) return [];
-	const seqs: number[] = [];
-	for (let index = 0; index < mutations.length; index += 1) {
-		const status = results[index]?.status;
-		if (status && TERMINAL.has(status)) seqs.push(mutations[index]!.seq);
-	}
-	return seqs;
 }
 
 export async function replay_durable(
