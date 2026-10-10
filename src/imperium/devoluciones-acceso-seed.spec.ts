@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
 	MENU_REF_DEVOLUCIONES,
+	permiso_plantilla_ticket_choferes,
 	permisos_adjunto_firma,
 	permisos_devolucion,
 } from '../../../../backend/src/components/user-group/flujo-grupos-acceso.ts';
@@ -99,13 +100,13 @@ function pick(row: Record<string, unknown>) {
 }
 
 describe('siembra de accesos de Devoluciones', () => {
-	test('base vacía crea las 7 filas y anexa el menú a los 3 grupos', async () => {
+	test('base vacía crea las 8 filas y anexa el menú a los 3 grupos', async () => {
 		const store = base();
 		const result = await ensure_devoluciones_access(store);
 		expect(result.rights).toEqual(DEVOLUCIONES_ACCESS_RIGHTS.map((row) => row._ref));
 		expect(result.groups).toEqual(['g-choferes', 'g-almacen', 'g-logistica']);
-		expect(store.data['access-rights']).toHaveLength(7);
-		expect(store.inserts.filter((call) => call.resource === 'access-rights')).toHaveLength(7);
+		expect(store.data['access-rights']).toHaveLength(8);
+		expect(store.inserts.filter((call) => call.resource === 'access-rights')).toHaveLength(8);
 		for (const row of store.data['access-rights'] ?? []) {
 			expect(row.is_active).toBe(true);
 			expect(row.allow_delete).toBe(false);
@@ -131,9 +132,9 @@ describe('siembra de accesos de Devoluciones', () => {
 		expect(second).toEqual({ rights: [], groups: [] });
 		expect(store.inserts).toEqual([]);
 		expect(store.updates).toEqual([]);
-		expect(store.data['access-rights']).toHaveLength(7);
+		expect(store.data['access-rights']).toHaveLength(8);
 		const refs = (store.data['access-rights'] ?? []).map((row) => row._ref);
-		expect(new Set(refs).size).toBe(7);
+		expect(new Set(refs).size).toBe(8);
 	});
 
 	test('no pisa un _ref existente y respeta menus_ids en JSON', async () => {
@@ -188,7 +189,7 @@ describe('siembra de accesos de Devoluciones', () => {
 			name: 'viejo',
 			description: 'distinto',
 		});
-		expect(store.data['access-rights']).toHaveLength(7);
+		expect(store.data['access-rights']).toHaveLength(8);
 		expect(store.updates.filter((call) => call.resource === 'access-rights')).toEqual([]);
 		expect(store.updates.map((call) => call.id).sort()).toEqual(['g-almacen', 'g-logistica']);
 		const almacen = store.data['user-group']?.find((row) => row._id === 'g-almacen');
@@ -213,12 +214,12 @@ describe('siembra de accesos de Devoluciones', () => {
 		expect(result.groups).toEqual([]);
 		expect(store.updates).toEqual([]);
 		expect(store.data['user-group']).toEqual(antes);
-		expect(result.rights).toHaveLength(7);
+		expect(result.rights).toHaveLength(8);
 	});
 
 	test('paridad con el backend en los tres grupos', () => {
 		expect(DEVOLUCIONES_MENU_REF).toBe(MENU_REF_DEVOLUCIONES);
-		expect(DEVOLUCIONES_ACCESS_RIGHTS).toHaveLength(7);
+		expect(DEVOLUCIONES_ACCESS_RIGHTS).toHaveLength(8);
 		const grupos = new Set<string>(GRUPOS);
 		const backend = [...permisos_devolucion(), ...permisos_adjunto_firma()].filter((row) =>
 			grupos.has(row.group_id),
@@ -239,6 +240,26 @@ describe('siembra de accesos de Devoluciones', () => {
 		);
 		expect(pick(fila ?? {})).toEqual(pick(ubicacion?.doc ?? {}));
 		expect(fila?.is_active).toBe(true);
+		const plantilla = DEVOLUCIONES_ACCESS_RIGHTS.find(
+			(row) => row._ref === 'choferes-access-rights-epson-ticket-template',
+		);
+		expect(pick(plantilla ?? {})).toEqual(pick(permiso_plantilla_ticket_choferes()));
+		expect(plantilla?.is_active).toBe(true);
+	});
+
+	test('una base con las 7 filas previas sólo inserta choferes-access-rights-epson-ticket-template', async () => {
+		const previas = DEVOLUCIONES_ACCESS_RIGHTS.filter(
+			(row) => row._ref !== 'choferes-access-rights-epson-ticket-template',
+		);
+		const store = base({ rights: previas });
+		const result = await ensure_devoluciones_access(store);
+		expect(previas).toHaveLength(7);
+		expect(result.rights).toEqual(['choferes-access-rights-epson-ticket-template']);
+		expect(
+			store.inserts
+				.filter((call) => call.resource === 'access-rights')
+				.map((call) => call.doc._ref),
+		).toEqual(['choferes-access-rights-epson-ticket-template']);
 	});
 
 	test('un fallo de esta siembra no tumba el resto', () => {

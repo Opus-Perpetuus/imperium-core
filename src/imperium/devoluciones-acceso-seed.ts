@@ -1,5 +1,5 @@
 /**
- * Permisos de Devoluciones para Choferes, Almacén y Logística.
+ * Permisos de Devoluciones para Choferes, Almacén y Logística, y lectura de la plantilla del ticket de Choferes.
  *
  * El núcleo no corre las siembras de Express y el lector de `module.data`
  * se salta `accesos_flujo()`. Estas filas se insertan aquí, idempotentes
@@ -81,10 +81,24 @@ const DERECHO_UBICACIONES: DevolucionAccessRight = {
 	is_active: true,
 };
 
+const DERECHO_PLANTILLA_TICKET_CHOFERES: DevolucionAccessRight = {
+	_ref: 'choferes-access-rights-epson-ticket-template',
+	name: 'EpsonTicketTemplate | Choferes (leer)',
+	description: 'Choferes: leer la plantilla con la que se imprime el ticket de la entrega.',
+	model_id: 'EpsonTicketTemplate',
+	group_id: 'user-group-choferes',
+	allow_read: true,
+	allow_create: false,
+	allow_update: false,
+	allow_delete: false,
+	is_active: true,
+};
+
 export const DEVOLUCIONES_ACCESS_RIGHTS: DevolucionAccessRight[] = [
 	...GRUPOS_DEVOLUCION.map(derecho_devolucion),
 	...GRUPOS_DEVOLUCION.map(derecho_firma),
 	DERECHO_UBICACIONES,
+	DERECHO_PLANTILLA_TICKET_CHOFERES,
 ];
 
 type FilaRef = { _ref?: unknown };
