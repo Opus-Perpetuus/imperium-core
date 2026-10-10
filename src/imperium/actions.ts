@@ -280,6 +280,7 @@ import { register_package_delivery_exit } from './inventory-logistics-flow.ts';
 import {
 	append_return_pickup_gps_line,
 	apply_quant_delta,
+	product_has_quants,
 	quant_total_for_pair,
 	recibir_delivery_return,
 	recompute_product_existencia,
@@ -3443,11 +3444,15 @@ async function import_apertura(ctx: Ctx) {
 	}
 	if (!dry_run && adjustments.length) {
 		const running = new Map<string, number>();
+		const sin_filas = new Map<string, boolean>();
 		const fecha = new Date();
 		for (const adj of adjustments) {
 			const product_id = String(adj.producto_id);
 			const prod = await ctx.store.find_id('products', product_id);
 			if (!prod) continue;
+			if (!sin_filas.has(product_id)) {
+				sin_filas.set(product_id, !(await product_has_quants(ctx.store, product_id)));
+			}
 			const previo = running.get(product_id) ?? opening_qty(prod.existencia);
 			const resultante = opening_qty(previo + Number(adj.diferencia));
 			running.set(product_id, resultante);
@@ -3459,7 +3464,11 @@ async function import_apertura(ctx: Ctx) {
 				ubicacion_codigo: String(adj.ubicacion_codigo),
 				delta: Number(adj.diferencia),
 			});
-			await recompute_product_existencia(ctx.store, product_id);
+			await recompute_product_existencia(ctx.store, product_id, {
+				sin_filas_previas: sin_filas.get(product_id) === true,
+				delta: Number(adj.diferencia),
+				existencia_previa: previo,
+			});
 			if (ctx.store.has('inventory-movement')) {
 				const apartado = opening_qty(prod.existenciaApartada);
 				const delta = Number(adj.diferencia);
@@ -4719,6 +4728,11 @@ async function po_apply_receipt(
 		if (product) await assert_new_serials(ctx.store, product, lots);
 		planned.push({ line, item, product, lots });
 	}
+	const sin_filas = new Map<string, boolean>();
+	for (const { line } of planned) {
+		if (sin_filas.has(line.producto)) continue;
+		sin_filas.set(line.producto, !(await product_has_quants(ctx.store, line.producto)));
+	}
 	for (const { line, item, product, lots } of planned) {
 		for (const lot of lots.length ? lots : [null]) {
 			const lot_doc =
@@ -4734,6 +4748,7 @@ async function po_apply_receipt(
 				ubicacion_destino: line.ubicacion_destino,
 				ubicacion_destino_nombre: line.ubicacion_destino_nombre,
 				referencia,
+				sin_filas_previas: sin_filas.get(line.producto) === true,
 				...(lot_doc && lot
 					? {
 							lote: String(lot_doc._id),

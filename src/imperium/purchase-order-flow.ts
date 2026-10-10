@@ -4,6 +4,7 @@
 import { as_array, as_object, type ImperiumDoc } from './envelope.ts';
 import {
 	apply_quant_delta,
+	product_has_quants,
 	recompute_product_existencia,
 } from './delivery-return-flow.ts';
 import type { ImperiumStore } from './store.ts';
@@ -232,6 +233,7 @@ export async function apply_purchase_receipt_stock(
 		lote?: string;
 		lote_codigo?: string;
 		fecha_caducidad?: string;
+		sin_filas_previas?: boolean;
 	},
 ): Promise<void> {
 	const lote = text(params.lote);
@@ -327,6 +329,8 @@ export async function apply_purchase_receipt_stock(
 		});
 	}
 	if (destination) {
+		const sin_filas_previas =
+			params.sin_filas_previas ?? !(await product_has_quants(store, params.producto));
 		await apply_quant_delta(store, {
 			producto: params.producto,
 			producto_nombre: text(product.name),
@@ -336,7 +340,11 @@ export async function apply_purchase_receipt_stock(
 			delta: cantidad,
 			...lote_fields,
 		});
-		await recompute_product_existencia(store, params.producto);
+		await recompute_product_existencia(store, params.producto, {
+			sin_filas_previas,
+			delta: cantidad,
+			existencia_previa: stock_previo,
+		});
 		await store.update('products', params.producto, {
 			ultimoCostoCompra: costo,
 			costoCompraPromedio: costo_promedio,

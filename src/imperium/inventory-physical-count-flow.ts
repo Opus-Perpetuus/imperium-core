@@ -5,6 +5,7 @@
 import { as_array, as_object, type ImperiumDoc } from './envelope.ts';
 import {
 	apply_quant_delta,
+	product_has_quants,
 	recompute_product_existencia,
 } from './delivery-return-flow.ts';
 import { is_record_id } from './record-id.ts';
@@ -267,6 +268,7 @@ export async function apply_physical_count(
 	const ubicacion_codigo = text(count.ubicacion_codigo);
 	const fecha = new Date().toISOString();
 	const running = new Map<string, number>();
+	const sin_filas = new Map<string, boolean>();
 	for (const raw of as_array(count.lineas)) {
 		const line = as_object(raw);
 		const producto = ref_id(line.producto);
@@ -277,6 +279,9 @@ export async function apply_physical_count(
 		if (!diferencia) continue;
 		const prod = await store.find_id('products', producto);
 		if (!prod) continue;
+		if (!sin_filas.has(producto)) {
+			sin_filas.set(producto, !(await product_has_quants(store, producto)));
+		}
 		const previo =
 			running.get(producto) ??
 			round_qty(prod.existencia);
@@ -292,7 +297,11 @@ export async function apply_physical_count(
 				delta: diferencia,
 			});
 		}
-		await recompute_product_existencia(store, producto);
+		await recompute_product_existencia(store, producto, {
+			sin_filas_previas: sin_filas.get(producto) === true,
+			delta: diferencia,
+			existencia_previa: previo,
+		});
 		if (store.has('inventory-movement')) {
 			const apartado = round_qty(prod.existenciaApartada);
 			await store.insert('inventory-movement', {

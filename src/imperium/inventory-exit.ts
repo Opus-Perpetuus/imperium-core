@@ -1,21 +1,18 @@
 /**
  * Salidas de inventario (surtido de pedido, entrega de bulto, venta POS).
  * Además de `products.existencia`, descuentan las existencias por ubicación:
- * recepciones, traslados y conteos recalculan la existencia como la suma por
- * ubicación, y sin este descuento lo ya surtido volvía a contar.
+ * primero las de la ruta de surtido y el resto en el almacén general.
  */
-import { apply_quant_delta } from './delivery-return-flow.ts';
+import { apply_quant_delta, find_warehouse_location } from './delivery-return-flow.ts';
 import { as_array, as_object, type ImperiumDoc } from './envelope.ts';
 import { compute_picking_route, round_quantity } from './inventory-picking.ts';
 import type { ImperiumStore } from './store.ts';
 
-const WAREHOUSE_REF = 'inventory-internal-location-warehouse';
-
 /**
  * Descuenta `cantidad` de las ubicaciones del producto en el orden de la ruta
- * de surtido. Lo que no alcance sale del almacén general (puede quedar en
- * negativo) para que la suma por ubicación siga igual a la existencia. Un
- * producto sin existencias por ubicación no se toca.
+ * de surtido. Lo que no alcance, o toda la cantidad si no hay existencias por
+ * ubicación, sale del almacén general (`inventory-internal-location-warehouse`).
+ * Si el producto no tiene fila ahí, se crea y puede quedar negativa.
  */
 export async function consume_exit_quants(
 	store: ImperiumStore,
@@ -25,13 +22,6 @@ export async function consume_exit_quants(
 	const producto = String(product._id ?? '');
 	const requerido = round_quantity(cantidad);
 	if (!producto || requerido <= 0 || !store.has('inventory-stock-quant')) return;
-	const { rows } = await store.find_many('inventory-stock-quant', {
-		where: { producto },
-		take: 1,
-		include_inactive: true,
-		populate: false,
-	});
-	if (!rows.length) return;
 	const base = {
 		producto,
 		producto_nombre: String(product.name ?? ''),
@@ -46,10 +36,8 @@ export async function consume_exit_quants(
 			delta: -renglon.tomar,
 		});
 	}
-	if (route.faltante <= 0 || !store.has('inventory-internal-location')) return;
-	const warehouse =
-		(await store.find_where('inventory-internal-location', { _ref: WAREHOUSE_REF })) ??
-		(await store.find_where('inventory-internal-location', { ref: WAREHOUSE_REF }));
+	if (route.faltante <= 0) return;
+	const warehouse = await find_warehouse_location(store);
 	if (!warehouse?._id) return;
 	await apply_quant_delta(store, {
 		...base,
@@ -89,10 +77,7 @@ async function insert_pos_sale_movement(
 	stock_total_resultante: number,
 ): Promise<void> {
 	if (!store.has('inventory-movement')) return;
-	const warehouse = store.has('inventory-internal-location')
-		? ((await store.find_where('inventory-internal-location', { _ref: WAREHOUSE_REF })) ??
-			(await store.find_where('inventory-internal-location', { ref: WAREHOUSE_REF })))
-		: null;
+	const warehouse = await find_warehouse_location(store);
 	const producto = String(product._id ?? '');
 	const apartado = round_quantity(Number(product.existenciaApartada ?? 0));
 	await store.insert('inventory-movement', {

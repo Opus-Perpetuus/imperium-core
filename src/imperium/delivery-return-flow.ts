@@ -12,6 +12,7 @@ const STATE_SIGNED = 'firmado';
 const STATE_RECEIVED = 'recibido_almacen';
 const DOMAIN_EVENT = 'devolucion-recibida-almacen';
 const OBJECT_ID = /^[a-fA-F0-9]{24}$/;
+const WAREHOUSE_REF = 'inventory-internal-location-warehouse';
 
 function text(value: unknown): string {
 	return String(value ?? '').trim();
@@ -158,6 +159,8 @@ async function register_return_receipt(
 		.map(as_object)
 		.filter((line) => ref_id(line.producto) && Number(line.cantidad ?? 0) > 0);
 	const running = new Map<string, number>();
+	const origen = new Map<string, number>();
+	const sin_filas = new Map<string, boolean>();
 	const affected = new Set<string>();
 	for (const line of lines) {
 		const product_id = ref_id(line.producto);
@@ -167,6 +170,10 @@ async function register_return_receipt(
 		const stock_total_previo = round_qty(
 			running.get(product_id) ?? Number(product.existencia ?? 0),
 		);
+		if (!origen.has(product_id)) {
+			origen.set(product_id, stock_total_previo);
+			sin_filas.set(product_id, !(await product_has_quants(store, product_id)));
+		}
 		const stock_apartado = round_qty(Number(product.existenciaApartada ?? 0));
 		const stock_total_resultante = round_qty(stock_total_previo + cantidad);
 		running.set(product_id, stock_total_resultante);
@@ -205,7 +212,12 @@ async function register_return_receipt(
 	}
 	for (const product_id of affected) {
 		if (store.has('inventory-stock-quant')) {
-			await recompute_product_existencia(store, product_id);
+			const previa = origen.get(product_id) ?? 0;
+			await recompute_product_existencia(store, product_id, {
+				sin_filas_previas: sin_filas.get(product_id) === true,
+				delta: round_qty((running.get(product_id) ?? previa) - previa),
+				existencia_previa: previa,
+			});
 		} else {
 			await store.update('products', product_id, {
 				existencia: running.get(product_id),
@@ -372,18 +384,70 @@ export async function apply_quant_delta(
 	return portions;
 }
 
-export async function recompute_product_existencia(store: ImperiumStore, product_id: string) {
+/** Ubicación del almacén general, por `_ref` o por `ref`. */
+export async function find_warehouse_location(store: ImperiumStore): Promise<ImperiumDoc | null> {
+	if (!store.has('inventory-internal-location')) return null;
+	return (
+		(await store.find_where('inventory-internal-location', { _ref: WAREHOUSE_REF })) ??
+		(await store.find_where('inventory-internal-location', { ref: WAREHOUSE_REF }))
+	);
+}
+
+/** El producto tiene al menos una fila en `inventory-stock-quant`. */
+export async function product_has_quants(store: ImperiumStore, producto: string): Promise<boolean> {
+	if (!producto || !store.has('inventory-stock-quant')) return false;
+	const { rows } = await store.find_many('inventory-stock-quant', {
+		where: { producto },
+		take: 1,
+		include_inactive: true,
+		populate: false,
+	});
+	return rows.length > 0;
+}
+
+/**
+ * Deja `products.existencia` igual a la suma por ubicación.
+ * Con `sin_filas_previas` la deja en la previa más `delta` y, si esa suma no
+ * coincide, asienta la diferencia en el almacén general.
+ */
+export async function recompute_product_existencia(
+	store: ImperiumStore,
+	product_id: string,
+	opts?: { sin_filas_previas?: boolean; delta?: number; existencia_previa?: number },
+) {
 	if (!store.has('products')) return;
-	let total = 0;
-	if (store.has('inventory-stock-quant')) {
-		for await (const page of store.scan('inventory-stock-quant', {
-			where: { producto: product_id },
-			include_inactive: true,
-		})) {
-			for (const row of page) total += Number(row.cantidad ?? 0);
+	const suma_quants = async () => {
+		let total = 0;
+		if (store.has('inventory-stock-quant')) {
+			for await (const page of store.scan('inventory-stock-quant', {
+				where: { producto: product_id },
+				include_inactive: true,
+			})) {
+				for (const row of page) total += Number(row.cantidad ?? 0);
+			}
 		}
+		return round_qty(total);
+	};
+	if (opts?.sin_filas_previas) {
+		const product = await store.find_id('products', product_id);
+		const previa = opts.existencia_previa ?? Number(product?.existencia ?? 0);
+		const existencia = round_qty(Number(previa) + Number(opts.delta ?? 0));
+		await store.update('products', product_id, { existencia });
+		const diferencia = round_qty(existencia - (await suma_quants()));
+		if (!diferencia) return;
+		const warehouse = await find_warehouse_location(store);
+		if (!warehouse?._id) return;
+		await apply_quant_delta(store, {
+			producto: product_id,
+			producto_nombre: text(product?.name),
+			producto_codigo: text(product?.codigo),
+			ubicacion: String(warehouse._id),
+			ubicacion_codigo: text(warehouse.codigo) || text(warehouse.name),
+			delta: diferencia,
+		});
+		return;
 	}
-	await store.update('products', product_id, { existencia: round_qty(total) });
+	await store.update('products', product_id, { existencia: await suma_quants() });
 }
 
 async function post_return_received_comments(

@@ -5,6 +5,7 @@
 import { as_array, as_object, type ImperiumDoc } from './envelope.ts';
 import {
 	apply_quant_delta,
+	product_has_quants,
 	recompute_product_existencia,
 } from './delivery-return-flow.ts';
 import { resolve_reception_location, supplier_display_name } from './purchase-order-flow.ts';
@@ -387,6 +388,8 @@ export async function register_internal_transfer(
 	}
 	const product = await store.find_id('products', producto_id);
 	if (!product) throw new Error('No se encontró el producto indicado');
+	const sin_filas_previas = !(await product_has_quants(store, producto_id));
+	const existencia_previa = round_qty(Number(product.existencia ?? 0));
 	const lote = text(params.lote) || undefined;
 	const disponible = await quant_disponible(store, producto_id, String(origen._id), lote);
 	if (cantidad > disponible) {
@@ -447,7 +450,11 @@ export async function register_internal_transfer(
 			...lote_fields,
 		});
 	}
-	await recompute_product_existencia(store, producto_id);
+	await recompute_product_existencia(store, producto_id, {
+		sin_filas_previas,
+		delta: 0,
+		existencia_previa,
+	});
 }
 
 export async function acomodar_reception(
