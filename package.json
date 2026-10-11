@@ -1,6 +1,6 @@
 {
   "name": "imperium-core",
-  "version": "13.78.10",
+  "version": "13.78.11",
   "private": true,
   "type": "module",
   "scripts": {
