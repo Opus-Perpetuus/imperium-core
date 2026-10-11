@@ -5833,6 +5833,8 @@ export class ImperiumStore {
 			scan_fields?: string[];
 			/** Barrido: todas las claves salvo estas. */
 			scan_omit?: string[];
+			/** `q` va directo al ILIKE, sin Meilisearch. */
+			sql_search_only?: boolean;
 		} = {},
 	): Promise<{ rows: ImperiumDoc[]; total: number }> {
 		const loc = this.loc(resource);
@@ -5841,12 +5843,22 @@ export class ImperiumStore {
 		const params: unknown[] = [];
 		const clauses: string[] = [];
 		if (!opts.include_inactive) clauses.push(`is_active IS DISTINCT FROM false`);
-		if (opts.q && SearchEngine.is_enabled() && resource !== 'font-awesome-icon-catalog') {
+		if (
+			opts.q &&
+			!opts.sql_search_only &&
+			SearchEngine.is_enabled() &&
+			resource !== 'font-awesome-icon-catalog'
+		) {
 			const ids = await SearchEngine.search_ids(loc.collection, opts.q);
 			if (ids !== null && ids.length) {
 				const wanted = opts.ids?.length ? ids.filter((id) => opts.ids!.includes(id)) : ids;
-				if (wanted.length) opts = { ...opts, q: '', ids: wanted };
+				if (wanted.length) {
+					const found = await this.find_many(resource, { ...opts, q: '', ids: wanted });
+					if (found.total > 0 || found.rows.length > 0) return found;
+				}
 			}
+			// Índice viejo (tabla recargada con otros ids): ningún hit existe y el ILIKE sí ve las filas.
+			opts = { ...opts, sql_search_only: true };
 		}
 		if (opts.ids?.length) {
 			const start = params.length + 1;
