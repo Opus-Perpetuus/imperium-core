@@ -1,5 +1,5 @@
 /**
- * Permisos de Devoluciones para Choferes, Almacén y Logística, y lectura de la plantilla del ticket de Choferes.
+ * Permisos de Devoluciones para Choferes, Almacén y Logística, y lectura de la plantilla del ticket de Choferes y Vendedores.
  *
  * El núcleo no corre las siembras de Express y el lector de `module.data`
  * se salta `accesos_flujo()`. Estas filas se insertan aquí, idempotentes
@@ -94,11 +94,43 @@ const DERECHO_PLANTILLA_TICKET_CHOFERES: DevolucionAccessRight = {
 	is_active: true,
 };
 
+const DERECHO_PLANTILLA_TICKET_VENDEDORES: DevolucionAccessRight = {
+	_ref: 'vendedores-access-rights-epson-ticket-template',
+	name: 'EpsonTicketTemplate | Vendedores (leer)',
+	description: 'Vendedores: leer la plantilla con la que el pedido offline imprime el ticket.',
+	model_id: 'EpsonTicketTemplate',
+	group_id: 'user-group-vendedores',
+	allow_read: true,
+	allow_create: false,
+	allow_update: false,
+	allow_delete: false,
+	is_active: true,
+};
+
+export type DevolucionRecordRule = DevolucionAccessRight & { domain: string };
+
+const REGLA_PLANTILLA_TICKET_VENDEDORES: DevolucionRecordRule = {
+	_ref: 'vendedores-record-rule-epson-offline-order',
+	name: 'EpsonTicketTemplate | Vendedores: pedido offline',
+	description: 'Vendedores sólo leen la plantilla OFFLINE_ORDER del ticket de pedido offline.',
+	is_active: true,
+	model_id: 'EpsonTicketTemplate',
+	group_id: 'user-group-vendedores',
+	domain: JSON.stringify({ template_key: 'OFFLINE_ORDER' }),
+	allow_read: true,
+	allow_create: false,
+	allow_update: false,
+	allow_delete: false,
+};
+
+export const DEVOLUCIONES_RECORD_RULES = [REGLA_PLANTILLA_TICKET_VENDEDORES];
+
 export const DEVOLUCIONES_ACCESS_RIGHTS: DevolucionAccessRight[] = [
 	...GRUPOS_DEVOLUCION.map(derecho_devolucion),
 	...GRUPOS_DEVOLUCION.map(derecho_firma),
 	DERECHO_UBICACIONES,
 	DERECHO_PLANTILLA_TICKET_CHOFERES,
+	DERECHO_PLANTILLA_TICKET_VENDEDORES,
 ];
 
 type FilaRef = { _ref?: unknown };
@@ -119,6 +151,13 @@ function row_id(row: { _id?: unknown; id?: unknown } | null | undefined): string
 export function plan_devoluciones_access_rights(existing: FilaRef[]): DevolucionAccessRight[] {
 	const present = new Set(existing.map((row) => String(row._ref ?? '')).filter(Boolean));
 	return DEVOLUCIONES_ACCESS_RIGHTS.filter((row) => !present.has(row._ref)).map((row) => ({
+		...row,
+	}));
+}
+
+export function plan_devoluciones_record_rules(existing: FilaRef[]): DevolucionRecordRule[] {
+	const present = new Set(existing.map((row) => String(row._ref ?? '')).filter(Boolean));
+	return DEVOLUCIONES_RECORD_RULES.filter((row) => !present.has(row._ref)).map((row) => ({
 		...row,
 	}));
 }
@@ -160,14 +199,22 @@ async function collect_scan(
 
 export async function ensure_devoluciones_access(
 	store: ImperiumStore,
-): Promise<{ rights: string[]; groups: string[] }> {
+): Promise<{ rights: string[]; rules: string[]; groups: string[] }> {
 	const rights: string[] = [];
+	const rules: string[] = [];
 	const groups: string[] = [];
 	if (store.has('access-rights')) {
 		const existing = await collect_scan(store, 'access-rights', { include_inactive: true });
 		for (const row of plan_devoluciones_access_rights(existing)) {
 			await store.insert('access-rights', row);
 			rights.push(row._ref);
+		}
+	}
+	if (store.has('record-rules')) {
+		const existing = await collect_scan(store, 'record-rules', { include_inactive: true });
+		for (const row of plan_devoluciones_record_rules(existing)) {
+			await store.insert('record-rules', row);
+			rules.push(row._ref);
 		}
 	}
 	if (store.has('menu-management') && store.has('user-group')) {
@@ -178,5 +225,5 @@ export async function ensure_devoluciones_access(
 			groups.push(patch.id);
 		}
 	}
-	return { rights, groups };
+	return { rights, rules, groups };
 }

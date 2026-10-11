@@ -4,8 +4,10 @@ import { join } from 'node:path';
 import {
 	MENU_REF_DEVOLUCIONES,
 	permiso_plantilla_ticket_choferes,
+	permiso_plantilla_ticket_offline,
 	permisos_adjunto_firma,
 	permisos_devolucion,
+	regla_plantilla_ticket_offline,
 } from '../../../../backend/src/components/user-group/flujo-grupos-acceso.ts';
 import type { ImperiumDoc } from './envelope.ts';
 import type { ImperiumStore } from './store.ts';
@@ -13,6 +15,7 @@ import {
 	DEVOLUCIONES_ACCESS_RIGHTS,
 	DEVOLUCIONES_MENU_GROUPS,
 	DEVOLUCIONES_MENU_REF,
+	DEVOLUCIONES_RECORD_RULES,
 	ensure_devoluciones_access,
 } from './devoluciones-acceso-seed.ts';
 import { parse_module_data_file } from './module-data.ts';
@@ -66,8 +69,9 @@ function base(extra: {
 	menus?: Row[];
 	groups?: Row[];
 	rights?: Row[];
+	rules?: Row[] | false;
 } = {}) {
-	return memory_store({
+	const seed: Record<string, Row[]> = {
 		'menu-management': extra.menus ?? [
 			{ _id: MENU_ID, _ref: DEVOLUCIONES_MENU_REF, name: 'Devoluciones' },
 		],
@@ -78,7 +82,9 @@ function base(extra: {
 			{ _id: 'g-vendedores', _ref: 'user-group-vendedores', name: 'Vendedores', menus_ids: [] },
 		],
 		'access-rights': extra.rights ?? [],
-	});
+	};
+	if (extra.rules !== false) seed['record-rules'] = extra.rules ?? [];
+	return memory_store(seed);
 }
 
 const CAMPOS = [
@@ -100,13 +106,16 @@ function pick(row: Record<string, unknown>) {
 }
 
 describe('siembra de accesos de Devoluciones', () => {
-	test('base vacía crea las 8 filas y anexa el menú a los 3 grupos', async () => {
+	test('base vacía crea las 9 filas y anexa el menú a los 3 grupos', async () => {
 		const store = base();
 		const result = await ensure_devoluciones_access(store);
 		expect(result.rights).toEqual(DEVOLUCIONES_ACCESS_RIGHTS.map((row) => row._ref));
+		expect(result.rules).toEqual(DEVOLUCIONES_RECORD_RULES.map((row) => row._ref));
 		expect(result.groups).toEqual(['g-choferes', 'g-almacen', 'g-logistica']);
-		expect(store.data['access-rights']).toHaveLength(8);
-		expect(store.inserts.filter((call) => call.resource === 'access-rights')).toHaveLength(8);
+		expect(store.data['access-rights']).toHaveLength(9);
+		expect(store.inserts.filter((call) => call.resource === 'access-rights')).toHaveLength(9);
+		expect(store.data['record-rules']).toHaveLength(1);
+		expect(store.inserts.filter((call) => call.resource === 'record-rules')).toHaveLength(1);
 		for (const row of store.data['access-rights'] ?? []) {
 			expect(row.is_active).toBe(true);
 			expect(row.allow_delete).toBe(false);
@@ -117,9 +126,11 @@ describe('siembra de accesos de Devoluciones', () => {
 		}
 		const vendedores = store.data['user-group']?.find((row) => row._ref === 'user-group-vendedores');
 		expect(vendedores?.menus_ids).toEqual([]);
-		expect(store.data['access-rights']?.some((row) => row.group_id === 'user-group-vendedores')).toBe(
-			false,
-		);
+		expect(
+			store.data['access-rights']
+				?.filter((row) => row.group_id === 'user-group-vendedores')
+				.map((row) => row._ref),
+		).toEqual(['vendedores-access-rights-epson-ticket-template']);
 		expect(DEVOLUCIONES_MENU_GROUPS).toEqual([...GRUPOS]);
 	});
 
@@ -129,12 +140,13 @@ describe('siembra de accesos de Devoluciones', () => {
 		store.inserts.length = 0;
 		store.updates.length = 0;
 		const second = await ensure_devoluciones_access(store);
-		expect(second).toEqual({ rights: [], groups: [] });
+		expect(second).toEqual({ rights: [], rules: [], groups: [] });
 		expect(store.inserts).toEqual([]);
 		expect(store.updates).toEqual([]);
-		expect(store.data['access-rights']).toHaveLength(8);
+		expect(store.data['access-rights']).toHaveLength(9);
+		expect(store.data['record-rules']).toHaveLength(1);
 		const refs = (store.data['access-rights'] ?? []).map((row) => row._ref);
-		expect(new Set(refs).size).toBe(8);
+		expect(new Set(refs).size).toBe(9);
 	});
 
 	test('no pisa un _ref existente y respeta menus_ids en JSON', async () => {
@@ -189,7 +201,7 @@ describe('siembra de accesos de Devoluciones', () => {
 			name: 'viejo',
 			description: 'distinto',
 		});
-		expect(store.data['access-rights']).toHaveLength(8);
+		expect(store.data['access-rights']).toHaveLength(9);
 		expect(store.updates.filter((call) => call.resource === 'access-rights')).toEqual([]);
 		expect(store.updates.map((call) => call.id).sort()).toEqual(['g-almacen', 'g-logistica']);
 		const almacen = store.data['user-group']?.find((row) => row._id === 'g-almacen');
@@ -214,12 +226,12 @@ describe('siembra de accesos de Devoluciones', () => {
 		expect(result.groups).toEqual([]);
 		expect(store.updates).toEqual([]);
 		expect(store.data['user-group']).toEqual(antes);
-		expect(result.rights).toHaveLength(8);
+		expect(result.rights).toHaveLength(9);
 	});
 
 	test('paridad con el backend en los tres grupos', () => {
 		expect(DEVOLUCIONES_MENU_REF).toBe(MENU_REF_DEVOLUCIONES);
-		expect(DEVOLUCIONES_ACCESS_RIGHTS).toHaveLength(8);
+		expect(DEVOLUCIONES_ACCESS_RIGHTS).toHaveLength(9);
 		const grupos = new Set<string>(GRUPOS);
 		const backend = [...permisos_devolucion(), ...permisos_adjunto_firma()].filter((row) =>
 			grupos.has(row.group_id),
@@ -245,21 +257,66 @@ describe('siembra de accesos de Devoluciones', () => {
 		);
 		expect(pick(plantilla ?? {})).toEqual(pick(permiso_plantilla_ticket_choferes()));
 		expect(plantilla?.is_active).toBe(true);
+		const plantilla_vendedores = DEVOLUCIONES_ACCESS_RIGHTS.find(
+			(row) => row._ref === 'vendedores-access-rights-epson-ticket-template',
+		);
+		expect(pick(plantilla_vendedores ?? {})).toEqual(pick(permiso_plantilla_ticket_offline()));
+		expect(plantilla_vendedores?.is_active).toBe(true);
+		const regla = DEVOLUCIONES_RECORD_RULES[0];
+		expect(pick(regla ?? {})).toEqual(pick(regla_plantilla_ticket_offline()));
+		expect(regla?.is_active).toBe(true);
+		expect(regla?.domain).toBe(regla_plantilla_ticket_offline().domain);
 	});
 
-	test('una base con las 7 filas previas sólo inserta choferes-access-rights-epson-ticket-template', async () => {
+	test('una base con las 8 filas previas sólo inserta vendedores-access-rights-epson-ticket-template', async () => {
 		const previas = DEVOLUCIONES_ACCESS_RIGHTS.filter(
-			(row) => row._ref !== 'choferes-access-rights-epson-ticket-template',
+			(row) => row._ref !== 'vendedores-access-rights-epson-ticket-template',
 		);
-		const store = base({ rights: previas });
+		const store = base({ rights: previas, rules: false });
 		const result = await ensure_devoluciones_access(store);
-		expect(previas).toHaveLength(7);
-		expect(result.rights).toEqual(['choferes-access-rights-epson-ticket-template']);
+		expect(previas).toHaveLength(8);
+		expect(result.rights).toEqual(['vendedores-access-rights-epson-ticket-template']);
+		expect(result.rules).toEqual([]);
 		expect(
 			store.inserts
 				.filter((call) => call.resource === 'access-rights')
 				.map((call) => call.doc._ref),
-		).toEqual(['choferes-access-rights-epson-ticket-template']);
+		).toEqual(['vendedores-access-rights-epson-ticket-template']);
+	});
+
+	test('sin record-rules no inserta reglas', async () => {
+		const store = base({ rules: false });
+		const result = await ensure_devoluciones_access(store);
+		expect(result.rules).toEqual([]);
+		expect(store.data['record-rules']).toBeUndefined();
+		expect(store.inserts.filter((call) => call.resource === 'record-rules')).toEqual([]);
+	});
+
+	test('no pisa una record-rule existente con el mismo _ref', async () => {
+		const previa: Row = {
+			_id: 'rr-offline',
+			_ref: 'vendedores-record-rule-epson-offline-order',
+			name: 'vieja',
+			description: 'distinta',
+			domain: '{"template_key":"OTRA"}',
+			is_active: false,
+			allow_read: false,
+		};
+		const store = base({ rules: [previa] });
+		const result = await ensure_devoluciones_access(store);
+		expect(result.rules).toEqual([]);
+		const reglas = store.data['record-rules']?.filter(
+			(row) => row._ref === 'vendedores-record-rule-epson-offline-order',
+		);
+		expect(reglas).toHaveLength(1);
+		expect(reglas?.[0]).toMatchObject({
+			name: 'vieja',
+			description: 'distinta',
+			domain: '{"template_key":"OTRA"}',
+			is_active: false,
+			allow_read: false,
+		});
+		expect(store.inserts.filter((call) => call.resource === 'record-rules')).toEqual([]);
 	});
 
 	test('un fallo de esta siembra no tumba el resto', () => {
