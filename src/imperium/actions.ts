@@ -16,6 +16,7 @@ import { is_record_id } from './record-id.ts';
 import { is_unique_violation, type ImperiumStore } from './store.ts';
 import { SearchEngine, search_text_from_doc } from './search-engine.ts';
 import { assert_pos_pin, verify_user_pin } from './user-pin.ts';
+import { CHOFER_SIN_EMPLEADO_MESSAGE } from './chofer-messages.ts';
 import { pac_provider, stamp_with_pac } from './pac.ts';
 import {
 	composed_codigo_from_path,
@@ -2061,7 +2062,7 @@ async function read_chofer_queue(ctx: Ctx) {
 	if (!employee) {
 		return ok(
 			[],
-			'El usuario no tiene un empleado vinculado. Configúralo en Usuarios → campo «Empleado vinculado».',
+			CHOFER_SIN_EMPLEADO_MESSAGE,
 		);
 	}
 	const vehicles = (
@@ -2266,7 +2267,7 @@ async function delivery_chofer_routes(ctx: Ctx) {
 			? ref_id(employee_raw)
 			: String(employee_raw ?? '').trim();
 	if (!employee_id) {
-		return ok([], 'El usuario no tiene un empleado vinculado para identificar al chofer. Configúralo en Usuarios → campo «Empleado vinculado».');
+		return ok([], CHOFER_SIN_EMPLEADO_MESSAGE);
 	}
 	const vehicles = ctx.store.has('vehicle')
 		? await collect_scan(ctx.store, 'vehicle', {
