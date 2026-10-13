@@ -58,10 +58,31 @@ describe('configuration seed insert (store.insert → assert_required_fields)', 
 				join(import.meta.dir, 'configuration-parameter-seeds.json'),
 				'utf8',
 			),
-		) as Array<{ _ref: string; value?: unknown }>;
-		expect(snapshot.map((row) => row._ref).sort()).toEqual(
-			walked.map((row) => row._ref).sort(),
+		) as Array<{
+			_ref: string;
+			value?: unknown;
+			type?: string;
+			name?: string;
+			is_system?: boolean;
+			module_id?: string;
+		}>;
+		const walked_refs = walked.map((row) => row._ref);
+		const snapshot_refs = snapshot.map((row) => row._ref);
+		expect(snapshot_refs.filter((ref) => walked_refs.includes(ref)).sort()).toEqual(
+			[...walked_refs].sort(),
 		);
+		expect(snapshot_refs.filter((ref) => !walked_refs.includes(ref)).sort()).toEqual([
+			'configuration-comercial-cola-activa',
+			'configuration-comercial-pedido-concepto',
+			'configuration-comercial-pedido-serie',
+		]);
+		expect(snapshot.find((row) => row._ref === 'configuration-comercial-cola-activa')).toMatchObject({
+			name: 'Comercial · Cola activa',
+			is_system: true,
+			module_id: 'NA',
+			type: 'switch',
+			value: false,
+		});
 		const landing_walked = walked.find(
 			(row) => row._ref === 'configuration-public-landing-enabled',
 		);

@@ -713,5 +713,32 @@
 		"module_id": "cobranza",
 		"type": "text",
 		"value": ""
+	},
+	{
+		"_ref": "configuration-comercial-pedido-concepto",
+		"name": "Comercial · Concepto del Pedido",
+		"description": "Código del concepto de Pedido en la empresa de CONTPAQi Comercial. Sigue pendiente de leerse en el laboratorio.",
+		"is_system": true,
+		"module_id": "NA",
+		"type": "text",
+		"value": "PENDIENTE: leer en el laboratorio"
+	},
+	{
+		"_ref": "configuration-comercial-pedido-serie",
+		"name": "Comercial · Serie del Pedido",
+		"description": "Código de la serie del Pedido en la empresa de CONTPAQi Comercial. Sigue pendiente de leerse en el laboratorio.",
+		"is_system": true,
+		"module_id": "NA",
+		"type": "text",
+		"value": "PENDIENTE: leer en el laboratorio"
+	},
+	{
+		"_ref": "configuration-comercial-cola-activa",
+		"name": "Comercial · Cola activa",
+		"description": "Si está en SI, enviar a comercial encola el documento. Si está en NO, la solicitud queda enviada a comercial.",
+		"is_system": true,
+		"module_id": "NA",
+		"type": "switch",
+		"value": false
 	}
 ]

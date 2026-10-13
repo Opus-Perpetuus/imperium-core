@@ -62,6 +62,29 @@ describe('unique_index_sqls', () => {
 		expect(sqls[0]).toContain("payload ->> 'codigo'");
 	});
 
+	test('composite_where adds a partial unique index and is omitted when absent', () => {
+		const columns = new Set(['id', 'origen', 'origen_id', 'sub_index', 'payload', 'is_active']);
+		const sqls = unique_index_sqls({
+			quoted_table: '"subject"."comercial_envio"',
+			table_key: 'comercial_envio',
+			fields: [],
+			composites: [['origen', 'origen_id', 'sub_index']],
+			composite_where: 'is_active IS DISTINCT FROM false',
+			columns,
+		});
+		expect(sqls).toEqual([
+			'CREATE UNIQUE INDEX IF NOT EXISTS "uq_comercial_envio_origen_origen_id_sub_index" ON "subject"."comercial_envio" ("origen", "origen_id", "sub_index") WHERE is_active IS DISTINCT FROM false',
+		]);
+		const plain = unique_index_sqls({
+			quoted_table: '"subject"."comercial_envio"',
+			table_key: 'comercial_envio',
+			fields: [],
+			composites: [['origen', 'origen_id', 'sub_index']],
+			columns,
+		});
+		expect(plain[0]).not.toContain('WHERE');
+	});
+
 	test('skips COUNT companions: skip_total is a documented find_many opt', async () => {
 		const { readFileSync } = await import('node:fs');
 		const src = readFileSync(new URL('./store.ts', import.meta.url), 'utf8');

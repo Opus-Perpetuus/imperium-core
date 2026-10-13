@@ -199,6 +199,7 @@ const UNIQUE_FIELDS: Record<string, string[]> = {
 	'epson-ticket-template': ['template_key'],
 	'chat-conversations': ['conversation_key', 'join_code'],
 	'chat-meetings': ['code'],
+	'comercial-envio': ['envio_uuid', 'llave_ref'],
 };
 
 /** Unique solo entre activos (`partialFilterExpression: { is_active: { $ne: false } }`). */
@@ -228,6 +229,12 @@ const UNIQUE_COMPOSITES: Record<string, string[][]> = {
 const UNIQUE_COMPOSITES_ACTIVE: Record<string, string[][]> = {
 	'user-pin': [['document_model', 'document_id']],
 	'home-pin': [['user_id', 'path']],
+	'comercial-envio': [['origen', 'origen_id', 'sub_index']],
+};
+
+/** Índice único parcial en Postgres (`WHERE is_active IS DISTINCT FROM false`). */
+const UNIQUE_COMPOSITES_ACTIVE_DB: Record<string, string[][]> = {
+	'comercial-envio': [['origen', 'origen_id', 'sub_index']],
 };
 
 function unique_fields_for(resource: string): string[] {
@@ -258,6 +265,14 @@ function unique_composites_active_for(resource: string): string[][] {
 	);
 }
 
+function unique_composites_active_db_for(resource: string): string[][] {
+	return (
+		UNIQUE_COMPOSITES_ACTIVE_DB[resource] ??
+		UNIQUE_COMPOSITES_ACTIVE_DB[RESOURCE_ALIASES[resource] ?? ''] ??
+		[]
+	);
+}
+
 function index_name(table_key: string, suffix: string): string {
 	const raw = `uq_${table_key}_${suffix}`.replace(/[^a-z0-9_]/gi, '_').slice(0, 63);
 	return raw.replace(/_+$/, '') || 'uq_idx';
@@ -272,6 +287,7 @@ export function unique_index_sqls(input: {
 	table_key: string;
 	fields: readonly string[];
 	composites?: readonly string[][];
+	composite_where?: string;
 	columns: ReadonlySet<string>;
 }): string[] {
 	const out: string[] = [];
@@ -297,8 +313,9 @@ export function unique_index_sqls(input: {
 				? qident(field)
 				: `(payload ->> '${field.replace(/'/g, "''")}')`,
 		);
+		const where = input.composite_where ? ` WHERE ${input.composite_where}` : '';
 		out.push(
-			`CREATE UNIQUE INDEX IF NOT EXISTS ${idx} ON ${input.quoted_table} (${cols.join(', ')})`,
+			`CREATE UNIQUE INDEX IF NOT EXISTS ${idx} ON ${input.quoted_table} (${cols.join(', ')})${where}`,
 		);
 	}
 	return out;
@@ -3369,6 +3386,14 @@ export class ImperiumStore {
 					table_key: loc.table,
 					fields: unique_fields_for(loc.resource),
 					composites: unique_composites_for(loc.resource),
+					columns: this.column_names(loc.resource),
+				}),
+				...unique_index_sqls({
+					quoted_table: this.qt(loc.resource),
+					table_key: loc.table,
+					fields: [],
+					composites: unique_composites_active_db_for(loc.resource),
+					composite_where: 'is_active IS DISTINCT FROM false',
 					columns: this.column_names(loc.resource),
 				}),
 				...lookup_index_sqls({

@@ -29,12 +29,18 @@ function backend_src_root(): string {
 	return join(import.meta.dir, '../../../../backend/src');
 }
 
-export function configuration_parameter_seeds(): ConfigurationSeedDoc[] {
-	const walked = load_configuration_parameter_seeds(backend_src_root());
-	if (walked.length) return walked;
+function configuration_snapshot(): ConfigurationSeedDoc[] {
 	const snapshot = join(import.meta.dir, 'configuration-parameter-seeds.json');
 	if (!existsSync(snapshot)) return [];
 	return JSON.parse(readFileSync(snapshot, 'utf8')) as ConfigurationSeedDoc[];
+}
+
+export function configuration_parameter_seeds(): ConfigurationSeedDoc[] {
+	const walked = load_configuration_parameter_seeds(backend_src_root());
+	const snapshot = configuration_snapshot();
+	if (!walked.length) return snapshot;
+	const seen = new Set(walked.map((row) => row._ref));
+	return walked.concat(snapshot.filter((row) => row._ref && !seen.has(row._ref)));
 }
 
 async function collect_scan(

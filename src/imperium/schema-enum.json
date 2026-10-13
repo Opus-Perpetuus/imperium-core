@@ -506,10 +506,30 @@
         "message": "El estado \"{VALUE}\" para la recepción no existe"
       }
     },
+    "comercial-envio": {
+      "estado": {
+        "values": [
+          "pendiente",
+          "enviando",
+          "enviado",
+          "reintento",
+          "error"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      },
+      "origen": {
+        "values": [
+          "pedido",
+          "invoice_request"
+        ],
+        "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
+      }
+    },
     "invoice-request": {
       "base_calculo": {
         "values": [
-          "importe"
+          "importe",
+          "total_con_iva"
         ],
         "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
       },
@@ -517,6 +537,7 @@
         "values": [
           "pendiente_autorizacion_cobranza",
           "listo_para_comercial",
+          "enviando_a_comercial",
           "enviado_a_comercial",
           "facturado",
           "cancelado"

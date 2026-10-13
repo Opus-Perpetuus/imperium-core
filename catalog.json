@@ -14252,6 +14252,170 @@
           ]
         },
         {
+          "resource": "comercial-envio",
+          "table": "comercial_envio",
+          "name": "Envíos a comercial",
+          "path": "/comercial-envio",
+          "collection": "comercial-envio",
+          "model_file": "",
+          "menu_ref": "comercial-envio-menu-management-0",
+          "icon": "fa-paper-plane",
+          "columns": [
+            {
+              "name": "envio_uuid",
+              "mongo": "envio_uuid",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "envio uuid"
+            },
+            {
+              "name": "llave_ref",
+              "mongo": "llave_ref",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "llave ref"
+            },
+            {
+              "name": "origen",
+              "mongo": "origen",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "origen"
+            },
+            {
+              "name": "origen_id",
+              "mongo": "origen_id",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "origen id"
+            },
+            {
+              "name": "sub_index",
+              "mongo": "sub_index",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "sub index"
+            },
+            {
+              "name": "payload",
+              "mongo": "payload",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "payload"
+            },
+            {
+              "name": "estado",
+              "mongo": "estado",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "estado"
+            },
+            {
+              "name": "intentos",
+              "mongo": "intentos",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "intentos"
+            },
+            {
+              "name": "proximo_intento",
+              "mongo": "proximo_intento",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "proximo intento"
+            },
+            {
+              "name": "lease_worker",
+              "mongo": "lease_worker",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "lease worker"
+            },
+            {
+              "name": "lease_hasta",
+              "mongo": "lease_hasta",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "lease hasta"
+            },
+            {
+              "name": "ultimo_error",
+              "mongo": "ultimo_error",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "ultimo error"
+            },
+            {
+              "name": "error_reintentable",
+              "mongo": "error_reintentable",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
+              "label": "error reintentable"
+            },
+            {
+              "name": "cm_folio",
+              "mongo": "cm_folio",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "cm folio"
+            },
+            {
+              "name": "cm_serie",
+              "mongo": "cm_serie",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "cm serie"
+            },
+            {
+              "name": "cm_id_doc",
+              "mongo": "cm_id_doc",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "cm id doc"
+            },
+            {
+              "name": "cm_existente",
+              "mongo": "cm_existente",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
+              "label": "cm existente"
+            },
+            {
+              "name": "enviado_fecha",
+              "mongo": "enviado_fecha",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "enviado fecha"
+            },
+            {
+              "name": "is_active",
+              "mongo": "is_active",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
+              "label": "is active"
+            }
+          ]
+        },
+        {
           "resource": "invoice-request",
           "table": "invoice_request",
           "name": "Solicitudes de facturación",
@@ -14467,6 +14631,62 @@
               "crud": "json",
               "component": "input-json",
               "label": "subpedidos"
+            },
+            {
+              "name": "iva_tasa",
+              "mongo": "iva_tasa",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "iva tasa"
+            },
+            {
+              "name": "comercial_envio_estado",
+              "mongo": "comercial_envio_estado",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "comercial envio estado"
+            },
+            {
+              "name": "comercial_envio_error",
+              "mongo": "comercial_envio_error",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "comercial envio error"
+            },
+            {
+              "name": "comercial_id_doc",
+              "mongo": "comercial_id_doc",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "comercial id doc"
+            },
+            {
+              "name": "comercial_referencia",
+              "mongo": "comercial_referencia",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "comercial referencia"
+            },
+            {
+              "name": "enviado_a_comercial_fecha",
+              "mongo": "enviado_a_comercial_fecha",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "enviado a comercial fecha"
+            },
+            {
+              "name": "enviado_a_comercial_usuario_nombre",
+              "mongo": "enviado_a_comercial_usuario_nombre",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "enviado a comercial usuario nombre"
             }
           ]
         },

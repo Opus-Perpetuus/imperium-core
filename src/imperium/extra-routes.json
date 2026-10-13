@@ -480,6 +480,30 @@
     "action": "cancel_request"
   },
   {
+    "resource": "comercial-envio",
+    "method": "post",
+    "path": "/enqueue",
+    "action": "enqueue"
+  },
+  {
+    "resource": "comercial-envio",
+    "method": "post",
+    "path": "/claim",
+    "action": "claim"
+  },
+  {
+    "resource": "comercial-envio",
+    "method": "post",
+    "path": "/:id/report",
+    "action": "report"
+  },
+  {
+    "resource": "comercial-envio",
+    "method": "post",
+    "path": "/:id/retry",
+    "action": "retry"
+  },
+  {
     "resource": "messages",
     "method": "get",
     "path": "/my",

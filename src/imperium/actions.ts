@@ -312,8 +312,17 @@ import {
 	cancel_invoice_request,
 	generate_invoice_from_order,
 	mark_invoice_request,
+	on_invoice_request_envio_change,
 	send_invoice_to_commercial,
 } from './invoice-request-flow.ts';
+import {
+	claim_envios,
+	ComercialEnvioError,
+	enqueue_envio,
+	report_envio,
+	retry_envio,
+	type DocumentoComercial,
+} from './comercial-envio-flow.ts';
 import { detail_fields, plan_from_model, widgets_from_plan } from './ai-query-harness.ts';
 import {
 	resolve_dashboard_catalog,
@@ -731,6 +740,14 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return picking_route(ctx);
 		case 'inventory-stock-quant:validar_consistencia':
 			return stock_consistency(ctx);
+		case 'comercial-envio:enqueue':
+			return comercial_enqueue(ctx);
+		case 'comercial-envio:claim':
+			return comercial_claim(ctx);
+		case 'comercial-envio:report':
+			return comercial_report(ctx);
+		case 'comercial-envio:retry':
+			return comercial_retry(ctx);
 		case 'invoice-request:generate_from_order':
 			return invoice_from_order(ctx);
 		case 'invoice-request:authorize':
@@ -3794,12 +3811,111 @@ async function invoice_authorize(ctx: Ctx) {
 	return ok([updated], 'Autorización de cobranza registrada');
 }
 
+function documento_comercial_body(
+	body: Record<string, unknown>,
+): Partial<DocumentoComercial> | undefined {
+	const raw = body.documento_comercial;
+	if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+	return raw as Partial<DocumentoComercial>;
+}
+
+function comercial_fail(err: unknown): Response | null {
+	if (!(err instanceof ComercialEnvioError)) return null;
+	const mapped = fail(err.message, err.status);
+	return Response.json(mapped.body, { status: mapped.status });
+}
+
+async function comercial_enqueue(ctx: Ctx) {
+	try {
+		if (ctx.body.origen === 'invoice_request') {
+			const updated = await send_invoice_to_commercial(
+				ctx.store,
+				String(ctx.body.origen_id ?? ''),
+				ctx.actor,
+				ctx.body.comercial_referencia,
+				{ documento_comercial: documento_comercial_body(ctx.body) },
+			);
+			return ok([updated], 'Solicitud enviada a comercial');
+		}
+		const payload = ctx.body.payload;
+		const { row, created } = await enqueue_envio(ctx.store, {
+			origen: ctx.body.origen as 'pedido',
+			origen_id: String(ctx.body.origen_id ?? ''),
+			sub_index: 0,
+			payload: payload as Record<string, unknown>,
+			documento_comercial: documento_comercial_body(ctx.body),
+		});
+		return ok([row], created ? 'Envío encolado' : 'El envío ya estaba encolado');
+	} catch (err) {
+		const http = comercial_fail(err);
+		if (http) return http;
+		throw err;
+	}
+}
+
+async function comercial_claim(ctx: Ctx) {
+	try {
+		const rows = await claim_envios(ctx.store, {
+			worker_id: String(ctx.body.worker_id ?? ''),
+			max: Number(ctx.body.max),
+		});
+		return ok(rows, 'Envíos tomados');
+	} catch (err) {
+		const http = comercial_fail(err);
+		if (http) return http;
+		throw err;
+	}
+}
+
+async function comercial_report(ctx: Ctx) {
+	try {
+		const row = await report_envio(
+			ctx.store,
+			ctx.params.id,
+			{
+				worker_id: String(ctx.body.worker_id ?? ''),
+				resultado: ctx.body.resultado as 'enviado' | 'error',
+				reintentable: ctx.body.reintentable === true,
+				folio: ctx.body.folio as string | null | undefined,
+				serie: ctx.body.serie as string | null | undefined,
+				id_doc: ctx.body.id_doc as string | number | null | undefined,
+				existente: ctx.body.existente === true,
+				mensaje: ctx.body.mensaje as string | null | undefined,
+			},
+			() => new Date(),
+			on_invoice_request_envio_change(ctx.store),
+		);
+		return ok([row], 'Envío reportado');
+	} catch (err) {
+		const http = comercial_fail(err);
+		if (http) return http;
+		throw err;
+	}
+}
+
+async function comercial_retry(ctx: Ctx) {
+	try {
+		const row = await retry_envio(
+			ctx.store,
+			ctx.params.id,
+			() => new Date(),
+			on_invoice_request_envio_change(ctx.store),
+		);
+		return ok([row], 'Envío reintentado');
+	} catch (err) {
+		const http = comercial_fail(err);
+		if (http) return http;
+		throw err;
+	}
+}
+
 async function invoice_send_commercial(ctx: Ctx) {
 	const updated = await send_invoice_to_commercial(
 		ctx.store,
 		ctx.params.id,
 		ctx.actor,
 		ctx.body.comercial_referencia,
+		{ documento_comercial: documento_comercial_body(ctx.body) },
 	);
 	return ok([updated], 'Solicitud enviada a comercial');
 }

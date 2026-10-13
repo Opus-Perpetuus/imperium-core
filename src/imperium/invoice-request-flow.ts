@@ -2,16 +2,29 @@
  * Solicitudes de facturación: generate/authorize/send/mark/cancel como el original.
  */
 import { as_array, as_object, type ImperiumDoc } from './envelope.ts';
+import {
+	comercial_cola_activa,
+	documento_comercial_pedido,
+	enqueue_envio,
+	envios_by_origen,
+	ESTADO_ENVIADO,
+	ESTADO_ENVIANDO,
+	ESTADO_ERROR,
+	ESTADO_REINTENTO,
+	type DocumentoComercial,
+} from './comercial-envio-flow.ts';
 import type { ImperiumStore } from './store.ts';
 
 export const IR_PENDING = 'pendiente_autorizacion_cobranza';
 export const IR_READY = 'listo_para_comercial';
+export const IR_SENDING = 'enviando_a_comercial';
 export const IR_SENT = 'enviado_a_comercial';
 export const IR_INVOICED = 'facturado';
 export const IR_CANCELED = 'cancelado';
 
 const IR_PENDING_ALIASES = new Set([IR_PENDING, 'pendiente_autorizacion']);
 const IR_READY_ALIASES = new Set([IR_READY, 'lista_comercial']);
+const IR_SENDING_ALIASES = new Set([IR_SENDING]);
 const IR_SENT_ALIASES = new Set([IR_SENT, 'enviada_comercial']);
 const IR_INVOICED_ALIASES = new Set([IR_INVOICED, 'facturada']);
 const IR_CANCELED_ALIASES = new Set([IR_CANCELED, 'cancelada']);
@@ -44,6 +57,17 @@ function round_money(value: number): number {
 
 function round_quantity(value: number): number {
 	return Number((Number(value) || 0).toFixed(4));
+}
+
+/** Precio del artículo del pedido; si incluye_iva, se quita el IVA de la lista dividiendo entre (1 + tasa/100) y se redondea a 4 decimales. */
+export function precio_sin_iva(
+	precio: number,
+	opts: { iva_tasa: number; incluye_iva: boolean },
+): number {
+	const base = Number(precio) || 0;
+	const tasa = Number(opts.iva_tasa) || 0;
+	const neto = opts.incluye_iva ? base / (1 + tasa / 100) : base;
+	return round_quantity(neto);
 }
 
 function actor_display(actor: ImperiumDoc | null): string {
@@ -83,6 +107,8 @@ type SubOrder = {
 	index: number;
 	name: string;
 	monto_total: number;
+	iva: number;
+	total_con_iva: number;
 	articulos_count: number;
 	articulos: SplitItem[];
 };
@@ -94,7 +120,11 @@ function suborder_name(folio: string, index: number): string {
 function can_regenerate(existing?: ImperiumDoc | null): boolean {
 	if (!existing) return true;
 	const estado = text(existing.estado);
-	return !IR_SENT_ALIASES.has(estado) && !IR_INVOICED_ALIASES.has(estado);
+	return (
+		!IR_SENT_ALIASES.has(estado) &&
+		!IR_INVOICED_ALIASES.has(estado) &&
+		!IR_SENDING_ALIASES.has(estado)
+	);
 }
 
 async function sync_order_invoice_state(store: ImperiumStore, request: ImperiumDoc) {
@@ -246,22 +276,33 @@ function split_item(line: InvoiceLine, chunk_quantity: number, chunk_amount: num
 	};
 }
 
+function with_iva(sub: SubOrder, iva_tasa: number): SubOrder {
+	const iva = round_money(sub.monto_total * (iva_tasa / 100));
+	return { ...sub, iva, total_con_iva: round_money(sub.monto_total + iva) };
+}
+
 function build_suborders(
 	folio: string,
 	lines: InvoiceLine[],
 	threshold: number,
 	split_enabled: boolean,
+	iva_tasa: number,
 ): SubOrder[] {
 	if (!split_enabled) {
 		const articulos = lines.map((line) => split_item(line, line.cantidad, line.monto_total));
 		return [
-			{
-				index: 1,
-				name: suborder_name(folio, 1),
-				monto_total: round_money(articulos.reduce((acc, item) => acc + item.monto_total, 0)),
-				articulos_count: articulos.length,
-				articulos,
-			},
+			with_iva(
+				{
+					index: 1,
+					name: suborder_name(folio, 1),
+					monto_total: round_money(articulos.reduce((acc, item) => acc + item.monto_total, 0)),
+					iva: 0,
+					total_con_iva: 0,
+					articulos_count: articulos.length,
+					articulos,
+				},
+				iva_tasa,
+			),
 		];
 	}
 	const suborders: SubOrder[] = [];
@@ -269,6 +310,8 @@ function build_suborders(
 		index: 1,
 		name: suborder_name(folio, 1),
 		monto_total: 0,
+		iva: 0,
+		total_con_iva: 0,
 		articulos_count: 0,
 		articulos: [],
 	};
@@ -276,12 +319,14 @@ function build_suborders(
 		if (!current.articulos.length) return;
 		current.monto_total = round_money(current.monto_total);
 		current.articulos_count = current.articulos.length;
-		suborders.push(current);
+		suborders.push(with_iva(current, iva_tasa));
 		const next_index = suborders.length + 1;
 		current = {
 			index: next_index,
 			name: suborder_name(folio, next_index),
 			monto_total: 0,
+			iva: 0,
+			total_con_iva: 0,
 			articulos_count: 0,
 			articulos: [],
 		};
@@ -334,24 +379,51 @@ function build_suborders(
 	return suborders;
 }
 
+function limite_sin_iva(umbral: number, iva_tasa: number): number {
+	const tasa = Number(iva_tasa) || 0;
+	if (tasa <= 0) return umbral;
+	return umbral / (1 + tasa / 100);
+}
+
+async function iva_tasa_de_pedido(store: ImperiumStore, pedido: ImperiumDoc): Promise<number> {
+	const lista = pedido.listaDePreciosId;
+	if (lista && typeof lista === 'object') {
+		const embedded = (lista as { iva?: unknown }).iva;
+		if (embedded != null && embedded !== '') {
+			const n = Number(embedded);
+			return Number.isFinite(n) ? n : 0;
+		}
+	}
+	const lista_id = ref_id(lista);
+	if (lista_id && store.has('lista-de-precios')) {
+		const row = await store.find_id('lista-de-precios', lista_id);
+		const n = Number(row?.iva ?? 0);
+		return Number.isFinite(n) ? n : 0;
+	}
+	return 0;
+}
+
 function build_payload(
 	pedido: ImperiumDoc,
 	contacto: ImperiumDoc | null,
 	existing: ImperiumDoc | null,
+	iva_tasa: number,
 ): ImperiumDoc {
 	validate_order_state(pedido, contacto);
 	const contact_config = resolve_contact_config(contacto);
+	const limite = limite_sin_iva(contact_config.monto_umbral, iva_tasa);
 	const lines = normalize_invoice_lines(
 		pedido,
-		contact_config.monto_umbral,
+		limite,
 		contact_config.requiere_facturacion_dividida,
 	);
 	const folio = text(pedido.folio);
 	const subpedidos = build_suborders(
 		folio,
 		lines,
-		contact_config.monto_umbral,
+		limite,
 		contact_config.requiere_facturacion_dividida,
+		iva_tasa,
 	);
 	const monto_total = round_money(
 		subpedidos.reduce((acc, sub) => acc + Number(sub.monto_total ?? 0), 0),
@@ -373,7 +445,8 @@ function build_payload(
 		pedido_iva: round_money(Number(pedido.iva ?? 0)),
 		monto_total,
 		monto_umbral: contact_config.monto_umbral,
-		base_calculo: 'importe',
+		base_calculo: 'total_con_iva',
+		iva_tasa,
 		requiere_facturacion_dividida: contact_config.requiere_facturacion_dividida,
 		requiere_autorizacion_cobranza: contact_config.requiere_autorizacion_cobranza,
 		autorizado_cobranza,
@@ -404,7 +477,7 @@ export async function generate_invoice_from_order(
 			'La solicitud ya fue enviada a comercial o marcada como facturada y no puede regenerarse.',
 		);
 	}
-	const payload = build_payload(pedido, contacto, existing);
+	const payload = build_payload(pedido, contacto, existing, await iva_tasa_de_pedido(store, pedido));
 	const record = existing?._id
 		? await store.update('invoice-request', String(existing._id), payload)
 		: await store.insert('invoice-request', payload);
@@ -450,26 +523,233 @@ export async function authorize_invoice_request(
 	return updated;
 }
 
+function fecha_documento(pedido: ImperiumDoc | null): string {
+	const raw = text(pedido?.fecha);
+	if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+	return new Date().toISOString().slice(0, 10);
+}
+
+function totales_subpedido(sub: ImperiumDoc | null, rec: ImperiumDoc) {
+	const importe_sin_iva = round_money(Number(sub?.monto_total ?? rec.monto_total ?? 0));
+	const iva_tasa = Number(rec.iva_tasa ?? 0) || 0;
+	const iva =
+		sub && sub.iva != null ? round_money(Number(sub.iva)) : round_money(importe_sin_iva * (iva_tasa / 100));
+	const total_con_iva =
+		sub && sub.total_con_iva != null
+			? round_money(Number(sub.total_con_iva))
+			: round_money(importe_sin_iva + iva);
+	return { importe_sin_iva, iva_tasa, iva, total_con_iva };
+}
+
+function lineas_snapshot(
+	sub: ImperiumDoc | null,
+	rec: ImperiumDoc,
+	pedido: ImperiumDoc | null,
+	iva_tasa: number,
+) {
+	const items = as_array(sub ? sub.articulos : rec.articulos).map((raw) => as_object(raw));
+	const origenes = as_array(pedido?.articulos).map((raw) => as_object(raw));
+	return items.map((item) => {
+		const index = Number(item.pedido_articulo_index);
+		const origen = Number.isInteger(index) ? origenes[index] : undefined;
+		const precio =
+			origen && origen.precio != null ? Number(origen.precio) : Number(item.precio_unitario ?? 0);
+		const descripcion = text(origen?.descripcion) || text(item.descripcion) || text(item.observaciones);
+		const line: Record<string, unknown> = {
+			cantidad: round_quantity(Number(item.cantidad_facturable ?? item.cantidad ?? 0)),
+			precio_unitario_sin_iva: precio_sin_iva(precio, { iva_tasa, incluye_iva: false }),
+			importe_sin_iva: round_money(Number(item.monto_total ?? item.importe ?? 0)),
+		};
+		const product = text(item.product);
+		if (product) line.product = product;
+		const product_code = text(item.product_code);
+		if (product_code) line.product_code = product_code;
+		if (descripcion) line.descripcion = descripcion;
+		return line;
+	});
+}
+
+async function fuentes_snapshot(store: ImperiumStore, rec: ImperiumDoc) {
+	const pedido_id = ref_id(rec.pedido);
+	const pedido =
+		pedido_id && store.has('pedidos') ? await store.find_id('pedidos', pedido_id) : null;
+	const contacto_id = ref_id(rec.contacto) || ref_id(pedido?.contacto);
+	const contacto =
+		contacto_id && store.has('contacto') ? await store.find_id('contacto', contacto_id) : null;
+	return { pedido, contacto, contacto_id };
+}
+
+function payload_subpedido(
+	rec: ImperiumDoc,
+	sub: ImperiumDoc | null,
+	index: number,
+	total: number,
+	pedido: ImperiumDoc | null,
+	contacto: ImperiumDoc | null,
+	contacto_id: string,
+	documento: DocumentoComercial,
+): Record<string, unknown> {
+	const totales = totales_subpedido(sub, rec);
+	const iva_tasa = Number(rec.iva_tasa ?? totales.iva_tasa) || 0;
+	const codigo = text(contacto?.codigo);
+	const cliente: Record<string, unknown> = {
+		contacto: contacto_id,
+		nombre: text(rec.contacto_nombre) || text(contacto?.name),
+		rfc: text(rec.contacto_rfc) || text(contacto?.rfc),
+	};
+	if (codigo) cliente.codigo = codigo;
+	return {
+		cliente,
+		fecha: fecha_documento(pedido),
+		lineas: lineas_snapshot(sub, rec, pedido, iva_tasa),
+		totales,
+		documento_comercial: documento,
+		texto_extra3: `${text(rec.name)} sub ${index + 1}/${total}`,
+		referencia: {
+			solicitud_id: String(rec._id ?? ''),
+			solicitud_name: text(rec.name),
+			sub_index: index,
+			sub_total: totales.total_con_iva,
+		},
+	};
+}
+
+async function encolar_solicitud(
+	store: ImperiumStore,
+	rec: ImperiumDoc,
+	documento: DocumentoComercial,
+) {
+	const subpedidos = as_array(rec.subpedidos).map((raw) => as_object(raw));
+	const partes = subpedidos.length ? subpedidos : [null];
+	const { pedido, contacto, contacto_id } = await fuentes_snapshot(store, rec);
+	const origen_id = String(rec._id ?? '');
+	for (let index = 0; index < partes.length; index++) {
+		await enqueue_envio(store, {
+			origen: 'invoice_request',
+			origen_id,
+			sub_index: index,
+			payload: payload_subpedido(
+				rec,
+				partes[index] ?? null,
+				index,
+				partes.length,
+				pedido,
+				contacto,
+				contacto_id,
+				documento,
+			),
+			documento_comercial: documento,
+		});
+	}
+}
+
 export async function send_invoice_to_commercial(
 	store: ImperiumStore,
 	id: string,
 	actor: ImperiumDoc | null,
 	comercial_referencia?: unknown,
+	opciones?: { documento_comercial?: Partial<DocumentoComercial> | null },
 ): Promise<ImperiumDoc> {
 	const rec = await store.find_id('invoice-request', id);
 	if (!rec || rec.is_active === false) throw new Error('No se encontró la solicitud de facturación.');
-	if (text(rec.estado) && !IR_READY_ALIASES.has(text(rec.estado))) {
+	const estado = text(rec.estado);
+	const cola = await comercial_cola_activa(store);
+	if (cola && IR_SENDING_ALIASES.has(estado)) {
+		await encolar_solicitud(
+			store,
+			rec,
+			await documento_comercial_pedido(store, opciones?.documento_comercial),
+		);
+		return rec;
+	}
+	if (estado && !IR_READY_ALIASES.has(estado)) {
 		throw new Error('La solicitud debe estar lista para comercial antes de enviarse.');
 	}
-	const updated = await store.update('invoice-request', String(rec._id), {
-		estado: IR_SENT,
-		enviado_a_comercial_fecha: new Date().toISOString(),
+	if (!cola) {
+		const updated = await store.update('invoice-request', String(rec._id), {
+			estado: IR_SENT,
+			enviado_a_comercial_fecha: new Date().toISOString(),
+			enviado_a_comercial_usuario_nombre: actor_display(actor),
+			comercial_referencia: text(comercial_referencia) || undefined,
+		});
+		if (!updated) throw new Error('No se encontró la solicitud de facturación.');
+		await sync_order_invoice_state(store, updated);
+		return updated;
+	}
+	const documento = await documento_comercial_pedido(store, opciones?.documento_comercial);
+	await encolar_solicitud(store, rec, documento);
+	const patch: ImperiumDoc = {
+		estado: IR_SENDING,
+		comercial_envio_estado: 'pendiente',
+		comercial_envio_error: null,
 		enviado_a_comercial_usuario_nombre: actor_display(actor),
-		comercial_referencia: text(comercial_referencia) || undefined,
-	});
+	};
+	if (comercial_referencia !== undefined && text(comercial_referencia)) {
+		patch.comercial_referencia = text(comercial_referencia);
+	}
+	const updated = await store.update('invoice-request', String(rec._id), patch);
 	if (!updated) throw new Error('No se encontró la solicitud de facturación.');
 	await sync_order_invoice_state(store, updated);
 	return updated;
+}
+
+function envio_estado_de(rows: ImperiumDoc[]): string {
+	if (rows.some((row) => row.estado === ESTADO_ERROR)) return 'error';
+	if (rows.length > 0 && rows.every((row) => row.estado === ESTADO_ENVIADO)) return 'enviado';
+	if (rows.some((row) => row.estado === ESTADO_REINTENTO)) return 'reintento';
+	if (rows.some((row) => row.estado === ESTADO_ENVIANDO)) return 'enviando';
+	return 'pendiente';
+}
+
+function referencia_comercial(row: ImperiumDoc): string {
+	const serie = text(row.cm_serie);
+	const folio = text(row.cm_folio);
+	if (!serie) return folio;
+	return folio ? `${serie}-${folio}` : serie;
+}
+
+export async function sync_invoice_request_from_envios(
+	store: ImperiumStore,
+	invoice_request_id: string,
+	now: () => Date = () => new Date(),
+): Promise<ImperiumDoc> {
+	const id = text(invoice_request_id);
+	const rec = await store.find_id('invoice-request', id);
+	if (!rec || rec.is_active === false) throw new Error('No se encontró la solicitud de facturación.');
+	const ordered = [...(await envios_by_origen(store, 'invoice_request', id))].sort(
+		(a, b) => Number(a.sub_index) - Number(b.sub_index),
+	);
+	const comercial_envio_estado = envio_estado_de(ordered);
+	const error_row = ordered.find((row) => row.estado === ESTADO_ERROR);
+	const patch: ImperiumDoc = {
+		comercial_envio_estado,
+		comercial_envio_error:
+			comercial_envio_estado === 'error' ? String(error_row?.ultimo_error ?? '') : null,
+	};
+	const estado = text(rec.estado);
+	const cerrable = !IR_CANCELED_ALIASES.has(estado) && !IR_INVOICED_ALIASES.has(estado);
+	if (comercial_envio_estado === 'enviado' && cerrable) {
+		patch.estado = IR_SENT;
+		patch.comercial_referencia = ordered.map(referencia_comercial).filter(Boolean).join(', ');
+		patch.comercial_id_doc = ordered.map((row) => text(row.cm_id_doc)).filter(Boolean);
+		if (!IR_SENT_ALIASES.has(estado)) patch.enviado_a_comercial_fecha = now().toISOString();
+	}
+	const updated = await store.update('invoice-request', String(rec._id), patch);
+	if (!updated) throw new Error('No se encontró la solicitud de facturación.');
+	await sync_order_invoice_state(store, updated);
+	return updated;
+}
+
+export function on_invoice_request_envio_change(
+	store: ImperiumStore,
+	now: () => Date = () => new Date(),
+): (row: ImperiumDoc) => Promise<void> {
+	return async (row) => {
+		if (row.origen !== 'invoice_request') return;
+		const origen_id = text(row.origen_id);
+		if (!origen_id) return;
+		await sync_invoice_request_from_envios(store, origen_id, now);
+	};
 }
 
 export async function mark_invoice_request(
