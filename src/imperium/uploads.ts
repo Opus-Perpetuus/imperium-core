@@ -50,6 +50,41 @@ const EXT_PERMITIDAS = new Set([
 	'rar',
 ]);
 
+// El chat también manda notas de voz y video.
+const MIME_PERMITIDOS_CHAT = new Set([
+	...MIME_PERMITIDOS,
+	'audio/webm',
+	'audio/ogg',
+	'audio/mpeg',
+	'audio/mp4',
+	'audio/x-m4a',
+	'audio/aac',
+	'audio/wav',
+	'audio/x-wav',
+	'video/webm',
+	'video/ogg',
+	'video/mp4',
+	'video/quicktime',
+	'video/3gpp',
+]);
+
+const EXT_PERMITIDAS_CHAT = new Set([
+	...EXT_PERMITIDAS,
+	'webm',
+	'weba',
+	'ogg',
+	'oga',
+	'opus',
+	'mp3',
+	'm4a',
+	'aac',
+	'wav',
+	'mp4',
+	'm4v',
+	'mov',
+	'3gp',
+]);
+
 const LIMITE_IMAGEN = 10 * 1024 * 1024;
 const LIMITE_OTROS = 50 * 1024 * 1024;
 const IMAGEN_ANCHO_MAXIMO = 4000;
@@ -381,10 +416,10 @@ async function persist_blob(
 ): Promise<SavedBlob> {
 	const name = file_name(file);
 	const ext = name.includes('.') ? name.split('.').pop()!.toLowerCase() : '';
-	const mime = (file.type || 'application/octet-stream').toLowerCase();
-	validate_upload(ext, mime, file.size, opts.related_model);
 	const bytes = Buffer.from(await file.arrayBuffer());
 	if (!bytes.length) throw new Error('No se ha subido un archivo');
+	const mime = content_mime(bytes, (file.type || 'application/octet-stream').toLowerCase());
+	validate_upload(ext, mime, file.size, opts.related_model);
 	if (should_defer_image_optimize(ext, mime)) {
 		await assert_upload_image(bytes);
 	}
@@ -393,12 +428,11 @@ async function persist_blob(
 	mkdirSync(folder, { recursive: true });
 	const path = join(folder, filename);
 	writeFileSync(path, bytes);
-	const original_mime = file.type || mime;
 	if (!should_defer_image_optimize(ext, mime)) {
 		return {
 			filename,
 			bytes,
-			mime: original_mime,
+			mime,
 			ext,
 			file_readiness: FILE_READINESS_USABLE,
 		};
@@ -407,7 +441,7 @@ async function persist_blob(
 	return {
 		filename,
 		bytes,
-		mime: original_mime,
+		mime,
 		ext,
 		file_readiness: FILE_READINESS_PROCESSING,
 	};
@@ -675,23 +709,93 @@ function validate_upload(
 	size: number,
 	related_model: string,
 ) {
-	// Cada flujo del chat valida el tipo de lo suyo (voz, video de una historia, imagen de un grupo).
-	const arbitrary = CHAT_ATTACHMENT_MODELS.has(related_model);
-	if (!arbitrary) {
-		const image = mime.startsWith('image/') || EXT_PERMITIDAS.has(ext);
-		if (!image) {
-			if (ext && !EXT_PERMITIDAS.has(ext)) {
-				throw new Error(`Extensión de archivo no permitida: ${ext}`);
-			}
-			if (!MIME_PERMITIDOS.has(mime)) {
-				throw new Error(`Tipo MIME no permitido: ${mime}`);
-			}
+	const chat = CHAT_ATTACHMENT_MODELS.has(related_model);
+	const exts = chat ? EXT_PERMITIDAS_CHAT : EXT_PERMITIDAS;
+	const mimes = chat ? MIME_PERMITIDOS_CHAT : MIME_PERMITIDOS;
+	const essence = mime.split(';')[0]!.trim();
+	if (essence === 'text/html') throw new Error(`Tipo MIME no permitido: ${essence}`);
+	const image = essence.startsWith('image/') || exts.has(ext);
+	if (!image) {
+		if (ext && !exts.has(ext)) {
+			throw new Error(`Extensión de archivo no permitida: ${ext}`);
+		}
+		if (!mimes.has(essence)) {
+			throw new Error(`Tipo MIME no permitido: ${mime}`);
 		}
 	}
 	const limit = mime.startsWith('image/') ? LIMITE_IMAGEN : LIMITE_OTROS;
 	if (size > limit) {
 		throw new Error(`Archivo demasiado grande. Límite: ${limit / (1024 * 1024)}MB`);
 	}
+}
+
+/** Firmas al inicio del archivo; `offset` cuenta desde el byte 0. */
+const FIRMAS: { mime: string; offset: number; bytes: number[] }[] = [
+	{ mime: 'image/png', offset: 0, bytes: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] },
+	{ mime: 'image/jpeg', offset: 0, bytes: [0xff, 0xd8, 0xff] },
+	{ mime: 'image/gif', offset: 0, bytes: [0x47, 0x49, 0x46, 0x38] },
+	{ mime: 'image/bmp', offset: 0, bytes: [0x42, 0x4d] },
+	{ mime: 'image/tiff', offset: 0, bytes: [0x49, 0x49, 0x2a, 0x00] },
+	{ mime: 'image/tiff', offset: 0, bytes: [0x4d, 0x4d, 0x00, 0x2a] },
+	{ mime: 'application/pdf', offset: 0, bytes: [0x25, 0x50, 0x44, 0x46, 0x2d] },
+	{ mime: 'application/zip', offset: 0, bytes: [0x50, 0x4b, 0x03, 0x04] },
+	{ mime: 'application/x-rar-compressed', offset: 0, bytes: [0x52, 0x61, 0x72, 0x21] },
+	{ mime: 'application/msword', offset: 0, bytes: [0xd0, 0xcf, 0x11, 0xe0] },
+	{ mime: 'video/webm', offset: 0, bytes: [0x1a, 0x45, 0xdf, 0xa3] },
+	{ mime: 'audio/ogg', offset: 0, bytes: [0x4f, 0x67, 0x67, 0x53] },
+	{ mime: 'audio/mpeg', offset: 0, bytes: [0x49, 0x44, 0x33] },
+	{ mime: 'video/mp4', offset: 4, bytes: [0x66, 0x74, 0x79, 0x70] },
+];
+
+/** Tipos que comparten contenedor: si el cliente declaró uno y llegó el otro, se respeta el suyo. */
+const MISMO_CONTENEDOR: Record<string, string[]> = {
+	'image/jpeg': ['image/jpg', 'image/pjpeg'],
+	'application/zip': [
+		'application/x-zip-compressed',
+		'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+		'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+	],
+	'application/x-rar-compressed': ['application/vnd.rar'],
+	'application/msword': ['application/vnd.ms-excel'],
+	'video/webm': ['audio/webm'],
+	'audio/ogg': ['video/ogg', 'audio/opus'],
+	'audio/mpeg': ['audio/mp3'],
+	'video/mp4': ['audio/mp4', 'audio/x-m4a', 'audio/aac', 'video/quicktime', 'video/3gpp', 'audio/3gpp'],
+	'audio/wav': ['audio/x-wav', 'audio/wave'],
+	'image/webp': [],
+};
+
+const MARKUP = /^\s*<(?:!doctype\s+html|html|head|body|script|iframe|svg|\?xml)[\s>/]/i;
+
+/**
+ * El tipo sale de los bytes, no del que declara el cliente: un HTML subido como `image/png`
+ * queda como `text/html` y el filtro de tipos lo rechaza.
+ */
+function content_mime(bytes: Uint8Array, declared: string): string {
+	const detected = sniff_mime(bytes);
+	const essence = declared.split(';')[0]!.trim();
+	if (detected) {
+		return essence === detected || MISMO_CONTENEDOR[detected]?.includes(essence) ? declared : detected;
+	}
+	// Formatos binarios sin su firma no son lo que dicen.
+	if (/^(image\/(?!svg)|audio\/|video\/)|^application\/pdf$/.test(essence)) return 'application/octet-stream';
+	return declared;
+}
+
+function sniff_mime(bytes: Uint8Array): string | null {
+	const head = Buffer.from(bytes.subarray(0, 512));
+	const ascii = (start: number, end: number) => head.subarray(start, end).toString('latin1');
+	if (ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WEBP') return 'image/webp';
+	if (ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WAVE') return 'audio/wav';
+	if (head.length >= 2 && head[0] === 0xff && (head[1]! & 0xe0) === 0xe0) {
+		return (head[1]! & 0x06) === 0 ? 'audio/aac' : 'audio/mpeg';
+	}
+	for (const firma of FIRMAS) {
+		if (firma.bytes.every((byte, i) => head[firma.offset + i] === byte)) return firma.mime;
+	}
+	const text = head.toString('utf8').replace(/^\uFEFF/, '');
+	if (MARKUP.test(text)) return /<svg[\s>]/i.test(text) ? 'image/svg+xml' : 'text/html';
+	return null;
 }
 
 function file_name(file: Blob): string {

@@ -3,7 +3,8 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { assert_attachment_access, ChatError, type GuestReader } from './chat-access.ts';
+import { assert_target_record_read } from './auth.ts';
+import { assert_attachment_access, CHAT_ATTACHMENT_MODELS, ChatError, type GuestReader } from './chat-access.ts';
 import { fail, type ImperiumDoc } from './envelope.ts';
 import type { ImperiumStore } from './store.ts';
 import { resolve_upload_folders, upload_file_path } from './uploads.ts';
@@ -36,7 +37,7 @@ function missing_image_placeholder(): Response | null {
 }
 
 /**
- * Sin `actor`, un adjunto del chat se niega: solo los demás se sirven a cualquier sesión. Un
+ * Sin `actor`, un adjunto del chat se niega; los demás exigen poder leer su registro dueño. Un
  * invitado (`guest`) solo alcanza los del chat de su reunión.
  */
 export async function serve_media(
@@ -58,6 +59,17 @@ export async function serve_media(
 			headers: NOSNIFF,
 		});
 	}
+	try {
+		await assert_owner_record_read(store, opts.actor ?? null, doc);
+	} catch (err) {
+		const status = (err as { status?: number }).status;
+		if (status !== 401 && status !== 403) throw err;
+		const message = (err as Error).message;
+		return Response.json(fail(message, status, { code: (err as { code?: string }).code }).body, {
+			status,
+			headers: NOSNIFF,
+		});
+	}
 	const source = await media_source(doc);
 	if (!source) {
 		if (is_image_attachment(doc)) {
@@ -68,6 +80,31 @@ export async function serve_media(
 	}
 	return serve_source(doc, source, opts.req);
 }
+
+/**
+ * Fuera del chat, el adjunto se lee con el permiso de Leer y las reglas de registro del registro
+ * dueño. Quedan fuera las fotos de usuario (se muestran a cualquier sesión), los archivos de una
+ * app (`subject-*:recurso`, su ACL vive en la app) y las filas sin modelo, que no tienen dueño.
+ */
+async function assert_owner_record_read(
+	store: ImperiumStore,
+	actor: ImperiumDoc | null,
+	doc: ImperiumDoc,
+): Promise<void> {
+	const model = String(doc.related_model ?? '').trim();
+	if (!model || CHAT_ATTACHMENT_MODELS.has(model) || PUBLIC_OWNER_MODELS.has(model)) return;
+	if (model.startsWith('subject-')) return;
+	const record_id = String(doc.related_record_id ?? '').trim();
+	const actor_id = String(actor?._id ?? '');
+	// Subida aún sin registro: solo quien la subió.
+	if (!record_id) {
+		if (actor_id && String(doc.created_by_id ?? '') === actor_id) return;
+		throw new ChatError(403, 'attachment_forbidden', 'No tienes acceso a este archivo.');
+	}
+	await assert_target_record_read(store, actor, model, record_id);
+}
+
+const PUBLIC_OWNER_MODELS = new Set(['User', 'user']);
 
 type MediaSource = { blob: Blob; mtime_ms: number };
 

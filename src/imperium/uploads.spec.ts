@@ -102,7 +102,7 @@ function is_webp(bytes: Buffer): boolean {
 describe('uploads diferidos', () => {
 	test('un PDF queda usable sin pasar por sharp', async () => {
 		const { store, docs } = memory_store();
-		const file = new File([Buffer.from('pdf')], 'acta.pdf', { type: 'application/pdf' });
+		const file = new File([Buffer.from('%PDF-1.4')], 'acta.pdf', { type: 'application/pdf' });
 		const saved = await persist_upload_as_attachment(store, file, {
 			actor_id: 'user',
 			related_model: 'notes',
@@ -114,7 +114,7 @@ describe('uploads diferidos', () => {
 		expect(saved.file_readiness).toBe(FILE_READINESS_USABLE);
 		expect(saved.mimetype).toBe('application/pdf');
 		expect(saved.file_ext).toBe('pdf');
-		expect(on_disk(String(saved.name_stored)).equals(Buffer.from('pdf'))).toBe(true);
+		expect(on_disk(String(saved.name_stored)).equals(Buffer.from('%PDF-1.4'))).toBe(true);
 		expect(docs.get(String(saved._id))?.file_readiness).toBe(FILE_READINESS_USABLE);
 	});
 
@@ -220,6 +220,48 @@ describe('uploads diferidos', () => {
 		expect(meta.height).toBeLessThanOrEqual(4000);
 		expect(meta.width).toBeGreaterThan(0);
 		expect(meta.height).toBeGreaterThan(0);
+	});
+
+	test('el tipo sale de los bytes: HTML disfrazado se rechaza, también en el chat', async () => {
+		const { store } = memory_store();
+		const html = '<!DOCTYPE html><script>alert(1)</script>';
+		for (const related_model of ['products', 'Message']) {
+			for (const [name, type] of [['foto.png', 'image/png'], ['nota.txt', 'text/plain'], ['x.html', 'text/html']]) {
+				await expect(
+					persist_upload_as_attachment(store, new File([html], name!, { type }), {
+						actor_id: 'user',
+						related_model,
+						related_record_id: '',
+						field: 'file',
+						index_if_is_array: 0,
+						inside_array: false,
+					}),
+				).rejects.toThrow('Tipo MIME no permitido');
+			}
+		}
+	});
+
+	test('el chat solo acepta la lista de tipos; un SVG queda como SVG y una nota de voz conserva su tipo', async () => {
+		const { store } = memory_store();
+		const meta = { actor_id: 'user', related_model: 'Message', related_record_id: '', field: 'file', index_if_is_array: 0, inside_array: false };
+		await expect(
+			persist_upload_as_attachment(store, new File(['MZ'], 'setup.exe', { type: 'application/x-msdownload' }), meta),
+		).rejects.toThrow('Extensión de archivo no permitida');
+		const svg = await persist_upload_as_attachment(
+			store,
+			new File(['<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'], 'dibujo.txt', { type: 'text/plain' }),
+			meta,
+		);
+		expect(svg.mimetype).toBe('image/svg+xml');
+		const voice = await persist_upload_as_attachment(
+			store,
+			new File([new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 0, 0, 0, 0])], 'nota.webm', { type: 'audio/webm;codecs=opus' }),
+			meta,
+		);
+		expect(voice.mimetype).toBe('audio/webm;codecs=opus');
+		// Sin la firma de OGG no se sirve como audio: queda como binario (attachment al descargarse).
+		const fake = await persist_upload_as_attachment(store, new File(['hola'], 'nota.ogg', { type: 'audio/ogg' }), meta);
+		expect(fake.mimetype).toBe('application/octet-stream');
 	});
 
 	test('rechaza un archivo que no es imagen aunque la extensión lo parezca', async () => {

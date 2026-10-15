@@ -1509,7 +1509,7 @@ describe('subidas del chat', () => {
 			peaks: JSON.stringify(WAVEFORM),
 		};
 		// Bun deduce el tipo por la extensión: una nota de voz .webm llega como video/webm.
-		const voice = new File([new Uint8Array(32)], 'nota.webm', { type: 'audio/webm' });
+		const voice = new File([new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, ...new Array(28).fill(0)])], 'nota.webm', { type: 'audio/webm' });
 		const first = await call(store, ana, 'create_chat_upload', { path: '/uploads', form: upload_form(fields, voice) });
 		const again = await call(store, ana, 'create_chat_upload', { path: '/uploads', form: upload_form(fields, voice) });
 		expect(first.body.data[0]).toEqual({
@@ -4000,6 +4000,37 @@ describe('fijados, reenvíos, tarjetas de registro y galería', () => {
 		const denied = await card(foreign);
 		expect([denied.status, denied.body.code]).toEqual([422, 'invalid_request']);
 		expect(JSON.stringify(store.tables.messages)).not.toContain('confidencial');
+	});
+
+	test('/media de un registro: el permiso de Leer y las reglas de registro del dueño; sin ellos 403', async () => {
+		const store = chat_store();
+		const [rosa, beto] = ['Rosa', 'Beto'].map((name) => add_user(store, name)) as ImperiumDoc[];
+		store.tables['user-group'] = [
+			{ _id: hex_id(), name: 'Soporte', user_ids: [rosa!._id], access_rights_ids: ['lee-tickets'], record_rules_ids: ['solo-propios'] },
+		];
+		store.tables['access-rights'] = [{ _id: 'lee-tickets', model_id: 'tickets', allow_read: true }];
+		store.tables['record-rules'] = [
+			{ _id: 'solo-propios', name: 'Solo propios', model_id: 'tickets', allow_read: true, domain: '{"created_by":"$current_user_id"}' },
+		];
+		const own = { _id: hex_id(), name: 'TK-1', created_by: rosa!._id };
+		const foreign = { _id: hex_id(), name: 'TK-2', created_by: hex_id() };
+		store.tables.tickets = [own, foreign];
+		const attach = (ticket: ImperiumDoc) => {
+			const row = { _id: hex_id(), name: 'evidencia', base64: Buffer.from('%PDF-1.4').toString('base64'), mimetype: 'application/pdf', related_model: 'tickets', related_record_id: ticket._id };
+			store.tables['attachment-management']!.push(row);
+			return row._id;
+		};
+		const of_own = attach(own);
+		const of_foreign = attach(foreign);
+		const media = (id: string, actor: ImperiumDoc | null) => serve_media(store as unknown as ImperiumStore, id, { actor });
+		expect((await media(of_own, rosa!)).status).toBe(200);
+		expect((await media(of_foreign, rosa!)).status).toBe(403);
+		expect((await media(of_own, beto!)).status).toBe(403);
+		expect((await media(of_own, null)).status).toBe(401);
+		const pending = { _id: hex_id(), base64: 'eA==', mimetype: 'text/plain', related_model: 'tickets', related_record_id: '', created_by_id: rosa!._id };
+		store.tables['attachment-management']!.push(pending);
+		expect((await media(pending._id, rosa!)).status).toBe(200);
+		expect((await media(pending._id, beto!)).status).toBe(403);
 	});
 
 	test('galería: por tipo y por seq, con los enlaces del texto; lo oculto o borrado no sale', async () => {

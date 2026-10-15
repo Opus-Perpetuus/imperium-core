@@ -11,6 +11,8 @@ import { serve_attachment_bytes, serve_media } from './media.ts';
 import { clone_for_request_log } from './router.ts';
 import type { ImperiumStore, ModuleLoc } from './store.ts';
 
+const PNG_FIRMA = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
 function fake_store(
 	docs: Record<string, ImperiumDoc | null>,
 	has_collection = true,
@@ -184,6 +186,18 @@ describe('serve_media por rangos', () => {
 			expect(full.status).toBe(200);
 			expect(full.headers.get('content-length')).toBe('10');
 			expect(await full.text()).toBe('0123456789');
+		});
+	});
+
+	test('bytes=0-99 de un archivo mayor: 206, Content-Range y Accept-Ranges', async () => {
+		const content = 'x'.repeat(100) + 'y'.repeat(150);
+		await with_upload('clip.mp4', content, async () => {
+			const res = await serve_media(fake_store({ clip: CLIP }), 'clip', { req: get({ range: 'bytes=0-99' }) });
+			expect(res.status).toBe(206);
+			expect(res.headers.get('content-range')).toBe('bytes 0-99/250');
+			expect(res.headers.get('accept-ranges')).toBe('bytes');
+			expect(res.headers.get('content-length')).toBe('100');
+			expect(await res.text()).toBe('x'.repeat(100));
 		});
 	});
 
@@ -406,7 +420,7 @@ describe('archivo de un adjunto: solo nombres que pone el servidor', () => {
 		const form = new FormData();
 		form.set('event_type', 'delivery');
 		form.set('delivery_ticket_reference', 'T-1');
-		form.set('signature', new File(['firma del cliente'], AJENO, { type: 'image/png' }));
+		form.set('signature', new File([PNG_FIRMA, 'firma del cliente'], AJENO, { type: 'image/png' }));
 		const url = new URL('http://imperium.test/api/delivery-package/p1/logistics-event');
 		const req = new Request(url, { method: 'POST', body: form });
 		await expect(
@@ -417,8 +431,8 @@ describe('archivo de un adjunto: solo nombres que pone el servidor', () => {
 		expect(inserted.length).toBe(1);
 		expect(String(inserted[0]?.name_stored ?? '')).toMatch(/^[0-9a-f-]{36}$/);
 		await with_upload(AJENO, 'bytes ajenos', async () => {
-			const res = await serve_media(fake_store({ firma: { ...inserted[0], _id: 'firma' } }), 'firma');
-			expect(await res.text()).toBe('firma del cliente');
+			const res = await serve_media(fake_store({ firma: { ...inserted[0], _id: 'firma', related_model: '' } }), 'firma');
+			expect(await res.text()).toEndWith('firma del cliente');
 		});
 	});
 
