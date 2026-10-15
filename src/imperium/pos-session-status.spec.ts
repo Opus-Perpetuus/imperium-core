@@ -5,6 +5,7 @@ import {
 	actor_can_restore_pos_session,
 	prepare_pos_session_create,
 	prepare_pos_session_update,
+	resolve_pos_session_status_prompt,
 } from './pos-session-flow.ts';
 import { issue_unlock_token, verify_unlock_token } from './user-pin.ts';
 
@@ -74,6 +75,49 @@ describe('POS session status update', () => {
 		);
 		expect(reopened.status).toBe('abierta');
 		expect(reopened.closing_date).toBeNull();
+	});
+});
+
+describe('POS session close prompt', () => {
+	test('cerrar abre el diálogo de PIN una vez y no recarga', () => {
+		const first = resolve_pos_session_status_prompt({
+			previous_status: 'abierta',
+			next_status: 'CERRADA',
+			dialog_open: false,
+		});
+		const second = resolve_pos_session_status_prompt({
+			previous_status: 'abierta',
+			next_status: 'cerrada',
+			dialog_open: true,
+		});
+		expect(first.ask_pin).toBe(true);
+		expect(first.open_dialog).toBe(true);
+		expect(first.reload).toBe(false);
+		expect(first.normalized_status).toBe('cerrada');
+		expect(second.open_dialog).toBe(false);
+		expect(second.reload).toBe(false);
+	});
+
+	test('reabrir también pide PIN, incluido el cajero, y no recarga', () => {
+		const prompt = resolve_pos_session_status_prompt({
+			previous_status: 'cerrada',
+			next_status: 'abierta',
+			dialog_open: false,
+		});
+		expect(prompt.ask_pin).toBe(true);
+		expect(prompt.open_dialog).toBe(true);
+		expect(prompt.reload).toBe(false);
+	});
+
+	test('el mismo estatus no abre otro diálogo', () => {
+		const prompt = resolve_pos_session_status_prompt({
+			previous_status: 'abierta',
+			next_status: 'abierta',
+			dialog_open: false,
+		});
+		expect(prompt.ask_pin).toBe(false);
+		expect(prompt.open_dialog).toBe(false);
+		expect(prompt.reload).toBe(false);
 	});
 });
 

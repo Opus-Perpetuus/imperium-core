@@ -156,6 +156,34 @@ export function normalize_pos_session_status_value(value: unknown): string {
 	return POS_SESSION_STATUS_ALIASES[raw] ?? POS_SESSION_STATUS_ALIASES[raw.toLowerCase()] ?? raw;
 }
 
+/**
+ * Cerrar o reabrir pide el diálogo de PIN una sola vez. `reload` queda en
+ * false: la transición no programa otra carga de la lista ni del motivo.
+ */
+export function resolve_pos_session_status_prompt(input: {
+	previous_status: unknown;
+	next_status: unknown;
+	dialog_open: boolean;
+}): {
+	ask_pin: boolean;
+	open_dialog: boolean;
+	reload: boolean;
+	normalized_status: string;
+} {
+	const previous = normalize_pos_session_status_value(input.previous_status);
+	const next = normalize_pos_session_status_value(input.next_status);
+	const was_open = previous === 'abierta';
+	const will_open = next === 'abierta';
+	const changes_open_state = Boolean(next) && next !== previous && was_open !== will_open;
+	const ask_pin = changes_open_state;
+	return {
+		ask_pin,
+		open_dialog: ask_pin && !input.dialog_open,
+		reload: false,
+		normalized_status: next,
+	};
+}
+
 export function is_pos_session_open(doc: ImperiumDoc): boolean {
 	const raw = text(doc.status ?? doc.estado).toLowerCase();
 	return raw === 'abierta' || raw === 'open';

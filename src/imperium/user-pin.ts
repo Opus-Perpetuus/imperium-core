@@ -14,6 +14,7 @@ const POS_PIN_DOCUMENT_MODEL = 'PosSession';
 const POS_PROTECTED_ROUTES = [
 	{ method: 'GET', path: '/pos-session/:id', label: 'Restaurar sesion POS' },
 	{ method: 'PUT', path: '/pos-session', label: 'Actualizar sesion POS' },
+	{ method: 'PATCH', path: '/pos-session/:id', label: 'Cerrar o reabrir sesion POS' },
 	{ method: 'POST', path: '/pos-tickets', label: 'Crear ticket POS' },
 	{ method: 'GET', path: '/pos-session/report/partial/:id', label: 'Reporte parcial POS' },
 	{ method: 'POST', path: '/pos-session/report/close/:id', label: 'Reporte de cierre POS' },
@@ -246,6 +247,7 @@ export async function assert_pos_pin(
 	document_id: string,
 	route: { method: string; path: string; label: string },
 	actor: ImperiumDoc | null,
+	options?: { skip_assignee_check?: boolean },
 ) {
 	if (!(await pos_pins_enabled(store))) return;
 	const pin = await find_session_pin(store, document_id);
@@ -254,7 +256,7 @@ export async function assert_pos_pin(
 	const assigned = as_array(pin.assigned_users).map((v) =>
 		typeof v === 'object' ? String(as_object(v)._id ?? '') : String(v ?? ''),
 	);
-	if (assigned.length && uid && !assigned.includes(uid)) {
+	if (!options?.skip_assignee_check && assigned.length && uid && !assigned.includes(uid)) {
 		throw new Error('Este PIN no esta asignado a tu usuario.');
 	}
 	const token = req.headers.get(USER_PIN_UNLOCK_TOKEN_HEADER) ?? '';

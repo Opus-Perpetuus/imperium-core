@@ -66,6 +66,7 @@ import {
 	prepare_pos_session_create,
 	prepare_pos_session_update,
 	prepare_pos_ticket_create,
+	resolve_pos_session_status_prompt,
 	take_offline_pos_replay,
 } from './pos-session-flow.ts';
 import { decorate_product, prepare_product_write } from './products-flow.ts';
@@ -963,16 +964,24 @@ export async function handle_crud(
 		const raw = await body();
 		const id = String(raw._id ?? raw.id ?? '');
 		if (!id) return json(resource, fail('Se necesita un id para actualizar').body, 400);
+		const previous = await store.find_id(resource, id);
 		if (resource === 'pos-session') {
+			const prompt = resolve_pos_session_status_prompt({
+				previous_status: previous?.status,
+				next_status: raw.status,
+				dialog_open: false,
+			});
 			await assert_pos_pin(
 				store,
 				req,
 				id,
-				{ method: 'PUT', path: '/pos-session', label: 'Actualizar sesion POS' },
+				prompt.ask_pin
+					? { method: 'PATCH', path: '/pos-session/:id', label: 'Cerrar o reabrir sesion POS' }
+					: { method: 'PUT', path: '/pos-session', label: 'Actualizar sesion POS' },
 				actor,
+				{ skip_assignee_check: prompt.ask_pin },
 			);
 		}
-		const previous = await store.find_id(resource, id);
 		const scope = await record_rule_scope(store, actor, resource, method);
 		await assert_id_in_scope(store, resource, id, previous, scope, method);
 		let b = await prepare_user_write(
@@ -1157,18 +1166,39 @@ export async function handle_crud(
 	}
 	if (method === 'PATCH' && segs.length === 1) {
 		assert_inventory_ledger_write(resource, 'update');
+		const raw_patch = await body();
 		const previous = await store.find_id(resource, segs[0]!);
+		if (resource === 'pos-session') {
+			const prompt = resolve_pos_session_status_prompt({
+				previous_status: previous?.status,
+				next_status: raw_patch.status,
+				dialog_open: false,
+			});
+			if (prompt.ask_pin) {
+				await assert_pos_pin(
+					store,
+					req,
+					segs[0]!,
+					{ method: 'PATCH', path: '/pos-session/:id', label: 'Cerrar o reabrir sesion POS' },
+					actor,
+					{ skip_assignee_check: true },
+				);
+			}
+		}
 		const scope = await record_rule_scope(store, actor, resource, method);
 		await assert_id_in_scope(store, resource, segs[0]!, previous, scope, method);
 		let patched = await prepare_user_write(
 			resource,
-			await apply_uploads(store, resource, await body(), actor, {
+			await apply_uploads(store, resource, raw_patch, actor, {
 				method: 'PATCH',
 				record_id: segs[0],
 				previous,
 			}),
 			false,
 		);
+		if (resource === 'pos-session' && previous) {
+			patched = await prepare_pos_session_update(store, patched, previous, actor);
+		}
 		if (resource === 'pedidos') {
 			patched = await prepare_pedido_update(store, patched, actor, previous);
 		}
