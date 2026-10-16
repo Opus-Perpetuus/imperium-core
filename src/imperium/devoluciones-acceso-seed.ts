@@ -1,5 +1,5 @@
 /**
- * Permisos de Devoluciones para Choferes, Almacén y Logística, y lectura de la plantilla del ticket de Choferes y Vendedores.
+ * Permisos de Devoluciones para Choferes, Almacén y Logística, carga de bultos de Almacén, y lectura de la plantilla del ticket de Choferes y Vendedores.
  *
  * El núcleo no corre las siembras de Express y el lector de `module.data`
  * se salta `accesos_flujo()`. Estas filas se insertan aquí, idempotentes
@@ -81,6 +81,45 @@ const DERECHO_UBICACIONES: DevolucionAccessRight = {
 	is_active: true,
 };
 
+const DERECHOS_CARGA_ALMACEN: DevolucionAccessRight[] = [
+	{
+		_ref: 'delivery-package-access-rights-almacen',
+		name: 'Bultos | Almacén (leer/actualizar)',
+		description: 'Almacén: cargar bultos asignándoles ruta y vehículo. Sin crear ni borrar.',
+		model_id: 'DeliveryPackage',
+		group_id: 'user-group-almacen',
+		allow_read: true,
+		allow_create: false,
+		allow_update: true,
+		allow_delete: false,
+		is_active: true,
+	},
+	{
+		_ref: 'delivery-route-access-rights-almacen',
+		name: 'Rutas de entrega | Almacén (leer)',
+		description: 'Almacén: leer las rutas de entrega a las que se cargan los bultos.',
+		model_id: 'DeliveryRoute',
+		group_id: 'user-group-almacen',
+		allow_read: true,
+		allow_create: false,
+		allow_update: false,
+		allow_delete: false,
+		is_active: true,
+	},
+	{
+		_ref: 'vehicle-access-rights-almacen',
+		name: 'Vehículos | Almacén (leer)',
+		description: 'Almacén: leer los vehículos a los que se cargan los bultos.',
+		model_id: 'Vehicle',
+		group_id: 'user-group-almacen',
+		allow_read: true,
+		allow_create: false,
+		allow_update: false,
+		allow_delete: false,
+		is_active: true,
+	},
+];
+
 const DERECHO_PLANTILLA_TICKET_CHOFERES: DevolucionAccessRight = {
 	_ref: 'choferes-access-rights-epson-ticket-template',
 	name: 'EpsonTicketTemplate | Choferes (leer)',
@@ -129,6 +168,7 @@ export const DEVOLUCIONES_ACCESS_RIGHTS: DevolucionAccessRight[] = [
 	...GRUPOS_DEVOLUCION.map(derecho_devolucion),
 	...GRUPOS_DEVOLUCION.map(derecho_firma),
 	DERECHO_UBICACIONES,
+	...DERECHOS_CARGA_ALMACEN,
 	DERECHO_PLANTILLA_TICKET_CHOFERES,
 	DERECHO_PLANTILLA_TICKET_VENDEDORES,
 ];

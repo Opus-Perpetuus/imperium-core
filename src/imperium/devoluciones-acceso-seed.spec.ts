@@ -9,6 +9,7 @@ import {
 	permisos_devolucion,
 	regla_plantilla_ticket_offline,
 } from '../../../../backend/src/components/user-group/flujo-grupos-acceso.ts';
+import { assert_http_access, HttpAccessDeniedError } from './auth.ts';
 import type { ImperiumDoc } from './envelope.ts';
 import type { ImperiumStore } from './store.ts';
 import {
@@ -38,6 +39,9 @@ function memory_store(seed: Record<string, Row[]>) {
 		updates,
 		has(resource: string) {
 			return Object.hasOwn(data, resource);
+		},
+		is_model_installed() {
+			return true;
 		},
 		async *scan(resource: string, _opts: { include_inactive?: boolean } = {}) {
 			yield (data[resource] ?? []).map((row) => ({ ...row }));
@@ -106,14 +110,14 @@ function pick(row: Record<string, unknown>) {
 }
 
 describe('siembra de accesos de Devoluciones', () => {
-	test('base vacía crea las 9 filas y anexa el menú a los 3 grupos', async () => {
+	test('base vacía crea las 12 filas y anexa el menú a los 3 grupos', async () => {
 		const store = base();
 		const result = await ensure_devoluciones_access(store);
 		expect(result.rights).toEqual(DEVOLUCIONES_ACCESS_RIGHTS.map((row) => row._ref));
 		expect(result.rules).toEqual(DEVOLUCIONES_RECORD_RULES.map((row) => row._ref));
 		expect(result.groups).toEqual(['g-choferes', 'g-almacen', 'g-logistica']);
-		expect(store.data['access-rights']).toHaveLength(9);
-		expect(store.inserts.filter((call) => call.resource === 'access-rights')).toHaveLength(9);
+		expect(store.data['access-rights']).toHaveLength(12);
+		expect(store.inserts.filter((call) => call.resource === 'access-rights')).toHaveLength(12);
 		expect(store.data['record-rules']).toHaveLength(1);
 		expect(store.inserts.filter((call) => call.resource === 'record-rules')).toHaveLength(1);
 		for (const row of store.data['access-rights'] ?? []) {
@@ -143,10 +147,10 @@ describe('siembra de accesos de Devoluciones', () => {
 		expect(second).toEqual({ rights: [], rules: [], groups: [] });
 		expect(store.inserts).toEqual([]);
 		expect(store.updates).toEqual([]);
-		expect(store.data['access-rights']).toHaveLength(9);
+		expect(store.data['access-rights']).toHaveLength(12);
 		expect(store.data['record-rules']).toHaveLength(1);
 		const refs = (store.data['access-rights'] ?? []).map((row) => row._ref);
-		expect(new Set(refs).size).toBe(9);
+		expect(new Set(refs).size).toBe(12);
 	});
 
 	test('no pisa un _ref existente y respeta menus_ids en JSON', async () => {
@@ -201,7 +205,7 @@ describe('siembra de accesos de Devoluciones', () => {
 			name: 'viejo',
 			description: 'distinto',
 		});
-		expect(store.data['access-rights']).toHaveLength(9);
+		expect(store.data['access-rights']).toHaveLength(12);
 		expect(store.updates.filter((call) => call.resource === 'access-rights')).toEqual([]);
 		expect(store.updates.map((call) => call.id).sort()).toEqual(['g-almacen', 'g-logistica']);
 		const almacen = store.data['user-group']?.find((row) => row._id === 'g-almacen');
@@ -226,12 +230,12 @@ describe('siembra de accesos de Devoluciones', () => {
 		expect(result.groups).toEqual([]);
 		expect(store.updates).toEqual([]);
 		expect(store.data['user-group']).toEqual(antes);
-		expect(result.rights).toHaveLength(9);
+		expect(result.rights).toHaveLength(12);
 	});
 
 	test('paridad con el backend en los tres grupos', () => {
 		expect(DEVOLUCIONES_MENU_REF).toBe(MENU_REF_DEVOLUCIONES);
-		expect(DEVOLUCIONES_ACCESS_RIGHTS).toHaveLength(9);
+		expect(DEVOLUCIONES_ACCESS_RIGHTS).toHaveLength(12);
 		const grupos = new Set<string>(GRUPOS);
 		const backend = [...permisos_devolucion(), ...permisos_adjunto_firma()].filter((row) =>
 			grupos.has(row.group_id),
@@ -252,7 +256,20 @@ describe('siembra de accesos de Devoluciones', () => {
 		);
 		expect(pick(fila ?? {})).toEqual(pick(ubicacion?.doc ?? {}));
 		expect(fila?.is_active).toBe(true);
-		const plantilla = DEVOLUCIONES_ACCESS_RIGHTS.find(
+		const bultos = parse_module_data_file(
+			join(import.meta.dir, '../../../../backend/src/components/delivery-package/module.data.ts'),
+		);
+		const carga_almacen = DEVOLUCIONES_ACCESS_RIGHTS.filter(
+			(row) =>
+				row.group_id === 'user-group-almacen' &&
+				['DeliveryPackage', 'DeliveryRoute', 'Vehicle'].includes(row.model_id),
+		);
+		expect(carga_almacen).toHaveLength(3);
+		for (const row of carga_almacen) {
+			const backend = bultos.find((item) => item.doc._ref === row._ref);
+			expect(pick(row)).toEqual(pick(backend?.doc ?? {}));
+		}
+		const plantilla =DEVOLUCIONES_ACCESS_RIGHTS.find(
 			(row) => row._ref === 'choferes-access-rights-epson-ticket-template',
 		);
 		expect(pick(plantilla ?? {})).toEqual(pick(permiso_plantilla_ticket_choferes()));
@@ -268,13 +285,13 @@ describe('siembra de accesos de Devoluciones', () => {
 		expect(regla?.domain).toBe(regla_plantilla_ticket_offline().domain);
 	});
 
-	test('una base con las 8 filas previas sólo inserta vendedores-access-rights-epson-ticket-template', async () => {
+	test('una base con las 11 filas previas sólo inserta vendedores-access-rights-epson-ticket-template', async () => {
 		const previas = DEVOLUCIONES_ACCESS_RIGHTS.filter(
 			(row) => row._ref !== 'vendedores-access-rights-epson-ticket-template',
 		);
 		const store = base({ rights: previas, rules: false });
 		const result = await ensure_devoluciones_access(store);
-		expect(previas).toHaveLength(8);
+		expect(previas).toHaveLength(11);
 		expect(result.rights).toEqual(['vendedores-access-rights-epson-ticket-template']);
 		expect(result.rules).toEqual([]);
 		expect(
@@ -317,6 +334,38 @@ describe('siembra de accesos de Devoluciones', () => {
 			allow_read: false,
 		});
 		expect(store.inserts.filter((call) => call.resource === 'record-rules')).toEqual([]);
+	});
+
+	test('Almacén lee rutas y vehículos y carga bultos, sin más', async () => {
+		const store = base();
+		const usuario: Row = { _id: 'u-almacen', name: 'E2E Almacen', email: 'e2e.almacen@test.local' };
+		const grupo = store.data['user-group']?.find((row) => row._ref === 'user-group-almacen');
+		if (grupo) grupo.user_ids = [usuario._id];
+		await ensure_devoluciones_access(store);
+		const permitido = [
+			['delivery-route', 'GET'],
+			['vehicle', 'GET'],
+			['delivery-package', 'GET'],
+			['delivery-package', 'PUT'],
+		] as const;
+		for (const [resource, method] of permitido) {
+			await assert_http_access(store, usuario, resource, method);
+		}
+		const negado = [
+			['delivery-route', 'POST'],
+			['delivery-route', 'PUT'],
+			['delivery-route', 'DELETE'],
+			['vehicle', 'POST'],
+			['vehicle', 'PUT'],
+			['vehicle', 'DELETE'],
+			['delivery-package', 'POST'],
+			['delivery-package', 'DELETE'],
+		] as const;
+		for (const [resource, method] of negado) {
+			await expect(assert_http_access(store, usuario, resource, method)).rejects.toBeInstanceOf(
+				HttpAccessDeniedError,
+			);
+		}
 	});
 
 	test('un fallo de esta siembra no tumba el resto', () => {
