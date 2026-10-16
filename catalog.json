@@ -13633,6 +13633,518 @@
               "crud": "string",
               "component": "input-text",
               "label": "chofer nombre"
+            },
+            {
+              "name": "serie",
+              "mongo": "serie",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "numero de serie"
+            },
+            {
+              "name": "lectura_km",
+              "mongo": "lectura_km",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "kilometros"
+            },
+            {
+              "name": "lectura_horas",
+              "mongo": "lectura_horas",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "horas de motor"
+            }
+          ]
+        },
+        {
+          "resource": "plantilla-revision",
+          "table": "plantilla_revision",
+          "name": "Plantillas de revisión",
+          "path": "/plantilla-revision",
+          "collection": "plantilla-revision",
+          "model_file": "components/plantilla-revision/plantilla-revision.model.ts",
+          "menu_ref": "plantilla-revision-menu",
+          "columns": [
+            {
+              "name": "items",
+              "mongo": "items",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "conceptos"
+            }
+          ]
+        },
+        {
+          "resource": "bitacora",
+          "table": "bitacora",
+          "name": "Bitácoras de revisión",
+          "path": "/bitacora",
+          "collection": "bitacora",
+          "model_file": "components/bitacora/bitacora.model.ts",
+          "menu_ref": "bitacora-menu",
+          "columns": [
+            {
+              "name": "vehicle_id",
+              "mongo": "vehicle_id",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "vehiculo"
+            },
+            {
+              "name": "plantilla_id",
+              "mongo": "plantilla_id",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "plantilla"
+            },
+            {
+              "name": "fecha",
+              "mongo": "fecha",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "fecha"
+            },
+            {
+              "name": "items",
+              "mongo": "items",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "items"
+            },
+            {
+              "name": "imagenes",
+              "mongo": "imagenes",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "evidencia"
+            },
+            {
+              "name": "firma_realiza",
+              "mongo": "firma_realiza",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "firma de quien realiza"
+            },
+            {
+              "name": "firma_revisa",
+              "mongo": "firma_revisa",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "firma de quien revisa"
+            },
+            {
+              "name": "revisada",
+              "mongo": "revisada",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
+              "label": "revisada"
+            }
+          ]
+        },
+        {
+          "resource": "falla",
+          "table": "falla",
+          "name": "Reportes de falla",
+          "path": "/falla",
+          "collection": "falla",
+          "model_file": "components/falla/falla.model.ts",
+          "menu_ref": "falla-menu",
+          "columns": [
+            {
+              "name": "vehicle_id",
+              "mongo": "vehicle_id",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "vehiculo"
+            },
+            {
+              "name": "bitacora_id",
+              "mongo": "bitacora_id",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "bitacora"
+            },
+            {
+              "name": "concepto",
+              "mongo": "concepto",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "concepto"
+            },
+            {
+              "name": "prioridad",
+              "mongo": "prioridad",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "prioridad"
+            },
+            {
+              "name": "estado",
+              "mongo": "estado",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "estado"
+            },
+            {
+              "name": "fecha",
+              "mongo": "fecha",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "fecha"
+            },
+            {
+              "name": "correctivo_id",
+              "mongo": "correctivo_id",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "correctivo"
+            }
+          ]
+        },
+        {
+          "resource": "mantenimiento-correctivo",
+          "table": "mantenimiento_correctivo",
+          "name": "Mantenimientos correctivos",
+          "path": "/mantenimiento-correctivo",
+          "collection": "mantenimiento-correctivo",
+          "model_file": "components/mantenimiento-correctivo/mantenimiento-correctivo.model.ts",
+          "menu_ref": "mantenimiento-correctivo-menu",
+          "columns": [
+            {
+              "name": "vehicle_id",
+              "mongo": "vehicle_id",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "vehiculo"
+            },
+            {
+              "name": "falla_id",
+              "mongo": "falla_id",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "falla"
+            },
+            {
+              "name": "fecha",
+              "mongo": "fecha",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "fecha"
+            },
+            {
+              "name": "trabajo_realizado",
+              "mongo": "trabajo_realizado",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "trabajo realizado"
+            },
+            {
+              "name": "costo",
+              "mongo": "costo",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-money",
+              "label": "costo"
+            },
+            {
+              "name": "estado",
+              "mongo": "estado",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "estado"
+            }
+          ]
+        },
+        {
+          "resource": "mantenimiento-preventivo",
+          "table": "mantenimiento_preventivo",
+          "name": "Mantenimientos preventivos",
+          "path": "/mantenimiento-preventivo",
+          "collection": "mantenimiento-preventivo",
+          "model_file": "components/mantenimiento-preventivo/mantenimiento-preventivo.model.ts",
+          "menu_ref": "mantenimiento-preventivo-menu",
+          "columns": [
+            {
+              "name": "vehicle_id",
+              "mongo": "vehicle_id",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "vehiculo"
+            },
+            {
+              "name": "servicio_programado_id",
+              "mongo": "servicio_programado_id",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "servicio programado"
+            },
+            {
+              "name": "fecha",
+              "mongo": "fecha",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "fecha"
+            },
+            {
+              "name": "trabajo_realizado",
+              "mongo": "trabajo_realizado",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "trabajo realizado"
+            },
+            {
+              "name": "costo",
+              "mongo": "costo",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-money",
+              "label": "costo"
+            },
+            {
+              "name": "estado",
+              "mongo": "estado",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "estado"
+            }
+          ]
+        },
+        {
+          "resource": "servicio-programado",
+          "table": "servicio_programado",
+          "name": "Servicios programados",
+          "path": "/servicio-programado",
+          "collection": "servicio-programado",
+          "model_file": "components/servicio-programado/servicio-programado.model.ts",
+          "menu_ref": "servicio-programado-menu",
+          "columns": [
+            {
+              "name": "vehicle_id",
+              "mongo": "vehicle_id",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "vehiculo"
+            },
+            {
+              "name": "tipo_lectura",
+              "mongo": "tipo_lectura",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "tipo de lectura"
+            },
+            {
+              "name": "proxima_fecha",
+              "mongo": "proxima_fecha",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "proxima fecha"
+            },
+            {
+              "name": "intervalo_dias",
+              "mongo": "intervalo_dias",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "intervalo dias"
+            },
+            {
+              "name": "proxima_lectura",
+              "mongo": "proxima_lectura",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "proxima lectura"
+            },
+            {
+              "name": "intervalo_lectura",
+              "mongo": "intervalo_lectura",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "intervalo lectura"
+            },
+            {
+              "name": "aviso_dias",
+              "mongo": "aviso_dias",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "aviso dias"
+            },
+            {
+              "name": "aviso_lectura",
+              "mongo": "aviso_lectura",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "aviso lectura"
+            },
+            {
+              "name": "estado",
+              "mongo": "estado",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "estado"
+            },
+            {
+              "name": "ultima_fecha",
+              "mongo": "ultima_fecha",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "ultima fecha"
+            },
+            {
+              "name": "ultima_lectura",
+              "mongo": "ultima_lectura",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "ultima lectura"
+            },
+            {
+              "name": "trabajo_realizado",
+              "mongo": "trabajo_realizado",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "trabajo realizado"
+            }
+          ]
+        },
+        {
+          "resource": "lectura-uso",
+          "table": "lectura_uso",
+          "name": "Lecturas de uso",
+          "path": "/lectura-uso",
+          "collection": "lectura-uso",
+          "model_file": "components/lectura-uso/lectura-uso.model.ts",
+          "menu_ref": "lectura-uso-menu",
+          "columns": [
+            {
+              "name": "vehicle_id",
+              "mongo": "vehicle_id",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "vehiculo"
+            },
+            {
+              "name": "tipo",
+              "mongo": "tipo",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "tipo"
+            },
+            {
+              "name": "valor",
+              "mongo": "valor",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "lectura"
+            },
+            {
+              "name": "fecha",
+              "mongo": "fecha",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "fecha"
+            }
+          ]
+        },
+        {
+          "resource": "documento-vehiculo",
+          "table": "documento_vehiculo",
+          "name": "Documentos del vehículo",
+          "path": "/documento-vehiculo",
+          "collection": "documento-vehiculo",
+          "model_file": "components/documento-vehiculo/documento-vehiculo.model.ts",
+          "menu_ref": "documento-vehiculo-menu",
+          "columns": [
+            {
+              "name": "vehicle_id",
+              "mongo": "vehicle_id",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "vehiculo"
+            },
+            {
+              "name": "tipo",
+              "mongo": "tipo",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "tipo"
+            },
+            {
+              "name": "folio",
+              "mongo": "folio",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "folio"
+            },
+            {
+              "name": "fecha_vencimiento",
+              "mongo": "fecha_vencimiento",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "vencimiento"
+            },
+            {
+              "name": "aviso_dias",
+              "mongo": "aviso_dias",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "aviso dias"
+            },
+            {
+              "name": "estado",
+              "mongo": "estado",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "estado"
             }
           ]
         }
