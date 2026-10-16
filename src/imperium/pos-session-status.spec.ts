@@ -7,7 +7,14 @@ import {
 	prepare_pos_session_update,
 	resolve_pos_session_status_prompt,
 } from './pos-session-flow.ts';
-import { issue_unlock_token, verify_unlock_token } from './user-pin.ts';
+import {
+	actor_may_present_pin,
+	assert_pos_pin,
+	issue_unlock_token,
+	PinChallengeError,
+	verify_unlock_token,
+	verify_user_pin,
+} from './user-pin.ts';
 
 const store = { has: () => false, find_id: async () => null } as never;
 const actor = { _id: 'cccccccccccccccccccccccc' };
@@ -107,6 +114,52 @@ describe('POS session close prompt', () => {
 		expect(prompt.ask_pin).toBe(true);
 		expect(prompt.open_dialog).toBe(true);
 		expect(prompt.reload).toBe(false);
+	});
+
+	test('un cajero ajeno a assigned_users obtiene token con el PIN correcto', async () => {
+		const creator = '550e8400-e29b-41d4-a716-446655440000';
+		const cashier = 'dddddddddddddddddddddddd';
+		const pin = {
+			_id: 'aaaaaaaaaaaaaaaaaaaaaaaa',
+			document_id: 'bbbbbbbbbbbbbbbbbbbbbbbb',
+			document_model: 'PosSession',
+			document_collection: 'pos-session',
+			assigned_users: [creator],
+			pin_hash: '1234',
+			pin_version: 1,
+			is_active: true,
+		};
+		expect(actor_may_present_pin(pin, cashier)).toBe(true);
+		expect(actor_may_present_pin(pin, cashier, { skip_assignee_check: false })).toBe(true);
+		expect(
+			actor_may_present_pin(
+				{ assigned_users: [creator], document_model: 'Otro', document_collection: 'otro' },
+				cashier,
+			),
+		).toBe(false);
+		const verified = await verify_user_pin(
+			{ find_id: async () => pin } as never,
+			{ pin_id: pin._id, pin: '1234' },
+			{ _id: cashier },
+		);
+		const token = verified.data[0]?.unlock_token ?? '';
+		expect(token).toBeTruthy();
+		expect(verify_unlock_token(token, pin, cashier)).toBe(true);
+		const challenge_store = {
+			has: (name: string) => name === 'user-pin',
+			find_where: async (resource: string) => (resource === 'user-pin' ? pin : null),
+		} as never;
+		const req = new Request('http://local/api/pos-session');
+		await expect(
+			assert_pos_pin(
+				challenge_store,
+				req,
+				pin.document_id,
+				{ method: 'PATCH', path: '/pos-session/:id', label: 'Cerrar o reabrir sesion POS' },
+				{ _id: cashier },
+				{ skip_assignee_check: false },
+			),
+		).rejects.toBeInstanceOf(PinChallengeError);
 	});
 
 	test('el mismo estatus no abre otro diálogo', () => {

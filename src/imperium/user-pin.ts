@@ -241,6 +241,34 @@ export async function find_session_pin(store: ImperiumStore, document_id: string
 	);
 }
 
+function assigned_ids(value: unknown): string[] {
+	return as_array(value).map((entry) =>
+		typeof entry === 'object' ? String(as_object(entry)._id ?? '') : String(entry ?? ''),
+	);
+}
+
+function is_pos_session_pin(pin: {
+	document_model?: unknown;
+	document_collection?: unknown;
+}): boolean {
+	return (
+		String(pin.document_model ?? '') === POS_PIN_DOCUMENT_MODEL ||
+		String(pin.document_collection ?? '') === 'pos-session'
+	);
+}
+
+/** El PIN de la sesión es la credencial de la caja. assigned_users solo recuerda a quién se le mostró. */
+export function actor_may_present_pin(
+	pin: { assigned_users?: unknown; document_model?: unknown; document_collection?: unknown },
+	actor_id: string,
+	options?: { skip_assignee_check?: boolean },
+): boolean {
+	if (options?.skip_assignee_check || is_pos_session_pin(pin)) return true;
+	const assigned = assigned_ids(pin.assigned_users);
+	if (!assigned.length || !actor_id) return true;
+	return assigned.includes(actor_id);
+}
+
 export async function assert_pos_pin(
 	store: ImperiumStore,
 	req: Request,
@@ -253,10 +281,7 @@ export async function assert_pos_pin(
 	const pin = await find_session_pin(store, document_id);
 	if (!pin) return;
 	const uid = String(actor?._id ?? '');
-	const assigned = as_array(pin.assigned_users).map((v) =>
-		typeof v === 'object' ? String(as_object(v)._id ?? '') : String(v ?? ''),
-	);
-	if (!options?.skip_assignee_check && assigned.length && uid && !assigned.includes(uid)) {
+	if (!actor_may_present_pin(pin, uid, options)) {
 		throw new Error('Este PIN no esta asignado a tu usuario.');
 	}
 	const token = req.headers.get(USER_PIN_UNLOCK_TOKEN_HEADER) ?? '';
@@ -292,10 +317,7 @@ export async function verify_user_pin(
 	const pin = await store.find_id('user-pin', pin_id);
 	if (!pin || pin.is_active === false) throw new Error('El PIN solicitado ya no esta disponible.');
 	const uid = String(actor?._id ?? '');
-	const assigned = as_array(pin.assigned_users).map((v) =>
-		typeof v === 'object' ? String(as_object(v)._id ?? '') : String(v ?? ''),
-	);
-	if (assigned.length && uid && !assigned.includes(uid)) {
+	if (!actor_may_present_pin(pin, uid)) {
 		throw new Error('Este PIN no esta asignado a tu usuario.');
 	}
 	const ok_pin = await verify_pin_hash(String(pin.pin_hash ?? pin.pin ?? pin.value ?? ''), provided);
