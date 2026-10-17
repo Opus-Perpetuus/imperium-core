@@ -6957,7 +6957,7 @@
         {
           "resource": "agua",
           "table": "agua",
-          "name": "Parámetros",
+          "name": "Parámetros de agua",
           "path": "/agua",
           "collection": "agua",
           "model_file": "plugins/agua/agua.model.ts",
