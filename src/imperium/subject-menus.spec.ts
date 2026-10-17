@@ -817,6 +817,7 @@ describe('reshape_subject_menus vehiculos icons', () => {
 				'mantenimiento-preventivo-menu',
 				'plantilla-revision-menu',
 				'servicio-programado-menu',
+				'vehiculos-padron-menu',
 			].sort(),
 		);
 		const icons = children.map((mod) => String(mod.icon ?? '').trim());
@@ -847,5 +848,62 @@ describe('reshape_subject_menus vehiculos icons', () => {
 			const row = stale.find((menu) => menu._ref === mod.menu_ref);
 			expect(String(row?.icon ?? '')).toBe(mod.icon);
 		}
+	});
+
+	test('el registro de vehículos es un hijo del panel y plan_subject_menus no se lo salta', () => {
+		const folder = vehiculos?.menu_ref;
+		expect(folder).toBe('vehicle-menu-management-0');
+		expect(vehiculos?.path).toBe('/vehicle');
+		const padron = vehiculos?.modules.find(
+			(mod) => mod.menu_ref === 'vehiculos-padron-menu',
+		);
+		expect(padron).toMatchObject({
+			name: 'Registro de vehículos',
+			path: '/padron-vehiculos',
+			icon: 'fa-bus',
+		});
+		expect(padron?.menu_ref).not.toBe(folder);
+
+		const con_carpeta = plan_subject_menus(vehiculos!, [{ _ref: folder! }]);
+		expect(con_carpeta.map((row) => row._ref)).toContain('vehiculos-padron-menu');
+		expect(con_carpeta.map((row) => row._ref)).toContain('falla-menu');
+		expect(
+			con_carpeta.find((row) => row._ref === 'vehiculos-padron-menu'),
+		).toMatchObject({
+			name: 'Registro de vehículos',
+			path: '/padron-vehiculos',
+			icon: 'fa-bus',
+			parent_ref: 'vehicle-menu-management-0',
+		});
+		expect(
+			con_carpeta.find((row) => row._ref === 'vehiculos-recordatorios-menu'),
+		).toMatchObject({
+			name: 'Recordatorios',
+			path: '/recordatorios',
+			icon: 'fa-bell',
+			parent_ref: 'vehicle-menu-management-0',
+		});
+
+		const fresco = plan_subject_menus(vehiculos!, []);
+		expect(fresco.map((row) => row._ref)).toContain('vehicle-menu-management-0');
+		expect(fresco.map((row) => row._ref)).toContain('vehiculos-padron-menu');
+		expect(fresco.filter((row) => row._ref === 'vehiculos-padron-menu')).toHaveLength(1);
+
+		const panel = reshape_subject_menus(store, [
+			{
+				_id: 'folder-id',
+				_ref: folder,
+				name: 'Vehículos',
+				path: '/vehicle',
+				parent_id: null,
+			},
+		]);
+		expect(
+			panel.find((row) => row._ref === 'vehiculos-padron-menu'),
+		).toMatchObject({
+			name: 'Registro de vehículos',
+			path: '/padron-vehiculos',
+			parent_id: 'folder-id',
+		});
 	});
 });

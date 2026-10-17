@@ -13532,11 +13532,12 @@
         {
           "resource": "vehicle",
           "table": "vehicle",
-          "name": "Vehículos",
-          "path": "/vehicle",
+          "name": "Registro de vehículos",
+          "path": "/padron-vehiculos",
           "collection": "vehicle",
           "model_file": "components/vehicle/vehicle.model.ts",
-          "menu_ref": "vehicle-menu-management-0",
+          "menu_ref": "vehiculos-padron-menu",
+          "icon": "fa-bus",
           "columns": [
             {
               "name": "foto",
@@ -13759,7 +13760,7 @@
         {
           "resource": "falla",
           "table": "falla",
-          "name": "Reportes de falla",
+          "name": "Fallas",
           "path": "/falla",
           "collection": "falla",
           "model_file": "components/falla/falla.model.ts",
@@ -14155,6 +14156,15 @@
               "label": "estado"
             }
           ]
+        }
+      ],
+      "menus": [
+        {
+          "name": "Recordatorios",
+          "menu_ref": "vehiculos-recordatorios-menu",
+          "path": "/recordatorios",
+          "icon": "fa-bell",
+          "parent_ref": "vehicle-menu-management-0"
         }
       ]
     },
