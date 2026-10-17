@@ -208,6 +208,29 @@ describe("cartel de obra de fabrica", () => {
     casi.title = "Portada";
     expect(is_legacy_placeholder_home(casi)).toBe(false);
   });
+
+  test("la variante sembrada con el boton a /cuenta/entrar tambien se reconoce", () => {
+    const sembrado = JSON.parse(
+      '{"id":"portal.home","owner":"portal","title":"Inicio","page":{"component":"nox.page","children":[{"component":"nox.markdown-view","props":{"block":"hero","content":"# Bienvenido\\n\\nConfigura esta landing desde el administrador."}},{"component":"nox.stack","props":{"gap":1},"children":[{"component":"nox.button","text":"Entrar","props":{"href":"/cuenta/entrar"}}]}]}}',
+    ) as unknown;
+    expect(is_legacy_placeholder_home(sembrado)).toBe(true);
+    expect(is_untouched_default_home(sembrado)).toBe(true);
+    expect(is_untouched_default_home(legacy_placeholder_home_document("/login"))).toBe(
+      true,
+    );
+  });
+
+  test("la variante /cuenta/entrar editada no se reconoce", () => {
+    const editada = legacy_placeholder_home_document("/cuenta/entrar") as {
+      page: { children: Array<{ props: { content: string } }> };
+    };
+    editada.page.children[0]!.props.content = "# Bienvenido\n\nNuestra tienda.";
+    expect(is_legacy_placeholder_home(editada)).toBe(false);
+    expect(is_untouched_default_home(editada)).toBe(false);
+    expect(
+      is_untouched_default_home(legacy_placeholder_home_document("/otra")),
+    ).toBe(false);
+  });
 });
 
 describe("plantilla anterior intacta", () => {

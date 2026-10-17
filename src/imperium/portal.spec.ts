@@ -121,6 +121,34 @@ describe('portal persist', () => {
 		);
 	});
 
+	test('el cartel sembrado con el boton a /cuenta/entrar tambien sube a la plantilla', async () => {
+		const pages = store();
+		const cartel = legacy_placeholder_home_document('/cuenta/entrar');
+		await pages.put({
+			slug: 'home',
+			name: 'Inicio',
+			draft: cartel,
+			published: cartel,
+			published_at: '2026-01-01T00:00:00.000Z',
+			published_by: 'seed',
+			is_active: true,
+		});
+
+		await ensure_home(pages, sanitize);
+
+		const published = await get_published(pages, 'home');
+		const page = published?.['page'] as { children?: unknown[] };
+		expect((page?.children ?? []).length).toBe(
+			(
+				(default_home_document()['page'] as { children: unknown[] })
+					.children
+			).length,
+		);
+		expect(JSON.stringify(published)).not.toContain(
+			'Configura esta landing',
+		);
+	});
+
 	test('una landing escrita por alguien no se toca nunca', async () => {
 		const pages = store();
 		const propia = {
