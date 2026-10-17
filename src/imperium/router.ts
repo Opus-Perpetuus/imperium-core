@@ -65,6 +65,7 @@ import {
 	set_odoo_authorized,
 	SubjectCatalogError,
 } from './subject-catalog.ts';
+import { live_catalog_scan } from './subject-image-sources.ts';
 import { is_base_subject_slug } from './subject-runtime.ts';
 import {
 	read_subject_auto_update_enabled,
@@ -580,6 +581,7 @@ async function handle_subjects(
 					data: accepted.rows,
 					dependencies: accepted.dependencies,
 					notification: accepted.notification,
+					warnings: accepted.warnings ?? [],
 					message: with_dependencies(
 						'Actualización en segundo plano',
 						accepted.dependencies,
@@ -625,6 +627,7 @@ async function handle_subjects(
 					data: accepted.rows,
 					dependencies: accepted.dependencies,
 					notification: accepted.notification,
+					warnings: accepted.warnings ?? [],
 					message: installed
 						? with_dependencies(
 								'Instalación en segundo plano',
@@ -721,6 +724,10 @@ async function handle_subject_catalog(
 			{ data: entry, message: `${entry.name} quedó en el catálogo` },
 			{ status: 201 },
 		);
+	}
+	if (rest === 'scan' && req.method === 'POST') {
+		const data = await list_catalog_subjects(store, sql, live_catalog_scan());
+		return Response.json({ data, total_elementos: data.length, message: 'Apps' });
 	}
 	if (rest === 'authorized' && (req.method === 'PUT' || req.method === 'POST')) {
 		if (!is_master_request(req)) {

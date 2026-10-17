@@ -171,6 +171,15 @@
 		"value": ""
 	},
 	{
+		"_ref": "configuration-subject-image-sources",
+		"description": "Fuentes de imágenes de apps. «ghcr:opus-perpetuus; ghcr:codice-progressio» lista los paquetes públicos de esas organizaciones. Una fuente privada se marca con «private» y solo se consulta si quien escanea trae un token de GitHub. Vacío: esas dos organizaciones públicas. El escaneo agrega o refresca apps; no borra ni desactiva las que ya están registradas.",
+		"is_system": true,
+		"module_id": "NA",
+		"name": "Fuentes de imágenes de apps",
+		"type": "text",
+		"value": "ghcr:opus-perpetuus; ghcr:codice-progressio"
+	},
+	{
 		"_ref": "configuration-public-landing-enabled",
 		"description": "Si está en SI, la raíz del sitio muestra la landing. Si está en NO, redirige al inicio de sesión.",
 		"is_system": true,

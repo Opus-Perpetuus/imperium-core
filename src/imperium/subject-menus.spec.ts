@@ -797,3 +797,55 @@ describe('control de emergencias: submenú Categorías', () => {
 		expect(refs).not.toContain(CATEGORIAS[0][0]);
 	});
 });
+
+describe('reshape_subject_menus vehiculos icons', () => {
+	const GENERIC = new Set(['', 'fa-circle', 'fa-cube', 'fa-folder', 'package', 'home']);
+	const store = new ImperiumStore(null as unknown as Bun.SQL, load_catalog_path());
+	const vehiculos = store.subjects.find((sub) => sub.slug === 'vehiculos');
+
+	test('cada submenú distinto de /vehicle declara un icono propio', () => {
+		const children = (vehiculos?.modules ?? []).filter(
+			(mod) => String(mod.path ?? '').replace(/\/+$/, '') !== '/vehicle',
+		);
+		expect(children.map((mod) => mod.menu_ref).sort()).toEqual(
+			[
+				'bitacora-menu',
+				'documento-vehiculo-menu',
+				'falla-menu',
+				'lectura-uso-menu',
+				'mantenimiento-correctivo-menu',
+				'mantenimiento-preventivo-menu',
+				'plantilla-revision-menu',
+				'servicio-programado-menu',
+			].sort(),
+		);
+		const icons = children.map((mod) => String(mod.icon ?? '').trim());
+		for (const icon of icons) {
+			expect(GENERIC.has(icon)).toBe(false);
+		}
+		expect(new Set(icons).size).toBe(icons.length);
+
+		const fresh = reshape_subject_menus(store, []);
+		for (const mod of children) {
+			const row = fresh.find((menu) => menu._ref === mod.menu_ref);
+			expect(String(row?.icon ?? '')).toBe(mod.icon);
+			expect(String(row?.path ?? '')).toBe(mod.path);
+		}
+
+		const stale = reshape_subject_menus(
+			store,
+			children.map((mod) => ({
+				_id: `id-${mod.menu_ref}`,
+				_ref: mod.menu_ref,
+				name: mod.name,
+				path: mod.path,
+				parent_id: 'vehiculos-root',
+				icon: 'fa-circle',
+			})),
+		);
+		for (const mod of children) {
+			const row = stale.find((menu) => menu._ref === mod.menu_ref);
+			expect(String(row?.icon ?? '')).toBe(mod.icon);
+		}
+	});
+});

@@ -13668,6 +13668,7 @@
           "collection": "plantilla-revision",
           "model_file": "components/plantilla-revision/plantilla-revision.model.ts",
           "menu_ref": "plantilla-revision-menu",
+          "icon": "fa-list-check",
           "columns": [
             {
               "name": "items",
@@ -13687,6 +13688,7 @@
           "collection": "bitacora",
           "model_file": "components/bitacora/bitacora.model.ts",
           "menu_ref": "bitacora-menu",
+          "icon": "fa-book-open",
           "columns": [
             {
               "name": "vehicle_id",
@@ -13762,6 +13764,7 @@
           "collection": "falla",
           "model_file": "components/falla/falla.model.ts",
           "menu_ref": "falla-menu",
+          "icon": "fa-triangle-exclamation",
           "columns": [
             {
               "name": "vehicle_id",
@@ -13829,6 +13832,7 @@
           "collection": "mantenimiento-correctivo",
           "model_file": "components/mantenimiento-correctivo/mantenimiento-correctivo.model.ts",
           "menu_ref": "mantenimiento-correctivo-menu",
+          "icon": "fa-wrench",
           "columns": [
             {
               "name": "vehicle_id",
@@ -13888,6 +13892,7 @@
           "collection": "mantenimiento-preventivo",
           "model_file": "components/mantenimiento-preventivo/mantenimiento-preventivo.model.ts",
           "menu_ref": "mantenimiento-preventivo-menu",
+          "icon": "fa-shield-halved",
           "columns": [
             {
               "name": "vehicle_id",
@@ -13947,6 +13952,7 @@
           "collection": "servicio-programado",
           "model_file": "components/servicio-programado/servicio-programado.model.ts",
           "menu_ref": "servicio-programado-menu",
+          "icon": "fa-calendar-plus",
           "columns": [
             {
               "name": "vehicle_id",
@@ -14054,6 +14060,7 @@
           "collection": "lectura-uso",
           "model_file": "components/lectura-uso/lectura-uso.model.ts",
           "menu_ref": "lectura-uso-menu",
+          "icon": "fa-gauge-high",
           "columns": [
             {
               "name": "vehicle_id",
@@ -14097,6 +14104,7 @@
           "collection": "documento-vehiculo",
           "model_file": "components/documento-vehiculo/documento-vehiculo.model.ts",
           "menu_ref": "documento-vehiculo-menu",
+          "icon": "fa-file-contract",
           "columns": [
             {
               "name": "vehicle_id",

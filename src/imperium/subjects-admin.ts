@@ -47,13 +47,25 @@ import {
 	missing_dependencies,
 	plan_subject_install,
 	SubjectDependencyError,
+	with_installed_images,
 	type DependencyNode,
+	type ImageDependencyWarning,
 } from './subject-deps.ts';
+import {
+	apply_image_sources_from_store,
+	current_image_sources,
+	merge_scanned_subjects,
+	scan_image_sources,
+	type CatalogImageScan,
+	type RegisteredSubject,
+	type ScannedPackage,
+} from './subject-image-sources.ts';
 import type { ImperiumDoc } from './envelope.ts';
 import { is_seed_admin } from './group-access.ts';
 import {
 	catalog_visible,
 	list_catalog_entries,
+	remember_scanned_subjects,
 	type CatalogEntry,
 } from './subject-catalog.ts';
 import { PREFER_OWNER, type ImperiumStore, type SubjectInfo } from './store.ts';
@@ -601,6 +613,16 @@ export type DependencyView = {
 	installed: ReadonlySet<string>;
 };
 
+/** La restricción mira el tag que ya corre, no solo el pin del catálogo. */
+function subjects_with_running_images(
+	subjects: readonly DependencyNode[],
+	recs: ReadonlyMap<string, { installed_image?: string | null }>,
+): DependencyNode[] {
+	const images = new Map<string, string | null>();
+	for (const [tid, rec] of recs) images.set(tid, rec.installed_image ?? null);
+	return with_installed_images(subjects, images);
+}
+
 /** Un grafo roto (lo vigila el spec del catálogo) no debe tumbar el listado. */
 function missing_or_empty(
 	subjects: readonly DependencyNode[],
@@ -730,15 +752,95 @@ export async function seed_missing_install_rows(
 	}
 }
 
+const IMAGE_SCAN_TTL_MS = 60_000;
+let image_scan_cache: { key: string; at: number; packages: ScannedPackage[] } | null = null;
+
+function registered_from(subjects: readonly SubjectInfo[]): RegisteredSubject[] {
+	return subjects.map((sub) => ({
+		technical_id: sub.technical_id,
+		slug: sub.slug,
+		name: sub.name,
+		image: sub.image,
+		depends_on: sub.depends_on ? [...sub.depends_on] : [],
+	}));
+}
+
+function apply_scanned_subjects(store: ImperiumStore, merged: readonly RegisteredSubject[]) {
+	const previous = new Map(store.subjects.map((sub) => [sub.technical_id, sub]));
+	const next = merged.map((sub) => {
+		const prev = previous.get(sub.technical_id);
+		if (!prev) {
+			return {
+				slug: sub.slug,
+				name: sub.name || sub.slug,
+				path: '',
+				menu_ref: '',
+				technical_id: sub.technical_id,
+				image: sub.image,
+				depends_on: sub.depends_on ? [...sub.depends_on] : [],
+				modules: [],
+			};
+		}
+		return { ...prev, image: sub.image };
+	});
+	store.subjects.splice(0, store.subjects.length, ...next);
+}
+
+async function scanned_subject_rows(
+	existing: readonly SubjectInfo[],
+	scan: CatalogImageScan,
+): Promise<{ merged: RegisteredSubject[]; seen: RegisteredSubject[] }> {
+	const key = `${scan.token ? 't' : 'f'}|${current_image_sources()
+		.map((source) => `${source.org}:${source.private ? 1 : 0}`)
+		.join('|')}`;
+	let packages: ScannedPackage[];
+	if (
+		scan.cache &&
+		image_scan_cache &&
+		image_scan_cache.key === key &&
+		Date.now() - image_scan_cache.at < IMAGE_SCAN_TTL_MS
+	) {
+		packages = image_scan_cache.packages;
+	} else {
+		packages = await scan_image_sources({
+			client: scan.client,
+			token: scan.token,
+		});
+		if (scan.cache) image_scan_cache = { key, at: Date.now(), packages };
+	}
+	const merged = merge_scanned_subjects(registered_from(existing), packages);
+	const seen_ids = new Set(packages.map((pkg) => pkg.name));
+	return {
+		merged,
+		seen: merged.filter((sub) => seen_ids.has(sub.technical_id)),
+	};
+}
+
 export async function list_catalog_subjects(
 	store: ImperiumStore,
 	sql: Bun.SQL,
+	scan?: CatalogImageScan,
 ) {
 	await seed_missing_install_rows(store, sql);
 	// Foto ANTES de leer: si un trabajo asentaba entre la lectura y la
 	// comprobación, la reconciliación pisaba su fila recién escrita.
 	const running = new Set(in_flight.keys());
 	const recs = await install_records(sql);
+	try {
+		await apply_image_sources_from_store(store);
+	} catch {
+		// Una lista ilegible no deja el catálogo sin filas. El escaneo sí falla.
+	}
+	if (scan) {
+		const before = store.subjects.map((sub) => ({ ...sub }));
+		try {
+			const { merged, seen } = await scanned_subject_rows(store.subjects, scan);
+			apply_scanned_subjects(store, merged);
+			await remember_scanned_subjects(sql, seen);
+		} catch {
+			store.subjects.splice(0, store.subjects.length, ...before);
+		}
+	}
 	for (const rec of recs.values()) {
 		const write = stale_lifecycle_write(
 			rec,
@@ -757,7 +859,10 @@ export async function list_catalog_subjects(
 	}
 	const all_modules = await collect_resource(store, 'module-management');
 	const installed = await installed_from(store, recs, all_modules);
-	const deps: DependencyView = { subjects: store.subjects, installed };
+	const deps: DependencyView = {
+		subjects: subjects_with_running_images(store.subjects, recs),
+		installed,
+	};
 	const entries = new Map(
 		(await list_catalog_entries(sql)).map((entry) => [entry.technical_id, entry]),
 	);
@@ -774,7 +879,7 @@ export async function list_catalog_subjects(
 				installed: row.installed,
 				busy: row.busy,
 				status: row.status,
-				authorized: Boolean(entry),
+				authorized: entry?.source === 'odoo' || entry?.source === 'manual',
 			})
 		) {
 			continue;
@@ -782,6 +887,7 @@ export async function list_catalog_subjects(
 		out.push({ ...row, external: false, catalog_source: entry?.source ?? null });
 	}
 	for (const entry of entries.values()) {
+		if (entry.source === 'registry') continue;
 		if (store.subjects.some((sub) => sub.technical_id === entry.technical_id)) continue;
 		out.push(external_catalog_row(entry));
 	}
@@ -1166,7 +1272,7 @@ export function build_install_chain(
 ): InstallChainStep[] {
 	let plan: string[];
 	try {
-		plan = plan_subject_install(subjects, target, is_ready);
+		plan = plan_subject_install(subjects, target, is_ready).order;
 	} catch (err) {
 		if (!(err instanceof SubjectDependencyError)) throw err;
 		throw new SubjectLifecycleError(err.message, 409, err.code, err.details);
@@ -1970,7 +2076,10 @@ async function catalog_rows(
 	const running = new Set(in_flight.keys());
 	const recs = await install_records(sql);
 	const installed = await installed_from(store, recs);
-	const deps: DependencyView = { subjects: store.subjects, installed };
+	const deps: DependencyView = {
+		subjects: subjects_with_running_images(store.subjects, recs),
+		installed,
+	};
 	const policy = await read_update_policy(store);
 	return technical_ids.map((tid) =>
 		catalog_row(
@@ -2032,11 +2141,13 @@ export async function accept_subject_lifecycle(
 		// La foto de `in_flight` va ANTES de leer la base: un trabajo que
 		// termine entre medias sigue contando como vivo, nunca se pierde.
 		const busy = new Map(in_flight);
-		const ready = await installed_technical_ids(store, sql);
+		const recs = await install_records(sql);
+		const ready = await installed_from(store, recs);
+		const subjects = subjects_with_running_images(store.subjects, recs);
 		if (!installed) {
 			// Antes de `begin`: el begin de desinstalar corta el acceso al momento.
 			const blocked = uninstall_dependents_error(
-				store.subjects,
+				subjects,
 				technical_id,
 				(tid) => ready.has(tid) || is_live_job(busy.get(tid)),
 			);
@@ -2049,6 +2160,7 @@ export async function accept_subject_lifecycle(
 				rows: await catalog_rows(store, sql, [technical_id]),
 				dependencies: [] as ReturnType<typeof subject_ref>[],
 				notification: null as ImperiumDoc | null,
+				warnings: [] as ImageDependencyWarning[],
 			};
 		}
 		if (!installed) {
@@ -2064,13 +2176,15 @@ export async function accept_subject_lifecycle(
 				notification: run.notification,
 			};
 		}
+		const is_ready = (tid: string) => ready.has(tid);
 		const steps = build_install_chain(
-			store.subjects,
+			subjects,
 			technical_id,
 			'install',
-			(tid) => ready.has(tid),
+			is_ready,
 			(tid) => busy.get(tid)?.op,
 		);
+		const warnings = plan_subject_install(subjects, technical_id, is_ready).warnings;
 		const groups = await open_chain(
 			store,
 			sql,
@@ -2079,7 +2193,7 @@ export async function accept_subject_lifecycle(
 			actor,
 		);
 		void run_chain(store, sql, groups);
-		return chain_accepted(store, sql, groups[0]!);
+		return { ...(await chain_accepted(store, sql, groups[0]!)), warnings };
 	});
 }
 
@@ -2434,9 +2548,11 @@ export async function accept_subject_update_all(
 	return admit(async () => {
 		const busy = new Map(in_flight);
 		const pending = await list_subject_updates(store, sql);
-		const ready = await installed_technical_ids(store, sql);
+		const recs = await install_records(sql);
+		const ready = await installed_from(store, recs);
+		const subjects = subjects_with_running_images(store.subjects, recs);
 		const plan = build_update_all_chain(
-			store.subjects,
+			subjects,
 			pending
 				.filter((item) => !in_flight.has(item.technical_id))
 				.map((item) => item.technical_id),
@@ -2524,6 +2640,7 @@ export async function accept_subject_update(
 				notification: null as ImperiumDoc | null,
 				done: Promise.resolve<string | null>(null),
 				image: null as string | null,
+				warnings: [] as ImageDependencyWarning[],
 			};
 		}
 		// El objetivo se calcula aquí, con las filas recién leídas: elegido
@@ -2551,18 +2668,25 @@ export async function accept_subject_update(
 		const image_source: ImageSource =
 			newer || forced ? target!.source : image === sub.image ? 'catalog' : 'running';
 		const ready = await installed_from(store, recs);
+		const subjects = subjects_with_running_images(store.subjects, recs);
+		const is_ready = (tid: string) => ready.has(tid);
 		const steps = with_target_image(
 			build_install_chain(
-				store.subjects,
+				subjects,
 				technical_id,
 				'update',
-				(tid) => ready.has(tid),
+				is_ready,
 				(tid) => busy.get(tid)?.op,
 			),
 			technical_id,
 			image,
 			image_source,
 		);
+		const warnings: ImageDependencyWarning[] = plan_subject_install(
+			subjects,
+			technical_id,
+			is_ready,
+		).warnings;
 		const groups = await open_chain(
 			store,
 			sql,
@@ -2573,7 +2697,7 @@ export async function accept_subject_update(
 		const done = run_chain(store, sql, groups).then(
 			(results) => results.get(technical_id) ?? null,
 		);
-		return { ...(await chain_accepted(store, sql, groups[0]!)), done, image };
+		return { ...(await chain_accepted(store, sql, groups[0]!)), done, image, warnings };
 	});
 }
 
@@ -2601,7 +2725,7 @@ export async function get_subject_details(
 	const module_rows = filter_module_rows(module_pack.rows, sub);
 	const installed = subject_is_installed(rec, module_rows);
 	const deps: DependencyView = {
-		subjects: store.subjects,
+		subjects: subjects_with_running_images(store.subjects, recs),
 		installed: await installed_from(store, recs, module_pack.rows),
 	};
 	const health = installed

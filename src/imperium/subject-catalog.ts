@@ -15,7 +15,7 @@ import {
 	normalize_subject_slug,
 } from './subject-runtime.ts';
 
-export type CatalogSource = 'odoo' | 'manual';
+export type CatalogSource = 'odoo' | 'manual' | 'registry';
 
 export type CatalogEntry = {
 	technical_id: string;
@@ -69,7 +69,8 @@ export async function list_catalog_entries(sql: Bun.SQL): Promise<CatalogEntry[]
 		name: String(row.name),
 		image: row.image ? String(row.image) : null,
 		repo: row.repo ? String(row.repo) : null,
-		source: row.source === 'odoo' ? 'odoo' : 'manual',
+		source:
+			row.source === 'odoo' || row.source === 'registry' ? row.source : 'manual',
 		created_at: String(row.created_at),
 		updated_at: String(row.updated_at),
 	}));
@@ -242,6 +243,39 @@ export async function add_manual_entry(
 	return entry!;
 }
 
+/**
+ * Refresca la imagen de lo que Odoo o un alta manual ya autorizaron y el
+ * escaneo volvió a ver. No inserta filas: ver un paquete en el registro no
+ * autoriza instalarlo, y una fila `registry` tampoco cuenta como autorización.
+ * No borra lo que el escaneo no vio.
+ */
+export async function remember_scanned_subjects(
+	sql: Bun.SQL,
+	scanned: readonly {
+		technical_id: string;
+		slug: string;
+		name?: string;
+		image: string;
+	}[],
+): Promise<void> {
+	await ensure_catalog_table(sql);
+	const existing = await list_catalog_entries(sql);
+	const by_id = new Map(existing.map((entry) => [entry.technical_id, entry]));
+	for (const sub of scanned) {
+		if (is_base_subject_slug(sub.slug)) continue;
+		const prev = by_id.get(sub.technical_id);
+		if (!prev || prev.source === 'registry') continue;
+		await upsert_entry(sql, {
+			technical_id: sub.technical_id,
+			slug: prev.slug,
+			name: prev.name || sub.name || sub.slug,
+			image: sub.image || prev.image || null,
+			repo: prev.repo,
+			source: prev.source,
+		});
+	}
+}
+
 /** Solo las de alta manual: las de Odoo se revocan desde Odoo. */
 export async function remove_manual_entry(
 	sql: Bun.SQL,
@@ -272,7 +306,8 @@ export async function is_catalog_authorized(
 ): Promise<boolean> {
 	await ensure_catalog_table(sql);
 	const rows = await sql.unsafe(
-		`SELECT 1 FROM public.subject_catalog WHERE technical_id = $1`,
+		`SELECT 1 FROM public.subject_catalog
+      WHERE technical_id = $1 AND source IN ('odoo', 'manual')`,
 		[technical_id],
 	);
 	return rows.length > 0;

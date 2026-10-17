@@ -129,7 +129,9 @@ export function sees_dependent_of(input: {
 	return input.subjects.some(
 		(sub) =>
 			sub.technical_id !== input.technical_id &&
-			(sub.depends_on ?? []).includes(input.technical_id) &&
+			(sub.depends_on ?? []).some(
+				(dep) => dep.split('@')[0] === input.technical_id,
+			) &&
 			visible.has(sub.slug),
 	);
 }

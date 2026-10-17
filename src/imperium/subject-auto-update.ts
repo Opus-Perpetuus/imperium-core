@@ -113,7 +113,7 @@ export function dependencies_first<T extends { technical_id: string }>(
 	for (const item of items) {
 		let plan: string[];
 		try {
-			plan = plan_subject_install(subjects, item.technical_id, () => false);
+			plan = plan_subject_install(subjects, item.technical_id, () => false).order;
 		} catch {
 			plan = [item.technical_id];
 		}
