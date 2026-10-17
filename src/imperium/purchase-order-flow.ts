@@ -127,11 +127,13 @@ function normalize_payload(payload: ImperiumDoc): ImperiumDoc {
 		articulos.reduce((s, item) => s + Number(item.cantidad_recibida ?? 0), 0),
 	);
 	const subtotal = round_money(articulos.reduce((s, item) => s + Number(item.importe), 0));
+	const proveedor = payload.proveedor ? ref_id(payload.proveedor) || text(payload.proveedor) : undefined;
 	return {
 		...payload,
 		name: build_name(payload),
 		description: text(payload.description),
-		proveedor: payload.proveedor ? ref_id(payload.proveedor) || text(payload.proveedor) : undefined,
+		proveedor,
+		proveedor_id: proveedor || null,
 		proveedor_nombre: text(payload.proveedor_nombre),
 		proveedor_rfc: text(payload.proveedor_rfc),
 		referencia_origen: text(payload.referencia_origen),

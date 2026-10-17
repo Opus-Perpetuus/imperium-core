@@ -4,7 +4,10 @@ import {
 	create_reception_from_purchase_order,
 	ensure_pending_reception_from_purchase_order,
 } from './inventory-reception-flow.ts';
-import { prepare_purchase_order_create } from './purchase-order-flow.ts';
+import {
+	prepare_purchase_order_create,
+	prepare_purchase_order_update,
+} from './purchase-order-flow.ts';
 import {
 	approve_purchase_request,
 	create_purchase_orders_from_requests,
@@ -145,12 +148,59 @@ describe('nombre de proveedor en la orden', () => {
 		const created = await create_purchase_orders_from_requests(store, [request._id]);
 		expect(created.data[0]).toMatchObject({
 			proveedor: PROV,
+			proveedor_id: PROV,
 			proveedor_nombre: 'Aceros del Norte',
 			tipo_origen: 'solicitud',
 		});
 		expect(store.data['inventory-reception'][0]).toMatchObject({
 			proveedor_nombre: 'Aceros del Norte',
 		});
+	});
+});
+
+describe('proveedor_id de la orden', () => {
+	const articulos = [{ producto: PROD, producto_nombre: 'Tornillo', cantidad: 1, costo_unitario: 10 }];
+	const OTRO = '507f1f77bcf86cd799439022';
+
+	test('crear guarda proveedor_id igual al id del proveedor', async () => {
+		const store = memory_store({ contacto: [contacto()] });
+		const doc = await prepare_purchase_order_create(store, { proveedor: PROV, articulos });
+		expect(doc.proveedor_id).toBe(PROV);
+	});
+
+	test('crear con el proveedor poblado guarda solo su id', async () => {
+		const store = memory_store({ contacto: [contacto()] });
+		const doc = await prepare_purchase_order_create(store, {
+			proveedor: { _id: PROV, name: 'Aceros del Norte' },
+			articulos,
+		});
+		expect(doc.proveedor).toBe(PROV);
+		expect(doc.proveedor_id).toBe(PROV);
+	});
+
+	test('crear sin proveedor deja proveedor_id en null', async () => {
+		const store = memory_store({ contacto: [] });
+		const doc = await prepare_purchase_order_create(store, { articulos });
+		expect(doc.proveedor_id).toBeNull();
+	});
+
+	test('actualizar una orden guardada sin proveedor_id lo llena', async () => {
+		const previous: Row = { _id: PO, estado: 'borrador', proveedor: PROV, articulos };
+		const doc = await prepare_purchase_order_update({ description: 'editada' }, previous);
+		expect(doc.proveedor_id).toBe(PROV);
+	});
+
+	test('actualizar el proveedor cambia proveedor_id', async () => {
+		const previous: Row = {
+			_id: PO,
+			estado: 'aprobada',
+			proveedor: PROV,
+			proveedor_id: PROV,
+			articulos,
+		};
+		const doc = await prepare_purchase_order_update({ proveedor: OTRO }, previous);
+		expect(doc.proveedor).toBe(OTRO);
+		expect(doc.proveedor_id).toBe(OTRO);
 	});
 });
 
