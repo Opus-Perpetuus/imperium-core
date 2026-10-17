@@ -27,6 +27,15 @@
 		"value": ""
 	},
 	{
+		"_ref": "configuration-company-name",
+		"description": "Nombre de la empresa que se imprime en reportes y credenciales ({{empresa_nombre}}).",
+		"is_system": true,
+		"module_id": "NA",
+		"name": "Nombre de la empresa",
+		"type": "text",
+		"value": ""
+	},
+	{
 		"_ref": "configuration-branding-mode",
 		"description": "Define si la interfaz usa Imperium o la marca de la empresa",
 		"is_system": true,
