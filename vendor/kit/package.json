@@ -1,6 +1,6 @@
 {
   "name": "@opus-perpetuus/imperium-core-kit",
-  "version": "13.83.5",
+  "version": "13.83.6",
   "private": false,
   "type": "module",
   "main": "./src/index.ts",
