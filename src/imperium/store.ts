@@ -6905,6 +6905,25 @@ export class ImperiumStore {
 		};
 	}
 
+	/** id → nombre de los registros que citan las estadísticas de turnos (archivados incluidos). */
+	private async turn_stats_names(resource: string, ids: string[]): Promise<Map<string, string>> {
+		const wanted = [...new Set(ids.filter(Boolean))];
+		const out = new Map<string, string>();
+		if (!wanted.length || !this.has(resource)) return out;
+		const { rows } = await this.find_many(resource, {
+			ids: wanted,
+			take: wanted.length,
+			include_inactive: true,
+			populate: false,
+			skip_total: true,
+		});
+		for (const row of rows) {
+			const name = String(row.name ?? '').trim();
+			if (name) out.set(String(row._id), name);
+		}
+		return out;
+	}
+
 	async turn_stats(mongo_match?: Record<string, unknown> | null): Promise<Record<string, unknown>> {
 		const from = new Date();
 		from.setUTCDate(from.getUTCDate() - 30);
@@ -6967,14 +6986,35 @@ export class ImperiumStore {
 			}
 		}
 		const today_rows = by_day.get(ref_key) ?? [];
-		const box_label = (r: ImperiumDoc) => {
-			const b = as_object(r.assigned_box);
-			return String(b.name ?? 'Sin nombre');
+		const seven_rows = seven_keys.flatMap((k) => by_day.get(k) ?? []);
+		const four_keys = seven_keys.slice(-4);
+		const four_rows = four_keys.flatMap((k) => by_day.get(k) ?? []);
+		// El barrido trae solo los ids de caja, servicio y tipo de usuario (sin
+		// poblar): sin este mapa cada gráfica decía «Sin nombre».
+		const names = {
+			boxes: await this.turn_stats_names(
+				'ticketing-system-box-config',
+				seven_rows.map((r) => ref_id(r.assigned_box)),
+			),
+			services: await this.turn_stats_names(
+				'ticketing-system-service-type',
+				seven_rows.flatMap((r) => as_array(r.services).map((s) => ref_id(s))),
+			),
+			customer_types: await this.turn_stats_names(
+				'ticketing-system-customer-type',
+				seven_rows.map((r) => ref_id(r.customer_type)),
+			),
 		};
-		const box_ref = (r: ImperiumDoc) => {
-			const b = as_object(r.assigned_box);
-			return b._id ? b : { _id: ref_id(r.assigned_box), name: box_label(r) };
+		const ref_name = (value: unknown, map: Map<string, string>, fallback: string) => {
+			const own = as_object(value).name;
+			if (own != null && String(own).trim()) return String(own).trim();
+			return map.get(ref_id(value)) || fallback;
 		};
+		const box_label = (r: ImperiumDoc) => ref_name(r.assigned_box, names.boxes, 'Sin nombre');
+		const box_ref = (r: ImperiumDoc) => ({
+			_id: ref_id(r.assigned_box),
+			name: box_label(r),
+		});
 		const daily_map = new Map<
 			string,
 			{ box_id: unknown; box_name: string; turns_attended: number }
@@ -6991,14 +7031,9 @@ export class ImperiumStore {
 		}
 		const daily_stats = [...daily_map.values()];
 		const box_ids = new Set<string>();
-		for (const k of seven_keys) {
-			for (const r of by_day.get(k) ?? []) box_ids.add(ref_id(r.assigned_box) || 'none');
-		}
+		for (const r of seven_rows) box_ids.add(ref_id(r.assigned_box) || 'none');
 		const seven_days_stats = [...box_ids].map((id) => {
-			const sample =
-				seven_keys.flatMap((k) => by_day.get(k) ?? []).find(
-					(r) => (ref_id(r.assigned_box) || 'none') === id,
-				) ?? today_rows[0];
+			const sample = seven_rows.find((r) => (ref_id(r.assigned_box) || 'none') === id);
 			const daily = seven_keys.map((k) => {
 				const day_rows = (by_day.get(k) ?? []).filter(
 					(r) => (ref_id(r.assigned_box) || 'none') === id,
@@ -7030,27 +7065,34 @@ export class ImperiumStore {
 					: 0,
 			};
 		});
+		// Servicios y tipos de usuario: los últimos 4 días (lo que dice la
+		// gráfica y su exportación) y cada servicio del turno, no solo el primero.
 		const service_map = new Map<
 			string,
-			{ service_type_name: string; turn_count: number; minutes: number[] }
+			{ service_id: unknown; service_name: string; turn_count: number; minutes: number[] }
 		>();
-		for (const r of today_rows) {
+		for (const r of four_rows) {
 			const services = as_array(r.services);
-			const name = String(
-				as_object(services[0]).name ?? r.service_type ?? 'Sin servicio',
-			);
-			const cur = service_map.get(name) ?? {
-				service_type_name: name,
-				turn_count: 0,
-				minutes: [],
-			};
-			cur.turn_count += 1;
 			const m = turn_duration_minutes(r);
-			if (m > 0) cur.minutes.push(m);
-			service_map.set(name, cur);
+			for (const s of services.length ? services : [null]) {
+				const id = ref_id(s) || 'none';
+				const name = s == null ? 'Sin servicio' : ref_name(s, names.services, 'Sin nombre');
+				const cur = service_map.get(id) ?? {
+					service_id: { _id: ref_id(s), name },
+					service_name: name,
+					turn_count: 0,
+					minutes: [],
+				};
+				cur.turn_count += 1;
+				if (m > 0) cur.minutes.push(m);
+				service_map.set(id, cur);
+			}
 		}
 		const services_stats = [...service_map.values()].map((s) => ({
-			service_type_name: s.service_type_name,
+			service_id: s.service_id,
+			service_name: s.service_name,
+			// Nombre anterior del campo; la pantalla lee `service_name`.
+			service_type_name: s.service_name,
 			turn_count: s.turn_count,
 			average_time_minutes: s.minutes.length
 				? Number((s.minutes.reduce((a, b) => a + b, 0) / s.minutes.length).toFixed(2))
@@ -7060,19 +7102,21 @@ export class ImperiumStore {
 			string,
 			{ customer_type_name: string; customer_type_id: unknown; turn_count: number; minutes: number[] }
 		>();
-		for (const r of today_rows) {
-			const c = as_object(r.customer_type);
-			const name = String(c.name ?? 'Sin tipo');
-			const cur = ctype_map.get(name) ?? {
+		for (const r of four_rows) {
+			const id = ref_id(r.customer_type) || 'none';
+			const name = id === 'none'
+				? 'Sin tipo'
+				: ref_name(r.customer_type, names.customer_types, 'Sin tipo');
+			const cur = ctype_map.get(id) ?? {
 				customer_type_name: name,
-				customer_type_id: c._id ? c : { _id: ref_id(r.customer_type), name },
+				customer_type_id: { _id: ref_id(r.customer_type), name },
 				turn_count: 0,
 				minutes: [],
 			};
 			cur.turn_count += 1;
 			const m = turn_duration_minutes(r);
 			if (m > 0) cur.minutes.push(m);
-			ctype_map.set(name, cur);
+			ctype_map.set(id, cur);
 		}
 		const customer_types_stats = [...ctype_map.values()].map((s) => ({
 			customer_type_name: s.customer_type_name,
@@ -7082,9 +7126,6 @@ export class ImperiumStore {
 				? Number((s.minutes.reduce((a, b) => a + b, 0) / s.minutes.length).toFixed(2))
 				: 0,
 		}));
-		const seven_rows = seven_keys.flatMap((k) => by_day.get(k) ?? []);
-		const four_keys = seven_keys.slice(-4);
-		const four_rows = four_keys.flatMap((k) => by_day.get(k) ?? []);
 		const customer_type_rows = four_rows.filter((r) => Boolean(ref_id(r.customer_type)));
 		const load_lookup = async (resource: string) =>
 			this.has(resource)
