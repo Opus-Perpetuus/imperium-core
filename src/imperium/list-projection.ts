@@ -19,6 +19,10 @@ type ListProjection = {
 	tipo?: readonly string[];
 	/** Claves de `rows` que la tabla pinta como SI/NO. */
 	boolean?: readonly string[];
+	/** Claves de `rows` que la tabla pinta como fecha (`tipo: 'Date'`). */
+	date?: readonly string[];
+	/** Claves arreglo que la lista resume a su último elemento (`$arrayElemAt -1`). */
+	last_of?: readonly string[];
 };
 
 const LIST_PROJECTIONS: Record<string, ListProjection> = {
@@ -260,6 +264,9 @@ const LIST_PROJECTIONS: Record<string, ListProjection> = {
 			'createdAt',
 			'priority_level',
 		],
+		// «Tiempo» = fecha y hora del último movimiento, como el `__read` original (#180, PR 418).
+		last_of: ['time'],
+		date: ['time'],
 		tipo: [
 			'_id',
 			'name',
@@ -1270,12 +1277,13 @@ export function list_projection_keys(resource: string): string[] {
 function instance_map(
 	keys: readonly string[],
 	boolean_keys: ReadonlySet<string>,
+	date_keys: ReadonlySet<string> = new Set(),
 ): Record<string, { nombre_encabezado: string; tipo: string }> {
 	const out: Record<string, { nombre_encabezado: string; tipo: string }> = {};
 	for (const key of keys) {
 		out[key] = {
 			nombre_encabezado: key.replace(/_/g, ' '),
-			tipo: boolean_keys.has(key) ? 'Boolean' : 'string',
+			tipo: boolean_keys.has(key) ? 'Boolean' : date_keys.has(key) ? 'Date' : 'string',
 		};
 	}
 	return out;
@@ -1286,7 +1294,25 @@ export function list_instance_type(
 ): Record<string, { nombre_encabezado: string; tipo: string }> | null {
 	const spec = projection_for(resource);
 	if (!spec) return null;
-	return instance_map(spec.tipo ?? spec.rows, new Set(spec.boolean ?? []));
+	return instance_map(
+		spec.tipo ?? spec.rows,
+		new Set(spec.boolean ?? []),
+		new Set(spec.date ?? []),
+	);
+}
+
+/** Último elemento de un arreglo (o de un arreglo guardado como texto JSON). */
+function last_element(value: unknown): unknown {
+	let list = value;
+	if (typeof list === 'string' && list.trim().startsWith('[')) {
+		try {
+			list = JSON.parse(list);
+		} catch {
+			return value;
+		}
+	}
+	if (!Array.isArray(list)) return value;
+	return list.length ? list[list.length - 1] : null;
 }
 
 export function project_list_docs(resource: string, rows: ImperiumDoc[]): ImperiumDoc[] {
@@ -1294,10 +1320,12 @@ export function project_list_docs(resource: string, rows: ImperiumDoc[]): Imperi
 	if (!spec) return rows;
 	const allow = new Set<string>(spec.rows);
 	for (const key of spec.rows) allow.add(`${key}_id`);
+	const last_of = new Set(spec.last_of ?? []);
 	return rows.map((row) => {
 		const out: ImperiumDoc = {};
 		for (const key of allow) {
-			if (row[key] !== undefined) out[key] = row[key];
+			if (row[key] === undefined) continue;
+			out[key] = last_of.has(key) ? last_element(row[key]) : row[key];
 		}
 		if (out._id == null && row._id != null) out._id = row._id;
 		return out;

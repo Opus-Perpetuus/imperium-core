@@ -144,6 +144,43 @@ export function reset_db_admin_capabilities(): void {
 	cached = null;
 }
 
+/**
+ * Identidad de esta instalación, guardada en su propia base.
+ *
+ * Todas las instalaciones v13 se llaman `imperium_core`, así que el nombre de
+ * la base no distingue a un cliente de otro. Este id nace una vez, viaja en
+ * cada respaldo (`manifest.instance_id`) y vuelve con él al restaurar: un
+ * respaldo de la misma instalación coincide aunque se haya mudado de
+ * servidor, y uno de otro cliente no.
+ */
+export async function read_instance_id(sql: Bun.SQL): Promise<string | null> {
+	try {
+		await sql.unsafe(`CREATE SCHEMA IF NOT EXISTS ${DB_ADMIN_SCHEMA}`);
+		await sql.unsafe(`
+			CREATE TABLE IF NOT EXISTS ${DB_ADMIN_SCHEMA}.instance (
+				id          TEXT PRIMARY KEY,
+				created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+			)
+		`);
+		await sql.unsafe(
+			`INSERT INTO ${DB_ADMIN_SCHEMA}.instance (id)
+			 SELECT $1 WHERE NOT EXISTS (SELECT 1 FROM ${DB_ADMIN_SCHEMA}.instance)`,
+			[crypto.randomUUID()],
+		);
+		const rows = (await sql.unsafe(
+			`SELECT id FROM ${DB_ADMIN_SCHEMA}.instance ORDER BY created_at LIMIT 1`,
+		)) as Array<{ id: string }>;
+		return rows[0]?.id ?? null;
+	} catch (err) {
+		debug_error(
+			`db-admin: no se pudo leer la identidad de la instalación — ${
+				err instanceof Error ? err.message : String(err)
+			}`,
+		);
+		return null;
+	}
+}
+
 export type AuditEntry = {
 	actor_id?: string | null;
 	actor_label?: string | null;

@@ -335,6 +335,8 @@ import {
 	prepare_payroll_stamp,
 } from './payroll-flow.ts';
 import {
+	attending_turn_for_box as ticketing_attending_turn_for_box,
+	box_turns_summary_for_box as ticketing_box_turns_summary,
 	end_attending_turn as end_ticketing_turn,
 	notify_turn as notify_ticketing_turn,
 	take_next_turn as take_ticketing_turn,
@@ -1040,6 +1042,10 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return notify_turn(ctx);
 		case 'ticketing-system-turn:end_attending_turn':
 			return end_attending_turn(ctx);
+		case 'ticketing-system-turn:attending_turn_for_box':
+			return attending_turn_for_box(ctx);
+		case 'ticketing-system-turn:box_turns_summary':
+			return box_turns_summary(ctx);
 		case 'citizen-report:reverse_geocode':
 			return reverse_geocode(ctx);
 		case 'violation:challenge':
@@ -6250,6 +6256,23 @@ async function take_next_turn(ctx: Ctx) {
 async function notify_turn(ctx: Ctx) {
 	const doc = await notify_ticketing_turn(ctx.store, ctx.body.turn_id ?? ctx.body.id ?? ctx.body._id);
 	return ok([doc], 'Turno notificado');
+}
+
+async function attending_turn_for_box(ctx: Ctx) {
+	const turn = await ticketing_attending_turn_for_box(
+		ctx.store,
+		String(ctx.body.box_config_id ?? ctx.body.box ?? ctx.body.caja ?? ''),
+	);
+	return ok(turn ? [turn] : [], turn ? 'Turno en atención' : 'Sin turno en atención');
+}
+
+async function box_turns_summary(ctx: Ctx) {
+	const summary = await ticketing_box_turns_summary(
+		ctx.store,
+		String(ctx.body.box_config_id ?? ctx.body.box ?? ctx.body.caja ?? ''),
+	);
+	const pending = Array.isArray(summary.pending_queue) ? summary.pending_queue.length : 0;
+	return ok([summary], 'Resumen de turnos de la caja', pending);
 }
 
 async function end_attending_turn(ctx: Ctx) {

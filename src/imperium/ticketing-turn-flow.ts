@@ -188,7 +188,7 @@ async function box_turns_summary(store: ImperiumStore, box: ImperiumDoc) {
 	const pending_queue = await sort_pending(store, matching);
 	const turns_by_service: Record<string, ImperiumDoc[]> = {};
 	const turns_by_user_type: Record<string, ImperiumDoc[]> = {};
-	for (const turn of matching) {
+	for (const turn of pending_queue) {
 		for (const raw of as_array(turn.services)) {
 			const id = ref_id(raw) || text(raw);
 			const service =
@@ -208,7 +208,23 @@ async function box_turns_summary(store: ImperiumStore, box: ImperiumDoc) {
 		const type_name = text(type_doc.name) || 'Tipo desconocido';
 		(turns_by_user_type[type_name] ??= []).push(turn);
 	}
-	return { pending_queue, turns_by_service, turns_by_user_type };
+	// La pantalla de cada caja descarta los resúmenes que no traen su box_config_id.
+	return { box_config_id: text(box._id), pending_queue, turns_by_service, turns_by_user_type };
+}
+
+/**
+ * Resumen de pendientes de una caja (POST /box-turns-summary). La pantalla
+ * de la caja lo pide al abrir; antes solo llegaba por socket (#185).
+ */
+export async function box_turns_summary_for_box(
+	store: ImperiumStore,
+	box_config_id: string,
+): Promise<Record<string, unknown>> {
+	const box_id = text(box_config_id);
+	if (!box_id) throw new Error('Se necesita box_config_id');
+	const box = await store.find_id('ticketing-system-box-config', box_id);
+	if (!box) throw new Error('No se encontró la configuración de la caja');
+	return box_turns_summary(store, box);
 }
 
 export async function notify_ticketing_rooms(store: ImperiumStore) {
@@ -368,6 +384,25 @@ export async function notify_turn(store: ImperiumStore, raw_id: unknown): Promis
 		}
 	}
 	return shown;
+}
+
+/**
+ * Turno que la caja dejó «en atención» (el más reciente). La pantalla de la
+ * caja lo pide al abrir para avisar «Turno sin terminar» aunque el turno se
+ * haya quedado abierto en otro navegador o equipo (#185, PR 459).
+ */
+export async function attending_turn_for_box(
+	store: ImperiumStore,
+	box_config_id: string,
+): Promise<ImperiumDoc | null> {
+	const box_id = text(box_config_id);
+	if (!box_id) throw new Error('Se necesita box_config_id');
+	const rows = (await attending_turns(store)).filter((row) => ref_id(row.assigned_box) === box_id);
+	if (!rows.length) return null;
+	const stamp = (row: ImperiumDoc) => text(row.updatedAt ?? row.updated_at ?? row.createdAt ?? row.created_at);
+	rows.sort((a, b) => stamp(b).localeCompare(stamp(a)));
+	const [populated] = await populate_turns(store, [rows[0]]);
+	return populated ?? rows[0];
 }
 
 export async function end_attending_turn(

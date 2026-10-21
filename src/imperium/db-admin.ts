@@ -57,6 +57,23 @@ import {
 } from './db-admin-backup.ts';
 import { get_task, list_tasks } from './db-admin-tasks.ts';
 import {
+	abort_upload,
+	append_chunk,
+	complete_upload,
+	start_upload,
+	upload_limits,
+	upload_status,
+} from './db-admin-upload.ts';
+import {
+	get_restore,
+	list_restores,
+	start_restore,
+	start_restore_preview,
+	start_undo,
+} from './db-admin-restore.ts';
+import { restore_gate_state } from './db-admin-restore-gate.ts';
+import { verify_user_password } from './auth.ts';
+import {
 	derive_subject_secret,
 	is_master_request,
 	master_secret,
@@ -73,7 +90,7 @@ export function is_db_admin_path(path: string): boolean {
 }
 
 type Access =
-	| { ok: true; actor: ConsoleActor }
+	| { ok: true; actor: ConsoleActor; user?: ImperiumDoc }
 	| { ok: false; status: number; message: string };
 
 async function authorize(
@@ -103,6 +120,7 @@ async function authorize(
 				origin: 'session',
 				source_ip,
 			},
+			user,
 		};
 	}
 
@@ -201,6 +219,17 @@ export async function handle_db_admin(
 	}
 	const actor = access.actor;
 
+	// Con una restauración en marcha el gestor solo lee: una sentencia de
+	// escritura de la consola o un VACUUM aquí se perderían en el swap.
+	const gate = restore_gate_state();
+	const method_now = req.method.toUpperCase();
+	if (gate.phase !== 'libre' && method_now !== 'GET' && method_now !== 'HEAD') {
+		const body = fail('Hay una restauración en curso; el gestor solo deja consultar.', 503, {
+			code: 'restauracion_en_curso',
+		});
+		return Response.json(body.body, { status: 503 });
+	}
+
 	let caps: DbAdminCapabilities;
 	try {
 		caps = await ensure_db_admin_objects(sql);
@@ -217,7 +246,7 @@ export async function handle_db_admin(
 	const method = req.method.toUpperCase();
 
 	try {
-		return await route(store, sql, req, url, segments, method, actor, caps);
+		return await route(store, sql, req, url, segments, method, actor, caps, access.user ?? null);
 	} catch (err) {
 		const status =
 			err instanceof ConsoleError ||
@@ -244,6 +273,7 @@ async function route(
 	method: string,
 	actor: ConsoleActor,
 	caps: DbAdminCapabilities,
+	user: ImperiumDoc | null = null,
 ): Promise<Response> {
 	const [head, ...tail] = segments;
 
@@ -356,8 +386,24 @@ async function route(
 		return Response.json(ok(task, 'Mantenimiento en curso'), { status: 202 });
 	}
 
+	if (head === 'backups' && tail[1] === 'restore') {
+		return restore_route(store, sql, req, tail, method, actor, user);
+	}
+
 	if (head === 'backups') {
 		return backups_route(sql, req, tail, method, actor);
+	}
+
+	if (head === 'uploads') {
+		return uploads_route(sql, req, url, tail, method, actor);
+	}
+
+	if (head === 'restores') {
+		return restores_route(store, sql, req, tail, method, actor, user);
+	}
+
+	if (head === 'restore-gate' && method === 'GET') {
+		return Response.json(ok(restore_gate_state(), 'Candado de restauración'));
 	}
 
 	if (head === 'tasks' && method === 'GET') {
@@ -423,7 +469,9 @@ async function backups_route(
 			{
 				label: body.label as string | undefined,
 				include_attachments: body.include_attachments !== false,
-				trigger: (body.trigger as never) ?? 'manual',
+				// Desde fuera solo se piden respaldos manuales o de programación;
+				// `seguridad`, `subido` y `drive` los pone el núcleo.
+				trigger: body.trigger === 'programado' ? 'programado' : 'manual',
 				id: body.id as string | undefined,
 			},
 			actor,
@@ -484,6 +532,140 @@ async function backups_route(
 	return Response.json(fail('Ruta desconocida del gestor.', 404).body, {
 		status: 404,
 	});
+}
+
+function json_status(body: ReturnType<typeof fail>): Response {
+	return Response.json(body.body, { status: body.status });
+}
+
+/** Subida por trozos (`db-admin-upload.ts`). La app del gestor también la usa (Drive). */
+async function uploads_route(
+	sql: Bun.SQL,
+	req: Request,
+	url: URL,
+	tail: string[],
+	method: string,
+	actor: ConsoleActor,
+): Promise<Response> {
+	if (tail.length === 0 && method === 'GET') {
+		return Response.json(ok(await upload_limits(), 'Límites de subida'));
+	}
+	if (tail.length === 0 && method === 'POST') {
+		const body = (await read_json(req)) as Record<string, unknown>;
+		const meta = await start_upload(
+			{
+				file_name: body.file_name,
+				bytes: body.bytes,
+				// `drive` solo lo puede declarar la app del gestor.
+				origin: actor.origin === 'app' && body.origin === 'drive' ? 'drive' : 'subido',
+			},
+			actor,
+		);
+		return Response.json(ok(meta, 'Subida abierta'), { status: 201 });
+	}
+	const id = tail[0];
+	if (!id) return json_status(fail('Falta la subida.', 400));
+	if (tail.length === 1 && method === 'GET') {
+		return Response.json(ok(upload_status(id), 'Subida'));
+	}
+	if (tail.length === 1 && method === 'PUT') {
+		const offset = Number(url.searchParams.get('offset') ?? NaN);
+		const chunk = new Uint8Array(await req.arrayBuffer());
+		return Response.json(ok(append_chunk(id, offset, chunk), 'Trozo recibido'));
+	}
+	if (tail.length === 1 && method === 'DELETE') {
+		abort_upload(id);
+		return Response.json(ok(null, 'Subida cancelada'));
+	}
+	if (tail[1] === 'complete' && method === 'POST') {
+		const body = (await read_json(req)) as Record<string, unknown>;
+		const task = complete_upload(sql, id, { sha256: body.sha256, label: body.label }, actor);
+		return Response.json(ok(task, 'Importando'), { status: 202 });
+	}
+	return json_status(fail('Ruta desconocida del gestor.', 404));
+}
+
+/** Restaurar exige la sesión de un administrador **y** su contraseña. */
+async function require_password(
+	store: ImperiumStore,
+	sql: Bun.SQL,
+	actor: ConsoleActor,
+	user: ImperiumDoc | null,
+	password: unknown,
+): Promise<Response | null> {
+	if (actor.origin !== 'session' || !user) {
+		return json_status(fail('Restaurar solo se puede desde la sesión de un administrador.', 403));
+	}
+	const check = await verify_user_password(store, sql, user, String(password ?? ''), actor.source_ip ?? 'desconocida');
+	if (!check.ok) return json_status(fail(check.message, check.status, { code: 'reautenticacion' }));
+	return null;
+}
+
+async function restore_route(
+	store: ImperiumStore,
+	sql: Bun.SQL,
+	req: Request,
+	tail: string[],
+	method: string,
+	actor: ConsoleActor,
+	user: ImperiumDoc | null,
+): Promise<Response> {
+	const id = tail[0]!;
+	if (actor.origin !== 'session') {
+		return json_status(fail('Restaurar solo se puede desde la sesión de un administrador.', 403));
+	}
+	if (tail[2] === 'preview' && method === 'POST') {
+		return Response.json(ok(start_restore_preview(sql, id), 'Revisando el respaldo'), {
+			status: 202,
+		});
+	}
+	if (tail.length === 2 && method === 'POST') {
+		const body = (await read_json(req)) as Record<string, unknown>;
+		const denied = await require_password(store, sql, actor, user, body.password);
+		if (denied) return denied;
+		const record = await start_restore(
+			sql,
+			id,
+			{
+				restore_attachments: body.restore_attachments === true,
+				allow_foreign: body.allow_foreign === true,
+				allow_version_mismatch: body.allow_version_mismatch === true,
+			},
+			String(body.confirm ?? ''),
+			actor,
+		);
+		return Response.json(ok(record, 'Restauración en curso'), { status: 202 });
+	}
+	return json_status(fail('Ruta desconocida del gestor.', 404));
+}
+
+async function restores_route(
+	store: ImperiumStore,
+	sql: Bun.SQL,
+	req: Request,
+	tail: string[],
+	method: string,
+	actor: ConsoleActor,
+	user: ImperiumDoc | null,
+): Promise<Response> {
+	if (tail.length === 0 && method === 'GET') {
+		const rows = list_restores();
+		return Response.json(ok(rows, 'Restauraciones', rows.length));
+	}
+	const id = tail[0]!;
+	if (tail.length === 1 && method === 'GET') {
+		const record = get_restore(id);
+		if (!record) return json_status(fail('No existe esa restauración.', 404));
+		return Response.json(ok(record, 'Restauración'));
+	}
+	if (tail[1] === 'undo' && method === 'POST') {
+		const body = (await read_json(req)) as Record<string, unknown>;
+		const denied = await require_password(store, sql, actor, user, body.password);
+		if (denied) return denied;
+		const record = await start_undo(sql, id, String(body.confirm ?? ''), actor);
+		return Response.json(ok(record, 'Deshaciendo la restauración'), { status: 202 });
+	}
+	return json_status(fail('Ruta desconocida del gestor.', 404));
 }
 
 async function read_json(req: Request): Promise<unknown> {

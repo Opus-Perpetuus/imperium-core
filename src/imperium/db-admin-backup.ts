@@ -32,22 +32,42 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import { writable_upload_folder } from './uploads.ts';
-import { write_audit } from './db-admin-setup.ts';
+import { read_instance_id, write_audit } from './db-admin-setup.ts';
+import { CORE_VERSION } from './health.ts';
 import { start_task, is_running, type Task, type TaskHandle } from './db-admin-tasks.ts';
 
 /** Nombre de la carpeta de respaldos dentro del volumen de adjuntos. */
-const BACKUP_FOLDER_NAME = '_respaldos';
+export const BACKUP_FOLDER_NAME = '_respaldos';
 
 export const ARCHIVE_SUFFIX = '.imperium-backup.tar';
-const SIDECAR_SUFFIX = '.manifest.json';
+export const SIDECAR_SUFFIX = '.manifest.json';
+
+/** Tipo de trabajo de la restauración; respaldo y restauración no se enciman. */
+export const RESTORE_TASK_KIND = 'restauracion';
+
+/**
+ * De dónde salió el respaldo. Solo `manual` y `programado` entran en la
+ * retención automática: uno subido, traído de Drive o de seguridad lo puso
+ * alguien a propósito y no debe desaparecer por una política nocturna.
+ */
+export type BackupTrigger = 'manual' | 'programado' | 'seguridad' | 'subido' | 'drive';
 
 export type BackupManifest = {
 	id: string;
 	label: string;
 	created_at: string;
 	created_by: string | null;
-	trigger: 'manual' | 'programado';
+	trigger: BackupTrigger;
 	database: string;
+	/** Versión del núcleo que lo hizo (desde 13.92). Vacío en respaldos viejos. */
+	core_version?: string;
+	/** Identidad de la instalación (`db_admin.instance`); distingue clientes. */
+	instance_id?: string | null;
+	/** Formato del artefacto; 1 = este. */
+	format_version?: number;
+	/** Si se importó: nombre original y cuándo. */
+	imported_from?: string | null;
+	imported_at?: string | null;
 	server_version: string;
 	dump_tool_version: string;
 	includes_attachments: boolean;
@@ -74,7 +94,7 @@ export function backup_dir(): string {
 }
 
 /** Conexión desglosada en variables `PG*` para no poner la contraseña en `ps`. */
-function pg_env(): Record<string, string> {
+export function pg_env(): Record<string, string> {
 	const raw = process.env.DATABASE_URL?.trim();
 	if (!raw) throw new BackupError('No hay DATABASE_URL en el núcleo.', 500);
 	let url: URL;
@@ -93,9 +113,9 @@ function pg_env(): Record<string, string> {
 	return env;
 }
 
-type RunResult = { code: number; stdout: string; stderr: string };
+export type RunResult = { code: number; stdout: string; stderr: string };
 
-async function run(cmd: string[], extra_env: Record<string, string> = {}): Promise<RunResult> {
+export async function run(cmd: string[], extra_env: Record<string, string> = {}): Promise<RunResult> {
 	const proc = Bun.spawn(cmd, {
 		env: { ...process.env, ...extra_env },
 		stdout: 'pipe',
@@ -137,7 +157,7 @@ export async function backup_tooling(): Promise<{
 }
 
 /** Espacio libre en el punto de montaje del destino, en bytes. */
-async function free_bytes(dir: string): Promise<number | null> {
+export async function free_bytes(dir: string): Promise<number | null> {
 	const out = await run(['df', '-Pk', dir]);
 	if (out.code !== 0) return null;
 	const line = out.stdout.trim().split('\n')[1];
@@ -145,7 +165,7 @@ async function free_bytes(dir: string): Promise<number | null> {
 	return available ? Number(available) * 1024 : null;
 }
 
-async function sha256_of(path: string): Promise<string> {
+export async function sha256_of(path: string): Promise<string> {
 	const hash = createHash('sha256');
 	for await (const chunk of createReadStream(path)) {
 		hash.update(chunk as Buffer);
@@ -168,7 +188,7 @@ function count_files(dir: string): number {
 export type BackupRequest = {
 	label?: string;
 	include_attachments?: boolean;
-	trigger?: 'manual' | 'programado';
+	trigger?: BackupTrigger;
 	/**
 	 * Nombre fijo del artefacto. El programador lo deriva de
 	 * `(política, momento programado)` para que un reintento sobrescriba el
@@ -195,13 +215,23 @@ export function start_backup(
 			409,
 		);
 	}
+	if (is_running(RESTORE_TASK_KIND)) {
+		throw new BackupError(
+			'Hay una restauración en curso; el respaldo puede esperar a que termine.',
+			409,
+		);
+	}
 	const label = String(request.label ?? '').trim() || 'Respaldo';
 	return start_task('respaldo', label, (handle) =>
 		create_backup(sql, request, actor, handle),
 	);
 }
 
-async function create_backup(
+/**
+ * Hace el respaldo en el hilo del que llama. Lo usa también la restauración
+ * para el respaldo de seguridad, que va dentro de su propio trabajo.
+ */
+export async function create_backup(
 	sql: Bun.SQL,
 	request: BackupRequest,
 	actor: BackupActor,
@@ -232,6 +262,12 @@ async function create_backup(
 	}
 
 	try {
+		// Antes del volcado: en una base que nunca leyó su identidad,
+		// `read_instance_id` crea `db_admin.instance` y, si se leyera después,
+		// el respaldo no la traería y al restaurarlo saldría otra identidad
+		// («El respaldo es de otra instalación» con su propio respaldo).
+		const instance_id = await read_instance_id(sql);
+
 		handle.log('Volcando roles y privilegios del clúster…');
 		const globals = await run(['pg_dumpall', '--globals-only'], env);
 		if (globals.code !== 0) {
@@ -304,6 +340,9 @@ async function create_backup(
 			database: String(server_row?.db ?? ''),
 			server_version: String(server_row?.v ?? ''),
 			dump_tool_version: tooling.pg_dump_version ?? '',
+			core_version: CORE_VERSION,
+			instance_id,
+			format_version: 1,
 			includes_attachments: include_attachments,
 			attachment_count,
 			parts,
@@ -506,7 +545,10 @@ export async function prune_backups(
 	keep: number,
 	actor: BackupActor,
 ): Promise<string[]> {
-	const all = list_backups();
+	// Solo los de la política; ver `BackupTrigger`.
+	const all = list_backups().filter(
+		(m) => (m.trigger ?? 'manual') === 'manual' || m.trigger === 'programado',
+	);
 	const limit = Math.max(1, Math.trunc(keep));
 	const doomed = all.slice(limit);
 	const removed: string[] = [];
@@ -522,7 +564,7 @@ export async function prune_backups(
 }
 
 /** Solo `A-Za-z0-9._-`: el id acaba siendo parte de una ruta. */
-function sanitize_id(raw: string | undefined | null): string | null {
+export function sanitize_id(raw: string | undefined | null): string | null {
 	const value = String(raw ?? '').trim();
 	if (!value) return null;
 	if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$/.test(value)) return null;

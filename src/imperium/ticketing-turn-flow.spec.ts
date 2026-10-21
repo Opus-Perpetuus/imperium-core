@@ -187,3 +187,80 @@ describe('tomar el siguiente turno avisa al tablero una vez', () => {
 		expect((announced[0]?.assigned_box as Row | undefined)?.name).toBe('Caja 3');
 	});
 });
+
+describe('turno en atención de la caja (#185, PR 459)', () => {
+	const open_turn = (id: string, box: string, updatedAt: string, extra: Row = {}): Row => ({
+		_id: id,
+		name: id.toUpperCase(),
+		status: 'en_atencion',
+		estado: 'en_atencion',
+		services: ['svc-1'],
+		customer_type: 'type-1',
+		assigned_box: box,
+		createdAt: '2026-01-01T00:00:00.000Z',
+		updatedAt,
+		is_active: true,
+		...extra,
+	});
+
+	test('devuelve el turno en atención más reciente de esa caja, con la caja poblada', async () => {
+		const seed = desk();
+		seed['ticketing-system-turn']!.push(
+			open_turn('b001', 'box-1', '2026-01-01T10:00:00.000Z'),
+			open_turn('b002', 'box-1', '2026-01-01T11:00:00.000Z'),
+			open_turn('b003', 'box-otra', '2026-01-01T12:00:00.000Z'),
+			open_turn('b004', 'box-1', '2026-01-01T13:00:00.000Z', { is_active: false }),
+		);
+		const res = await call(memory_store(seed), 'attending_turn_for_box', { box_config_id: 'box-1' });
+		expect(res.data.map((row: Row) => row._id)).toEqual(['b002']);
+		expect(res.total_elementos).toBe(1);
+		expect((res.data[0]?.assigned_box as Row | undefined)?.name).toBe('Caja 3');
+	});
+
+	test('sin turno en atención responde lista vacía', async () => {
+		const res = await call(memory_store(desk()), 'attending_turn_for_box', { box_config_id: 'box-1' });
+		expect(res.data).toEqual([]);
+		expect(res.total_elementos).toBe(0);
+	});
+
+	test('la ruta está declarada en extra-routes', async () => {
+		const routes = (await import('./extra-routes.json')).default as Array<Record<string, string>>;
+		expect(routes).toContainEqual({
+			resource: 'ticketing-system-turn',
+			method: 'post',
+			path: '/attending-turn-for-box',
+			action: 'attending_turn_for_box',
+		});
+	});
+});
+
+describe('resumen de pendientes de la caja (box-turns-summary)', () => {
+	test('devuelve la cola de la caja con su box_config_id', async () => {
+		const res = await call(memory_store(desk()), 'box_turns_summary', { box_config_id: 'box-1' });
+		expect(res.data).toHaveLength(1);
+		const summary = res.data[0] as Row;
+		expect(summary.box_config_id).toBe('box-1');
+		expect((summary.pending_queue as Row[]).map((row) => row._id)).toEqual(['turn-waiting']);
+		expect(Object.keys(summary.turns_by_service as Row)).toEqual(['Trámite']);
+		expect(Object.keys(summary.turns_by_user_type as Row)).toEqual(['General']);
+		expect(res.total_elementos).toBe(1);
+	});
+
+	test('no cuenta turnos que la caja no puede atender', async () => {
+		const seed = desk();
+		seed['ticketing-system-turn']![0]!.customer_type = 'type-otro';
+		const res = await call(memory_store(seed), 'box_turns_summary', { box_config_id: 'box-1' });
+		expect((res.data[0] as Row).pending_queue).toEqual([]);
+		expect(res.total_elementos).toBe(0);
+	});
+
+	test('la ruta está declarada en extra-routes', async () => {
+		const routes = (await import('./extra-routes.json')).default as Array<Record<string, string>>;
+		expect(routes).toContainEqual({
+			resource: 'ticketing-system-turn',
+			method: 'post',
+			path: '/box-turns-summary',
+			action: 'box_turns_summary',
+		});
+	});
+});

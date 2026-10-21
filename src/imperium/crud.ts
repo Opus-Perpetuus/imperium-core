@@ -47,6 +47,7 @@ import {
 	prepare_delivery_route_write,
 } from './delivery-route-flow.ts';
 import { list_instance_type, project_list_docs } from './list-projection.ts';
+import { link_access_right_to_group } from './access-right-group-link.ts';
 import {
 	prepare_purchase_order_create,
 	prepare_purchase_order_update,
@@ -857,6 +858,7 @@ export async function handle_crud(
 			await after_pattern_condition_create(store, created);
 		}
 		if (resource === 'pedidos') await after_pedido_mutate(store, 'create', created);
+		if (resource === 'access-rights') await link_access_right_to_group(store, created);
 		if (resource === 'ticketing-system-turn') await notify_ticketing_rooms(store);
 		if (resource === 'purchase-order') {
 			await sync_inbound_supplier_invoice(store, created);
@@ -1090,6 +1092,7 @@ export async function handle_crud(
 		if (updated) await link_attachments_to_record(store, resource, updated);
 		if (!updated) return json(resource, fail('No encontrado', 404).body, 404);
 		if (resource === 'pedidos') await after_pedido_mutate(store, 'update', updated, previous);
+		if (resource === 'access-rights') await link_access_right_to_group(store, updated);
 		if (is_pattern_parts_resource(resource)) {
 			await after_pattern_part_write(store, updated, previous);
 		}
@@ -1283,6 +1286,7 @@ export async function handle_crud(
 		if (updated) await link_attachments_to_record(store, resource, updated);
 		if (!updated) return json(resource, fail('No encontrado', 404).body, 404);
 		if (resource === 'pedidos') await after_pedido_mutate(store, 'update', updated, previous);
+		if (resource === 'access-rights') await link_access_right_to_group(store, updated);
 		if (is_pattern_parts_resource(resource)) {
 			await after_pattern_part_write(store, updated, previous);
 		}

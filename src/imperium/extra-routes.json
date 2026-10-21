@@ -1680,6 +1680,18 @@
     "action": "end_attending_turn"
   },
   {
+    "resource": "ticketing-system-turn",
+    "method": "post",
+    "path": "/attending-turn-for-box",
+    "action": "attending_turn_for_box"
+  },
+  {
+    "resource": "ticketing-system-turn",
+    "method": "post",
+    "path": "/box-turns-summary",
+    "action": "box_turns_summary"
+  },
+  {
     "resource": "violation",
     "method": "post",
     "path": "/challenge/:id",

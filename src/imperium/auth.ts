@@ -661,6 +661,49 @@ async function create_session(
 	return session;
 }
 
+/**
+ * Olvida todas las sesiones en memoria del proceso.
+ *
+ * `stored_session` responde desde este mapa sin mirar la base: después de
+ * restaurar un respaldo (o de vaciar `imperium_sessions` a mano) una sesión
+ * en memoria seguiría viva con el usuario de antes. Devuelve cuántas había.
+ */
+export function forget_all_sessions(): number {
+	const count = memory.size;
+	for (const id of memory.keys()) disconnect_sockets_for_auth_sid(id);
+	memory.clear();
+	return count;
+}
+
+/**
+ * Re-autenticación para operaciones destructivas (restaurar la base): la
+ * contraseña del usuario de la sesión, con el mismo limitador que el login.
+ */
+export async function verify_user_password(
+	store: ImperiumStore,
+	sql: Bun.SQL,
+	user: ImperiumDoc,
+	password: string,
+	ip: string,
+): Promise<{ ok: true } | { ok: false; status: number; message: string }> {
+	const email = normalize_auth_rate_limit_email(user.email);
+	const limited = await consume_login_limits(sql, email, ip);
+	if (limited) return { ok: false, status: 429, message: limited.message };
+	if (!password) {
+		return { ok: false, status: 400, message: 'Escribe tu contraseña para confirmar.' };
+	}
+	const id = String(user._id ?? user.id ?? '');
+	const fresh = id ? await store.find_id('user', id).catch(() => null) : null;
+	const row = fresh ?? (email ? await store.find_where('user', { email }) : null);
+	const hash = String(row?.password ?? '');
+	const ok_pw =
+		row && row.is_active !== false && hash
+			? await verify_password(password, hash)
+			: await dummy_verify();
+	if (!ok_pw) return { ok: false, status: 401, message: 'La contraseña no es correcta.' };
+	return { ok: true };
+}
+
 async function destroy_session(sql: Bun.SQL, id: string): Promise<void> {
 	memory.delete(id);
 	disconnect_sockets_for_auth_sid(id);
@@ -1098,6 +1141,8 @@ const SESSION_SCOPED_EXTRAS = new Set([
 	'ticketing-system-turn:take_next_turn',
 	'ticketing-system-turn:notify_turn',
 	'ticketing-system-turn:end_attending_turn',
+	'ticketing-system-turn:attending_turn_for_box',
+	'ticketing-system-turn:box_turns_summary',
 	'citizen-report:reverse_geocode',
 	'purchase-order:replenish_from_order',
 	'purchase-order:parse_document',

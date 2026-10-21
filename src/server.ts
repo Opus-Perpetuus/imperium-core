@@ -12,6 +12,7 @@ import {
 } from '@opus-perpetuus/imperium-core-kit';
 import { handle_service_plane, service_plane_match } from './service-plane.ts';
 import { add_cors, create_imperium_layer } from './imperium/router.ts';
+import { restore_gate } from './imperium/db-admin-restore-gate.ts';
 import { CORE_VERSION, health_status, probe_database } from './imperium/health.ts';
 import {
 	current_user,
@@ -601,6 +602,9 @@ const server = Bun.serve({
 		const started_ms = Date.now();
 		const url = new URL(req.url);
 		const path = url.pathname;
+		// Restauración en marcha: escrituras (o todo, durante el swap) en 503.
+		const restoring = restore_gate(req.method, path);
+		if (restoring) return add_cors(req, restoring)!;
 		/** Remitente app → app, solo si el gateway lo aceptó. */
 		let accepted_caller: string | null = null;
 		let shared = { kind: 'none' } as ShareGate;

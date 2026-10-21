@@ -112,4 +112,26 @@ describe('Estadísticas de turnos (#185, subtarea 284)', () => {
 			['General', 3, 4],
 		]);
 	});
+
+	test('un turno archivado (prueba) no cuenta en las estadísticas (#183)', async () => {
+		const data = seed();
+		data['ticketing-system-turn'].push({
+			_id: 't-prueba',
+			name: 'G999',
+			description: 'pruebaIMPERIUM',
+			is_active: false,
+			status: 'completado',
+			assigned_box: 'box-1',
+			services: ['svc-actas'],
+			customer_type: 'type-1',
+			time_box: [at('18:00'), at('18:30')],
+			createdAt: at('17:59'),
+		});
+		const stats = (await stats_store(data).turn_stats()) as Record<string, any>;
+		const caja = (stats.daily_stats as Array<Record<string, any>>).find(
+			(d) => d.box_name === 'CAJA_PRUEBAS_1',
+		)!;
+		expect(caja.turns_attended).toBe(2);
+		expect(JSON.stringify(stats)).not.toContain('t-prueba');
+	});
 });

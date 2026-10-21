@@ -6939,10 +6939,12 @@ export class ImperiumStore {
 		};
 		const is_completed = (r: ImperiumDoc) =>
 			String(r.status ?? r.state ?? '') === 'completado';
+		// Archivar un turno lo saca de las estadísticas igual que de la lista:
+		// así se marcan los turnos de prueba en los servidores productivos (#183).
 		const day_counts = await this.count_by_created_day('ticketing-system-turn', {
 			from_iso: from.toISOString(),
 			mongo_match: match,
-			include_inactive: true,
+			include_inactive: false,
 		});
 		const today_key = new Date().toISOString().slice(0, 10);
 		let ref_key = today_key;
@@ -6973,11 +6975,11 @@ export class ImperiumStore {
 				},
 			},
 			mongo_match: match,
-			include_inactive: true,
+			include_inactive: false,
 			fields: TURN_STATS_FIELDS,
 		})) {
 			for (const r of page) {
-				if (!is_completed(r)) continue;
+				if (r.is_active === false || !is_completed(r)) continue;
 				const k = day_of(r);
 				if (!k || !seven_keys.includes(k)) continue;
 				const list = by_day.get(k) ?? [];
