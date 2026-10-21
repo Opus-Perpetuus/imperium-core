@@ -372,6 +372,12 @@
     "action": "register_transfer"
   },
   {
+    "resource": "inventory-movement",
+    "method": "get",
+    "path": "/kardex/:producto_id",
+    "action": "read_kardex"
+  },
+  {
     "resource": "inventory-physical-count",
     "method": "post",
     "path": "/import-apertura",
@@ -436,6 +442,18 @@
     "method": "get",
     "path": "/consistencia",
     "action": "validar_consistencia"
+  },
+  {
+    "resource": "inventory-stock-quant",
+    "method": "get",
+    "path": "/caducidades",
+    "action": "read_expiring"
+  },
+  {
+    "resource": "inventory-stock-quant",
+    "method": "get",
+    "path": "/valuacion",
+    "action": "read_valuation"
   },
   {
     "resource": "invoice-request",
@@ -1896,9 +1914,81 @@
     "action": "cancel_invoice"
   },
   {
+    "resource": "supplier-invoice",
+    "method": "get",
+    "path": "/antiguedad-saldos",
+    "action": "read_aging"
+  },
+  {
     "resource": "supplier-payment",
     "method": "post",
     "path": "/cancel/:id",
     "action": "cancel_payment"
+  },
+  {
+    "resource": "pos-tickets",
+    "method": "get",
+    "path": "/ventas-por-articulo",
+    "action": "read_sales_by_product"
+  },
+  {
+    "resource": "pos-tickets",
+    "method": "get",
+    "path": "/devolucion-disponible",
+    "action": "read_return_availability"
+  },
+  {
+    "resource": "pos-tickets",
+    "method": "get",
+    "path": "/estado-cuenta",
+    "action": "read_client_statement"
+  },
+  {
+    "resource": "pos-tickets",
+    "method": "get",
+    "path": "/antiguedad-clientes",
+    "action": "read_clients_aging"
+  },
+  {
+    "resource": "pos-tickets",
+    "method": "get",
+    "path": "/apartado",
+    "action": "read_layaway"
+  },
+  {
+    "resource": "pos-tickets",
+    "method": "post",
+    "path": "/:id/apartado-cancelar",
+    "action": "cancel_layaway"
+  },
+  {
+    "resource": "pos-tickets",
+    "method": "get",
+    "path": "/cotizacion",
+    "action": "read_quote"
+  },
+  {
+    "resource": "pos-tickets",
+    "method": "get",
+    "path": "/por-folio",
+    "action": "read_ticket_by_folio"
+  },
+  {
+    "resource": "pos-tickets",
+    "method": "post",
+    "path": "/reimpresion",
+    "action": "register_reprint"
+  },
+  {
+    "resource": "pos-tickets",
+    "method": "get",
+    "path": "/saldo-favor",
+    "action": "read_store_credit"
+  },
+  {
+    "resource": "products",
+    "method": "get",
+    "path": "/reabastecer",
+    "action": "read_replenishment"
   }
 ]

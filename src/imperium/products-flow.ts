@@ -4,6 +4,7 @@
  */
 import { type ImperiumDoc } from './envelope.ts';
 import { assert_tracking_flags } from './inventory-lot-flow.ts';
+import { normalize_product_rules } from './pos-product-rules.ts';
 import type { ImperiumStore } from './store.ts';
 
 function ref_id(value: unknown): string {
@@ -31,9 +32,10 @@ export function decorate_product(doc: ImperiumDoc): ImperiumDoc {
 export async function prepare_product_write(
 	store: ImperiumStore,
 	incoming: ImperiumDoc,
+	self_id = '',
 ): Promise<ImperiumDoc> {
 	assert_tracking_flags(incoming);
-	const doc = { ...incoming };
+	const doc = await normalize_product_rules(store, { ...incoming }, self_id);
 	if (!('ubicacion_preferida' in incoming)) return doc;
 	const raw = incoming.ubicacion_preferida;
 	if (raw == null || raw === '') {

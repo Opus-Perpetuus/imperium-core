@@ -433,7 +433,8 @@
         "values": [
           "POS_SALE",
           "OFFLINE_ORDER",
-          "DELIVERY_RECEIPT"
+          "DELIVERY_RECEIPT",
+          "POS_REMISION"
         ],
         "message": "`{VALUE}` is not a valid enum value for path `{PATH}`."
       }
@@ -721,7 +722,12 @@
         "values": [
           "VENTA",
           "DEVOLUCION",
-          "RETIRO_MANUAL_CAJA"
+          "RETIRO_MANUAL_CAJA",
+          "ENTRADA_EFECTIVO",
+          "ABONO_CREDITO",
+          "APARTADO",
+          "ABONO_APARTADO",
+          "COTIZACION"
         ],
         "message": "El tipo \"{VALUE}\" para un ticket de pos, no existe"
       },

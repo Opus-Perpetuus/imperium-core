@@ -270,6 +270,38 @@
               "crud": "boolean",
               "component": "input-checkbox",
               "label": "tiene caducidad"
+            },
+            {
+              "name": "precios_escala",
+              "mongo": "precios_escala",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "precios por escala"
+            },
+            {
+              "name": "promociones",
+              "mongo": "promociones",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "promociones"
+            },
+            {
+              "name": "conversiones_unidad",
+              "mongo": "conversiones_unidad",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "conversiones de unidad"
+            },
+            {
+              "name": "kit_componentes",
+              "mongo": "kit_componentes",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "componentes del kit"
             }
           ]
         },
@@ -11627,8 +11659,112 @@
               "crud": "string",
               "component": "input-text",
               "label": "withdrawal signature"
+            },
+            {
+              "name": "original_ticket",
+              "mongo": "original_ticket",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "venta original"
+            },
+            {
+              "name": "restock_mode",
+              "mongo": "restock_mode",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "modo de reingreso"
+            },
+            {
+              "name": "restock_result",
+              "mongo": "restock_result",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "resultado del reingreso"
+            },
+            {
+              "name": "cash_in_amount",
+              "mongo": "cash_in_amount",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "monto de entrada"
+            },
+            {
+              "name": "cash_in_reason",
+              "mongo": "cash_in_reason",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "motivo de entrada"
+            },
+            {
+              "name": "payment_method",
+              "mongo": "payment_method",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "forma de pago"
+            },
+            {
+              "name": "payments",
+              "mongo": "payments",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "pagos"
+            },
+            {
+              "name": "layaway_status",
+              "mongo": "layaway_status",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "layaway status"
+            },
+            {
+              "name": "quote_status",
+              "mongo": "quote_status",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "quote status"
+            },
+            {
+              "name": "remision_numero",
+              "mongo": "remision_numero",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "Número de remisión"
+            },
+            {
+              "name": "remision_folio",
+              "mongo": "remision_folio",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "Folio de remisión"
+            },
+            {
+              "name": "reprint_log",
+              "mongo": "reprint_log",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "Reimpresiones"
             }
           ]
+        }
+      ],
+      "menus": [
+        {
+          "name": "Reportes comerciales",
+          "menu_ref": "pos-commercial-reports-menu-0",
+          "path": "/reportes-comerciales",
+          "icon": "fa-chart-line"
         }
       ]
     },
@@ -15428,6 +15564,38 @@
               "crud": "string",
               "component": "input-text",
               "label": "proveedor nombre"
+            },
+            {
+              "name": "precios_escala",
+              "mongo": "precios_escala",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "precios por escala"
+            },
+            {
+              "name": "promociones",
+              "mongo": "promociones",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "promociones"
+            },
+            {
+              "name": "conversiones_unidad",
+              "mongo": "conversiones_unidad",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "conversiones de unidad"
+            },
+            {
+              "name": "kit_componentes",
+              "mongo": "kit_componentes",
+              "pg": "json",
+              "crud": "json",
+              "component": "input-json",
+              "label": "componentes del kit"
             }
           ]
         },

@@ -58,6 +58,15 @@ import {
 	ensure_pending_reception_from_purchase_order,
 } from './inventory-reception-flow.ts';
 import { register_pos_ticket_exit } from './inventory-exit.ts';
+import { register_layaway_effects, release_layaway_on_cancel } from './pos-layaway.ts';
+import { register_quote_conversion } from './pos-quote.ts';
+import {
+	assert_return_within_sale,
+	is_linked_return,
+	prepare_pos_return,
+	register_pos_return_entry,
+	revert_pos_return_entry,
+} from './pos-return.ts';
 import {
 	notify_ticketing_rooms,
 	prepare_ticketing_turn_create,
@@ -607,6 +616,7 @@ export async function handle_crud(
 		}
 		const deleted = await store.remove(resource, segs[1]);
 		if (!deleted) return json(resource, fail('No encontrado', 404).body, 404);
+		if (resource === 'pos-tickets') await after_pos_ticket_mutate(store, doc, deleted);
 		if (is_pattern_condition_resource(resource)) {
 			await after_pattern_condition_delete(store, deleted);
 			return json(resource, ok([deleted], pattern_condition_delete_message()));
@@ -769,6 +779,7 @@ export async function handle_crud(
 			if (replayed) {
 				return json(resource, ok([replayed], 'Ticket ya registrado'), 200);
 			}
+			incoming = await prepare_pos_return(store, incoming);
 			await assert_pos_pin(
 				store,
 				req,
@@ -1020,7 +1031,7 @@ export async function handle_crud(
 			b = await prepare_pos_session_update(store, b, previous, actor);
 		}
 		if (resource === 'products') {
-			b = await prepare_product_write(store, b);
+			b = await prepare_product_write(store, b, String(previous?._id ?? ''));
 		}
 		if (resource === 'vehicle') {
 			b = await prepare_vehicle_write(store, b, previous);
@@ -1091,6 +1102,7 @@ export async function handle_crud(
 		}
 		if (updated) await link_attachments_to_record(store, resource, updated);
 		if (!updated) return json(resource, fail('No encontrado', 404).body, 404);
+		if (resource === 'pos-tickets') await after_pos_ticket_mutate(store, previous, updated);
 		if (resource === 'pedidos') await after_pedido_mutate(store, 'update', updated, previous);
 		if (resource === 'access-rights') await link_access_right_to_group(store, updated);
 		if (is_pattern_parts_resource(resource)) {
@@ -1224,7 +1236,7 @@ export async function handle_crud(
 			patched = await prepare_supplier_invoice_update(store, patched, previous);
 		}
 		if (resource === 'products') {
-			patched = await prepare_product_write(store, patched);
+			patched = await prepare_product_write(store, patched, String(previous?._id ?? ''));
 		}
 		if (resource === 'vehicle') {
 			patched = await prepare_vehicle_write(store, patched, previous);
@@ -1285,6 +1297,7 @@ export async function handle_crud(
 		}
 		if (updated) await link_attachments_to_record(store, resource, updated);
 		if (!updated) return json(resource, fail('No encontrado', 404).body, 404);
+		if (resource === 'pos-tickets') await after_pos_ticket_mutate(store, previous, updated);
 		if (resource === 'pedidos') await after_pedido_mutate(store, 'update', updated, previous);
 		if (resource === 'access-rights') await link_access_right_to_group(store, updated);
 		if (is_pattern_parts_resource(resource)) {
@@ -1574,6 +1587,21 @@ async function decorate_attachment_list(
 		created_by: names.get(String(row.created_by_id ?? '').trim()) ?? '',
 	}));
 }
+
+/** Ticket POS cancelado por el CRUD: libera el apartado abierto o revierte el reingreso de la devolución. */
+async function after_pos_ticket_mutate(
+	store: ImperiumStore,
+	previous: ImperiumDoc | null,
+	current: ImperiumDoc | null,
+): Promise<void> {
+	if (!previous) return;
+	await release_layaway_on_cancel(store, previous, current);
+	const was_live = previous.is_active !== false && !POS_CANCELLED_STATES.has(String(previous.state ?? '').toLowerCase());
+	const now_live = !!current && current.is_active !== false && !POS_CANCELLED_STATES.has(String(current.state ?? '').toLowerCase());
+	if (is_linked_return(previous) && was_live && !now_live) await revert_pos_return_entry(store, previous);
+}
+
+const POS_CANCELLED_STATES = new Set(['cancelado', 'canceled', 'cancelled']);
 
 function decorate_pos_ticket(doc: ImperiumDoc): ImperiumDoc {
 	const items = as_array(doc.items).map((raw) => {
@@ -1871,6 +1899,13 @@ async function after_create(
 		return null;
 	}
 	if (resource !== 'pos-tickets') return null;
+	await assert_return_within_sale(store, created);
 	await register_pos_ticket_exit(store, created);
+	await register_layaway_effects(store, created);
+	await register_quote_conversion(store, created);
+	if (is_linked_return(created)) {
+		const restock_result = await register_pos_return_entry(store, created);
+		await store.update('pos-tickets', String(created._id), { restock_result });
+	}
 }
 

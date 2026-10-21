@@ -99,6 +99,8 @@ describe("validate_page_descriptor", () => {
   test("validate_page_descriptor_renderable rejects non-MVP ids", () => {
     expect(NOX_UI_MVP_RENDER_IDS).toContain("nox.collapsible");
     expect(NOX_UI_MVP_RENDER_IDS).toContain("nox.input-choice");
+    expect(NOX_UI_MVP_RENDER_IDS).toContain("nox.input-operacion");
+    expect(NOX_UI_MVP_RENDER_IDS).toContain("nox.input-scanner");
     const ok = validate_page_descriptor_renderable({
       id: "home",
       owner: "portal",

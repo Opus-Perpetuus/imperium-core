@@ -25,8 +25,37 @@ type ListProjection = {
 	last_of?: readonly string[];
 };
 
+const PRODUCT_LIST_COLUMNS = [
+	'_id',
+	'name',
+	'description',
+	'existencia',
+	'existenciaApartada',
+	'existenciaDisponible',
+	'costoVenta',
+	'costoCompraPromedio',
+	'ultimoCostoCompra',
+	'fechaUltimaCompra',
+	'stockMaximo',
+	'stockMinimo',
+	'codigo',
+	'positional_code',
+	'unidad',
+	'puedoVenderlo',
+	'puedoComprarlo',
+	'image',
+	'codigos_proveedor',
+	'clave_prod_serv',
+	'objeto_imp_default',
+	'ubicacion_preferida',
+	'ubicacion_preferida_codigo',
+] as const;
+
 const LIST_PROJECTIONS: Record<string, ListProjection> = {
 	products: {
+		// La tabla pinta las mismas columnas de siempre; las reglas de venta
+		// viajan en el listado para que la caja las use sin pedir el detalle.
+		tipo: PRODUCT_LIST_COLUMNS,
 		rows: [
 			'_id',
 			'name',
@@ -51,6 +80,10 @@ const LIST_PROJECTIONS: Record<string, ListProjection> = {
 			'objeto_imp_default',
 			'ubicacion_preferida',
 			'ubicacion_preferida_codigo',
+			'precios_escala',
+			'promociones',
+			'conversiones_unidad',
+			'kit_componentes',
 		],
 	},
 	'purchase-order': {

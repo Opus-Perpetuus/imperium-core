@@ -13,6 +13,18 @@ import { plan_documentation_sync } from './documentation-sync.ts';
 import { serve_attachment_bytes } from './media.ts';
 import { query_list, read_imperium_body } from './body.ts';
 import { is_record_id } from './record-id.ts';
+import { product_kardex } from './inventory-kardex.ts';
+import { pos_sales_by_product } from './pos-sales-report.ts';
+import { client_statement, clients_aging } from './pos-credit.ts';
+import { cancel_layaway, layaway_lookup } from './pos-layaway.ts';
+import { quote_lookup } from './pos-quote.ts';
+import { pos_ticket_by_folio, register_pos_reprint } from './pos-reprint.ts';
+import { store_credit_lookup } from './pos-store-credit.ts';
+import { pos_return_lookup } from './pos-return.ts';
+import { products_to_replenish } from './inventory-replenishment.ts';
+import { supplier_aging } from './supplier-aging.ts';
+import { expiring_stock } from './inventory-expiry.ts';
+import { stock_valuation } from './inventory-valuation.ts';
 import { is_unique_violation, type ImperiumStore } from './store.ts';
 import { SearchEngine, search_text_from_doc } from './search-engine.ts';
 import { assert_pos_pin, verify_user_pin } from './user-pin.ts';
@@ -714,6 +726,16 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return import_location_tree(ctx);
 		case 'inventory-movement:register_transfer':
 			return register_transfer(ctx);
+		case 'inventory-movement:read_kardex':
+			return ok(
+				[
+					await product_kardex(ctx.store, String(ctx.params.producto_id ?? ''), {
+						desde: ctx.url.searchParams.get('desde') ?? undefined,
+						hasta: ctx.url.searchParams.get('hasta') ?? undefined,
+					}),
+				],
+				'Kárdex del producto',
+			);
 		case 'inventory-physical-count:import_apertura':
 			return import_apertura(ctx);
 		case 'inventory-physical-count:aplicar':
@@ -740,6 +762,10 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return reservar(ctx);
 		case 'inventory-stock-quant:read_picking_route':
 			return picking_route(ctx);
+		case 'inventory-stock-quant:read_expiring':
+			return ok([await expiring_stock(ctx.store, ctx.url.searchParams.get('dias'))], 'Caducidades próximas');
+		case 'inventory-stock-quant:read_valuation':
+			return ok([await stock_valuation(ctx.store, ctx.url.searchParams.get('ubicacion') ?? '')], 'Existencias valorizadas');
 		case 'inventory-stock-quant:validar_consistencia':
 			return stock_consistency(ctx);
 		case 'comercial-envio:enqueue':
@@ -881,6 +907,67 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return lista_de_precios_sync_offline(ctx);
 		case 'sku:sync_offline':
 			return sku_sync_offline(ctx);
+		case 'supplier-invoice:read_aging':
+			return ok([await supplier_aging(ctx.store, ctx.url.searchParams.get('corte'))], 'Antigüedad de saldos');
+		case 'products:read_replenishment':
+			return ok(
+				[await products_to_replenish(ctx.store, ctx.url.searchParams.get('proveedor') ?? '')],
+				'Productos por reabastecer',
+			);
+		case 'pos-tickets:register_reprint':
+			return ok([await register_pos_reprint(ctx.store, ctx.body, ctx.actor)], 'Reimpresión registrada');
+		case 'pos-tickets:read_store_credit':
+			return ok([await store_credit_lookup(ctx.store, ctx.url.searchParams.get('cliente'))], 'Saldo a favor');
+		case 'pos-tickets:read_ticket_by_folio':
+			return ok([await pos_ticket_by_folio(ctx.store, ctx.url.searchParams.get('folio'))], 'Ticket');
+		case 'pos-tickets:read_quote':
+			return ok(
+				[await quote_lookup(ctx.store, { id: ctx.url.searchParams.get('id'), folio: ctx.url.searchParams.get('folio') })],
+				'Cotización',
+			);
+		case 'pos-tickets:read_layaway':
+			return ok(
+				[await layaway_lookup(ctx.store, { id: ctx.url.searchParams.get('id'), folio: ctx.url.searchParams.get('folio') })],
+				'Apartado',
+			);
+		case 'pos-tickets:cancel_layaway':
+			return ok([await cancel_layaway(ctx.store, ctx.params.id)], 'Apartado cancelado');
+		case 'pos-tickets:read_client_statement':
+			return ok(
+				[await client_statement(ctx.store, ctx.url.searchParams.get('cliente') ?? '', ctx.url.searchParams.get('corte'))],
+				'Estado de cuenta del cliente',
+			);
+		case 'pos-tickets:read_clients_aging':
+			return ok(
+				[
+					await clients_aging(ctx.store, ctx.url.searchParams.get('corte'), {
+						pagina: ctx.url.searchParams.get('pagina'),
+						por_pagina: ctx.url.searchParams.get('por_pagina'),
+					}),
+				],
+				'Antigüedad de saldos de clientes',
+			);
+		case 'pos-tickets:read_return_availability':
+			return ok(
+				[
+					await pos_return_lookup(ctx.store, {
+						id: ctx.url.searchParams.get('id'),
+						folio: ctx.url.searchParams.get('folio'),
+					}),
+				],
+				'Disponible para devolución',
+			);
+		case 'pos-tickets:read_sales_by_product':
+			return ok(
+				[
+					await pos_sales_by_product(ctx.store, {
+						desde: ctx.url.searchParams.get('desde') ?? undefined,
+						hasta: ctx.url.searchParams.get('hasta') ?? undefined,
+						sesion: ctx.url.searchParams.get('sesion') ?? undefined,
+					}),
+				],
+				'Ventas por artículo',
+			);
 		case 'pos-session:get_next_consecutive':
 			return pos_next_consecutive(ctx);
 		case 'pos-session:get_last_closure_reference':

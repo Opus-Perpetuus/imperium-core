@@ -3,12 +3,28 @@
  */
 import { as_array, as_object, type ImperiumDoc } from './envelope.ts';
 import { find_increment_control } from './custom-pattern-render.ts';
+import { CREDIT_METHOD, TICKET_ABONO, prepare_credit_rules } from './pos-credit.ts';
+import { TICKET_ABONO_APARTADO, TICKET_APARTADO, prepare_layaway_rules } from './pos-layaway.ts';
+import { TICKET_COTIZACION, prepare_quote_rules } from './pos-quote.ts';
+import { STORE_CREDIT_METHOD, prepare_store_credit_sale } from './pos-store-credit.ts';
+import { non_cash_amount, payments_by_method, prepare_pos_payments } from './pos-payments.ts';
 import type { ImperiumStore } from './store.ts';
 
 const TICKET_VENTA = 'VENTA';
 const TICKET_DEVOLUCION = 'DEVOLUCION';
 const TICKET_RETIRO = 'RETIRO_MANUAL_CAJA';
-const TICKET_TYPES = new Set([TICKET_VENTA, TICKET_DEVOLUCION, TICKET_RETIRO]);
+/** Entrada de efectivo a la caja (cambio, fondo extra): suma a la caja esperada. */
+export const TICKET_ENTRADA = 'ENTRADA_EFECTIVO';
+const TICKET_TYPES = new Set([
+	TICKET_VENTA,
+	TICKET_DEVOLUCION,
+	TICKET_RETIRO,
+	TICKET_ENTRADA,
+	TICKET_ABONO,
+	TICKET_APARTADO,
+	TICKET_ABONO_APARTADO,
+	TICKET_COTIZACION,
+]);
 export const POS_REPORT_PARTIAL = 'VENTAS_PARCIAL';
 export const POS_REPORT_CLOSE = 'CIERRE_CAJA';
 const INVALID_SIGNATURES = new Set([
@@ -498,6 +514,38 @@ export async function prepare_pos_ticket_create(
 		out.ref = ref;
 		out._ref = ref;
 	}
+	if (ticket_type === TICKET_VENTA || ticket_type === TICKET_COTIZACION) {
+		Object.assign(out, await prepare_quote_rules(store, out));
+	}
+	if (ticket_type === TICKET_COTIZACION) {
+		delete out.payments;
+		delete out.payment_method;
+	}
+	if (ticket_type === TICKET_VENTA) {
+		Object.assign(out, prepare_pos_payments(out, [CREDIT_METHOD, STORE_CREDIT_METHOD]));
+		Object.assign(out, await prepare_credit_rules(store, out));
+		Object.assign(out, await prepare_store_credit_sale(store, out));
+	}
+	if (ticket_type === TICKET_ABONO) {
+		Object.assign(out, prepare_pos_payments(out));
+		Object.assign(out, await prepare_credit_rules(store, out));
+	}
+	if (ticket_type === TICKET_APARTADO || ticket_type === TICKET_ABONO_APARTADO) {
+		Object.assign(out, await prepare_layaway_rules(store, out));
+	}
+	if (ticket_type === TICKET_ENTRADA) {
+		const cash_in_amount = Number(out.cash_in_amount ?? 0);
+		const cash_in_reason = text(out.cash_in_reason);
+		if (!Number.isFinite(cash_in_amount) || cash_in_amount <= 0) {
+			throw new Error('La entrada de efectivo requiere una cantidad mayor a 0');
+		}
+		if (!cash_in_reason) {
+			throw new Error('La entrada de efectivo requiere especificar un motivo');
+		}
+		out.cash_in_amount = round_money(cash_in_amount);
+		out.cash_in_reason = cash_in_reason;
+		out.items = [];
+	}
 	if (ticket_type !== 'RETIRO_MANUAL_CAJA') {
 		out.withdrawal_amount = 0;
 		out.withdrawal_reason = '';
@@ -545,8 +593,29 @@ function resolve_withdrawal_amount(ticket: ImperiumDoc, ticket_type: string): nu
 	return round_money(Number(ticket.subtotal ?? 0));
 }
 
-function ticket_cash_effect(ticket_type: string, subtotal: number, withdrawal_amount: number): number {
+function resolve_cash_in_amount(ticket: ImperiumDoc, ticket_type: string): number {
+	if (ticket_type !== TICKET_ENTRADA) return 0;
+	const amount = Number(ticket.cash_in_amount ?? 0);
+	return Number.isFinite(amount) && amount > 0 ? round_money(amount) : 0;
+}
+
+/** Tickets que cobran: a la caja solo entra lo que no es tarjeta, transferencia o crédito. */
+const PAID_TYPES = new Set([TICKET_VENTA, TICKET_ABONO, TICKET_APARTADO, TICKET_ABONO_APARTADO]);
+
+function ticket_cash_effect(
+	ticket_type: string,
+	subtotal: number,
+	withdrawal_amount: number,
+	cash_in_amount = 0,
+	non_cash = 0,
+): number {
 	if (ticket_type === TICKET_RETIRO) return round_money(-withdrawal_amount);
+	if (ticket_type === TICKET_ENTRADA) return round_money(cash_in_amount);
+	if (ticket_type === TICKET_COTIZACION) return 0;
+	if (PAID_TYPES.has(ticket_type) && non_cash > 0) {
+		return round_money(subtotal - non_cash);
+	}
+	if (ticket_type === TICKET_DEVOLUCION && non_cash > 0) return round_money(subtotal + non_cash);
 	return round_money(subtotal);
 }
 
@@ -554,13 +623,16 @@ function ticket_display_amount(
 	ticket_type: string,
 	subtotal: number,
 	withdrawal_amount: number,
+	cash_in_amount = 0,
 ): number {
 	if (ticket_type === TICKET_RETIRO) return round_money(withdrawal_amount);
+	if (ticket_type === TICKET_ENTRADA) return round_money(cash_in_amount);
 	return round_money(subtotal);
 }
 
 function ticket_client_name(ticket: ImperiumDoc, ticket_type: string): string {
 	if (ticket_type === TICKET_RETIRO) return 'Retiro manual de caja';
+	if (ticket_type === TICKET_ENTRADA) return 'Entrada de efectivo';
 	const full = `${text(ticket.client_name)} ${text(ticket.client_lastname)}`.trim();
 	return full || 'Publico general';
 }
@@ -569,6 +641,11 @@ function summarize_pos_ticket(ticket: ImperiumDoc): ImperiumDoc {
 	const ticket_type = text(ticket.ticket_type).toUpperCase() || TICKET_VENTA;
 	const subtotal = Number(ticket.subtotal ?? 0);
 	const withdrawal_amount = resolve_withdrawal_amount(ticket, ticket_type);
+	const cash_in_amount = resolve_cash_in_amount(ticket, ticket_type);
+	const non_cash =
+		PAID_TYPES.has(ticket_type) || ticket_type === TICKET_DEVOLUCION ? non_cash_amount(ticket) : 0;
+	// Del apartado entra el anticipo, no el total.
+	const charged = ticket_type === TICKET_APARTADO ? Number(ticket.total_paid ?? 0) : subtotal;
 	return {
 		_id: String(ticket._id ?? ''),
 		ticket_sequence: text(ticket.ticket_sequence),
@@ -577,8 +654,15 @@ function summarize_pos_ticket(ticket: ImperiumDoc): ImperiumDoc {
 		withdrawal_amount,
 		withdrawal_reason: text(ticket.withdrawal_reason),
 		withdrawal_signature: normalize_signature(ticket.withdrawal_signature),
-		cash_effect: ticket_cash_effect(ticket_type, subtotal, withdrawal_amount),
-		display_amount: ticket_display_amount(ticket_type, subtotal, withdrawal_amount),
+		...(ticket_type === TICKET_ENTRADA
+			? { cash_in_amount, cash_in_reason: text(ticket.cash_in_reason) }
+			: {}),
+		...(text(ticket.payment_method)
+			? { payment_method: text(ticket.payment_method), non_cash_amount: non_cash, payments: ticket.payments }
+			: {}),
+		...(ticket_type === TICKET_APARTADO ? { layaway_status: text(ticket.layaway_status) } : {}),
+		cash_effect: ticket_cash_effect(ticket_type, charged, withdrawal_amount, cash_in_amount, non_cash),
+		display_amount: ticket_display_amount(ticket_type, charged, withdrawal_amount, cash_in_amount),
 		subtotal,
 		total_paid: Number(ticket.total_paid ?? 0),
 		createdAt: ticket_created_at(ticket).toISOString(),
@@ -621,6 +705,36 @@ function total_withdrawals_of(summaries: ImperiumDoc[]): number {
 				text(ticket.ticket_type) === TICKET_RETIRO
 					? sum + Number(ticket.withdrawal_amount ?? 0)
 					: sum,
+			0,
+		),
+	);
+}
+
+function total_cash_in_of(summaries: ImperiumDoc[]): number {
+	return round_money(
+		summaries.reduce(
+			(sum, ticket) =>
+				text(ticket.ticket_type) === TICKET_ENTRADA ? sum + Number(ticket.cash_in_amount ?? 0) : sum,
+			0,
+		),
+	);
+}
+
+function total_layaway_payments_of(tickets: ImperiumDoc[]): number {
+	return round_money(
+		tickets.reduce((sum, ticket) => {
+			const type = text(ticket.ticket_type);
+			if (type === TICKET_APARTADO) return sum + Number(ticket.display_amount ?? 0);
+			if (type === TICKET_ABONO_APARTADO) return sum + Number(ticket.subtotal ?? 0);
+			return sum;
+		}, 0),
+	);
+}
+
+function total_credit_payments_of(summaries: ImperiumDoc[]): number {
+	return round_money(
+		summaries.reduce(
+			(sum, ticket) => (text(ticket.ticket_type) === TICKET_ABONO ? sum + Number(ticket.subtotal ?? 0) : sum),
 			0,
 		),
 	);
@@ -685,6 +799,12 @@ export async function build_pos_session_report(
 		total_tickets: summaries.length,
 		total_sales: round_money(total_sales_of(summaries)),
 		total_manual_withdrawals: total_withdrawals_of(summaries),
+		total_cash_in: total_cash_in_of(summaries),
+		total_credit_payments: total_credit_payments_of(summaries),
+		total_layaway_payments: total_layaway_payments_of(summaries),
+		payments_by_method: payments_by_method(
+			summaries.filter((t) => text(t.ticket_type) === TICKET_VENTA),
+		),
 		expected_cash: expected_cash_of(opening_money, summaries),
 		cash_register_opening_money: opening_money,
 		tickets: summaries,
