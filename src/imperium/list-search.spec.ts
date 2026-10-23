@@ -60,4 +60,19 @@ describe('list_search_columns', () => {
 		);
 		expect(cols).toEqual(['name', 'description', 'search_field', 'folio', 'folio_interno']);
 	});
+	test('user no busca por ref: «ana» no debe traer a admin (#179)', () => {
+		const cols = list_search_columns(
+			'user',
+			new Set(['name', 'ref', 'search_field', 'code']),
+		);
+		expect(cols).not.toContain('ref');
+		expect(cols).toContain('name');
+		expect(cols).toContain('search_field');
+	});
+
+	test('otros recursos siguen buscando por ref', () => {
+		expect(list_search_columns('products', new Set(['name', 'ref']))).toContain(
+			'ref',
+		);
+	});
 });
