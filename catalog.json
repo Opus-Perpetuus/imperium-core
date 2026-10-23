@@ -16450,7 +16450,7 @@
       "catalog_id": "SUBJECT-tienda",
       "technical_id": "subject-tienda",
       "depends_on": [],
-      "image": "ghcr.io/opus-perpetuus/subject-tienda:0.17.3",
+      "image": "ghcr.io/opus-perpetuus/subject-tienda:0.18.0",
       "repo": "Opus-Perpetuus/imperium-subject-tienda",
       "dir": "workspace/imperium-subject-tienda",
       "modules": [
