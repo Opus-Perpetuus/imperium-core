@@ -17,6 +17,7 @@ import {
 	type ImperiumDoc,
 } from './envelope.ts';
 import { is_record_id } from './record-id.ts';
+import { GEO_LEGACY_SCHEMA, relocate_geo_tables, seed_geo_catalog, type GeoSeedResult } from './geo-catalog.ts';
 import { SearchEngine, search_text_from_doc } from './search-engine.ts';
 import {
 	ACTIVITY_CONTEXTS,
@@ -5151,6 +5152,7 @@ export class ImperiumStore {
 
 	async ensure_defaults(): Promise<void> {
 		await this.ensure_orphan_tables();
+		await this.ensure_geo_tables_location();
 		await this.ensure_catalog_columns();
 		try {
 			await this.ensure_postgres_table_tracker_table();
@@ -5602,6 +5604,38 @@ export class ImperiumStore {
 
 	has(resource: string): boolean {
 		return this.locs.has(resource);
+	}
+
+	/**
+	 * #150: Estados, Municipios y Delegaciones pasaron de Control municipal a
+	 * Configuración; si el catálogo ya los pone en otro esquema, sus tablas se mudan.
+	 */
+	async ensure_geo_tables_location(): Promise<void> {
+		if (!this.has('states')) return;
+		const to = pg_schema_name(this.loc('states').technical_id);
+		if (to === GEO_LEGACY_SCHEMA) return;
+		try {
+			const done = await relocate_geo_tables(this.sql, { to });
+			const moved = done.filter((r) => r.action !== 'none');
+			if (moved.length)
+				console.log(
+					`[geo] Tablas a ${to}: ${moved.map((r) => `${r.table} (${r.action}${r.rows ? ` ${r.rows}` : ''})`).join(', ')}`,
+				);
+		} catch (err) {
+			console.warn(`[geo] No se pudieron mudar las tablas: ${err instanceof Error ? err.message : String(err)}`);
+		}
+	}
+
+	/** #150: municipios de todo el país y colonias del SAT (idempotente). */
+	async ensure_geo_catalog(): Promise<GeoSeedResult> {
+		for (const resource of ['states', 'municipality', 'colonias']) {
+			if (!this.has(resource)) continue;
+			const table = this.loc(resource).table;
+			await this.sql
+				.unsafe(`CREATE INDEX IF NOT EXISTS ${qident(`idx_${table}_ref_geo`)} ON ${this.qt(resource)} (ref)`)
+				.catch(() => undefined);
+		}
+		return seed_geo_catalog({ sql: this.sql, has: (r) => this.has(r), qt: (r) => this.qt(r) });
 	}
 
 	/** Reemplaza el caché de apps instaladas (al arrancar). */

@@ -164,6 +164,16 @@ export function create_imperium_layer(sql: Bun.SQL) {
 				`imperium-core: arranque listo en ${Date.now() - started} ms`,
 			);
 			boot_state = 'ready';
+			// #150: municipios y colonias del SAT en segundo plano; no frena el arranque.
+			void store
+				.ensure_geo_catalog()
+				.then((r) => {
+					if (!r.skipped)
+						debug_info(
+							`[geo] Catálogo SAT: ${r.states} estados, ${r.municipalities} municipios nuevos, ${r.municipalities_matched} existentes con clave, ${r.colonias} colonias`,
+						);
+				})
+				.catch((err) => debug_error(`[geo] ${err instanceof Error ? err.message : String(err)}`));
 		})().catch((err) => {
 			ready = null;
 			boot_state = 'failed';

@@ -2464,6 +2464,157 @@
           "columns": []
         },
         {
+          "resource": "states",
+          "table": "states",
+          "name": "Estados",
+          "path": "/states",
+          "collection": "states",
+          "model_file": "components/states/states.model.ts",
+          "menu_ref": "states-menu-management-0",
+          "icon": "fa-map",
+          "columns": [
+            {
+              "name": "catalog_key",
+              "mongo": "catalog_key",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "catalog key"
+            },
+            {
+              "name": "abbreviation",
+              "mongo": "abbreviation",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "abbreviation"
+            },
+            {
+              "name": "country",
+              "mongo": "country",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "country"
+            },
+            {
+              "name": "cfdi_c_estado",
+              "mongo": "cfdi_c_estado",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "cfdi c estado"
+            },
+            {
+              "name": "cfdi_c_pais",
+              "mongo": "cfdi_c_pais",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "cfdi c pais"
+            },
+            {
+              "name": "cfdi_fecha_inicio_vigencia",
+              "mongo": "cfdi_fecha_inicio_vigencia",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "cfdi fecha inicio vigencia"
+            },
+            {
+              "name": "cfdi_fecha_fin_vigencia",
+              "mongo": "cfdi_fecha_fin_vigencia",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "cfdi fecha fin vigencia"
+            }
+          ]
+        },
+        {
+          "resource": "municipality",
+          "table": "municipality",
+          "name": "Municipios",
+          "path": "/municipality",
+          "collection": "municipality",
+          "model_file": "components/municipality/municipality.model.ts",
+          "menu_ref": "municipality-menu-management-0",
+          "icon": "fa-city",
+          "columns": [
+            {
+              "name": "catalog_key",
+              "mongo": "catalog_key",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "clave SAT (c_Municipio)"
+            },
+            {
+              "name": "state_key",
+              "mongo": "state_key",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "estado (c_Estado)"
+            }
+          ]
+        },
+        {
+          "resource": "boroughs",
+          "table": "boroughs",
+          "name": "Delegaciones",
+          "path": "/boroughs",
+          "collection": "boroughs",
+          "model_file": "components/boroughs/boroughs.model.ts",
+          "menu_ref": "boroughs-menu-management-0",
+          "icon": "fa-landmark",
+          "columns": []
+        },
+        {
+          "resource": "colonias",
+          "table": "colonias",
+          "name": "Colonias",
+          "path": "/colonias",
+          "collection": "colonias",
+          "model_file": "components/colonias/colonias.model.ts",
+          "menu_ref": "colonias-menu-management-0",
+          "icon": "fa-map-marker-alt",
+          "columns": [
+            {
+              "name": "catalog_key",
+              "mongo": "catalog_key",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "clave SAT (c_Colonia)"
+            },
+            {
+              "name": "postal_code",
+              "mongo": "postal_code",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "código postal"
+            },
+            {
+              "name": "state_key",
+              "mongo": "state_key",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "estado (c_Estado)"
+            },
+            {
+              "name": "municipality_key",
+              "mongo": "municipality_key",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "municipio (c_Municipio)"
+            }
+          ]
+        },
+        {
           "resource": "record-rules",
           "table": "record_rules",
           "name": "Reglas de registro",
@@ -7985,96 +8136,6 @@
               "crud": "string",
               "component": "input-text",
               "label": "department"
-            }
-          ]
-        },
-        {
-          "resource": "municipality",
-          "table": "municipality",
-          "name": "Municipios",
-          "path": "/municipality",
-          "collection": "municipality",
-          "model_file": "components/municipality/municipality.model.ts",
-          "menu_ref": "municipality-menu-management-0",
-          "icon": "fa-city",
-          "columns": []
-        },
-        {
-          "resource": "boroughs",
-          "table": "boroughs",
-          "name": "Delegaciones",
-          "path": "/boroughs",
-          "collection": "boroughs",
-          "model_file": "components/boroughs/boroughs.model.ts",
-          "menu_ref": "boroughs-menu-management-0",
-          "icon": "fa-landmark",
-          "columns": []
-        },
-        {
-          "resource": "states",
-          "table": "states",
-          "name": "Estados",
-          "path": "/states",
-          "collection": "states",
-          "model_file": "components/states/states.model.ts",
-          "menu_ref": "states-menu-management-0",
-          "icon": "fa-map",
-          "columns": [
-            {
-              "name": "catalog_key",
-              "mongo": "catalog_key",
-              "pg": "text",
-              "crud": "string",
-              "component": "input-text",
-              "label": "catalog key"
-            },
-            {
-              "name": "abbreviation",
-              "mongo": "abbreviation",
-              "pg": "text",
-              "crud": "string",
-              "component": "input-text",
-              "label": "abbreviation"
-            },
-            {
-              "name": "country",
-              "mongo": "country",
-              "pg": "text",
-              "crud": "string",
-              "component": "input-text",
-              "label": "country"
-            },
-            {
-              "name": "cfdi_c_estado",
-              "mongo": "cfdi_c_estado",
-              "pg": "text",
-              "crud": "string",
-              "component": "input-text",
-              "label": "cfdi c estado"
-            },
-            {
-              "name": "cfdi_c_pais",
-              "mongo": "cfdi_c_pais",
-              "pg": "text",
-              "crud": "string",
-              "component": "input-text",
-              "label": "cfdi c pais"
-            },
-            {
-              "name": "cfdi_fecha_inicio_vigencia",
-              "mongo": "cfdi_fecha_inicio_vigencia",
-              "pg": "text",
-              "crud": "string",
-              "component": "input-text",
-              "label": "cfdi fecha inicio vigencia"
-            },
-            {
-              "name": "cfdi_fecha_fin_vigencia",
-              "mongo": "cfdi_fecha_fin_vigencia",
-              "pg": "text",
-              "crud": "string",
-              "component": "input-text",
-              "label": "cfdi fecha fin vigencia"
             }
           ]
         },
