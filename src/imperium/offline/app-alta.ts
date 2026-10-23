@@ -21,9 +21,6 @@ export const APP_ALTA_RESOURCE: Record<string, string> = {
 	vehiculos: "vehicle",
 	ventas: "pedidos",
 	herramientas: "herr-tablas",
-	predial: "predio",
-	ingresos: "ingreso",
-	tramites: "tramite",
 };
 
 export const APP_CREATE_FORMS: Record<string, Record<string, unknown>> = {
@@ -141,19 +138,6 @@ export const APP_CREATE_FORMS: Record<string, Record<string, unknown>> = {
 		_id: "tabla-rutas",
 		name: "Tabla de rutas",
 	},
-	predial: {
-		_id: "predio-22",
-		name: "Predio 22",
-	},
-	ingresos: {
-		_id: "ingreso-40",
-		name: "Ingreso en efectivo de 40",
-		amount: 40,
-	},
-	tramites: {
-		_id: "solicitud-5",
-		name: "Solicitud de constancia",
-	},
 };
 
 export const APP_EDIT_PATCH: Record<string, Record<string, unknown>> = {
@@ -172,8 +156,6 @@ export const APP_EDIT_PATCH: Record<string, Record<string, unknown>> = {
 	vehiculos: { placas: "XYZ-987-E" },
 	ventas: { name: "Pedido 18 surtido" },
 	herramientas: { name: "Tabla de rutas del día" },
-	predial: { name: "Predio 22 actualizado" },
-	tramites: { name: "Solicitud de constancia recibida" },
 };
 
 export function app_alta_resource(slug: string): string {

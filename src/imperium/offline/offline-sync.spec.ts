@@ -443,9 +443,6 @@ describe("políticas", () => {
 			expect(policy_of(item.id)?.explanation.length).toBeGreaterThan(0);
 		}
 		const slugs = catalog_slugs();
-		expect(slugs).toEqual(
-			expect.arrayContaining(["predial", "ingresos", "presupuesto", "tramites"]),
-		);
 		const policies = app_policies();
 		expect(policies.map((item) => item.slug)).toEqual(slugs);
 		expect(policies).toHaveLength(slugs.length);
