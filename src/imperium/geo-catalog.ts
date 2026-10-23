@@ -183,14 +183,14 @@ export async function seed_geo_catalog(
 	if (have_m >= data.municipios.length && have_c >= data.colonias.length && have_s >= data.states.length)
 		return { ...out, skipped: 'completo' };
 
-	// Estados: solo los que falten por clave SAT.
-	const known_states = new Set(
-		(await sql.unsafe(`SELECT upper(cfdi_c_estado) AS k FROM ${qt_s} WHERE coalesce(cfdi_c_estado,'') <> ''`)).map(
-			(r) => String(r.k),
-		),
-	);
+	// Estados: solo los que falten por clave SAT y por nombre. La semilla vieja
+	// trae Ciudad de México con «DIF» y el SAT la da como «CMX»: por clave sola
+	// salía duplicada (PROFESA, #150).
+	const existing_states = await sql.unsafe(`SELECT upper(coalesce(cfdi_c_estado,'')) AS k, name FROM ${qt_s}`);
+	const known_states = new Set(existing_states.map((r) => String(r.k)).filter(Boolean));
+	const known_state_names = new Set(existing_states.map((r) => geo_norm(String(r.name ?? ''))).filter(Boolean));
 	const state_rows = data.states
-		.filter(([k]) => !known_states.has(k))
+		.filter(([k, n]) => !known_states.has(k) && !known_state_names.has(geo_norm(n)))
 		.map(([k, n]) => ({
 			id: new_id(),
 			name: n,

@@ -64,6 +64,7 @@ const fake: GeoData = {
 	states: [
 		['JAL', 'Jalisco'],
 		['COL', 'Colima'],
+		['CMX', 'Ciudad de México'],
 	],
 	municipios: [
 		['JAL', '001', 'Acatic'],
@@ -94,7 +95,7 @@ describe.skipIf(!sql)('catálogo geográfico (Postgres)', () => {
 		await db.unsafe(`CREATE TABLE ${LEGACY}.municipality ${generic()}`);
 		await db.unsafe(`CREATE TABLE ${LEGACY}.boroughs ${generic()}`);
 		await db.unsafe(
-			`INSERT INTO ${LEGACY}.states (id, name, ref, cfdi_c_estado) VALUES ('s1', 'Jalisco', 'jalisco', 'JAL')`,
+			`INSERT INTO ${LEGACY}.states (id, name, ref, cfdi_c_estado) VALUES ('s1', 'Jalisco', 'jalisco', 'JAL'), ('s2', 'Ciudad de México', 'ciudad_de_mexico', 'DIF')`,
 		);
 		await db.unsafe(`INSERT INTO ${LEGACY}.municipality (id, name, ref) VALUES
 			('m1', 'Acatic', 'municipality_jal_1'), ('m2', 'Acatlan de Juarez', 'municipality_jal_2')`);
@@ -146,6 +147,10 @@ describe.skipIf(!sql)('catálogo geográfico (Postgres)', () => {
 			municipality_key: '124',
 			description: 'CP 45430 · Zapotlanejo, Jalisco',
 		});
+
+		// CDMX ya estaba con «DIF»: no se duplica con la «CMX» del SAT.
+		const cdmx = await db.unsafe(`SELECT id FROM ${TARGET}.states WHERE name = 'Ciudad de México'`);
+		expect(cdmx.map((r: { id: string }) => r.id)).toEqual(['s2']);
 
 		const again = await seed_geo_catalog(store, { data: fake, batch: 2, env: {} });
 		expect(again.skipped).toBe('completo');
