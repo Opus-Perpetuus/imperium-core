@@ -28,6 +28,7 @@ export type DbAdminCapabilities = {
 };
 
 let cached: DbAdminCapabilities | null = null;
+let in_flight: Promise<DbAdminCapabilities> | null = null;
 
 /**
  * Crea (si faltan) los objetos del gestor. Idempotente.
@@ -40,7 +41,37 @@ export async function ensure_db_admin_objects(
 	sql: Bun.SQL,
 ): Promise<DbAdminCapabilities> {
 	if (cached) return cached;
+	// La pantalla del gestor pide varias rutas a la vez al abrir: sin compartir
+	// la preparación en curso, dos `CREATE SCHEMA IF NOT EXISTS` simultáneos
+	// chocan en `pg_namespace_nspname_index` y una de ellas devolvía 500.
+	if (!in_flight) {
+		in_flight = prepare_with_retry(sql).finally(() => {
+			in_flight = null;
+		});
+	}
+	return in_flight;
+}
 
+/** Otro proceso puede estar creando lo mismo: un choque de unicidad se reintenta una vez. */
+async function prepare_with_retry(sql: Bun.SQL): Promise<DbAdminCapabilities> {
+	try {
+		return await prepare_db_admin_objects(sql);
+	} catch (err) {
+		if (!is_unique_violation(err)) throw err;
+		return prepare_db_admin_objects(sql);
+	}
+}
+
+function is_unique_violation(err: unknown): boolean {
+	const e = err as { code?: unknown; errno?: unknown; message?: unknown } | null;
+	return (
+		e?.code === '23505' ||
+		e?.errno === '23505' ||
+		/duplicate key value violates unique constraint/i.test(String(e?.message ?? ''))
+	);
+}
+
+async function prepare_db_admin_objects(sql: Bun.SQL): Promise<DbAdminCapabilities> {
 	await sql.unsafe(`CREATE SCHEMA IF NOT EXISTS ${DB_ADMIN_SCHEMA}`);
 	await sql.unsafe(`
 		CREATE TABLE IF NOT EXISTS ${DB_ADMIN_SCHEMA}.audit_log (
@@ -142,6 +173,7 @@ async function grant_inherited(
 /** Olvida lo memorizado (las pruebas montan varias bases en un proceso). */
 export function reset_db_admin_capabilities(): void {
 	cached = null;
+	in_flight = null;
 }
 
 /**

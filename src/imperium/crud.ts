@@ -160,6 +160,7 @@ import {
 } from './pattern-parts-flow.ts';
 import { assign_document_increments } from './custom-pattern-render.ts';
 import { prepare_increment_create } from './increment-normalize.ts';
+import { prepare_api_key_create, prepare_api_key_update } from './api-keys-flow.ts';
 import { build_access } from './auth.ts';
 import { is_chat_private_resource, is_chat_row, without_chat_rows } from './chat-access.ts';
 import { can_manage_user_groups, is_seed_admin } from './group-access.ts';
@@ -848,6 +849,9 @@ export async function handle_crud(
 		if (resource === 'auto-increment-control') {
 			incoming = await prepare_increment_create(store, incoming);
 		}
+		if (resource === 'api-keys') {
+			incoming = await prepare_api_key_create(store, incoming);
+		}
 		let user_pin_notice: UserPinWriteNotice | undefined;
 		if (resource === 'user-pin') {
 			const prepared = await prepare_user_pin_write(store, incoming, null);
@@ -1006,6 +1010,9 @@ export async function handle_crud(
 			}),
 			false,
 		);
+		if (resource === 'api-keys') {
+			b = prepare_api_key_update(b, previous);
+		}
 		if (resource === 'pedidos') {
 			b = await prepare_pedido_update(store, b, actor, previous);
 		}
