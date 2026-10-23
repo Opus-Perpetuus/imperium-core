@@ -4,7 +4,7 @@ import { handle_action } from './actions.ts';
 import { build_access } from './auth.ts';
 import type { ImperiumDoc } from './envelope.ts';
 import { ImperiumStore, load_catalog_path } from './store.ts';
-import { SubjectNotInstalledError } from './subjects-admin.ts';
+import { assert_subject_resource_access, SubjectNotInstalledError } from './subjects-admin.ts';
 
 const BASE = ['subject-configuracion', 'subject-configuraciones-de-vista', 'subject-planeacion'];
 
@@ -102,6 +102,50 @@ describe('is_resource_installed', () => {
 			resource: 'cfdi-document',
 		});
 		expect(err.message).toContain('no está instalada');
+	});
+});
+
+describe('Por surtir lee los pedidos de ventas (#172)', () => {
+	function recording_sql(installed: string[]) {
+		const queries: string[] = [];
+		const sql = {
+			unsafe: async (query: string) => {
+				queries.push(query);
+				if (query.includes('FROM public.subject_installs')) {
+					return installed.map((technical_id) => ({ technical_id, installed: true, status: 'installed' }));
+				}
+				return [];
+			},
+		};
+		return { sql: sql as unknown as Bun.SQL, queries };
+	}
+
+	test('pedidos-surtir y pedidos resuelven a subject_ventas.pedidos', async () => {
+		const { sql, queries } = recording_sql([]);
+		const store = new ImperiumStore(sql, load_catalog_path());
+		store.set_installed_subjects([...BASE, 'subject-almacen', 'subject-ventas']);
+		expect(store.qt('pedidos-surtir')).toBe('"subject_ventas"."pedidos"');
+		expect(store.qt('pedidos')).toBe('"subject_ventas"."pedidos"');
+		await store.find_many('pedidos-surtir', { take: 5, skip_total: true, populate: false });
+		expect(queries.some((q) => q.includes('"subject_ventas"."pedidos"'))).toBe(true);
+		expect(queries.some((q) => q.includes('subject_almacen'))).toBe(false);
+	});
+
+	test('la app dueña de Por surtir sigue siendo almacén', () => {
+		const store = store_with('almacen', 'ventas');
+		expect(store.loc('pedidos-surtir').technical_id).toBe('subject-almacen');
+		expect(store.loc('pedidos-surtir').resource).toBe('pedidos-surtir');
+		expect(store_with('ventas').is_resource_installed('pedidos-surtir')).toBe(false);
+	});
+
+	test('sin ventas instalada, Por surtir pide instalar ventas', async () => {
+		const { sql } = recording_sql(['subject-almacen']);
+		const store = new ImperiumStore(sql, load_catalog_path());
+		const err = await assert_subject_resource_access(store, sql, 'pedidos-surtir').catch((e) => e);
+		expect(err).toBeInstanceOf(SubjectNotInstalledError);
+		expect(err.details).toMatchObject({ technical_id: 'subject-ventas' });
+		const both = recording_sql(['subject-almacen', 'subject-ventas']);
+		await assert_subject_resource_access(new ImperiumStore(both.sql, load_catalog_path()), both.sql, 'pedidos-surtir');
 	});
 });
 

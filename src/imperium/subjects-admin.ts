@@ -68,7 +68,7 @@ import {
 	remember_scanned_subjects,
 	type CatalogEntry,
 } from './subject-catalog.ts';
-import { PREFER_OWNER, type ImperiumStore, type SubjectInfo } from './store.ts';
+import { DATA_ALIASES, PREFER_OWNER, type ImperiumStore, type SubjectInfo } from './store.ts';
 
 type JobCtx = {
 	store: ImperiumStore;
@@ -1442,7 +1442,7 @@ export async function assert_subject_resource_access(
 	sql: Bun.SQL,
 	resource: string,
 ): Promise<void> {
-	const loc = store.locs.get(resource);
+	const loc = store.locs.get(DATA_ALIASES[resource] ?? resource);
 	if (!loc) return;
 	if (is_base_subject_slug(loc.slug)) return;
 	if (await technical_id_is_installed(store, sql, loc.technical_id)) return;

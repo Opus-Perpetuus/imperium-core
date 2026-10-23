@@ -131,6 +131,10 @@ export const RESOURCE_ALIASES: Record<string, string> = {
 	__time_sheets: 'time-sheets',
 };
 
+export const DATA_ALIASES: Record<string, string> = {
+	'pedidos-surtir': 'pedidos',
+};
+
 function round_qty(value: number): number {
 	return Math.round((value + Number.EPSILON) * 10000) / 10000;
 }
@@ -3365,6 +3369,7 @@ export class ImperiumStore {
 			return;
 		}
 		for (const loc of this.locs.values()) {
+			if (DATA_ALIASES[loc.resource]) continue;
 			const idx = `trgm_${loc.table}_search`.slice(0, 63);
 			try {
 				await this.sql.unsafe(
@@ -3379,7 +3384,7 @@ export class ImperiumStore {
 	async ensure_unique_indexes(): Promise<void> {
 		const seen = new Set<string>();
 		for (const loc of this.locs.values()) {
-			if (seen.has(loc.resource)) continue;
+			if (seen.has(loc.resource) || DATA_ALIASES[loc.resource]) continue;
 			seen.add(loc.resource);
 			const sqls = [
 				...unique_index_sqls({
@@ -5783,7 +5788,7 @@ export class ImperiumStore {
 	}
 
 	qt(resource: string): string {
-		const loc = this.loc(resource);
+		const loc = this.loc(DATA_ALIASES[resource] ?? resource);
 		return `${qident(pg_schema_name(loc.technical_id))}.${qident(loc.table)}`;
 	}
 
