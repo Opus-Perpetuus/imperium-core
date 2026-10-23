@@ -1320,6 +1320,12 @@
     "action": "cancel_open_session"
   },
   {
+    "resource": "pos-session",
+    "method": "post",
+    "path": "/bulk-close",
+    "action": "bulk_close_sessions"
+  },
+  {
     "resource": "purchase-order",
     "method": "post",
     "path": "/:id/approve",

@@ -45,7 +45,7 @@ function ref_id(value: unknown): string {
 	return String(value).trim();
 }
 
-function round_money(value: number): number {
+export function round_money(value: number): number {
 	return Number((Number(value) || 0).toFixed(2));
 }
 
@@ -105,7 +105,7 @@ function usage_entry(params: {
 	};
 }
 
-function release_usage_history(session: ImperiumDoc, reason: string): ImperiumDoc[] {
+export function release_usage_history(session: ImperiumDoc, reason: string): ImperiumDoc[] {
 	const history = as_array(session.usage_history).map((raw) => ({ ...as_object(raw) }));
 	const last = history[history.length - 1];
 	if (last && !last.ended_at) {
@@ -669,7 +669,7 @@ function summarize_pos_ticket(ticket: ImperiumDoc): ImperiumDoc {
 	};
 }
 
-async function ticket_summaries_for_session(
+export async function ticket_summaries_for_session(
 	store: ImperiumStore,
 	session_id: string,
 	generated_at: Date,
@@ -690,7 +690,7 @@ async function ticket_summaries_for_session(
 	);
 }
 
-function total_sales_of(summaries: ImperiumDoc[]): number {
+export function total_sales_of(summaries: ImperiumDoc[]): number {
 	return summaries.reduce(
 		(sum, ticket) =>
 			text(ticket.ticket_type) === TICKET_VENTA ? sum + Number(ticket.subtotal ?? 0) : sum,
@@ -740,12 +740,12 @@ function total_credit_payments_of(summaries: ImperiumDoc[]): number {
 	);
 }
 
-function expected_cash_of(opening_money: number, summaries: ImperiumDoc[]): number {
+export function expected_cash_of(opening_money: number, summaries: ImperiumDoc[]): number {
 	const movements = summaries.reduce((sum, ticket) => sum + Number(ticket.cash_effect ?? 0), 0);
 	return round_money(opening_money + movements);
 }
 
-function session_employee_name(session: ImperiumDoc): string {
+export function session_employee_name(session: ImperiumDoc): string {
 	const cashier_name = text(session.cashier_name);
 	if (cashier_name) return cashier_name;
 	const cashier = as_object(session.cashier);

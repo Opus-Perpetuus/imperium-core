@@ -1138,6 +1138,7 @@ const SESSION_SCOPED_EXTRAS = new Set([
 	'pos-session:generate_close_report',
 	'pos-session:conclude_close_report',
 	'pos-session:cancel_open_session',
+	'pos-session:bulk_close_sessions',
 	'ticketing-system-turn:take_next_turn',
 	'ticketing-system-turn:notify_turn',
 	'ticketing-system-turn:end_attending_turn',

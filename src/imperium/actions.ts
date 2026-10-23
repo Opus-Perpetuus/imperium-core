@@ -365,6 +365,7 @@ import {
 	POS_REPORT_PARTIAL,
 	preview_pos_consecutive,
 } from './pos-session-flow.ts';
+import { bulk_close_pos_sessions } from './pos-session-bulk-close.ts';
 import {
 	create_error_ticket,
 	create_interinstance_ticket,
@@ -982,6 +983,8 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return pos_conclude(ctx);
 		case 'pos-session:cancel_open_session':
 			return pos_cancel(ctx);
+		case 'pos-session:bulk_close_sessions':
+			return bulk_close_pos_sessions(ctx.store, ctx.actor, ctx.body ?? {});
 		case 'purchase-order:approve':
 			return po_approve(ctx);
 		case 'purchase-order:register_receipt':
