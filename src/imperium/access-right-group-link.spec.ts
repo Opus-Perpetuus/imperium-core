@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { link_access_right_to_group } from './access-right-group-link.ts';
+import {
+	access_right_group_for_form,
+	link_access_right_to_group,
+} from './access-right-group-link.ts';
 import type { ImperiumDoc } from './envelope.ts';
 import { ImperiumStore, load_catalog_path } from './store.ts';
 
@@ -46,5 +49,27 @@ describe('permiso con grupo queda en la lista del grupo (#157)', () => {
 		expect(await link_access_right_to_group(store, { _id: 'ar-x', group_id: '' })).toBeNull();
 		expect(await link_access_right_to_group(store, { _id: 'ar-x', group_id: 'nope' })).toBeNull();
 		expect(groups[0]?.access_rights_ids).toEqual([]);
+	});
+
+	test('acepta group_id poblado y una lista guardada como JSON', async () => {
+		const { store, groups } = store_with([
+			{ _id: 'g-ventas', name: 'Ventas', access_rights_ids: '["ar-1"]' },
+		]);
+		await link_access_right_to_group(store, {
+			_id: 'ar-pr',
+			group_id: { _id: 'g-ventas', name: 'Ventas' },
+		});
+		expect(groups[0]?.access_rights_ids).toEqual(['ar-1', 'ar-pr']);
+	});
+
+	test('el formulario recibe el _id aunque el permiso guarde el _ref del grupo', async () => {
+		const { store } = store_with([
+			{ _id: 'g-1', _ref: 'user-group-ventas', name: 'Ventas' },
+		]);
+		const shown = await access_right_group_for_form(store, {
+			_id: 'ar-pr',
+			group_id: 'user-group-ventas',
+		});
+		expect(shown.group_id).toBe('g-1');
 	});
 });

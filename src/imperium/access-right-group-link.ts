@@ -28,6 +28,23 @@ async function find_group(store: ImperiumStore, gid: string): Promise<ImperiumDo
 	return (await store.find_where('user-group', { _ref: gid })) ?? null;
 }
 
+/**
+ * El datalist del permiso compara `group_id` con el `_id` del grupo.
+ * Los seeds guardan el `_ref` (o a veces el grupo poblado).
+ */
+export async function access_right_group_for_form(
+	store: ImperiumStore,
+	right: ImperiumDoc,
+): Promise<ImperiumDoc> {
+	if (!store.has('user-group')) return right;
+	const gid = ref_text(right.group_id);
+	if (!gid) return right;
+	const group = await find_group(store, gid);
+	const id = ref_text(group?._id);
+	if (!id || right.group_id === id) return right;
+	return { ...right, group_id: id };
+}
+
 /** Devuelve el grupo actualizado, o null si no hubo que tocar nada. */
 export async function link_access_right_to_group(
 	store: ImperiumStore,

@@ -47,7 +47,10 @@ import {
 	prepare_delivery_route_write,
 } from './delivery-route-flow.ts';
 import { list_instance_type, project_list_docs } from './list-projection.ts';
-import { link_access_right_to_group } from './access-right-group-link.ts';
+import {
+	access_right_group_for_form,
+	link_access_right_to_group,
+} from './access-right-group-link.ts';
 import {
 	prepare_purchase_order_create,
 	prepare_purchase_order_update,
@@ -697,9 +700,12 @@ export async function handle_crud(
 			await store.populate_docs(resource, [doc]),
 			'detail',
 		);
-		const detail = is_project_resource(resource)
+		let detail = is_project_resource(resource)
 			? await hydrate_project(store, populated)
 			: populated;
+		if (resource === 'access-rights' && detail) {
+			detail = await access_right_group_for_form(store, detail);
+		}
 		return json(resource, await with_module_info(store, resource, {
 			...ok([detail], detail_message(resource)),
 			schema_validation: await schema_validation_for(store, resource),
@@ -915,12 +921,15 @@ export async function handle_crud(
 		if (is_registro_asistencia_resource(resource)) {
 			result = await snapshot_attendance_entries(store, created);
 		}
-		const [populated] = await finalize_rows(
+		let [populated] = await finalize_rows(
 			store,
 			resource,
 			await store.populate_docs(resource, [result]),
 			'detail',
 		);
+		if (resource === 'access-rights' && populated) {
+			populated = await access_right_group_for_form(store, populated);
+		}
 		const message =
 			resource === 'pos-session'
 				? 'Sesión creada'
@@ -1136,12 +1145,15 @@ export async function handle_crud(
 		if (is_project_resource(resource)) {
 			shown = await hydrate_project(store, updated);
 		}
-		const [populated] = await finalize_rows(
+		let [populated] = await finalize_rows(
 			store,
 			resource,
 			await store.populate_docs(resource, [shown]),
 			'detail',
 		);
+		if (resource === 'access-rights' && populated) {
+			populated = await access_right_group_for_form(store, populated);
+		}
 		const update_message =
 			resource === 'pedidos'
 				? 'Pedido actualizado'
@@ -1331,12 +1343,15 @@ export async function handle_crud(
 		if (is_project_resource(resource)) {
 			shown = await hydrate_project(store, updated);
 		}
-		const [decorated] = await finalize_rows(
+		let [decorated] = await finalize_rows(
 			store,
 			resource,
 			await store.populate_docs(resource, [shown]),
 			'detail',
 		);
+		if (resource === 'access-rights' && decorated) {
+			decorated = await access_right_group_for_form(store, decorated);
+		}
 		return json(
 			resource,
 			await with_module_info(
