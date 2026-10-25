@@ -12025,6 +12025,14 @@
               "label": "boroughs"
             },
             {
+              "name": "colonia",
+              "mongo": "colonia",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "colonia"
+            },
+            {
               "name": "street",
               "mongo": "street",
               "pg": "text",
