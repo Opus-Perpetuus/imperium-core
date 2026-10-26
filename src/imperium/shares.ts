@@ -80,6 +80,92 @@ export type Share = {
 	access_count: number;
 };
 
+
+export type ShareVisit = {
+	id: string;
+	share_id: string;
+	visited_at: number;
+	referrer: string;
+	user_agent: string;
+	browser: string;
+	browser_version: string;
+	os: string;
+	os_version: string;
+	device: 'mobile' | 'tablet' | 'desktop' | 'bot' | 'unknown';
+	language: string;
+	ip: string;
+};
+
+/** Desglosa el User-Agent lo más que se pueda sin librerías. */
+export function parse_user_agent(ua_raw: string): {
+	browser: string;
+	browser_version: string;
+	os: string;
+	os_version: string;
+	device: ShareVisit['device'];
+} {
+	const ua = String(ua_raw ?? '').trim();
+	if (!ua) {
+		return { browser: '', browser_version: '', os: '', os_version: '', device: 'unknown' };
+	}
+	let device: ShareVisit['device'] = 'desktop';
+	if (/bot|crawl|spider|slurp|facebookexternalhit|preview/i.test(ua)) device = 'bot';
+	else if (/ipad|tablet|kindle|playbook|silk|(android(?!.*mobile))/i.test(ua)) device = 'tablet';
+	else if (/mobi|iphone|ipod|android.*mobile|windows phone|opera mini|iemobile/i.test(ua)) {
+		device = 'mobile';
+	}
+
+	let os = 'unknown';
+	let os_version = '';
+	if (/Windows NT/i.test(ua)) {
+		os = 'Windows';
+		os_version = (ua.match(/Windows NT ([\d.]+)/i)?.[1] ?? '').trim();
+	} else if (/Android/i.test(ua)) {
+		os = 'Android';
+		os_version = (ua.match(/Android ([\d.]+)/i)?.[1] ?? '').trim();
+	} else if (/iPhone|iPad|iPod|CPU (?:iPhone )?OS/i.test(ua)) {
+		os = 'iOS';
+		os_version = (ua.match(/OS ([\d_]+)/i)?.[1] ?? '').replace(/_/g, '.');
+	} else if (/Mac OS X/i.test(ua)) {
+		os = 'macOS';
+		os_version = (ua.match(/Mac OS X ([\d_]+)/i)?.[1] ?? '').replace(/_/g, '.');
+	} else if (/CrOS/i.test(ua)) {
+		os = 'Chrome OS';
+		os_version = (ua.match(/CrOS [\w]+ ([\d.]+)/i)?.[1] ?? '').trim();
+	} else if (/Linux/i.test(ua)) {
+		os = 'Linux';
+	}
+
+	let browser = 'unknown';
+	let browser_version = '';
+	const browsers: Array<[RegExp, string]> = [
+		[/Edg\/([\d.]+)/i, 'Edge'],
+		[/OPR\/([\d.]+)/i, 'Opera'],
+		[/SamsungBrowser\/([\d.]+)/i, 'Samsung Internet'],
+		[/Firefox\/([\d.]+)/i, 'Firefox'],
+		[/CriOS\/([\d.]+)/i, 'Chrome'],
+		[/Chrome\/([\d.]+)/i, 'Chrome'],
+		[/Version\/([\d.]+).*Safari/i, 'Safari'],
+		[/MSIE ([\d.]+)/i, 'Internet Explorer'],
+		[/Trident\/.*rv:([\d.]+)/i, 'Internet Explorer'],
+	];
+	for (const [re, name] of browsers) {
+		const m = ua.match(re);
+		if (m) {
+			browser = name;
+			browser_version = m[1] ?? '';
+			break;
+		}
+	}
+	return { browser, browser_version, os, os_version, device };
+}
+
+export function client_ip(req: Request): string {
+	const forwarded = (req.headers.get('x-forwarded-for') ?? '').split(',')[0]?.trim() ?? '';
+	if (forwarded) return forwarded.slice(0, 128);
+	return (req.headers.get('x-real-ip') ?? '').trim().slice(0, 128);
+}
+
 export type ShareBlockKind = 'app' | 'recurso' | 'ruta';
 export type ShareBlock = { kind: ShareBlockKind; key: string; label: string };
 
@@ -330,6 +416,25 @@ function ensure_share_tables(sql: Bun.SQL): Promise<void> {
 		await sql.unsafe(
 			`CREATE INDEX IF NOT EXISTS imperium_shares_owner ON public.imperium_shares (owner_id, created_at DESC)`,
 		);
+
+		await sql.unsafe(`CREATE TABLE IF NOT EXISTS public.imperium_share_visits (
+			id TEXT PRIMARY KEY,
+			share_id TEXT NOT NULL REFERENCES public.imperium_shares(id) ON DELETE CASCADE,
+			visited_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			referrer TEXT NOT NULL DEFAULT '',
+			user_agent TEXT NOT NULL DEFAULT '',
+			browser TEXT NOT NULL DEFAULT '',
+			browser_version TEXT NOT NULL DEFAULT '',
+			os TEXT NOT NULL DEFAULT '',
+			os_version TEXT NOT NULL DEFAULT '',
+			device TEXT NOT NULL DEFAULT 'unknown',
+			language TEXT NOT NULL DEFAULT '',
+			ip TEXT NOT NULL DEFAULT ''
+		)`);
+		await sql.unsafe(
+			`CREATE INDEX IF NOT EXISTS imperium_share_visits_share ON public.imperium_share_visits (share_id, visited_at DESC)`,
+		);
+
 		await sql.unsafe(`CREATE TABLE IF NOT EXISTS public.imperium_share_blocks (
 			kind TEXT NOT NULL,
 			key TEXT NOT NULL,
@@ -602,6 +707,7 @@ export type PublicShareDeps = ShareGateDeps & {
 	access_of(owner: ImperiumDoc): Promise<AccessRights>;
 	global_hidden(): Promise<string[]>;
 	count_access(id: string): Promise<void>;
+	record_visit(id: string, req: Request): Promise<void>;
 };
 
 export function share_deps(store: ImperiumStore, sql: Bun.SQL): PublicShareDeps {
@@ -624,6 +730,38 @@ export function share_deps(store: ImperiumStore, sql: Bun.SQL): PublicShareDeps 
 				`UPDATE public.imperium_shares SET access_count = access_count + 1, last_access_at = now() WHERE id = $1`,
 				[id],
 			);
+		},
+		async record_visit(id, req) {
+			const ua = (req.headers.get('user-agent') ?? '').slice(0, 1000);
+			const parsed = parse_user_agent(ua);
+			const referrer = (req.headers.get('referer') ?? req.headers.get('referrer') ?? '').slice(0, 2000);
+			const language = (req.headers.get('accept-language') ?? '').slice(0, 200);
+			const ip = client_ip(req);
+			const visit_id = randomBytes(16).toString('base64url');
+			await sql.begin(async (tx) => {
+				await tx.unsafe(
+					`UPDATE public.imperium_shares SET access_count = access_count + 1, last_access_at = now() WHERE id = $1`,
+					[id],
+				);
+				await tx.unsafe(
+					`INSERT INTO public.imperium_share_visits
+					(id, share_id, referrer, user_agent, browser, browser_version, os, os_version, device, language, ip)
+					VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+					[
+						visit_id,
+						id,
+						referrer,
+						ua,
+						parsed.browser,
+						parsed.browser_version,
+						parsed.os,
+						parsed.os_version,
+						parsed.device,
+						language,
+						ip,
+					],
+				);
+			});
 		},
 	};
 }
@@ -651,7 +789,10 @@ export async function handle_public_share(
 	if (block) return blocked_response();
 	const owner = await deps.load_owner(active.owner_id);
 	if (!owner) return NOT_FOUND();
-	if (!is_owner && active.state === 'activo') await deps.count_access(active.id);
+	if (!is_owner && active.state === 'activo') {
+		if (deps.record_visit) await deps.record_visit(active.id, req);
+		else await deps.count_access(active.id);
+	}
 	const { dueno_id: _dueno_id, llamadas: _llamadas, ...visible } = share_view(active);
 	return Response.json({
 		data: {
@@ -709,6 +850,7 @@ const BLOCK_KINDS = new Set<ShareBlockKind>(['app', 'recurso', 'ruta']);
  * - `GET /compartir[?ruta=][&todos=1]`, `POST /compartir`,
  *   `PATCH /compartir/:id`, `DELETE /compartir/:id`: los enlaces.
  * - `GET|PUT /compartir/bloqueos`: lo que nunca se comparte (admin).
+ * - `GET /compartir/:id/visitas`: visitas del enlace (dueño o admin).
  */
 export async function handle_share_api(
 	store: ImperiumStore,
@@ -854,6 +996,47 @@ export async function handle_share_api(
 		);
 		const share = await load_share(sql, id);
 		return json_response(201, { data: share_view(share!) });
+	}
+
+
+	if (rest.endsWith('/visitas') && method === 'GET') {
+		const visit_share_id = decodeURIComponent(rest.slice(0, -'/visitas'.length).replace(/\/+$/, ''));
+		const visit_share = await load_share(sql, visit_share_id);
+		if (!visit_share || (visit_share.owner_id !== actor_id && !is_admin)) {
+			return json_response(404, {
+				error: 'Este enlace no existe.',
+				message: 'Este enlace no existe.',
+				code: 'compartido_no_existe',
+			});
+		}
+		const limit = Math.min(500, Math.max(1, Number(url.searchParams.get('limite') ?? 100) || 100));
+		const rows = (await sql.unsafe(
+			`SELECT id, share_id,
+				extract(epoch from visited_at) * 1000 AS visited_at,
+				referrer, user_agent, browser, browser_version, os, os_version, device, language, ip
+			 FROM public.imperium_share_visits
+			 WHERE share_id = $1
+			 ORDER BY visited_at DESC
+			 LIMIT $2`,
+			[visit_share.id, limit],
+		)) as Record<string, unknown>[];
+		return json_response(200, {
+			data: rows.map((row) => ({
+				id: String(row.id),
+				compartido_id: String(row.share_id),
+				visitado_en: iso(ms_or_null(row.visited_at)),
+				desde: String(row.referrer ?? ''),
+				navegador: String(row.browser ?? ''),
+				navegador_version: String(row.browser_version ?? ''),
+				sistema: String(row.os ?? ''),
+				sistema_version: String(row.os_version ?? ''),
+				dispositivo: String(row.device ?? 'unknown'),
+				idioma: String(row.language ?? ''),
+				ip: String(row.ip ?? ''),
+				agente: String(row.user_agent ?? ''),
+			})),
+			total_elementos: rows.length,
+		});
 	}
 
 	const id = decodeURIComponent(rest.split('/')[0] ?? '');

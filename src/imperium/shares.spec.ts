@@ -12,6 +12,7 @@ import {
 	share_allows_media,
 	share_grants,
 	touched_by,
+	parse_user_agent,
 	type PublicShareDeps,
 	type Share,
 	type ShareBlock,
@@ -73,6 +74,9 @@ function deps(over: Partial<PublicShareDeps> & { row?: Share | null; cookie_user
 			}) as never,
 		global_hidden: async () => ['global1'],
 		count_access: async (id) => {
+			counted.push(id);
+		},
+		record_visit: async (id, _req) => {
 			counted.push(id);
 		},
 		...over,
@@ -393,5 +397,66 @@ describe('GET /api/p/compartido/:id', () => {
 		expect((await resolve(deps({ blocks: [{ kind: 'recurso', key: 'employee', label: '' }] }).value)).status).toBe(403);
 		expect((await resolve(deps({ row: share({ expires_at: NOW }) }).value)).status).toBe(410);
 		expect((await resolve(deps().value, 'otro')).status).toBe(404);
+	});
+});
+
+
+describe('parse_user_agent', () => {
+	test('chrome en windows de escritorio', () => {
+		const parsed = parse_user_agent(
+			'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+		);
+		expect(parsed).toMatchObject({
+			browser: 'Chrome',
+			browser_version: '120.0.0.0',
+			os: 'Windows',
+			os_version: '10.0',
+			device: 'desktop',
+		});
+	});
+
+	test('safari en iphone', () => {
+		const parsed = parse_user_agent(
+			'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1',
+		);
+		expect(parsed.browser).toBe('Safari');
+		expect(parsed.os).toBe('iOS');
+		expect(parsed.device).toBe('mobile');
+	});
+
+	test('bot', () => {
+		expect(parse_user_agent('Googlebot/2.1 (+http://www.google.com/bot.html)').device).toBe('bot');
+	});
+});
+
+describe('record_visit en GET público', () => {
+	test('guarda la visita con el user-agent del request', async () => {
+		const visits: Array<{ id: string; ua: string; referrer: string }> = [];
+		const { value } = deps({
+			cookie_user: VISITOR,
+			record_visit: async (id, req) => {
+				visits.push({
+					id,
+					ua: req.headers.get('user-agent') ?? '',
+					referrer: req.headers.get('referer') ?? '',
+				});
+			},
+		});
+		const req = new Request(`${BASE}/api/p/compartido/tok`, {
+			headers: {
+				'user-agent':
+					'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/120.0.0.0 Mobile Safari/537.36',
+				referer: 'https://mail.ejemplo/x',
+			},
+		});
+		const res = await handle_public_share(req, url('/api/p/compartido/tok'), value);
+		expect(res.status).toBe(200);
+		expect(visits).toEqual([
+			{
+				id: 'tok',
+				ua: 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/120.0.0.0 Mobile Safari/537.36',
+				referrer: 'https://mail.ejemplo/x',
+			},
+		]);
 	});
 });
