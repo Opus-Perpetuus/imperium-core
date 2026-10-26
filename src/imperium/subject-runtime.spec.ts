@@ -10,6 +10,8 @@ import {
 	is_base_subject_slug,
 	normalize_subject_slug,
 	subject_image_ref,
+	subject_tag_env_name,
+	tag_after_product_update,
 	subject_service_name,
 } from './subject-runtime.ts';
 
@@ -63,6 +65,40 @@ describe('subject-runtime', () => {
 			}),
 		).toBe('ghcr.io/opus-perpetuus/subject-pos:0.1.0');
 		expect(subject_service_name('almacen')).toBe('subject-almacen');
+	});
+
+	test('el tag del registro gana sobre el entorno de una actualización', () => {
+		const name = subject_tag_env_name('pos');
+		const previous = process.env[name];
+		const global = process.env.IMPERIUM_SUBJECT_TAG;
+		process.env[name] = '9.9.9';
+		process.env.IMPERIUM_SUBJECT_TAG = '8.8.8';
+		try {
+			expect(
+				subject_image_ref({
+					slug: 'pos',
+					image: 'ghcr.io/opus-perpetuus/subject-pos:0.1.0',
+					registry_installed_tag: '0.4.2',
+				}),
+			).toBe('ghcr.io/opus-perpetuus/subject-pos:0.4.2');
+			expect(
+				tag_after_product_update({
+					env_tag: '9.9.9',
+					registry_installed_tag: '0.4.2',
+				}),
+			).toBe('0.4.2');
+			expect(
+				subject_image_ref({
+					slug: 'pos',
+					image: 'ghcr.io/opus-perpetuus/subject-pos:0.1.0',
+				}),
+			).toBe('ghcr.io/opus-perpetuus/subject-pos:9.9.9');
+		} finally {
+			if (previous == null) delete process.env[name];
+			else process.env[name] = previous;
+			if (global == null) delete process.env.IMPERIUM_SUBJECT_TAG;
+			else process.env.IMPERIUM_SUBJECT_TAG = global;
+		}
 	});
 
 	test('operator compose file declares a service for every catalog slug including tienda', () => {

@@ -23,8 +23,10 @@ import {
 	is_base_subject_slug,
 	read_subject_image_manifest,
 	run_subject_docker,
+	subject_image_ref,
 	type SubjectRuntimeResult,
 } from './subject-runtime.ts';
+import { registry_tag_index } from './app-registry-store.ts';
 import {
 	APPS_AL_PIN,
 	describe_hold,
@@ -637,6 +639,25 @@ function missing_or_empty(
 	}
 }
 
+/** El tag del registro gana sobre el pin y sobre `IMPERIUM_SUBJECT_TAG_*`. */
+async function image_respecting_registry(
+	sql: Bun.SQL,
+	slug: string,
+	image: string,
+): Promise<{ image: string; registry_installed_tag: string | null }> {
+	let registry_installed_tag: string | null = null;
+	try {
+		registry_installed_tag = (await registry_tag_index(sql)).get(slug)?.installed_tag ?? null;
+	} catch {
+		registry_installed_tag = null;
+	}
+	if (!registry_installed_tag) return { image, registry_installed_tag: null };
+	return {
+		image: subject_image_ref({ slug, image, registry_installed_tag }),
+		registry_installed_tag,
+	};
+}
+
 /**
  * Fila de `GET /subjects`. `depends_on`, `required_by` (dependientes vivas) y
  * `missing_dependencies` van en technical ids.
@@ -648,6 +669,7 @@ export function catalog_row(
 	deps: DependencyView,
 	running: ReadonlySet<string> = new Set(),
 	policy: UpdatePolicy = { holds: new Map(), take_discovered: false },
+	registry?: { installed_tag: string | null; discovered_tag: string | null } | null,
 ) {
 	const is_ready = (tid: string) => deps.installed.has(tid);
 	const is_live = (tid: string) =>
@@ -690,6 +712,8 @@ export function catalog_row(
 		// Lo más nuevo del registro, se tome o no (con el interruptor en NO solo se enseña).
 		discovered_tag: subject_image_tag(rec?.discovered_image),
 		discovered_note: rec?.discovered_note ?? null,
+		registry_installed_tag: registry?.installed_tag ?? null,
+		registry_discovered_tag: registry?.discovered_tag ?? null,
 		last_error: rec?.last_error ?? null,
 		last_error_at: rec?.last_error_at ?? null,
 		depends_on: [...(sub.depends_on ?? [])],
@@ -867,11 +891,25 @@ export async function list_catalog_subjects(
 		(await list_catalog_entries(sql)).map((entry) => [entry.technical_id, entry]),
 	);
 	const policy = await read_update_policy(store);
+	let registry_tags = new Map<string, { installed_tag: string | null; discovered_tag: string | null }>();
+	try {
+		registry_tags = await registry_tag_index(sql);
+	} catch {
+		registry_tags = new Map();
+	}
 	const out = [];
 	for (const sub of store.subjects) {
 		const rows = filter_module_rows(all_modules, sub);
 		const rec = recs.get(sub.technical_id);
-		const row = catalog_row(sub, subject_is_installed(rec, rows), rec, deps, running, policy);
+		const row = catalog_row(
+			sub,
+			subject_is_installed(rec, rows),
+			rec,
+			deps,
+			running,
+			policy,
+			registry_tags.get(sub.slug) ?? null,
+		);
 		const entry = entries.get(sub.technical_id);
 		if (
 			!catalog_visible({
@@ -1563,9 +1601,11 @@ async function finish_subject_lifecycle(
 			);
 		}
 	}
+	const pinned = await image_respecting_registry(sql, sub.slug, image);
+	image = pinned.image;
 	const docker = await run_subject_docker(
 		op,
-		{ slug: sub.slug, image },
+		{ slug: sub.slug, image, registry_installed_tag: pinned.registry_installed_tag },
 		(event) => {
 			emit_subject_event(
 				{
@@ -2427,9 +2467,11 @@ export async function run_subject_update(
 		},
 		job,
 	);
+	const pinned = await image_respecting_registry(sql, sub.slug, target_image);
+	target_image = pinned.image;
 	const docker = await run_subject_docker(
 		'update',
-		{ slug: sub.slug, image: target_image },
+		{ slug: sub.slug, image: target_image, registry_installed_tag: pinned.registry_installed_tag },
 		(event) => {
 			emit_subject_event(
 				{

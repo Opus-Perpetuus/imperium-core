@@ -2,12 +2,19 @@
 
 import {
   type KirletManifest,
+  type KirletManifestLeaf,
   type KirletManifestMenuItem,
+  type KirletManifestPage,
   type KirletManifestPublic,
+  type KirletManifestRepository,
+  type KirletManifestVersionChannel,
   type KirletPublicAccess,
+  KIRLET_MANIFEST_SCHEMA_URI,
+  KIRLET_MANIFEST_VERSION,
   is_kirlet_catalog_id,
   is_kirlet_technical_id,
   kirlet_slug_from_id,
+  leaf_segment_is_reserved,
 } from "./manifest.js";
 import type { KirletManifestWidget } from "./widgets.js";
 import { KIRLET_WIDGET_CAPABILITIES, KIRLET_WIDGET_SIZES } from "./widgets.js";
@@ -194,6 +201,9 @@ export function validate_kirlet_manifest(input: unknown): KirletManifestValidati
   }
 
   const page_ids = new Set<string>();
+  const page_id_counts = new Map<string, number>();
+  const leaf_segments = new Set<string>();
+  let declares_leaf = false;
   let pages: KirletManifest["pages"];
   if (input["pages"] !== undefined) {
     if (!Array.isArray(input["pages"])) {
@@ -209,19 +219,71 @@ export function validate_kirlet_manifest(input: unknown): KirletManifestValidati
         if (!is_nonempty_string(raw["id"])) {
           issues.push({ path: `${p}.id`, message: "id is required" });
         } else {
-          page_ids.add(String(raw["id"]));
+          const id = String(raw["id"]);
+          page_ids.add(id);
+          page_id_counts.set(id, (page_id_counts.get(id) ?? 0) + 1);
         }
         if (!is_nonempty_string(raw["path"])) {
           issues.push({ path: `${p}.path`, message: "path is required" });
         }
-        pages!.push({
+        const page: KirletManifestPage = {
           id: String(raw["id"] ?? ""),
           path: String(raw["path"] ?? ""),
           permission: is_nonempty_string(raw["permission"])
             ? raw["permission"]
             : undefined,
-        });
+        };
+        if (raw["leaf"] !== undefined) {
+          declares_leaf = true;
+          const leaf = parse_page_leaf(
+            raw["leaf"],
+            page.path,
+            page.permission,
+            slug,
+            `${p}.leaf`,
+            issues,
+          );
+          if (leaf) page.leaf = leaf;
+          if (
+            leaf &&
+            relative_resource_issue(page.path) == null &&
+            !leaf_segment_is_reserved(page.path)
+          ) {
+            if (leaf_segments.has(page.path)) {
+              issues.push({
+                path: `${p}.path`,
+                message: `duplicate leaf segment "${page.path}"`,
+              });
+            } else {
+              leaf_segments.add(page.path);
+            }
+          }
+        }
+        pages!.push(page);
       });
+    }
+  }
+
+  if (declares_leaf) {
+    if (input["manifestVersion"] === undefined) {
+      issues.push({
+        path: "$.manifestVersion",
+        message: "manifestVersion is required when a page declares a leaf",
+      });
+    }
+    if (input["$schema"] === undefined) {
+      issues.push({
+        path: "$.$schema",
+        message: "$schema is required when a page declares a leaf",
+      });
+    }
+    for (const [id, count] of page_id_counts) {
+      if (count > 1) {
+        issues.push({
+          path: "$.pages",
+          message: `duplicate page id "${id}"`,
+        });
+      }
     }
   }
 
@@ -381,6 +443,8 @@ export function validate_kirlet_manifest(input: unknown): KirletManifestValidati
     }
   }
 
+  const registry_meta = parse_registry_metadata(input, issues);
+
   if (issues.length > 0) {
     return { ok: false, issues };
   }
@@ -443,8 +507,416 @@ export function validate_kirlet_manifest(input: unknown): KirletManifestValidati
   if (widgets?.length) manifest.widgets = widgets;
   if (depends_on?.length) manifest.dependsOn = depends_on;
   if (requires) manifest.requires = requires;
+  if (input["manifestVersion"] === KIRLET_MANIFEST_VERSION) {
+    manifest.manifestVersion = KIRLET_MANIFEST_VERSION;
+  }
+  if (input["$schema"] === KIRLET_MANIFEST_SCHEMA_URI) {
+    manifest.$schema = KIRLET_MANIFEST_SCHEMA_URI;
+  }
+  if (registry_meta.imageDigest) manifest.imageDigest = registry_meta.imageDigest;
+  if (registry_meta.repository) manifest.repository = registry_meta.repository;
+  if (registry_meta.versionChannel) manifest.versionChannel = registry_meta.versionChannel;
 
   return { ok: true, manifest };
+}
+
+const RELATIVE_RESOURCE = /^[a-z0-9]+(?:[/-][a-z0-9]+)*$/;
+
+function relative_resource_issue(value: string): string | null {
+  if (
+    value.startsWith("/") ||
+    value.startsWith("m/") ||
+    value.includes("..") ||
+    value.includes("://") ||
+    value.includes("\\")
+  ) {
+    return "must be a relative resource without a leading slash, m/, .. or a URL";
+  }
+  if (!RELATIVE_RESOURCE.test(value)) {
+    return "must use only [a-z0-9/-] and no empty segments";
+  }
+  return null;
+}
+
+function is_leaf_read_permission(id: string, slug: string): boolean {
+  if (!slug) return false;
+  return new RegExp(
+    `^(?:kirlet|subject)\\.${slug}\\.[a-z][a-z0-9-]*\\.read$`,
+  ).test(id);
+}
+
+function parse_page_leaf(
+  raw: unknown,
+  page_path: string,
+  page_permission: string | undefined,
+  slug: string,
+  path: string,
+  issues: Array<{ path: string; message: string }>,
+): KirletManifestLeaf | undefined {
+  if (!is_plain_object(raw)) {
+    issues.push({ path, message: "leaf must be an object" });
+    return undefined;
+  }
+  const segment_issue = relative_resource_issue(page_path);
+  if (!is_nonempty_string(page_path) || segment_issue) {
+    issues.push({
+      path: path.replace(/\.leaf$/, ".path"),
+      message: segment_issue ?? "leaf page path is required",
+    });
+  } else if (leaf_segment_is_reserved(page_path)) {
+    issues.push({
+      path: path.replace(/\.leaf$/, ".path"),
+      message: `segment "${page_path.split("/")[0]}" is reserved`,
+    });
+  }
+
+  const kind = raw["kind"];
+  if (kind !== "crud" && kind !== "page") {
+    issues.push({
+      path: `${path}.kind`,
+      message: 'kind must be "crud" or "page"',
+    });
+  }
+
+  let app_base: string | undefined;
+  if (raw["appBase"] !== undefined) {
+    if (!is_nonempty_string(raw["appBase"])) {
+      issues.push({ path: `${path}.appBase`, message: "appBase must be a string" });
+    } else {
+      const problem = relative_resource_issue(raw["appBase"]);
+      if (problem) issues.push({ path: `${path}.appBase`, message: problem });
+      else app_base = raw["appBase"];
+    }
+  } else if (kind === "crud") {
+    issues.push({
+      path: `${path}.appBase`,
+      message: "appBase is required for kind crud",
+    });
+  }
+
+  let app_create: string | undefined;
+  if (raw["appCreate"] !== undefined) {
+    if (!is_nonempty_string(raw["appCreate"])) {
+      issues.push({ path: `${path}.appCreate`, message: "appCreate must be a string" });
+    } else {
+      const problem = relative_resource_issue(raw["appCreate"]);
+      if (problem) issues.push({ path: `${path}.appCreate`, message: problem });
+      else app_create = raw["appCreate"];
+    }
+  }
+
+  const permission = is_nonempty_string(raw["permission"])
+    ? raw["permission"]
+    : page_permission;
+  if (!permission || !is_leaf_read_permission(permission, slug)) {
+    issues.push({
+      path: `${path}.permission`,
+      message: slug
+        ? `permission must match subject.${slug}.<resource>.read or kirlet.${slug}.<resource>.read`
+        : "permission is required",
+    });
+  }
+
+  let icon: string | undefined;
+  if (raw["icon"] !== undefined) {
+    if (typeof raw["icon"] !== "string" || !/^[a-z0-9-]{1,64}$/.test(raw["icon"])) {
+      issues.push({
+        path: `${path}.icon`,
+        message: "icon must be a short kebab-case id",
+      });
+    } else {
+      icon = raw["icon"];
+    }
+  }
+
+  let list_only: boolean | undefined;
+  if (raw["listOnly"] !== undefined) {
+    if (typeof raw["listOnly"] !== "boolean") {
+      issues.push({ path: `${path}.listOnly`, message: "listOnly must be a boolean" });
+    } else {
+      list_only = raw["listOnly"];
+    }
+  }
+
+  let min_shell: string | undefined;
+  if (raw["minShellVersion"] !== undefined) {
+    if (
+      typeof raw["minShellVersion"] !== "string" ||
+      !/^\d+\.\d+\.\d+$/.test(raw["minShellVersion"])
+    ) {
+      issues.push({
+        path: `${path}.minShellVersion`,
+        message: "minShellVersion must be a version X.Y.Z",
+      });
+    } else {
+      min_shell = raw["minShellVersion"];
+    }
+  }
+
+  const list_headers =
+    raw["listHeaders"] === undefined
+      ? undefined
+      : parse_label_map(raw["listHeaders"], `${path}.listHeaders`, issues);
+  const form_labels =
+    raw["formLabels"] === undefined
+      ? undefined
+      : parse_label_map(raw["formLabels"], `${path}.formLabels`, issues);
+
+  if (kind !== "crud" && kind !== "page") return undefined;
+  const leaf: KirletManifestLeaf = { kind };
+  if (app_base) leaf.appBase = app_base;
+  if (app_create) leaf.appCreate = app_create;
+  if (icon) leaf.icon = icon;
+  if (list_headers) leaf.listHeaders = list_headers;
+  if (form_labels) leaf.formLabels = form_labels;
+  if (list_only !== undefined) leaf.listOnly = list_only;
+  if (min_shell) leaf.minShellVersion = min_shell;
+  if (permission && is_leaf_read_permission(permission, slug)) {
+    leaf.permission = permission;
+  }
+  return leaf;
+}
+
+const LABEL_FIELD = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const LABEL_LOCALE = /^[a-z]{2}(?:-[A-Z]{2})?$/;
+
+function parse_label_map(
+  raw: unknown,
+  path: string,
+  issues: Array<{ path: string; message: string }>,
+): Record<string, Record<string, string>> | undefined {
+  if (!is_plain_object(raw)) {
+    issues.push({ path, message: "must be an object" });
+    return undefined;
+  }
+  const entries = Object.entries(raw);
+  if (!entries.length) return undefined;
+  const flat = entries.every(([, value]) => typeof value === "string");
+  const nested = entries.every(
+    ([, value]) =>
+      is_plain_object(value) &&
+      Object.values(value).every((item) => typeof item === "string"),
+  );
+  if (flat) {
+    const es: Record<string, string> = {};
+    for (const [key, value] of entries) {
+      if (!LABEL_FIELD.test(key)) {
+        issues.push({ path: `${path}.${key}`, message: "field name is invalid" });
+        continue;
+      }
+      es[key] = value as string;
+    }
+    return { es };
+  }
+  if (!nested) {
+    issues.push({
+      path,
+      message: "must be a locale map or a flat field→label map",
+    });
+    return undefined;
+  }
+  const out: Record<string, Record<string, string>> = {};
+  for (const [locale, fields] of entries) {
+    if (!LABEL_LOCALE.test(locale)) {
+      issues.push({
+        path: `${path}.${locale}`,
+        message: "locale must look like es or es-MX",
+      });
+      continue;
+    }
+    const labels: Record<string, string> = {};
+    for (const [key, value] of Object.entries(fields as Record<string, unknown>)) {
+      if (!LABEL_FIELD.test(key) || typeof value !== "string") {
+        issues.push({
+          path: `${path}.${locale}.${key}`,
+          message: "field name is invalid",
+        });
+        continue;
+      }
+      labels[key] = value;
+    }
+    out[locale] = labels;
+  }
+  return out;
+}
+
+function parse_registry_metadata(
+  input: Record<string, unknown>,
+  issues: Array<{ path: string; message: string }>,
+): {
+  repository?: KirletManifestRepository;
+  versionChannel?: KirletManifestVersionChannel;
+  imageDigest?: string;
+} {
+  const out: {
+    repository?: KirletManifestRepository;
+    versionChannel?: KirletManifestVersionChannel;
+    imageDigest?: string;
+  } = {};
+  if (
+    input["manifestVersion"] !== undefined &&
+    input["manifestVersion"] !== KIRLET_MANIFEST_VERSION
+  ) {
+    issues.push({ path: "$.manifestVersion", message: "manifestVersion must be 1" });
+  }
+  if (
+    input["$schema"] !== undefined &&
+    input["$schema"] !== KIRLET_MANIFEST_SCHEMA_URI
+  ) {
+    issues.push({
+      path: "$.$schema",
+      message: `$schema must be ${KIRLET_MANIFEST_SCHEMA_URI}`,
+    });
+  }
+  if (input["imageDigest"] !== undefined) {
+    if (
+      typeof input["imageDigest"] !== "string" ||
+      !/^sha256:[a-f0-9]{64}$/.test(input["imageDigest"])
+    ) {
+      issues.push({
+        path: "$.imageDigest",
+        message: "imageDigest must be sha256:<64 hex>",
+      });
+    } else {
+      out.imageDigest = input["imageDigest"];
+    }
+  }
+  if (input["repository"] !== undefined) {
+    const repository = parse_repository(input["repository"], issues);
+    if (repository) out.repository = repository;
+  }
+  if (input["versionChannel"] !== undefined) {
+    const channel = parse_version_channel(input["versionChannel"], issues);
+    if (channel) out.versionChannel = channel;
+  }
+  return out;
+}
+
+function parse_repository(
+  raw: unknown,
+  issues: Array<{ path: string; message: string }>,
+): KirletManifestRepository | undefined {
+  if (!is_plain_object(raw)) {
+    issues.push({ path: "$.repository", message: "repository must be an object" });
+    return undefined;
+  }
+  const repository: KirletManifestRepository = {};
+  if (raw["git"] !== undefined) {
+    if (typeof raw["git"] !== "string" || !/^https:\/\/\S+$/.test(raw["git"])) {
+      issues.push({
+        path: "$.repository.git",
+        message: "git must be an https URL",
+      });
+    } else {
+      repository.git = raw["git"];
+    }
+  }
+  if (raw["github"] !== undefined) {
+    if (
+      typeof raw["github"] !== "string" ||
+      !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(raw["github"])
+    ) {
+      issues.push({
+        path: "$.repository.github",
+        message: "github must be owner/repo",
+      });
+    } else {
+      repository.github = raw["github"];
+    }
+  }
+  if (!repository.git && !repository.github) {
+    issues.push({
+      path: "$.repository",
+      message: "repository needs git or github",
+    });
+    return undefined;
+  }
+  return repository;
+}
+
+function parse_version_channel(
+  raw: unknown,
+  issues: Array<{ path: string; message: string }>,
+): KirletManifestVersionChannel | undefined {
+  if (!is_plain_object(raw)) {
+    issues.push({
+      path: "$.versionChannel",
+      message: "versionChannel must be an object",
+    });
+    return undefined;
+  }
+  let failed = false;
+  if (raw["kind"] !== "oci") {
+    issues.push({ path: "$.versionChannel.kind", message: 'kind must be "oci"' });
+    failed = true;
+  }
+  if (
+    typeof raw["registry"] !== "string" ||
+    !/^[a-z0-9.-]+(?::\d+)?$/.test(raw["registry"]) ||
+    raw["registry"].includes("://")
+  ) {
+    issues.push({
+      path: "$.versionChannel.registry",
+      message: "registry must be a host such as ghcr.io",
+    });
+    failed = true;
+  }
+  if (
+    typeof raw["repository"] !== "string" ||
+    !/^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+$/.test(raw["repository"]) ||
+    raw["repository"].includes("..")
+  ) {
+    issues.push({
+      path: "$.versionChannel.repository",
+      message: "repository must be org/name",
+    });
+    failed = true;
+  }
+  if (raw["policy"] !== "same-major-auto-patch") {
+    issues.push({
+      path: "$.versionChannel.policy",
+      message: 'policy must be "same-major-auto-patch"',
+    });
+    failed = true;
+  }
+  let releases: "github" | undefined;
+  if (raw["releases"] !== undefined) {
+    if (raw["releases"] !== "github") {
+      issues.push({
+        path: "$.versionChannel.releases",
+        message: 'releases must be "github"',
+      });
+      failed = true;
+    } else {
+      releases = "github";
+    }
+  }
+  let min_age: number | undefined;
+  if (raw["minAgeHours"] !== undefined) {
+    if (
+      typeof raw["minAgeHours"] !== "number" ||
+      !Number.isFinite(raw["minAgeHours"]) ||
+      raw["minAgeHours"] < 0
+    ) {
+      issues.push({
+        path: "$.versionChannel.minAgeHours",
+        message: "minAgeHours must be a number >= 0",
+      });
+      failed = true;
+    } else {
+      min_age = raw["minAgeHours"];
+    }
+  }
+  if (failed) return undefined;
+  const channel: KirletManifestVersionChannel = {
+    kind: "oci",
+    registry: String(raw["registry"]),
+    repository: String(raw["repository"]),
+    policy: "same-major-auto-patch",
+  };
+  if (releases) channel.releases = releases;
+  if (min_age !== undefined) channel.minAgeHours = min_age;
+  return channel;
 }
 
 /**

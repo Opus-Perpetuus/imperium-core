@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import {
   check_kirlet_compat,
   validate_kirlet_manifest,
 } from "./manifest-validate.js";
+import { KIRLET_MANIFEST_SCHEMA_URI } from "./manifest.js";
 import { semver_satisfies } from "./semver-lite.js";
 import { define_kirlet } from "./define-kirlet.js";
 import { define_module, define_routes } from "./define-module.js";
@@ -468,5 +470,139 @@ describe("requires.core", () => {
   test("una versión que no es X.Y.Z se rechaza", () => {
     const result = validate_kirlet_manifest({ ...hr_manifest_0_3, requires: { core: "latest" } });
     expect(result.ok).toBe(false);
+  });
+});
+
+const LEAF_SCHEMA = KIRLET_MANIFEST_SCHEMA_URI;
+
+function vehiculos_leaf(leaf: Record<string, unknown>, page_path = "envio-revision") {
+  return {
+    $schema: LEAF_SCHEMA,
+    manifestVersion: 1,
+    id: "SUBJECT-vehiculos",
+    technicalId: "subject-vehiculos",
+    name: "Vehículos",
+    version: "0.10.0",
+    image: "ghcr.io/opus-perpetuus/subject-vehiculos:0.10.0",
+    compat: { nox: ">=0.2.0 <2.0.0", kit: "^0.2.0" },
+    api: { basePath: "/api/m/subject-vehiculos", port: 3000, healthPath: "/health" },
+    permissions: [
+      { id: "subject.vehiculos.envio-revision.read", label: "Ver envíos a revisión" },
+      { id: "subject.vehiculos.envio-revision.write", label: "Editar envíos a revisión" },
+    ],
+    repository: {
+      git: "https://github.com/Opus-Perpetuus/imperium-subject-vehiculos",
+      github: "Opus-Perpetuus/imperium-subject-vehiculos",
+    },
+    versionChannel: {
+      kind: "oci",
+      registry: "ghcr.io",
+      repository: "opus-perpetuus/subject-vehiculos",
+      policy: "same-major-auto-patch",
+      releases: "github",
+      minAgeHours: 24,
+    },
+    pages: [
+      {
+        id: "vehiculos.envio-revision",
+        path: page_path,
+        permission: "subject.vehiculos.envio-revision.read",
+        leaf,
+      },
+    ],
+  };
+}
+
+describe("leaf del manifiesto", () => {
+  test("un crud con appBase relativo pasa y normaliza etiquetas planas a es", () => {
+    const result = validate_kirlet_manifest(
+      vehiculos_leaf({
+        kind: "crud",
+        appBase: "envio-revision",
+        appCreate: "providers/connectors",
+        icon: "fa-file-signature",
+        listHeaders: { name: "Título", estado: "Estado" },
+        listOnly: false,
+        minShellVersion: "13.102.0",
+      }),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.manifest.manifestVersion).toBe(1);
+    expect(result.manifest.repository?.github).toBe(
+      "Opus-Perpetuus/imperium-subject-vehiculos",
+    );
+    expect(result.manifest.pages?.[0]?.leaf).toMatchObject({
+      kind: "crud",
+      appBase: "envio-revision",
+      appCreate: "providers/connectors",
+      listHeaders: { es: { name: "Título", estado: "Estado" } },
+      minShellVersion: "13.102.0",
+    });
+  });
+
+  test("appBase ilegal no pasa", () => {
+    for (const appBase of [
+      "../etc",
+      "/envio-revision",
+      "m/subject-vehiculos/envio-revision",
+      "http://evil.example/envio",
+      "Envio",
+      "envio/../../admin",
+    ]) {
+      const result = validate_kirlet_manifest(
+        vehiculos_leaf({ kind: "crud", appBase }),
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) continue;
+      expect(result.issues.some((issue) => issue.path.endsWith("appBase"))).toBe(true);
+    }
+  });
+
+  test("un segmento reservado o con / inicial no es hoja", () => {
+    for (const path of ["login", "tienda", "m", "/envio-revision", "api/health"]) {
+      const result = validate_kirlet_manifest(
+        vehiculos_leaf({ kind: "crud", appBase: "envio-revision" }, path),
+      );
+      expect(result.ok).toBe(false);
+    }
+  });
+
+  test("kind desconocido y leaf sin contrato 1.0 se rechazan", () => {
+    const unknown = validate_kirlet_manifest(
+      vehiculos_leaf({ kind: "widget-host", appBase: "envio-revision" }),
+    );
+    expect(unknown.ok).toBe(false);
+    const bare = validate_kirlet_manifest({
+      ...vehiculos_leaf({ kind: "crud", appBase: "envio-revision" }),
+      manifestVersion: undefined,
+      $schema: undefined,
+    });
+    expect(bare.ok).toBe(false);
+  });
+
+  test("un manifiesto viejo sin leaf sigue valiendo", () => {
+    const result = validate_kirlet_manifest(hr_manifest_0_3);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.manifest.pages?.[0]?.leaf).toBeUndefined();
+  });
+
+  test("el esquema vendored publica el mismo URI y el patrón de appBase", () => {
+    const schema = JSON.parse(
+      readFileSync(new URL("./kirlet-manifest-1.0.schema.json", import.meta.url), "utf8"),
+    ) as {
+      $id?: string;
+      properties?: {
+        pages?: {
+          items?: {
+            properties?: { leaf?: { properties?: { appBase?: { pattern?: string } } } };
+          };
+        };
+      };
+    };
+    expect(schema.$id).toBe(LEAF_SCHEMA);
+    expect(schema.properties?.pages?.items?.properties?.leaf?.properties?.appBase?.pattern).toBe(
+      "^[a-z0-9]+(?:[/-][a-z0-9]+)*$",
+    );
   });
 });

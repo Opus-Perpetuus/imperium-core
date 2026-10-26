@@ -23,6 +23,12 @@ import { handle_sync_http } from './offline/http.ts';
 import { meta_http_response } from './meta.ts';
 import { handle_action } from './actions.ts';
 import { handle_db_admin, is_db_admin_path } from './db-admin.ts';
+import {
+	ensure_app_registry_schema,
+	handle_app_registry_http,
+	is_app_registry_path,
+} from './app-registry.ts';
+import { start_registry_cold_sync } from './app-registry-boot.ts';
 import { handle_mcp_agent, seed_mcp_access } from './mcp-agent.ts';
 import { ChatError, media_token_actor } from './chat-access.ts';
 import { serve_media } from './media.ts';
@@ -150,6 +156,16 @@ export function create_imperium_layer(sql: Bun.SQL) {
 					err instanceof Error ? err.message : String(err),
 				);
 			}
+			try {
+				await ensure_app_registry_schema(sql);
+			} catch (err) {
+				debug_error(
+					err instanceof Error ? err.message : String(err),
+				);
+			}
+			void start_registry_cold_sync(store, sql).catch((err) => {
+				debug_error(err instanceof Error ? err.message : String(err));
+			});
 			try {
 				await recover_orphan_processing_uploads(store);
 			} catch (err) {
@@ -320,6 +336,12 @@ async function dispatch(
 				return add_cors(
 					req,
 					await handle_db_admin(store, sql, req, url, path),
+				);
+			}
+			if (is_app_registry_path(path)) {
+				return add_cors(
+					req,
+					await handle_app_registry_http(store, sql, req, path),
 				);
 			}
 			if (path === '/auth' || path.startsWith('/auth/')) {
@@ -791,6 +813,7 @@ function looks_imperium(path: string, store: ImperiumStore): boolean {
 	if (p === '/media' || p.startsWith('/media/')) return true;
 	if (p === '/mcp-agent' || p.startsWith('/mcp-agent/')) return true;
 	if (p === '/subjects' || p.startsWith('/subjects/')) return true;
+	if (is_app_registry_path(p)) return true;
 	if (p === '/compartir' || p.startsWith('/compartir/')) return true;
 	if (p === '/meta' || p === '/meta/') return true;
 	if (portal_route_path(path)) return true;

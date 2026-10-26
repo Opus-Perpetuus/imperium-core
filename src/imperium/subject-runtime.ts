@@ -93,14 +93,38 @@ export function subject_service_name(slug: string): string {
 	return `subject-${slug}`;
 }
 
+const REGISTRY_TAG_RE = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/;
+
+/** Tag que se puede poner en una imagen. Vacío o con `..` no cuenta. */
+export function registry_tag_or_null(value: unknown): string | null {
+	const tag = String(value ?? '').trim();
+	if (!tag || tag.includes('..') || !REGISTRY_TAG_RE.test(tag)) return null;
+	return tag;
+}
+
+/**
+ * Un update del producto puede reescribir `IMPERIUM_SUBJECT_TAG_*`. El tag
+ * que el registro ya aplicó sigue siendo el que corre.
+ */
+export function tag_after_product_update(input: {
+	env_tag?: string | null;
+	registry_installed_tag?: string | null;
+}): string | null {
+	const registry = registry_tag_or_null(input.registry_installed_tag);
+	if (registry) return registry;
+	const env_tag = String(input.env_tag ?? '').trim();
+	return env_tag || null;
+}
+
 /**
  * Imagen efectiva de una app, por precedencia:
  *
- *   1. `IMPERIUM_SUBJECT_TAG_<SLUG>` — el selector por app.
- *   2. la imagen que se pasa (lo instalado en `subject_installs`, o el pin del
+ *   1. `registry_installed_tag` — lo que `app_registry.installed_tag` ya aplicó.
+ *   2. `IMPERIUM_SUBJECT_TAG_<SLUG>` — el selector por app.
+ *   3. la imagen que se pasa (lo instalado en `subject_installs`, o el pin del
  *      catálogo).
- *   3. `IMPERIUM_SUBJECT_TAG` — palanca global, para pinar toda la flota.
- *   4. `0.1.0`.
+ *   4. `IMPERIUM_SUBJECT_TAG` — palanca global, para pinar toda la flota.
+ *   5. `0.1.0`.
  *
  * El global estaba por ENCIMA de la imagen recibida, así que reescribía a su
  * valor el tag de todas las apps. Como el compose lo trae puesto a `0.1.0` por
@@ -111,8 +135,11 @@ export function subject_service_name(slug: string): string {
 export function subject_image_ref(input: {
 	slug: string;
 	image?: string | null;
+	registry_installed_tag?: string | null;
 }): string {
 	const slug = normalize_subject_slug(input.slug) ?? '';
+	const registry = registry_tag_or_null(input.registry_installed_tag);
+	if (registry) return `ghcr.io/opus-perpetuus/subject-${slug}:${registry}`;
 	const per_app = env(subject_tag_env_name(slug));
 	const global_tag = env('IMPERIUM_SUBJECT_TAG');
 	const given = String(input.image ?? '').trim();
@@ -308,7 +335,7 @@ function file_args(): string[] {
 
 export async function run_subject_docker(
 	op: SubjectRuntimeOp,
-	input: { slug: string; image?: string | null },
+	input: { slug: string; image?: string | null; registry_installed_tag?: string | null },
 	on_progress?: (event: SubjectRuntimeProgress) => void,
 ): Promise<SubjectRuntimeResult> {
 	const slug = normalize_subject_slug(input.slug);
@@ -337,7 +364,8 @@ export async function run_subject_docker(
 		};
 	}
 	const service = subject_service_name(slug);
-	const image = subject_image_ref({ slug, image: input.image });
+	const registry_installed_tag = registry_tag_or_null(input.registry_installed_tag);
+	const image = subject_image_ref({ slug, image: input.image, registry_installed_tag });
 	if (!docker_runtime_wanted()) {
 		return {
 			ok: true,
@@ -351,7 +379,7 @@ export async function run_subject_docker(
 	}
 	const remote = operator_url();
 	if (remote) {
-		return call_operator(remote, op, { slug, image }, on_progress);
+		return call_operator(remote, op, { slug, image, registry_installed_tag }, on_progress);
 	}
 	return run_subject_docker_local(op, { slug, service, image }, on_progress);
 }
@@ -359,7 +387,7 @@ export async function run_subject_docker(
 async function call_operator(
 	base: string,
 	op: SubjectRuntimeOp,
-	input: { slug: string; image: string },
+	input: { slug: string; image: string; registry_installed_tag?: string | null },
 	on_progress?: (event: SubjectRuntimeProgress) => void,
 ): Promise<SubjectRuntimeResult> {
 	on_progress?.({
@@ -380,7 +408,12 @@ async function call_operator(
 				'content-type': 'application/json',
 				'x-core-subject-gateway-secret': secret,
 			},
-			body: JSON.stringify({ image: input.image }),
+			body: JSON.stringify({
+				image: input.image,
+				...(input.registry_installed_tag
+					? { registry_installed_tag: input.registry_installed_tag }
+					: {}),
+			}),
 			signal: AbortSignal.timeout(10 * 60 * 1000),
 		});
 		const json = (await res.json().catch(() => ({}))) as SubjectRuntimeResult;
@@ -740,19 +773,21 @@ export async function handle_operator_http(req: Request): Promise<Response> {
 		return Response.json({ error: 'invalid slug' }, { status: 400 });
 	}
 	let image = '';
+	let registry_installed_tag: string | null = null;
 	try {
-		const body = (await req.json()) as { image?: string };
+		const body = (await req.json()) as { image?: string; registry_installed_tag?: string };
 		image = String(body.image ?? '');
+		registry_installed_tag = registry_tag_or_null(body.registry_installed_tag);
 	} catch {
 		image = '';
 	}
-	if (!image) image = subject_image_ref({ slug });
+	if (!image) image = subject_image_ref({ slug, registry_installed_tag });
 	const result = await run_subject_docker_local(
 		hit[2] as SubjectRuntimeOp,
 		{
 			slug,
 			service: subject_service_name(slug),
-			image: subject_image_ref({ slug, image }),
+			image: subject_image_ref({ slug, image, registry_installed_tag }),
 		},
 	);
 	return Response.json(result, { status: result.ok ? 200 : 500 });

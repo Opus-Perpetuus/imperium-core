@@ -30,10 +30,71 @@ export interface KirletManifestMenuItem {
   children?: KirletManifestMenuItem[];
 }
 
+export const KIRLET_MANIFEST_SCHEMA_URI =
+  "https://schemas.opus-perpetuus.dev/imperium/kirlet-manifest/1.0.json";
+
+export const KIRLET_MANIFEST_VERSION = 1;
+
+/**
+ * Primer segmento de una hoja. El shell ya los usa como rutas propias;
+ * un subject no puede registrarlas.
+ */
+export const RESERVED_LEAF_SEGMENTS = [
+  "login",
+  "admin",
+  "tienda",
+  "m",
+  "api",
+  "assets",
+  "downloads",
+  "registry",
+  "subject-home",
+  "desktop",
+  "oauth",
+  "health",
+  "metrics",
+] as const;
+
+export function leaf_segment_is_reserved(segment: string): boolean {
+  const head = segment.split("/")[0] ?? "";
+  return (RESERVED_LEAF_SEGMENTS as readonly string[]).includes(head);
+}
+
+export interface KirletManifestRepository {
+  git?: string;
+  github?: string;
+}
+
+export interface KirletManifestVersionChannel {
+  kind: "oci";
+  registry: string;
+  repository: string;
+  policy: "same-major-auto-patch";
+  releases?: "github";
+  minAgeHours?: number;
+}
+
+export type KirletLeafKind = "crud" | "page";
+
+export interface KirletManifestLeaf {
+  kind: KirletLeafKind;
+  /** Relativo al gateway. Nunca absoluto, con `..` ni con prefijo `m/`. */
+  appBase?: string;
+  appCreate?: string;
+  icon?: string;
+  /** Locale → campo → etiqueta. Un mapa plano se normaliza a `{ es }`. */
+  listHeaders?: Record<string, Record<string, string>>;
+  formLabels?: Record<string, Record<string, string>>;
+  listOnly?: boolean;
+  minShellVersion?: string;
+  permission?: string;
+}
+
 export interface KirletManifestPage {
   id: string;
   path: string;
   permission?: string;
+  leaf?: KirletManifestLeaf;
 }
 
 export interface KirletManifestIcon {
@@ -106,6 +167,11 @@ export interface KirletManifest {
   name: string;
   version: string;
   image: string;
+  imageDigest?: string;
+  $schema?: string;
+  manifestVersion?: number;
+  repository?: KirletManifestRepository;
+  versionChannel?: KirletManifestVersionChannel;
   compat: KirletManifestCompat;
   api: KirletManifestApi;
   permissions?: Array<{ id: string; label: string }>;

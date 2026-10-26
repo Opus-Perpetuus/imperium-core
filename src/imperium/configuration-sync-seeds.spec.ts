@@ -72,6 +72,7 @@ describe('configuration seed insert (store.insert → assert_required_fields)', 
 			[...walked_refs].sort(),
 		);
 		expect(snapshot_refs.filter((ref) => !walked_refs.includes(ref)).sort()).toEqual([
+			'configuration-app-registry-enabled',
 			'configuration-comercial-cola-activa',
 			'configuration-comercial-pedido-concepto',
 			'configuration-comercial-pedido-serie',

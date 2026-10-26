@@ -144,6 +144,15 @@
 		"value": false
 	},
 	{
+		"_ref": "configuration-app-registry-enabled",
+		"description": "Si está en SI, el núcleo expone el registro de apps. Si está en NO, esas rutas responden como si no existieran. IMPERIUM_APP_REGISTRY=1 lo enciende y =0 lo apaga aunque aquí diga otra cosa.",
+		"is_system": true,
+		"module_id": "NA",
+		"name": "Registro de apps",
+		"type": "switch",
+		"value": false
+	},
+	{
 		"_ref": "configuration-subject-auto-update-enabled",
 		"description": "Si está en SI, las apps instaladas se actualizan solas cuando el catálogo trae una versión nueva. Si está en NO, cada actualización se lanza a mano desde Configuración → Módulos.",
 		"is_system": true,

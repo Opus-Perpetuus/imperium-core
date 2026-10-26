@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.opus-perpetuus.dev/imperium/kirlet-manifest/1.0.json",
+  "title": "KirletManifest",
+  "description": "Contrato 1.0 del manifiesto de una app Imperium. El validador del kit es la puerta; este archivo es el esquema vendored.",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "$schema": {
+      "const": "https://schemas.opus-perpetuus.dev/imperium/kirlet-manifest/1.0.json"
+    },
+    "manifestVersion": { "const": 1 },
+    "id": { "type": "string", "pattern": "^(?:KIRLET|SUBJECT)-[a-z][a-z0-9-]*$" },
+    "technicalId": { "type": "string", "pattern": "^(?:kirlet|subject)-[a-z][a-z0-9-]*$" },
+    "name": { "type": "string", "minLength": 1 },
+    "version": { "type": "string", "minLength": 1 },
+    "image": { "type": "string", "minLength": 1 },
+    "imageDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "git": { "type": "string", "pattern": "^https://\\S+$" },
+        "github": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" }
+      },
+      "anyOf": [{ "required": ["git"] }, { "required": ["github"] }]
+    },
+    "versionChannel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "registry", "repository", "policy"],
+      "properties": {
+        "kind": { "const": "oci" },
+        "registry": { "type": "string", "pattern": "^[a-z0-9.-]+(?::\\d+)?$" },
+        "repository": { "type": "string", "pattern": "^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)+$" },
+        "policy": { "const": "same-major-auto-patch" },
+        "releases": { "const": "github" },
+        "minAgeHours": { "type": "number", "minimum": 0 }
+      }
+    },
+    "pages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "path"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "path": {
+            "type": "string",
+            "description": "Sin / inicial cuando la página declara leaf. El primer segmento no puede ser una ruta reservada del shell."
+          },
+          "permission": { "type": "string" },
+          "leaf": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind"],
+            "properties": {
+              "kind": { "enum": ["crud", "page"] },
+              "appBase": {
+                "type": "string",
+                "pattern": "^[a-z0-9]+(?:[/-][a-z0-9]+)*$",
+                "description": "Relativo al gateway. Prohibido empezar por /, por m/, contener .. o un esquema URL. kind crud lo exige."
+              },
+              "appCreate": {
+                "type": "string",
+                "pattern": "^[a-z0-9]+(?:[/-][a-z0-9]+)*$",
+                "description": "Misma regla que appBase. Puede diferir del listado."
+              },
+              "icon": { "type": "string", "pattern": "^[a-z0-9-]{1,64}$" },
+              "listHeaders": { "type": "object" },
+              "formLabels": { "type": "object" },
+              "listOnly": { "type": "boolean" },
+              "minShellVersion": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+              "permission": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

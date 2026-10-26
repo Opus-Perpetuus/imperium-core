@@ -42,6 +42,7 @@ const DENIED_PREFIXES = [
 	'/api/kirlets',
 	'/api/install-schemas',
 	'/api/db-admin',
+	'/api/registry',
 	'/api/user-pin',
 ];
 
