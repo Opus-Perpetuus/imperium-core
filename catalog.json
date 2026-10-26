@@ -16815,7 +16815,7 @@
       "catalog_id": "SUBJECT-database-manager",
       "technical_id": "subject-database-manager",
       "depends_on": [],
-      "image": "ghcr.io/opus-perpetuus/subject-database-manager:0.3.3",
+      "image": "ghcr.io/opus-perpetuus/subject-database-manager:0.4.0",
       "repo": "Opus-Perpetuus/imperium-subject-database-manager",
       "dir": "workspace/imperium-subject-database-manager",
       "modules": [
