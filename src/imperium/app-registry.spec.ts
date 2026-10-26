@@ -180,12 +180,12 @@ describe('interruptor', () => {
 		expect(await read_app_registry_enabled(store_with(true))).toBe(false);
 	});
 
-	test('la semilla nace en NO', () => {
+	test('la semilla nace en SI (migración estática→dynamic)', () => {
 		const seeds = JSON.parse(
 			readFileSync(new URL('./configuration-parameter-seeds.json', import.meta.url), 'utf8'),
 		) as Array<{ _ref: string; value: unknown }>;
 		const row = seeds.find((item) => item._ref === APP_REGISTRY_ENABLED_REF);
-		expect(row?.value).toBe(false);
+		expect(row?.value).toBe(true);
 	});
 });
 

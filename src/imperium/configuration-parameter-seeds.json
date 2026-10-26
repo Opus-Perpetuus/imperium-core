@@ -150,7 +150,7 @@
 		"module_id": "NA",
 		"name": "Registro de apps",
 		"type": "switch",
-		"value": false
+		"value": true
 	},
 	{
 		"_ref": "configuration-subject-auto-update-enabled",
