@@ -17,6 +17,15 @@ import {
 	type ManifestReader,
 } from './app-registry-sync.ts';
 import { run_subject_docker } from './subject-runtime.ts';
+import {
+	apply_image_sources_from_store,
+	current_image_sources,
+	live_catalog_scan,
+	merge_scanned_subjects,
+	scan_image_sources,
+	type CatalogImageScan,
+	type RegisteredSubject,
+} from './subject-image-sources.ts';
 
 export const APP_REGISTRY_ENABLED_REF = 'configuration-app-registry-enabled';
 export const REGISTRY_API_VERSION = 1;
@@ -119,7 +128,13 @@ export type RegistryDispatch = {
 	access?: LeafAccess;
 	repo?: AppRegistryRepository;
 	read_manifest?: ManifestReader;
+	/** Catálogo inyectado (tests). Sin esto, el baseline son `store.subjects`. */
 	catalog?: readonly CatalogApp[];
+	/**
+	 * Escaneo GHCR. `false` = no escanear (tests con catálogo fijo).
+	 * Omitido + `store` = `live_catalog_scan()`.
+	 */
+	scan?: CatalogImageScan | false;
 	run_install?: (input: {
 		slug: string;
 		image: string;
@@ -155,12 +170,6 @@ export async function handle_app_registry_http(
 			user,
 			store,
 			access,
-			catalog: store.subjects.map((sub) => ({
-				slug: sub.slug,
-				name: sub.name,
-				technical_id: sub.technical_id,
-				image: sub.image,
-			})),
 			read_manifest: read_installed_image_manifest,
 			run_install: async (input) => {
 				const result = await run_subject_docker('install', input);
@@ -219,12 +228,28 @@ export async function dispatch_app_registry(
 				message: 'No se pudo preparar el esquema del registro.',
 			});
 		}
+		let image_sources: ReturnType<typeof current_image_sources> = [];
+		if (deps.store) {
+			try {
+				image_sources = await apply_image_sources_from_store(deps.store);
+			} catch {
+				image_sources = current_image_sources();
+			}
+		} else {
+			image_sources = current_image_sources();
+		}
 		return registry_json(200, {
 			registryApiVersion: REGISTRY_API_VERSION,
 			enabled: true,
 			schemaReady: true,
 			tables: ['app_registry', 'app_manifest_snapshot', 'app_registry_audit'],
 			userBootstrap: 'ready',
+			imageSources: image_sources.map((source) => ({
+				kind: 'oci-ghcr',
+				org: source.org,
+				private: source.private,
+			})),
+			imageSourcesConfigRef: 'configuration-subject-image-sources',
 			envWrite: false,
 			deferred: [...REGISTRY_DEFERRED_ROUTES],
 		});
@@ -336,7 +361,7 @@ function locale_chain(req: Request, user: ImperiumDoc | null): string[] {
 	return [...(pref ? [pref] : []), ...from_header];
 }
 
-function catalog_of(deps: RegistryDispatch): CatalogApp[] {
+function baseline_catalog(deps: RegistryDispatch): CatalogApp[] {
 	if (deps.catalog) return [...deps.catalog];
 	return (deps.store?.subjects ?? []).map((sub) => ({
 		slug: sub.slug,
@@ -344,6 +369,49 @@ function catalog_of(deps: RegistryDispatch): CatalogApp[] {
 		technical_id: sub.technical_id,
 		image: sub.image,
 	}));
+}
+
+function to_catalog_apps(rows: readonly RegisteredSubject[]): CatalogApp[] {
+	return rows.map((row) => ({
+		slug: row.slug,
+		name: row.name?.trim() ? row.name : row.slug,
+		technical_id: row.technical_id,
+		image: row.image,
+	}));
+}
+
+/**
+ * Catálogo M4a: escaneo GHCR de `configuration-subject-image-sources`
+ * (+ filas ya conocidas). Fallo de red/token → fail-open al baseline.
+ * No escribe registry ni `IMPERIUM_SUBJECT_TAG_*`.
+ */
+export async function resolve_registry_catalog(deps: RegistryDispatch): Promise<CatalogApp[]> {
+	const baseline = baseline_catalog(deps);
+	const scan =
+		deps.scan === false ? null : deps.scan ?? (deps.store ? live_catalog_scan() : null);
+	if (!scan) return baseline;
+	try {
+		if (deps.store) {
+			try {
+				await apply_image_sources_from_store(deps.store);
+			} catch {
+				// Lista ilegible: se conserva la vigente en memoria.
+			}
+		}
+		const packages = await scan_image_sources({
+			client: scan.client,
+			token: scan.token,
+		});
+		const registered: RegisteredSubject[] = baseline.map((app) => ({
+			technical_id: app.technical_id,
+			slug: app.slug,
+			name: app.name,
+			image: app.image,
+		}));
+		return to_catalog_apps(merge_scanned_subjects(registered, packages));
+	} catch {
+		return baseline;
+	}
 }
 
 async function respond_user_bootstrap(
@@ -399,7 +467,7 @@ async function respond_apps(
 	const installed_raw = url.searchParams.get('installed');
 	const limit_raw = Number(url.searchParams.get('limit') ?? '');
 	const page = page_registry_catalog({
-		subjects: catalog_of(deps),
+		subjects: await resolve_registry_catalog(deps),
 		registry: await repo.list_registry(),
 		q: url.searchParams.get('q') ?? '',
 		installed: installed_raw == null ? null : installed_raw === '1' || installed_raw === 'true',
@@ -419,7 +487,7 @@ async function respond_versions(
 	repo: AppRegistryRepository,
 	slug: string,
 ): Promise<Response> {
-	const app = catalog_of(deps).find((item) => item.slug === slug) ?? null;
+	const app = (await resolve_registry_catalog(deps)).find((item) => item.slug === slug) ?? null;
 	const row = await repo.get_registry(slug);
 	if (!app && !row) {
 		return registry_json(404, {
@@ -450,7 +518,7 @@ async function respond_install(
 	} catch {
 		tag = null;
 	}
-	const app = catalog_of(deps).find((item) => item.slug === slug) ?? null;
+	const app = (await resolve_registry_catalog(deps)).find((item) => item.slug === slug) ?? null;
 	const outcome = await install_registry_app({
 		repo,
 		slug,

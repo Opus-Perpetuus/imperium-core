@@ -16,6 +16,7 @@ import {
 } from './app-registry-manifest.ts';
 import { is_denied_path } from './shares.ts';
 import type { ImperiumStore } from './store.ts';
+import { apply_odoo_image_sources } from './subject-image-sources.ts';
 
 const SCHEMA_URI = 'https://schemas.opus-perpetuus.dev/imperium/kirlet-manifest/1.0.json';
 const ADMIN = { _ref: 'user-menu-management-0' };
@@ -505,5 +506,150 @@ describe('bootstrap de usuario', () => {
 		const view = (await versions.json()) as { envWrite: boolean; installed_tag: string };
 		expect(view.envWrite).toBe(false);
 		expect(view.installed_tag).toBe('0.11.0');
+	});
+});
+
+describe('catálogo GHCR M4a', () => {
+	afterEach(() => {
+		apply_odoo_image_sources('');
+	});
+
+	const installed_row = {
+		slug: 'vehiculos',
+		name: 'Vehículos',
+		technical_id: 'subject-vehiculos',
+		image: 'ghcr.io/opus-perpetuus/subject-vehiculos:0.10.0',
+	};
+
+	test('GET /apps lista paquetes del escaneo y filas instaladas; no escribe env', async () => {
+		apply_odoo_image_sources('ghcr:opus-perpetuus');
+		const repo = memory_app_registry();
+		await repo.upsert_registry({
+			slug: 'vehiculos',
+			technical_id: 'subject-vehiculos',
+			install_status: 'ok',
+			installed_tag: '0.10.0',
+			image_repo: 'ghcr.io/opus-perpetuus/subject-vehiculos',
+		});
+		const env_before = process.env.IMPERIUM_SUBJECT_TAG_VEHICULOS;
+		const calls: string[] = [];
+		const res = await dispatch_app_registry(
+			{
+				sql: recording_sql(),
+				enabled: true,
+				user: ADMIN,
+				repo,
+				catalog: [installed_row],
+				scan: {
+					client: async (input) => {
+						calls.push(input.url);
+						if (input.url.includes('/packages?ecosystem=container')) {
+							return {
+								status: 200,
+								body: `<a href="/orgs/Opus-Perpetuus/packages/container/package/subject-pos">subject-pos</a>
+<a href="/orgs/Opus-Perpetuus/packages/container/package/nginx">nginx</a>`,
+							};
+						}
+						if (input.url.includes('/token?')) {
+							return { status: 200, body: { token: 'anon' } };
+						}
+						if (input.url.includes('/tags/list')) {
+							return { status: 200, body: { tags: ['1.2.3', '1.0.0'] } };
+						}
+						return { status: 404, body: '' };
+					},
+					token: null,
+				},
+			},
+			new Request('http://core/api/registry/apps'),
+			'/registry/apps',
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			items: Array<{ slug: string; installed: boolean; image: string; envWrite: boolean }>;
+			envWrite: boolean;
+			next_cursor: string | null;
+		};
+		expect(body.envWrite).toBe(false);
+		const by_slug = new Map(body.items.map((item) => [item.slug, item]));
+		expect(by_slug.has('vehiculos')).toBe(true);
+		expect(by_slug.get('vehiculos')?.installed).toBe(true);
+		expect(by_slug.has('pos')).toBe(true);
+		expect(by_slug.get('pos')?.installed).toBe(false);
+		expect(by_slug.get('pos')?.image).toContain('subject-pos:1.2.3');
+		expect(by_slug.has('nginx')).toBe(false);
+		expect(process.env.IMPERIUM_SUBJECT_TAG_VEHICULOS).toBe(env_before);
+		expect(calls.some((url) => url.includes('opus-perpetuus'))).toBe(true);
+	});
+
+	test('si el escaneo falla, fail-open al baseline + instaladas', async () => {
+		const repo = memory_app_registry();
+		await repo.upsert_registry({
+			slug: 'vehiculos',
+			technical_id: 'subject-vehiculos',
+			install_status: 'ok',
+			installed_tag: '0.10.0',
+		});
+		const res = await dispatch_app_registry(
+			{
+				sql: recording_sql(),
+				enabled: true,
+				user: ADMIN,
+				repo,
+				catalog: [installed_row],
+				scan: {
+					client: async () => {
+						throw new Error('ghcr down');
+					},
+				},
+			},
+			new Request('http://core/api/registry/apps?installed=1'),
+			'/registry/apps',
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { items: Array<{ slug: string }> };
+		expect(body.items.map((item) => item.slug)).toEqual(['vehiculos']);
+	});
+
+	test('GET /registry expone fuentes y el config ref editable', async () => {
+		apply_odoo_image_sources('ghcr:codice-progressio private');
+		const status = await dispatch_app_registry(
+			{ sql: recording_sql(), enabled: true, user: ADMIN, repo: memory_app_registry() },
+			new Request('http://core/api/registry'),
+			'/registry',
+		);
+		const body = (await status.json()) as {
+			imageSources: Array<{ kind: string; org: string; private: boolean }>;
+			imageSourcesConfigRef: string;
+			envWrite: boolean;
+		};
+		expect(body.imageSourcesConfigRef).toBe('configuration-subject-image-sources');
+		expect(body.imageSources).toEqual([
+			{ kind: 'oci-ghcr', org: 'codice-progressio', private: true },
+		]);
+		expect(body.envWrite).toBe(false);
+	});
+
+	test('scan:false no llama a la red aunque haya store', async () => {
+		const store = {
+			has: () => true,
+			find_where: async () => ({ value: 'ghcr:opus-perpetuus' }),
+			subjects: [installed_row],
+		} as unknown as ImperiumStore;
+		const res = await dispatch_app_registry(
+			{
+				sql: recording_sql(),
+				enabled: true,
+				user: ADMIN,
+				repo: memory_app_registry(),
+				store,
+				scan: false,
+			},
+			new Request('http://core/api/registry/apps'),
+			'/registry/apps',
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { items: Array<{ slug: string }> };
+		expect(body.items.map((i) => i.slug)).toEqual(['vehiculos']);
 	});
 });
