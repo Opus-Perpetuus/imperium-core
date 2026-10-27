@@ -9,6 +9,7 @@ import {
 	type RegistrySql,
 } from './app-registry.ts';
 import { memory_app_registry } from './app-registry-store.ts';
+import { record_applied_registry_tag } from './app-registry-catalog.ts';
 import { GRANDFATHER_SEGMENTS } from './app-registry-grandfather.ts';
 import {
 	colliding_segments,
@@ -651,5 +652,90 @@ describe('catálogo GHCR M4a', () => {
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as { items: Array<{ slug: string }> };
 		expect(body.items.map((i) => i.slug)).toEqual(['vehiculos']);
+	});
+});
+
+describe('tag aplicado en el registro', () => {
+	test('con installed_tag vacío persiste el tag nuevo y no escribe el entorno', async () => {
+		const repo = memory_app_registry();
+		await repo.upsert_registry({
+			slug: 'pos',
+			technical_id: 'subject-pos',
+			install_status: null,
+			previous_tag: '0.0.1',
+		});
+		const env_before = process.env.IMPERIUM_SUBJECT_TAG_POS;
+		const result = await record_applied_registry_tag({
+			repo,
+			slug: 'pos',
+			technical_id: 'subject-pos',
+			applied_tag: '0.4.7',
+			image: 'ghcr.io/opus-perpetuus/subject-pos:0.4.7',
+		});
+		expect(result.wrote).toBe(true);
+		const row = await repo.get_registry('pos');
+		expect(row?.installed_tag).toBe('0.4.7');
+		expect(row?.previous_tag).toBe('0.0.1');
+		expect(row?.install_status).toBe('ok');
+		expect(row?.image_repo).toBe('ghcr.io/opus-perpetuus/subject-pos:0.4.7');
+		expect(process.env.IMPERIUM_SUBJECT_TAG_POS).toBe(env_before);
+	});
+
+	test('al cambiar de tag el anterior queda en previous_tag', async () => {
+		const repo = memory_app_registry();
+		await repo.upsert_registry({
+			slug: 'tienda',
+			technical_id: 'subject-tienda',
+			installed_tag: '0.4.0',
+			previous_tag: '0.3.0',
+			install_status: 'ok',
+		});
+		const result = await record_applied_registry_tag({
+			repo,
+			slug: 'tienda',
+			technical_id: 'subject-tienda',
+			applied_tag: '0.5.0',
+			image: 'ghcr.io/opus-perpetuus/subject-tienda:0.5.0',
+		});
+		expect(result.wrote).toBe(true);
+		const row = await repo.get_registry('tienda');
+		expect(row?.installed_tag).toBe('0.5.0');
+		expect(row?.previous_tag).toBe('0.4.0');
+		expect(row?.install_status).toBe('ok');
+	});
+
+	test('el mismo tag en ok no reescribe previous_tag', async () => {
+		const repo = memory_app_registry();
+		await repo.upsert_registry({
+			slug: 'vehiculos',
+			technical_id: 'subject-vehiculos',
+			installed_tag: '0.11.0',
+			previous_tag: '0.10.0',
+			install_status: 'ok',
+		});
+		const result = await record_applied_registry_tag({
+			repo,
+			slug: 'vehiculos',
+			technical_id: 'subject-vehiculos',
+			applied_tag: '0.11.0',
+			image: 'ghcr.io/opus-perpetuus/subject-vehiculos:0.11.0',
+		});
+		expect(result.wrote).toBe(false);
+		const row = await repo.get_registry('vehiculos');
+		expect(row?.installed_tag).toBe('0.11.0');
+		expect(row?.previous_tag).toBe('0.10.0');
+		expect(row?.install_status).toBe('ok');
+	});
+
+	test('un tag inválido no crea fila', async () => {
+		const repo = memory_app_registry();
+		const result = await record_applied_registry_tag({
+			repo,
+			slug: 'pos',
+			technical_id: 'subject-pos',
+			applied_tag: '../0.1.0',
+		});
+		expect(result.wrote).toBe(false);
+		expect(await repo.get_registry('pos')).toBeNull();
 	});
 });

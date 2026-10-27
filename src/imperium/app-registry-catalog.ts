@@ -209,20 +209,14 @@ export async function install_registry_app(input: {
 			},
 		};
 	}
-	await input.repo.upsert_registry({
+	await record_applied_registry_tag({
+		repo: input.repo,
 		slug: input.slug,
 		technical_id: input.app?.technical_id ?? row?.technical_id ?? `subject-${input.slug}`,
-		installed_tag: applied_tag,
-		installed_digest: digest_or_null(input.digest),
-		previous_tag: current && current !== applied_tag ? current : row?.previous_tag ?? null,
-		install_status: 'ok',
-		image_repo: image,
-	});
-	await input.repo.insert_audit({
-		actor_user_id: input.actor,
-		action: 'install',
-		slug: input.slug,
-		detail: { installed_tag: applied_tag, envWrite: false },
+		applied_tag,
+		image,
+		digest: digest_or_null(input.digest),
+		actor: input.actor,
 	});
 	return {
 		status: 200,
@@ -234,4 +228,37 @@ export async function install_registry_app(input: {
 			envWrite: false,
 		},
 	};
+}
+
+export async function record_applied_registry_tag(input: {
+	repo: AppRegistryRepository;
+	slug: string;
+	technical_id: string;
+	applied_tag: string;
+	image?: string | null;
+	digest?: string | null;
+	actor?: string | null;
+}): Promise<{ wrote: boolean }> {
+	const applied = registry_tag_or_null(input.applied_tag);
+	if (!applied) return { wrote: false };
+	const row = await input.repo.get_registry(input.slug);
+	const current = row?.installed_tag ?? null;
+	if (current === applied && row?.install_status === 'ok') return { wrote: false };
+	const previous = current && current !== applied ? current : (row?.previous_tag ?? null);
+	await input.repo.upsert_registry({
+		slug: input.slug,
+		technical_id: input.technical_id,
+		installed_tag: applied,
+		installed_digest: digest_or_null(input.digest),
+		previous_tag: previous,
+		install_status: 'ok',
+		...(input.image ? { image_repo: input.image } : {}),
+	});
+	await input.repo.insert_audit({
+		actor_user_id: input.actor ?? null,
+		action: 'install',
+		slug: input.slug,
+		detail: { installed_tag: applied, envWrite: false },
+	});
+	return { wrote: true };
 }

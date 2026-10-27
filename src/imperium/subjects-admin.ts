@@ -22,11 +22,14 @@ import {
 	docker_runtime_wanted,
 	is_base_subject_slug,
 	read_subject_image_manifest,
+	registry_tag_or_null,
 	run_subject_docker,
 	subject_image_ref,
 	type SubjectRuntimeResult,
 } from './subject-runtime.ts';
-import { registry_tag_index } from './app-registry-store.ts';
+import { record_applied_registry_tag } from './app-registry-catalog.ts';
+import { ensure_app_registry_schema } from './app-registry.ts';
+import { registry_tag_index, sql_app_registry } from './app-registry-store.ts';
 import {
 	APPS_AL_PIN,
 	describe_hold,
@@ -2468,10 +2471,34 @@ export async function run_subject_update(
 		job,
 	);
 	const pinned = await image_respecting_registry(sql, sub.slug, target_image);
-	target_image = pinned.image;
+	const registry_tag = pinned.registry_installed_tag;
+	const target_tag = registry_tag_or_null(subject_image_tag(target_image));
+	const source: UpdateSource = image_source === 'running' ? 'catalog' : image_source;
+	const registry_image = registry_tag
+		? subject_image_ref({ slug: sub.slug, registry_installed_tag: registry_tag })
+		: null;
+	// El tag guardado gana al entorno y a un objetivo más viejo.
+	const target_moves =
+		Boolean(target_tag) &&
+		(!registry_tag ||
+			update_wanted(registry_image, {
+				image: target_image,
+				source,
+				created_at: null,
+			}));
+	const launch_tag = target_moves && target_tag ? target_tag : registry_tag;
+	if (target_moves && target_tag) {
+		target_image = subject_image_ref({
+			slug: sub.slug,
+			image: target_image,
+			registry_installed_tag: target_tag,
+		});
+	} else if (registry_tag) {
+		target_image = pinned.image;
+	}
 	const docker = await run_subject_docker(
 		'update',
-		{ slug: sub.slug, image: target_image, registry_installed_tag: pinned.registry_installed_tag },
+		{ slug: sub.slug, image: target_image, registry_installed_tag: launch_tag },
 		(event) => {
 			emit_subject_event(
 				{
@@ -2545,14 +2572,29 @@ export async function run_subject_update(
 		}
 	}
 	const applied = await schema_version(sql, technical_id);
+	const applied_image = docker.skipped ? null : (docker.image || target_image);
 	await write_install_row(
 		sql,
 		technical_id,
 		true,
 		applied.version,
 		'installed',
-		docker.skipped ? null : docker.image,
+		applied_image,
 	);
+	if (docker.ok && !docker.skipped) {
+		// Cold-sync resuelve la imagen por installed_tag; vacío cae a 0.1.0.
+		const applied_tag = registry_tag_or_null(subject_image_tag(applied_image));
+		if (applied_tag) {
+			await ensure_app_registry_schema(sql);
+			await record_applied_registry_tag({
+				repo: sql_app_registry(sql),
+				slug: sub.slug,
+				technical_id,
+				applied_tag,
+				image: applied_image,
+			});
+		}
+	}
 	store.mark_subject_installed(technical_id, true);
 	emit_subject_event(
 		{

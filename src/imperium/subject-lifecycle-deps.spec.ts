@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import {
 	accept_subject_lifecycle,
 	accept_subject_update,
+	accept_subject_update_all,
 	build_install_chain,
 	build_update_all_chain,
 	catalog_row,
@@ -326,8 +327,25 @@ type Row = {
 type Hook = (row: { technical_id: string; status: string }) => Promise<void> | void;
 type SelectHook = (call: number) => Promise<void> | void;
 
+type RegistryMem = {
+	slug: string;
+	technical_id: string;
+	installed_tag: string | null;
+	previous_tag: string | null;
+	install_status: string | null;
+	image_repo: string | null;
+	discovered_tag: string | null;
+	installed_digest: string | null;
+	enabled: boolean;
+};
+
+function coalesce<T>(next: T | null | undefined, prev: T | null): T | null {
+	return next == null ? prev : next;
+}
+
 function fake_sql(initial: Array<[string, boolean, string?]>) {
 	const rows = new Map<string, Row>();
+	const registry = new Map<string, RegistryMem>();
 	const writes: Array<{ technical_id: string; status: string }> = [];
 	let hook: Hook | null = null;
 	let select_hook: SelectHook | null = null;
@@ -381,12 +399,37 @@ function fake_sql(initial: Array<[string, boolean, string?]>) {
 				await select_hook?.(++selects);
 				return read;
 			}
+			if (query.includes('app_registry_audit')) return [];
+			if (query.includes('INSERT INTO public.app_registry')) {
+				const slug = String(params[0]);
+				const prev = registry.get(slug);
+				registry.set(slug, {
+					slug,
+					technical_id: String(params[1] ?? prev?.technical_id ?? ''),
+					image_repo: coalesce(params[3] as string | null, prev?.image_repo ?? null),
+					installed_tag: coalesce(params[8] as string | null, prev?.installed_tag ?? null),
+					installed_digest: coalesce(params[9] as string | null, prev?.installed_digest ?? null),
+					discovered_tag: coalesce(params[10] as string | null, prev?.discovered_tag ?? null),
+					previous_tag: coalesce(params[11] as string | null, prev?.previous_tag ?? null),
+					install_status: coalesce(params[12] as string | null, prev?.install_status ?? null),
+					enabled: params[13] == null ? (prev?.enabled ?? true) : Boolean(params[13]),
+				});
+				return [];
+			}
+			if (query.includes('FROM public.app_registry')) {
+				if (query.includes('WHERE slug')) {
+					const row = registry.get(String(params[0]));
+					return row ? [{ ...row }] : [];
+				}
+				return [...registry.values()].map((row) => ({ ...row }));
+			}
 			return [];
 		},
 	} as unknown as Bun.SQL;
 	return {
 		sql,
 		rows,
+		registry,
 		writes,
 		on_write(next: Hook | null) {
 			hook = next;
@@ -796,6 +839,18 @@ describe('ciclo de vida con dependencias', () => {
 		await settled(db);
 		expect(state(db, 'subject-pos')).toBe('on:installed');
 	});
+
+	test('sin operador no se inventa installed_tag', async () => {
+		const db = fake_sql([
+			['subject-almacen', true],
+			['subject-rh', true],
+			['subject-pos', true, IMAGE_OLD],
+		]);
+		const manual = (await accept_subject_update(fake_store(), db.sql, 'subject-pos', null))!;
+		expect(await manual.done).toBeNull();
+		await settled(db);
+		expect(db.registry.has('pos')).toBe(false);
+	});
 });
 
 describe('auto-actualización con versiones descubiertas en el registro', () => {
@@ -1182,5 +1237,111 @@ describe('actualizar a una versión descubierta pasa por el operador con esa ima
 			{ path: '/runtime/pos/install', image: IMAGE_FOUND },
 			{ path: '/runtime/pos/uninstall', image: IMAGE_FOUND },
 		]);
+	});
+
+	function pos_db(image: string) {
+		return fake_sql([
+			['subject-almacen', true, 'ghcr.io/opus-perpetuus/subject-almacen:0.1.0'],
+			['subject-rh', true, 'ghcr.io/opus-perpetuus/subject-rh:0.1.0'],
+			['subject-pos', true, image],
+		]);
+	}
+
+	function put_registry(
+		db: ReturnType<typeof fake_sql>,
+		tag: string | null,
+		previous: string | null,
+		status: string | null,
+	) {
+		db.registry.set('pos', {
+			slug: 'pos',
+			technical_id: 'subject-pos',
+			installed_tag: tag,
+			previous_tag: previous,
+			install_status: status,
+			image_repo: tag ? `ghcr.io/opus-perpetuus/subject-pos:${tag}` : null,
+			discovered_tag: null,
+			installed_digest: null,
+			enabled: true,
+		});
+	}
+
+	test('update y apply dejan installed_tag aunque estuviera vacío', async () => {
+		seen.length = 0;
+		const env = process.env.IMPERIUM_SUBJECT_TAG_POS;
+		const db = pos_db(IMAGE_OLD);
+		put_registry(db, null, '0.0.1', null);
+		const one = (await accept_subject_update(store_on(), db.sql, 'subject-pos', null))!;
+		expect(await one.done).toBeNull();
+		await settled(db);
+		expect(db.registry.get('pos')).toMatchObject({
+			installed_tag: '0.2.0',
+			previous_tag: '0.0.1',
+			install_status: 'ok',
+		});
+		expect(seen.filter((s) => s.path.endsWith('/update'))).toEqual([
+			{ path: '/runtime/pos/update', image: IMAGE_NEW },
+		]);
+		expect(process.env.IMPERIUM_SUBJECT_TAG_POS).toBe(env);
+
+		const again = pos_db(IMAGE_OLD);
+		put_registry(again, null, null, null);
+		const all = await accept_subject_update_all(store_on(), again.sql, null);
+		expect(all.slugs).toEqual(['pos']);
+		await settled(again);
+		expect(again.registry.get('pos')).toMatchObject({
+			installed_tag: '0.2.0',
+			previous_tag: null,
+			install_status: 'ok',
+		});
+	});
+
+	test('el mismo tag no reescribe previous_tag', async () => {
+		seen.length = 0;
+		const db = pos_db(IMAGE_NEW);
+		put_registry(db, '0.2.0', '0.0.9', 'ok');
+		const manual = (await accept_subject_update(store_on(), db.sql, 'subject-pos', null))!;
+		expect(await manual.done).toBeNull();
+		await settled(db);
+		expect(db.registry.get('pos')).toMatchObject({
+			installed_tag: '0.2.0',
+			previous_tag: '0.0.9',
+			install_status: 'ok',
+		});
+		expect(seen.filter((s) => s.path.endsWith('/update'))).toEqual([
+			{ path: '/runtime/pos/update', image: IMAGE_NEW },
+		]);
+	});
+
+	test('un tag viejo no frena el pin más nuevo; uno más nuevo no se baja', async () => {
+		seen.length = 0;
+		const up = pos_db(IMAGE_OLD);
+		put_registry(up, '0.1.0', '0.0.1', 'ok');
+		const moved = (await accept_subject_update(store_on(), up.sql, 'subject-pos', null))!;
+		expect(await moved.done).toBeNull();
+		await settled(up);
+		expect(seen.filter((s) => s.path.endsWith('/update'))).toEqual([
+			{ path: '/runtime/pos/update', image: IMAGE_NEW },
+		]);
+		expect(up.registry.get('pos')).toMatchObject({
+			installed_tag: '0.2.0',
+			previous_tag: '0.1.0',
+			install_status: 'ok',
+		});
+
+		seen.length = 0;
+		const stay = pos_db(IMAGE_OLD);
+		put_registry(stay, '0.3.0', '0.2.0', 'ok');
+		const kept = (await accept_subject_update(store_on(), stay.sql, 'subject-pos', null))!;
+		expect(await kept.done).toBeNull();
+		await settled(stay);
+		expect(seen.filter((s) => s.path.endsWith('/update'))).toEqual([
+			{ path: '/runtime/pos/update', image: 'ghcr.io/opus-perpetuus/subject-pos:0.3.0' },
+		]);
+		expect(stay.registry.get('pos')).toMatchObject({
+			installed_tag: '0.3.0',
+			previous_tag: '0.2.0',
+			install_status: 'ok',
+		});
 	});
 });
