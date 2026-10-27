@@ -11202,7 +11202,7 @@
         "subject-almacen",
         "subject-rh"
       ],
-      "image": "ghcr.io/opus-perpetuus/subject-pos:0.8.0",
+      "image": "ghcr.io/opus-perpetuus/subject-pos:0.9.0",
       "repo": "Opus-Perpetuus/imperium-subject-pos",
       "dir": "workspace/imperium-subject-pos",
       "modules": [
