@@ -55,7 +55,7 @@ export function image_tag(image: string | null | undefined): string {
  * Entorno extra para el `docker compose` de una app: fija su tag.
  *
  * `${VAR:-default}` cae al default tanto si la variable falta como si viene
- * vacía, así que un tag en blanco no se publica: se deja que mande el pin del
+ * vacía, así que un tag en blanco no se publica: se deja que mande el fallback
  * compose en vez de arrastrar la app a una imagen inexistente.
  */
 export function subject_tag_env(
@@ -121,16 +121,15 @@ export function tag_after_product_update(input: {
  *
  *   1. `registry_installed_tag` — lo que `app_registry.installed_tag` ya aplicó.
  *   2. `IMPERIUM_SUBJECT_TAG_<SLUG>` — el selector por app.
- *   3. la imagen que se pasa (lo instalado en `subject_installs`, o el pin del
- *      catálogo).
- *   4. `IMPERIUM_SUBJECT_TAG` — palanca global, para pinar toda la flota.
- *   5. `0.1.0`.
+ *   3. la imagen que se pasa (lo instalado en `subject_installs`).
+ *   4. `IMPERIUM_SUBJECT_TAG` — palanca global, para forzar toda la flota.
+ *   5. `latest` (fallback de compose; sin pin de catálogo).
  *
  * El global estaba por ENCIMA de la imagen recibida, así que reescribía a su
- * valor el tag de todas las apps. Como el compose lo trae puesto a `0.1.0` por
- * defecto, el `docker rmi` del desinstalar apuntaba a una imagen que no era la
- * que corría y se iba en silencio por el `no such image`. Debajo de la imagen
- * concreta sigue sirviendo para pinar la flota, que es para lo que está.
+ * valor el tag de todas las apps. Como el compose lo traía a un semver fijo
+ * por defecto, el `docker rmi` del desinstalar apuntaba a una imagen que no
+ * era la que corría y se iba en silencio por el `no such image`. Debajo de
+ * la imagen concreta sigue sirviendo para forzar la flota.
  */
 export function subject_image_ref(input: {
 	slug: string;
@@ -149,7 +148,7 @@ export function subject_image_ref(input: {
 	if (given && IMAGE_RE.test(given)) {
 		return given;
 	}
-	const fallback_tag = global_tag || '0.1.0';
+	const fallback_tag = global_tag || 'latest';
 	return `ghcr.io/opus-perpetuus/subject-${slug}:${fallback_tag}`;
 }
 

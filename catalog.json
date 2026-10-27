@@ -15,7 +15,6 @@
       "catalog_id": "SUBJECT-almacen",
       "technical_id": "subject-almacen",
       "depends_on": [],
-      "image": "ghcr.io/opus-perpetuus/subject-almacen:0.4.0",
       "repo": "Opus-Perpetuus/imperium-subject-almacen",
       "dir": "workspace/imperium-subject-almacen",
       "modules": [
@@ -1844,7 +1843,6 @@
       "catalog_id": "SUBJECT-configuraciones-de-vista",
       "technical_id": "subject-configuraciones-de-vista",
       "depends_on": [],
-      "image": "ghcr.io/opus-perpetuus/subject-configuraciones-de-vista:0.2.3",
       "repo": "Opus-Perpetuus/imperium-subject-configuraciones-de-vista",
       "dir": "workspace/imperium-subject-configuraciones-de-vista",
       "modules": [
@@ -1926,7 +1924,6 @@
       "catalog_id": "SUBJECT-configuracion",
       "technical_id": "subject-configuracion",
       "depends_on": [],
-      "image": "ghcr.io/opus-perpetuus/subject-configuracion:0.4.0",
       "repo": "Opus-Perpetuus/imperium-subject-configuracion",
       "dir": "workspace/imperium-subject-configuracion",
       "modules": [
@@ -3882,7 +3879,6 @@
       "catalog_id": "SUBJECT-control-hospitalario",
       "technical_id": "subject-control-hospitalario",
       "depends_on": [],
-      "image": "ghcr.io/opus-perpetuus/subject-control-hospitalario:0.2.3",
       "repo": "Opus-Perpetuus/imperium-subject-control-hospitalario",
       "dir": "workspace/imperium-subject-control-hospitalario",
       "modules": [
@@ -5237,7 +5233,6 @@
       "catalog_id": "SUBJECT-control-emergencias",
       "technical_id": "subject-control-emergencias",
       "depends_on": [],
-      "image": "ghcr.io/opus-perpetuus/subject-control-emergencias:0.2.3",
       "repo": "Opus-Perpetuus/imperium-subject-control-emergencias",
       "dir": "workspace/imperium-subject-control-emergencias",
       "modules": [
@@ -6621,7 +6616,6 @@
       "catalog_id": "SUBJECT-control-escolar",
       "technical_id": "subject-control-escolar",
       "depends_on": [],
-      "image": "ghcr.io/opus-perpetuus/subject-control-escolar:0.6.0",
       "repo": "Opus-Perpetuus/imperium-subject-control-escolar",
       "dir": "workspace/imperium-subject-control-escolar",
       "modules": [
@@ -7217,7 +7211,6 @@
       "catalog_id": "SUBJECT-control-municipal",
       "technical_id": "subject-control-municipal",
       "depends_on": [],
-      "image": "ghcr.io/opus-perpetuus/subject-control-municipal:0.3.0",
       "repo": "Opus-Perpetuus/imperium-subject-control-municipal",
       "dir": "workspace/imperium-subject-control-municipal",
       "modules": [
@@ -8712,7 +8705,6 @@
       "catalog_id": "SUBJECT-dispositivos-fisicos",
       "technical_id": "subject-dispositivos-fisicos",
       "depends_on": [],
-      "image": "ghcr.io/opus-perpetuus/subject-dispositivos-fisicos:0.2.3",
       "repo": "Opus-Perpetuus/imperium-subject-dispositivos-fisicos",
       "dir": "workspace/imperium-subject-dispositivos-fisicos",
       "modules": [
@@ -8906,7 +8898,6 @@
       "catalog_id": "SUBJECT-facturacion-electronica",
       "technical_id": "subject-facturacion-electronica",
       "depends_on": [],
-      "image": "ghcr.io/opus-perpetuus/subject-facturacion-electronica:0.2.3",
       "repo": "Opus-Perpetuus/imperium-subject-facturacion-electronica",
       "dir": "workspace/imperium-subject-facturacion-electronica",
       "modules": [
@@ -9235,7 +9226,6 @@
         "subject-almacen",
         "subject-vehiculos"
       ],
-      "image": "ghcr.io/opus-perpetuus/subject-logistica:0.5.1",
       "repo": "Opus-Perpetuus/imperium-subject-logistica",
       "dir": "workspace/imperium-subject-logistica",
       "modules": [
@@ -11286,7 +11276,6 @@
         "subject-almacen",
         "subject-rh"
       ],
-      "image": "ghcr.io/opus-perpetuus/subject-pos:0.10.0",
       "repo": "Opus-Perpetuus/imperium-subject-pos",
       "dir": "workspace/imperium-subject-pos",
       "modules": [
@@ -11922,7 +11911,6 @@
       "catalog_id": "SUBJECT-pagos",
       "technical_id": "subject-pagos",
       "depends_on": [],
-      "image": "ghcr.io/opus-perpetuus/subject-pagos:0.2.3",
       "repo": "Opus-Perpetuus/imperium-subject-pagos",
       "dir": "workspace/imperium-subject-pagos",
       "modules": [
@@ -12036,7 +12024,6 @@
       "catalog_id": "SUBJECT-rh",
       "technical_id": "subject-rh",
       "depends_on": [],
-      "image": "ghcr.io/opus-perpetuus/subject-rh:0.2.3",
       "repo": "Opus-Perpetuus/imperium-subject-rh",
       "dir": "workspace/imperium-subject-rh",
       "modules": [
@@ -12909,7 +12896,6 @@
       "catalog_id": "SUBJECT-reportes",
       "technical_id": "subject-reportes",
       "depends_on": [],
-      "image": "ghcr.io/opus-perpetuus/subject-reportes:0.4.0",
       "repo": "Opus-Perpetuus/imperium-subject-reportes",
       "dir": "workspace/imperium-subject-reportes",
       "modules": [
@@ -13108,7 +13094,6 @@
       "catalog_id": "SUBJECT-planeacion",
       "technical_id": "subject-planeacion",
       "depends_on": [],
-      "image": "ghcr.io/opus-perpetuus/subject-planeacion:0.2.3",
       "repo": "Opus-Perpetuus/imperium-subject-planeacion",
       "dir": "workspace/imperium-subject-planeacion",
       "modules": [
@@ -13293,7 +13278,6 @@
       "catalog_id": "SUBJECT-tableros-dinamicos",
       "technical_id": "subject-tableros-dinamicos",
       "depends_on": [],
-      "image": "ghcr.io/opus-perpetuus/subject-tableros-dinamicos:0.2.3",
       "repo": "Opus-Perpetuus/imperium-subject-tableros-dinamicos",
       "dir": "workspace/imperium-subject-tableros-dinamicos",
       "modules": [
@@ -13511,7 +13495,6 @@
       "catalog_id": "SUBJECT-turnos",
       "technical_id": "subject-turnos",
       "depends_on": [],
-      "image": "ghcr.io/opus-perpetuus/subject-turnos:0.2.3",
       "repo": "Opus-Perpetuus/imperium-subject-turnos",
       "dir": "workspace/imperium-subject-turnos",
       "modules": [
@@ -13806,7 +13789,6 @@
       "catalog_id": "SUBJECT-vehiculos",
       "technical_id": "subject-vehiculos",
       "depends_on": [],
-      "image": "ghcr.io/opus-perpetuus/subject-vehiculos:0.11.1",
       "repo": "Opus-Perpetuus/imperium-subject-vehiculos",
       "dir": "workspace/imperium-subject-vehiculos",
       "modules": [
@@ -14460,7 +14442,6 @@
       "depends_on": [
         "subject-almacen"
       ],
-      "image": "ghcr.io/opus-perpetuus/subject-ventas:0.5.0",
       "repo": "Opus-Perpetuus/imperium-subject-ventas",
       "dir": "workspace/imperium-subject-ventas",
       "modules": [
@@ -16534,7 +16515,6 @@
       "catalog_id": "SUBJECT-tienda",
       "technical_id": "subject-tienda",
       "depends_on": [],
-      "image": "ghcr.io/opus-perpetuus/subject-tienda:0.22.0",
       "repo": "Opus-Perpetuus/imperium-subject-tienda",
       "dir": "workspace/imperium-subject-tienda",
       "modules": [
@@ -16899,7 +16879,6 @@
       "catalog_id": "SUBJECT-database-manager",
       "technical_id": "subject-database-manager",
       "depends_on": [],
-      "image": "ghcr.io/opus-perpetuus/subject-database-manager:0.4.0",
       "repo": "Opus-Perpetuus/imperium-subject-database-manager",
       "dir": "workspace/imperium-subject-database-manager",
       "modules": [
@@ -17206,7 +17185,6 @@
       "depends_on": [
         "subject-vehiculos"
       ],
-      "image": "ghcr.io/opus-perpetuus/subject-herramientas:0.10.0",
       "repo": "Opus-Perpetuus/imperium-subject-herramientas",
       "dir": "workspace/imperium-subject-herramientas",
       "modules": [
