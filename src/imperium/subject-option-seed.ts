@@ -4,7 +4,7 @@
  * de una sesión humana.
  */
 import { SUBJECT_CALLER_HEADER } from '@opus-perpetuus/imperium-core-kit';
-import { as_object } from './envelope.ts';
+import { as_array, as_object } from './envelope.ts';
 
 const SEED_KEYS = new Set([
 	'status-option-control:seed_defaults',
@@ -50,14 +50,28 @@ function explicit_entries(
 	return loose ? [body] : null;
 }
 
-function entry_in_scope(caller: string, entry: Record<string, unknown>): boolean {
-	const model_id = text(entry.model_id);
-	const module_name = text(entry.module_name);
-	const module_id = text(entry.module_id);
+function claimed_ids_in_scope(caller: string, item: Record<string, unknown>): boolean {
+	const model_id = text(item.model_id);
+	const module_name = text(item.module_name);
+	const module_id = text(item.module_id);
 	if (model_id && !owns(caller, model_id)) return false;
 	if (module_name && !owns(caller, module_name)) return false;
 	if (module_id && !owns(caller, module_id)) return false;
-	return Boolean((model_id && owns(caller, model_id)) || (module_name && owns(caller, module_name)));
+	return true;
+}
+
+function entry_in_scope(caller: string, entry: Record<string, unknown>): boolean {
+	const model_id = text(entry.model_id);
+	const module_name = text(entry.module_name);
+	if (!claimed_ids_in_scope(caller, entry)) return false;
+	if (!Boolean((model_id && owns(caller, model_id)) || (module_name && owns(caller, module_name)))) {
+		return false;
+	}
+	// general-option-list: cada elemento de `lists` puede traer su propio módulo.
+	for (const raw of as_array(entry.lists)) {
+		if (!claimed_ids_in_scope(caller, as_object(raw))) return false;
+	}
+	return true;
 }
 
 /**

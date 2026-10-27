@@ -152,6 +152,51 @@ describe('authorize_subject_option_seed', () => {
 		}
 	});
 
+	test('listas anidadas con model_id/module_name/module_id ajenos → 403 seed_out_of_scope', async () => {
+		for (const lists of [
+			[{ list_key: 'prioridad', model_id: 'subject-other/orders', options: [{ value: 'alta', label: 'Alta' }] }],
+			[{ list_key: 'prioridad', module_name: 'subject-other/orders', options: [{ value: 'alta', label: 'Alta' }] }],
+			[{ list_key: 'prioridad', module_id: 'subject-other/orders', options: [{ value: 'alta', label: 'Alta' }] }],
+			[
+				{ list_key: 'propia', options: [{ value: 'ok', label: 'Ok' }] },
+				{ list_key: 'ajena', model_id: 'Pedidos', options: [{ value: 'x', label: 'X' }] },
+			],
+		]) {
+			const result = await gate(
+				seed_request(TIENDA, secret_of(TIENDA), {
+					entries: [{ model_id: 'subject-tienda/orders', module_name: 'subject-tienda/orders', lists }],
+				}),
+				'general-option-list-control',
+			);
+			expect((result as Response).status).toBe(403);
+			expect((await refused(result)).code).toBe('seed_out_of_scope');
+		}
+	});
+
+	test('listas anidadas propias o sin claim de módulo pasan el candado', async () => {
+		const result = await gate(
+			seed_request(TIENDA, secret_of(TIENDA), {
+				entries: [
+					{
+						model_id: 'subject-tienda/orders',
+						module_name: 'subject-tienda/orders',
+						lists: [
+							{ list_key: 'prioridad', options: [{ value: 'alta', label: 'Alta' }] },
+							{
+								list_key: 'canal',
+								model_id: 'subject-tienda/orders',
+								module_name: 'subject-tienda/orders',
+								options: [{ value: 'web', label: 'Web' }],
+							},
+						],
+					},
+				],
+			}),
+			'general-option-list-control',
+		);
+		expect(result).toEqual({ ok: true, caller: TIENDA });
+	});
+
 	test('sin entries, builtin false o cuerpo vacío no siembra los builtins del núcleo', async () => {
 		for (const [resource, body] of [
 			['status-option-control', {}],
