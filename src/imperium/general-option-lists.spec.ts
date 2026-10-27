@@ -283,3 +283,32 @@ describe('status-option-control seed-defaults', () => {
 		expect(store.updates()).toBe(writes);
 	});
 });
+
+describe('seed fill-empty color/icon', () => {
+	test('rellena color vacío en opción general ya guardada sin tocar etiqueta', async () => {
+		const existing = { value: 'efectivo', label: 'Efectivo custom', color: '' };
+		const store = memory_store({ configuration: [general_config([existing])] });
+		const result = await seed_general_option_lists(
+			ctx(store, {
+				model_id: 'PosTickets',
+				lists: [
+					{
+						list_key: 'metodo_pago',
+						options: [
+							{ value: 'efectivo', label: 'Efectivo', color: '#198754', icon: 'fas fa-coins' },
+						],
+					},
+				],
+			}) as never,
+		);
+		expect(result.data[0]?.filled).toBe(1);
+		expect(result.data[0]?.inserted).toBe(0);
+		const options = (
+			store.data.configuration[0]?.value as { lists: Array<{ options: ImperiumDoc[] }> }
+		).lists[0]?.options;
+		expect(options?.[0]?.label).toBe('Efectivo custom');
+		expect(options?.[0]?.color).toBe('#198754');
+		expect(options?.[0]?.icon).toBe('fas fa-coins');
+	});
+});
+

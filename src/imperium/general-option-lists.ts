@@ -5,12 +5,23 @@
  */
 import { as_array, as_object, ok, type ImperiumDoc } from './envelope.ts';
 import { query_list } from './body.ts';
-import { insert_missing } from './option-seed.ts';
+import { fill_empty_presentation, insert_missing } from './option-seed.ts';
 import type { ImperiumStore } from './store.ts';
 
 export const GENERAL_OPTION_LIST_TYPE = 'general-option-lists-by-module';
 
 const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
+const TYPE_TO_COLOR: Record<string, string> = {
+	neutral: '#6c757d',
+	primary: '#0d6efd',
+	secondary: '#6c757d',
+	info: '#0dcaf0',
+	success: '#198754',
+	warning: '#ffc107',
+	danger: '#dc3545',
+	notice: '#6f42c1',
+	black: '#212529',
+};
 
 type ListCtx = {
 	store: ImperiumStore;
@@ -98,6 +109,7 @@ function normalize_new_option(raw: unknown, user_defined: boolean): GeneralOptio
 	const type = text(rec.type);
 	if (description) option.description = description;
 	if (HEX_COLOR.test(color)) option.color = color;
+	else if (type && TYPE_TO_COLOR[type]) option.color = TYPE_TO_COLOR[type];
 	if (icon) option.icon = icon;
 	if (type) option.type = type;
 	return option;
@@ -244,13 +256,14 @@ export async function general_choice_options(
 
 /**
  * POST /general-option-list-control/seed-defaults
- * Crea listas y valores que no existen. No reescribe ni borra nada ya guardado.
+ * Crea listas y valores que no existen. Rellena color/icon solo si estaban vacíos; no pisa el resto.
  */
 export async function seed_general_option_lists(ctx: ListCtx) {
 	const body = as_object(ctx.body);
 	const entries = seed_entries(body);
 	let inserted = 0;
 	let skipped = 0;
+	let filled_total = 0;
 	let created_configurations = 0;
 	let created_lists = 0;
 	const results: Array<Record<string, unknown>> = [];
@@ -265,6 +278,7 @@ export async function seed_general_option_lists(ctx: ListCtx) {
 		const lists = lists_of(value);
 		let entry_inserted = 0;
 		let entry_skipped = 0;
+		let entry_filled = 0;
 		const next = [...lists];
 		for (const raw of as_array(entry.lists)) {
 			const spec = as_object(raw);
@@ -288,20 +302,24 @@ export async function seed_general_option_lists(ctx: ListCtx) {
 			}
 			const current = next[index]!;
 			const merged = insert_missing(current.options, incoming, false);
+			const filled = fill_empty_presentation(merged.options, incoming, false);
 			entry_inserted += merged.inserted;
 			entry_skipped += merged.skipped;
-			if (merged.inserted === 0) continue;
-			next[index] = { ...current, options: merged.options };
+			entry_filled += filled.filled;
+			if (merged.inserted === 0 && filled.filled === 0) continue;
+			next[index] = { ...current, options: filled.options };
 		}
 		inserted += entry_inserted;
 		skipped += entry_skipped;
+		filled_total += entry_filled;
 		results.push({
 			module_id: target.storage_id,
 			model_id: target.model_id,
 			inserted: entry_inserted,
 			skipped: entry_skipped,
+			filled: entry_filled,
 		});
-		if (entry_inserted === 0) continue;
+		if (entry_inserted === 0 && entry_filled === 0) continue;
 		const next_value = {
 			...value,
 			module_id: text(value.module_id) || target.storage_id,
@@ -333,18 +351,22 @@ export async function seed_general_option_lists(ctx: ListCtx) {
 	const summary = {
 		inserted,
 		skipped,
+		filled: filled_total,
 		created_configurations,
 		created_lists,
 		results,
 	};
-	return ok([summary], seed_message(inserted, skipped), results.length);
+	return ok([summary], seed_message(inserted, skipped, filled_total), results.length);
 }
 
-function seed_message(inserted: number, skipped: number) {
-	if (!inserted) {
-		return 'No había opciones nuevas: las existentes se dejaron igual.';
+function seed_message(inserted: number, skipped: number, filled = 0) {
+	const parts: string[] = [];
+	if (inserted) parts.push(`Se agregaron ${inserted} opciones que faltaban`);
+	if (filled) parts.push(`se rellenó color/icon en ${filled} vacías`);
+	if (!parts.length) {
+		return 'No había opciones nuevas ni color/icon vacíos: las existentes se dejaron igual.';
 	}
-	return `Se agregaron ${inserted} opciones que faltaban. ${skipped} ya existían y no se modificaron.`;
+	return `${parts.join('; ')}. ${skipped} ya existían con presentación completa.`;
 }
 
 export async function add_general_option(ctx: ListCtx) {

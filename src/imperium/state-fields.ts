@@ -380,7 +380,7 @@ export function builtin_status_seed_entries() {
 				label: value.display_leyend || value.label || value.value,
 				field_name: field.field_name,
 				type: value.type,
-				color: value.color,
+				color: value_color(value.type, value.color),
 				icon: value.icon,
 			})),
 		),

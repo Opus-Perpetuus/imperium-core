@@ -3,7 +3,7 @@
  */
 import { as_array, as_object, ok, type ImperiumDoc } from './envelope.ts';
 import { query_list } from './body.ts';
-import { insert_missing } from './option-seed.ts';
+import { fill_empty_presentation, insert_missing } from './option-seed.ts';
 import { builtin_status_seed_entries } from './state-fields.ts';
 import type { ImperiumStore } from './store.ts';
 
@@ -12,11 +12,15 @@ const STATUS_OPTION_DEFAULT_TYPE = 'info';
 const STATUS_OPTION_DEFAULT_COLOR = '#6c757d';
 const HEX_COLOR_REGEX = /^#[0-9a-fA-F]{6}$/;
 const STATUS_OPTION_TYPE_TO_COLOR: Record<string, string> = {
+	neutral: '#6c757d',
+	primary: '#0d6efd',
+	secondary: '#6c757d',
 	info: '#0dcaf0',
 	success: '#198754',
 	warning: '#ffc107',
 	danger: '#dc3545',
 	notice: '#6f42c1',
+	black: '#212529',
 };
 
 type StatusCtx = {
@@ -712,13 +716,14 @@ async function find_status_configuration_for_seed(
 
 /**
  * POST /status-option-control/seed-defaults
- * Agrega estatus que no existen (módulo + campo + valor). No reescribe los ya guardados.
+ * Agrega estatus que no existen (módulo + campo + valor). Rellena color/icon solo si estaban vacíos; no pisa los ya guardados.
  * Sin `entries` usa los defaults del núcleo (`builtin`), para un upgrade de instancias viejas.
  */
 export async function seed_status_defaults(ctx: StatusCtx) {
 	const entries = status_seed_plan(as_object(ctx.body));
 	let inserted = 0;
 	let skipped = 0;
+	let filled_total = 0;
 	let created_configurations = 0;
 	const results: Array<Record<string, unknown>> = [];
 	for (const entry of entries) {
@@ -745,21 +750,24 @@ export async function seed_status_defaults(ctx: StatusCtx) {
 			is_user_defined: false as const,
 		}));
 		const merged = insert_missing(current_options, incoming, true);
+		const filled = fill_empty_presentation(merged.options, incoming, true);
 		inserted += merged.inserted;
 		skipped += merged.skipped;
+		filled_total += filled.filled;
 		results.push({
 			module_id: storage_id,
 			model_id,
 			inserted: merged.inserted,
 			skipped: merged.skipped,
+			filled: filled.filled,
 		});
-		if (merged.inserted === 0) continue;
+		if (merged.inserted === 0 && filled.filled === 0) continue;
 		const fields = normalize_fields(value.status_fields);
 		for (const field of normalize_fields(entry.status_fields)) {
 			if (!fields.includes(field)) fields.push(field);
 		}
 		for (const option of incoming) {
-			if (!merged.options.includes(option)) continue;
+			if (!filled.options.includes(option)) continue;
 			const field = option.field_name || 'state';
 			if (!fields.includes(field)) fields.push(field);
 		}
@@ -769,7 +777,7 @@ export async function seed_status_defaults(ctx: StatusCtx) {
 			module_name: text(value.module_name) || module_name,
 			model_id: text(value.model_id) || model_id,
 			status_fields: fields,
-			options: merged.options,
+			options: filled.options,
 		};
 		if (existing?._id) {
 			await ctx.store.update('configuration', String(existing._id), { value: next_value });
@@ -787,9 +795,12 @@ export async function seed_status_defaults(ctx: StatusCtx) {
 		});
 		created_configurations += 1;
 	}
-	const summary = { inserted, skipped, created_configurations, results };
-	const message = inserted
-		? `Se agregaron ${inserted} opciones de estatus que faltaban. ${skipped} ya existían y no se modificaron.`
-		: 'No había opciones de estatus nuevas: las existentes se dejaron igual.';
+	const summary = { inserted, skipped, filled: filled_total, created_configurations, results };
+	const parts: string[] = [];
+	if (inserted) parts.push(`Se agregaron ${inserted} opciones de estatus que faltaban`);
+	if (filled_total) parts.push(`se rellenó color/icon en ${filled_total} vacías`);
+	const message = parts.length
+		? `${parts.join('; ')}. ${skipped} ya existían con presentación completa.`
+		: 'No había opciones de estatus nuevas ni color/icon vacíos: las existentes se dejaron igual.';
 	return ok([summary], message, results.length);
 }

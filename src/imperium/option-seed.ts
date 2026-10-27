@@ -66,3 +66,40 @@ export function insert_missing<T extends SeedIdentity>(
 	}
 	return { options, inserted, skipped };
 }
+
+export type PresentationSeed = SeedIdentity & {
+	color?: unknown;
+	icon?: unknown;
+};
+
+function blank(value: unknown) {
+	return !(typeof value === 'string' && value.trim());
+}
+
+/**
+ * Rellena color/icon solo cuando el guardado los trae vacíos.
+ * No toca etiqueta, valor, type ni banderas. Devuelve copia superficial.
+ */
+export function fill_empty_presentation<T extends PresentationSeed>(
+	existing: readonly T[],
+	incoming: readonly T[],
+	field_scoped: boolean,
+): { options: T[]; filled: number } {
+	let filled = 0;
+	const options = existing.map((have) => {
+		const donor = incoming.find((item) => same_option(have, item, field_scoped));
+		if (!donor) return have;
+		let next: T | null = null;
+		if (blank(have.color) && !blank(donor.color)) {
+			next = { ...(next ?? have), color: donor.color };
+		}
+		if (blank(have.icon) && !blank(donor.icon)) {
+			next = { ...(next ?? have), icon: donor.icon };
+		}
+		if (!next) return have;
+		filled += 1;
+		return next;
+	});
+	return { options, filled };
+}
+
