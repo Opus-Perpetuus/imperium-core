@@ -184,6 +184,7 @@ import {
 	load_custom_field_definitions,
 	with_custom_list_instance_type,
 } from './custom-fields.ts';
+import { general_choice_options } from './general-option-lists.ts';
 import {
 	load_state_fields_metadata,
 	model_id_for_resource,
@@ -436,6 +437,20 @@ export async function handle_crud(
 		const scope = await record_rule_scope(store, actor, resource, method);
 		const values = await store.distinct(resource, field_path, termino, scope.match);
 		const metadata = await load_state_fields_metadata(store, resource);
+		if (!state_field_for(metadata, field_path)) {
+			const bound = store.has(resource)
+				? store.loc(resource).columns.find((column) => column.name === field_path)?.option_list
+				: undefined;
+			const listed = await general_choice_options(
+				store,
+				model_id_for_resource(resource),
+				field_path,
+				bound,
+			);
+			if (listed) {
+				return json(resource, ok(listed, field_values_message(field_path), listed.length));
+			}
+		}
 		const options = await filter_pedido_estado_options(
 			store,
 			actor,

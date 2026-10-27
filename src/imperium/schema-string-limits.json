@@ -76,6 +76,12 @@
         "message": "El nombre debe contener cuatro letras o mas"
       }
     },
+    "general-option-list-control": {
+      "name": {
+        "min": 4,
+        "message": "El nombre debe contener cuatro letras o mas"
+      }
+    },
     "asociaciones": {
       "name": {
         "min": 4,
@@ -677,6 +683,12 @@
       }
     },
     "status-option-control": {
+      "description": {
+        "max": 500,
+        "message": "La descripción excede el maximo de caracteres"
+      }
+    },
+    "general-option-list-control": {
       "description": {
         "max": 500,
         "message": "La descripción excede el maximo de caracteres"

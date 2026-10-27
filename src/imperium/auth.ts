@@ -1195,6 +1195,11 @@ const SESSION_SCOPED_EXTRAS = new Set([
 	'status-option-control:save_module_configuration',
 	'status-option-control:normalize_state_values',
 	'status-option-control:resolve_spurious_options',
+	'status-option-control:seed_defaults',
+	'general-option-list-control:read_options',
+	'general-option-list-control:seed_defaults',
+	'general-option-list-control:save_module_configuration',
+	'general-option-list-control:add_option',
 ]);
 
 /** Catálogos de referencia que todo el personal usa (el selector de íconos). */

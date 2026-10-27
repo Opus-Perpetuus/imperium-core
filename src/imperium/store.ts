@@ -77,6 +77,8 @@ export type ExtraCol = {
 	crud?: string;
 	label?: string;
 	component?: string;
+	/** Clave en general-option-list-control. El estatus no usa esta columna. */
+	option_list?: string;
 };
 
 export type ModuleLoc = {

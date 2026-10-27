@@ -217,11 +217,20 @@ import {
 	resolve_history_model,
 } from './history.ts';
 import {
+	add_general_option,
+	list_general_option_list_control,
+	read_general_option_list_control,
+	read_general_option_list_options,
+	save_general_option_lists,
+	seed_general_option_lists,
+} from './general-option-lists.ts';
+import {
 	list_status_option_control,
 	normalize_state_values,
 	read_status_option_control,
 	resolve_spurious_options,
 	save_status_config,
+	seed_status_defaults,
 } from './status-options.ts';
 import {
 	activate_module,
@@ -625,6 +634,20 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return list_status_option_control(ctx);
 		case 'status-option-control:read_one':
 			return read_status_option_control(ctx);
+		case 'status-option-control:seed_defaults':
+			return seed_status_defaults(ctx);
+		case 'general-option-list-control:read_list':
+			return list_general_option_list_control(ctx);
+		case 'general-option-list-control:read_one':
+			return read_general_option_list_control(ctx);
+		case 'general-option-list-control:read_options':
+			return read_general_option_list_options(ctx);
+		case 'general-option-list-control:seed_defaults':
+			return seed_general_option_lists(ctx);
+		case 'general-option-list-control:save_module_configuration':
+			return save_general_option_lists(ctx);
+		case 'general-option-list-control:add_option':
+			return add_general_option(ctx);
 		case 'auto-increment-control:read_list':
 			return list_auto_increment_controls(ctx);
 		case 'status-option-control:save_module_configuration':

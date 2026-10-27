@@ -3,6 +3,8 @@
  */
 import { as_array, as_object, ok, type ImperiumDoc } from './envelope.ts';
 import { query_list } from './body.ts';
+import { insert_missing } from './option-seed.ts';
+import { builtin_status_seed_entries } from './state-fields.ts';
 import type { ImperiumStore } from './store.ts';
 
 const STATUS_OPTION_CONFIGURATION_TYPE = 'status-options-by-module';
@@ -670,4 +672,124 @@ export async function read_status_option_control(ctx: StatusCtx) {
 	if (!module_record) throw new Error('No se encontró el módulo solicitado.');
 	const configuration = await find_existing_configuration(ctx.store, String(module_record._id));
 	return ok([build_record(module_record, configuration)], 'Ruta encontrada');
+}
+
+type StatusSeedEntry = {
+	module_id?: string;
+	model_id?: string;
+	module_name?: string;
+	status_fields?: unknown;
+	options?: unknown;
+};
+
+function status_seed_plan(body: Record<string, unknown>) {
+	const many = as_array(body.entries).map((item) => as_object(item) as StatusSeedEntry);
+	if (many.length) return many;
+	if (Array.isArray(body.options) || text(body.model_id) || text(body.module_id)) {
+		return [body as StatusSeedEntry];
+	}
+	if (body.builtin === false) return [] as StatusSeedEntry[];
+	return builtin_status_seed_entries();
+}
+
+async function find_status_configuration_for_seed(
+	store: ImperiumStore,
+	module_id: string,
+	model_id: string,
+) {
+	const rows = await list_status_configurations(store);
+	return (
+		rows.find((row) => {
+			const value = configuration_value(row);
+			const mid = text(row.module_id ?? value.module_id);
+			const model = text(row.model_id ?? value.model_id);
+			if (module_id && (mid === module_id || model === module_id)) return true;
+			if (model_id && (model === model_id || mid === model_id)) return true;
+			return false;
+		}) ?? null
+	);
+}
+
+/**
+ * POST /status-option-control/seed-defaults
+ * Agrega estatus que no existen (módulo + campo + valor). No reescribe los ya guardados.
+ * Sin `entries` usa los defaults del núcleo (`builtin`), para un upgrade de instancias viejas.
+ */
+export async function seed_status_defaults(ctx: StatusCtx) {
+	const entries = status_seed_plan(as_object(ctx.body));
+	let inserted = 0;
+	let skipped = 0;
+	let created_configurations = 0;
+	const results: Array<Record<string, unknown>> = [];
+	for (const entry of entries) {
+		const asked_module = text(entry.module_id);
+		const asked_model = text(entry.model_id);
+		let module_record: ImperiumDoc | null = null;
+		if (asked_module) module_record = await find_module(ctx.store, asked_module);
+		if (!module_record && asked_model) module_record = await find_module(ctx.store, asked_model);
+		const module_id = module_record?._id ? String(module_record._id) : asked_module;
+		const model_id = text(module_record?.model_id) || asked_model;
+		const storage_id = module_id || model_id;
+		if (!storage_id) {
+			skipped += 1;
+			continue;
+		}
+		const module_name =
+			text(module_record?.module_name) || text(entry.module_name) || model_id || module_id;
+		const name = text(module_record?.name) || module_name;
+		const existing = await find_status_configuration_for_seed(ctx.store, module_id, model_id);
+		const value = existing ? configuration_value(existing) : {};
+		const current_options = as_array(value.options) as StatusOption[];
+		const incoming = normalize_options(entry.options).map((option) => ({
+			...option,
+			is_user_defined: false as const,
+		}));
+		const merged = insert_missing(current_options, incoming, true);
+		inserted += merged.inserted;
+		skipped += merged.skipped;
+		results.push({
+			module_id: storage_id,
+			model_id,
+			inserted: merged.inserted,
+			skipped: merged.skipped,
+		});
+		if (merged.inserted === 0) continue;
+		const fields = normalize_fields(value.status_fields);
+		for (const field of normalize_fields(entry.status_fields)) {
+			if (!fields.includes(field)) fields.push(field);
+		}
+		for (const option of incoming) {
+			if (!merged.options.includes(option)) continue;
+			const field = option.field_name || 'state';
+			if (!fields.includes(field)) fields.push(field);
+		}
+		const next_value = {
+			...value,
+			module_id: text(value.module_id) || storage_id,
+			module_name: text(value.module_name) || module_name,
+			model_id: text(value.model_id) || model_id,
+			status_fields: fields,
+			options: merged.options,
+		};
+		if (existing?._id) {
+			await ctx.store.update('configuration', String(existing._id), { value: next_value });
+			continue;
+		}
+		const ref = configuration_ref(module_name || storage_id);
+		await upsert_configuration(ctx.store, ref, {
+			name: `Opciones de estado | ${name}`,
+			description: `Configuración de opciones de estado para el módulo ${name}.`,
+			module_id: storage_id,
+			model_id,
+			type: STATUS_OPTION_CONFIGURATION_TYPE,
+			value: next_value,
+			is_system: false,
+		});
+		created_configurations += 1;
+	}
+	const summary = { inserted, skipped, created_configurations, results };
+	const message = inserted
+		? `Se agregaron ${inserted} opciones de estatus que faltaban. ${skipped} ya existían y no se modificaron.`
+		: 'No había opciones de estatus nuevas: las existentes se dejaron igual.';
+	return ok([summary], message, results.length);
 }

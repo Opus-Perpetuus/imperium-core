@@ -16,6 +16,7 @@ export * from './descriptors/ui-descriptor.js';
 export * from './descriptors/ui-action.js';
 export * from './descriptors/landing.js';
 export * from './descriptors/feature-shell.js';
+export * from './descriptors/option-lists.js';
 // Kirtexto is DOM-free by design (the purifier is injected), so the whole
 // pipeline is safe to ship to the browser.
 export * from './html/html-profile.js';

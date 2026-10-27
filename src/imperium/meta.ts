@@ -27,6 +27,13 @@ type SchemaShape = {
 				values?: Array<{ value?: unknown; display_leyend?: unknown }>;
 			}>;
 		};
+		option_lists?: {
+			lists?: Array<{
+				list_key?: string;
+				field_name?: string;
+				options?: Array<{ value?: unknown; label?: unknown }>;
+			}>;
+		};
 	};
 };
 
@@ -117,7 +124,19 @@ function options_for(
 			return { value: raw, label };
 		})
 		.filter((item): item is { value: string; label: string } => item != null);
-	return from_state.length ? from_state : undefined;
+	if (from_state.length) return from_state;
+	const list = schema.metadata?.option_lists?.lists?.find(
+		(item) => item.field_name === name || item.list_key === name,
+	);
+	const from_list = (list?.options ?? [])
+		.map((option) => {
+			const raw = String(option.value ?? '').trim();
+			if (!raw) return null;
+			const label = String(option.label ?? '').trim() || raw;
+			return { value: raw, label };
+		})
+		.filter((item): item is { value: string; label: string } => item != null);
+	return from_list.length ? from_list : undefined;
 }
 
 function ref_for(name: string, schema: SchemaShape): string | undefined {

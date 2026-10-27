@@ -12,6 +12,7 @@ import {
 	merge_custom_state_fields,
 } from './custom-fields.ts';
 import { as_array, as_object } from './envelope.ts';
+import { option_lists_for_model } from './general-option-lists.ts';
 import { RESOURCE_ALIASES, type ImperiumStore } from './store.ts';
 
 type SchemaConstraints = {
@@ -366,6 +367,25 @@ export function model_id_for_resource(resource: string) {
 	);
 }
 
+/** Defaults de estatus del núcleo, para la siembra que solo agrega faltantes. */
+export function builtin_status_seed_entries() {
+	return Object.entries(RAW_DEFAULTS).map(([resource, fields]) => ({
+		model_id: model_id_for_resource(resource),
+		module_name: resource,
+		status_fields: fields.map((field) => field.field_name),
+		options: fields.flatMap((field) =>
+			field.values.map((value) => ({
+				value: value.value,
+				label: value.display_leyend || value.label || value.value,
+				field_name: field.field_name,
+				type: value.type,
+				color: value.color,
+				icon: value.icon,
+			})),
+		),
+	}));
+}
+
 function normalize_values(values: unknown): StateValue[] {
 	const out = new Map<string, StateValue>();
 	for (const item of as_array(values)) {
@@ -661,20 +681,37 @@ function attachment_fields_for(
 }
 
 async function find_persisted_config(store: ImperiumStore, resource: string) {
-	if (!store.has('module-management') || !store.has('configuration')) return null;
+	if (!store.has('configuration')) return null;
 	const model_id = model_id_for_resource(resource);
-	const module_record =
-		(await store.find_where('module-management', { model_id })) ??
-		(await store.find_where('module-management', { module_name: model_id }));
-	if (!module_record?._id) return null;
-	const module_id = String(module_record._id);
-	const configuration =
+	if (store.has('module-management')) {
+		const module_record =
+			(await store.find_where('module-management', { model_id })) ??
+			(await store.find_where('module-management', { module_name: model_id }));
+		if (module_record?._id) {
+			const configuration =
+				(await store.find_where('configuration', {
+					type: STATUS_OPTION_CONFIGURATION_TYPE,
+					module_id: String(module_record._id),
+				})) ?? null;
+			if (configuration) return as_object(configuration.value);
+		}
+	}
+	const by_column =
 		(await store.find_where('configuration', {
 			type: STATUS_OPTION_CONFIGURATION_TYPE,
-			module_id,
+			model_id,
 		})) ?? null;
-	if (!configuration) return null;
-	return as_object(configuration.value);
+	if (by_column) return as_object(by_column.value);
+	for await (const page of store.scan('configuration', {
+		where: { type: STATUS_OPTION_CONFIGURATION_TYPE },
+		include_inactive: true,
+	})) {
+		for (const row of page) {
+			const value = as_object(row.value);
+			if (text(value.model_id) === model_id || text(row.model_id) === model_id) return value;
+		}
+	}
+	return null;
 }
 
 export async function load_state_fields_metadata(
@@ -691,10 +728,11 @@ export async function load_state_fields_metadata(
 export async function schema_validation_for(store: ImperiumStore, resource: string) {
 	const canonical = canonical_state_resource(resource);
 	const model_id = model_id_for_resource(resource);
-	const [state_fields, tracker, custom_fields] = await Promise.all([
+	const [state_fields, tracker, custom_fields, option_lists] = await Promise.all([
 		load_state_fields_metadata(store, resource),
 		load_tracker_doc(store, canonical),
 		load_custom_field_definitions(store, model_id),
+		option_lists_for_model(store, model_id),
 	]);
 	const properties = build_schema_properties(store, canonical, tracker);
 	for (const [name, spec] of Object.entries(
@@ -710,6 +748,24 @@ export async function schema_validation_for(store: ImperiumStore, resource: stri
 			metadata: {
 				state_fields: merge_custom_state_fields(state_fields, custom_fields),
 				model_id,
+				...(option_lists.length
+					? {
+							option_lists: {
+								lists: option_lists.map((list) => ({
+									list_key: list.list_key,
+									label: list.label,
+									field_name: list.field_name,
+									options: list.options.map((option) => ({
+										value: option.value,
+										label: option.label,
+										description: option.description,
+										color: option.color,
+										icon: option.icon,
+									})),
+								})),
+							},
+						}
+					: {}),
 				attachment_fields: attachment_fields_for(store, canonical, tracker),
 				batch_import: build_batch_import(store, canonical, tracker, properties),
 			},

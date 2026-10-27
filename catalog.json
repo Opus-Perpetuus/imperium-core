@@ -3129,6 +3129,90 @@
           ]
         },
         {
+          "resource": "general-option-list-control",
+          "table": "general_option_list_control",
+          "name": "Listas de opciones",
+          "path": "/general-option-list-control",
+          "collection": "general-option-list-control",
+          "model_file": "",
+          "menu_ref": "general-option-list-control-menu-management-0",
+          "icon": "fa-list",
+          "columns": [
+            {
+              "name": "module_name",
+              "mongo": "module_name",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "module name"
+            },
+            {
+              "name": "model_id",
+              "mongo": "model_id",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "model id"
+            },
+            {
+              "name": "module_id",
+              "mongo": "module_id",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "module id"
+            },
+            {
+              "name": "lists_count",
+              "mongo": "lists_count",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "lists count"
+            },
+            {
+              "name": "options_count",
+              "mongo": "options_count",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "options count"
+            },
+            {
+              "name": "has_configuration",
+              "mongo": "has_configuration",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "has configuration"
+            },
+            {
+              "name": "list_key",
+              "mongo": "list_key",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "list key"
+            },
+            {
+              "name": "option_value",
+              "mongo": "option_value",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "option value"
+            },
+            {
+              "name": "option_color",
+              "mongo": "option_color",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "option color"
+            }
+          ]
+        },
+        {
           "resource": "api-keys",
           "table": "api_keys",
           "name": "API keys",

@@ -281,6 +281,8 @@
     "debuglog": "debug-log",
     "status-option-control": "status-option-control",
     "statusoptioncontrol": "status-option-control",
+    "general-option-list-control": "general-option-list-control",
+    "generaloptionlistcontrol": "general-option-list-control",
     "api-keys": "api-keys",
     "apikeys": "api-keys",
     "custom-field-control": "custom-field-control",

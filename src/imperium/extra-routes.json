@@ -156,6 +156,48 @@
     "action": "resolve_spurious_options"
   },
   {
+    "resource": "status-option-control",
+    "method": "post",
+    "path": "/seed-defaults",
+    "action": "seed_defaults"
+  },
+  {
+    "resource": "general-option-list-control",
+    "method": "get",
+    "path": "/",
+    "action": "read_list"
+  },
+  {
+    "resource": "general-option-list-control",
+    "method": "get",
+    "path": "/options",
+    "action": "read_options"
+  },
+  {
+    "resource": "general-option-list-control",
+    "method": "get",
+    "path": "/:id",
+    "action": "read_one"
+  },
+  {
+    "resource": "general-option-list-control",
+    "method": "post",
+    "path": "/seed-defaults",
+    "action": "seed_defaults"
+  },
+  {
+    "resource": "general-option-list-control",
+    "method": "post",
+    "path": "/module/:module_id/configuration",
+    "action": "save_module_configuration"
+  },
+  {
+    "resource": "general-option-list-control",
+    "method": "post",
+    "path": "/module/:module_id/lists/:list_key/options",
+    "action": "add_option"
+  },
+  {
     "resource": "lista-asistencia",
     "method": "post",
     "path": "/mark-attendance/:id",

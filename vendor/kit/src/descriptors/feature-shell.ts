@@ -174,7 +174,11 @@ export type FeatureShellFieldDescriptor = {
   type?: "text" | "email" | "search" | "url" | "tel";
   /** Opciones fijas de los tipos de selección. */
   options?: FeatureShellFieldOption[];
-  /** Opciones desde el API (`api://…?as=options` → `{ value, label }[]`). */
+  /**
+   * Opciones desde el API (`api://…?as=options` → `{ value, label }[]`).
+   * Un campo que no es estatus usa `general_option_list_options_source`.
+   * El estatus es `input-status` (status-option-control), no esta URL.
+   */
   optionsSource?: string;
   /** `input-number` / `input-money`. */
   min?: number;
