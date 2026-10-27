@@ -361,6 +361,7 @@ export function canonical_state_resource(resource: string) {
 
 export function model_id_for_resource(resource: string) {
 	const canonical = canonical_state_resource(resource);
+	if (canonical.includes('/')) return canonical;
 	return (
 		MODEL_ID[canonical] ??
 		canonical.replace(/(^|-)([a-z])/g, (_, __, letter: string) => letter.toUpperCase())

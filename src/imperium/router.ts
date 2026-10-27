@@ -62,7 +62,8 @@ import {
 	SubjectLifecycleError,
 	SubjectNotInstalledError,
 } from './subjects-admin.ts';
-import { is_master_request } from './subject-secret.ts';
+import { authorize_subject_option_seed } from './subject-option-seed.ts';
+import { is_master_request, is_subject_request, master_secret } from './subject-secret.ts';
 import {
 	add_manual_entry,
 	is_catalog_authorized,
@@ -400,7 +401,20 @@ async function dispatch(
 					},
 					async () => {
 				const extra_hit = match_extra(hit.resource, req.method, hit.rest);
-				if (!is_public_extra_action(hit.resource, extra_hit?.action)) {
+				const subject_seed = await authorize_subject_option_seed(
+					req,
+					hit.resource,
+					extra_hit?.action,
+					{
+						master_configured: () => Boolean(master_secret()),
+						catalog_tids: new Set(store.subjects.map((sub) => sub.technical_id)),
+						is_subject_request,
+						installed: (caller) => technical_id_is_installed(store, sql, caller),
+					},
+				);
+				if (subject_seed instanceof Response) return add_cors(req, subject_seed);
+				// La app siembra con el secreto de gateway; no hay sesión humana.
+				if (!subject_seed && !is_public_extra_action(hit.resource, extra_hit?.action)) {
 					await assert_http_access(store, actor, hit.resource, req.method, {
 						extra: Boolean(extra_hit),
 						action: extra_hit?.action,

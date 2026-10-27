@@ -92,6 +92,7 @@ import {
 	resolve_subject_caller,
 	SUBJECT_CALL_PROXY_TIMEOUT_MS,
 } from './imperium/subject-caller.ts';
+import { dress_subject_sheet } from './imperium/subject-sheet-schema.ts';
 import {
 	authorize_subject_plane,
 	dev_attach_enabled,
@@ -449,12 +450,14 @@ async function proxy_subject(
 		headers.delete('content-length');
 	}
 	try {
-		return subject_proxy_response(
+		const proxied = subject_proxy_response(
 			await fetch(target, {
 				...init,
 				signal: AbortSignal.timeout(timeout_ms),
 			}),
 		);
+		if (req.method !== 'GET') return proxied;
+		return await dress_subject_sheet(imperium.store, technical_id, rest, proxied);
 	} catch (err) {
 		return Response.json(
 			{
