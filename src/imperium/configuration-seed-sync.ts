@@ -11,6 +11,7 @@ import {
 	reconcile_configuration_seeds,
 	type ConfigurationSeedDoc,
 } from './reconcile-configuration-seeds.ts';
+import type { RegistrySql } from './app-registry.ts';
 import type { ImperiumStore, SubjectInfo } from './store.ts';
 import { plan_escritorio_menu } from './escritorio-menu-seed.ts';
 import { plan_portal_menus } from './portal-menu-seed.ts';
@@ -114,6 +115,7 @@ async function ensure_reuniones_menu(store: ImperiumStore): Promise<void> {
 
 export async function apply_missing_configuration_seeds(
 	store: ImperiumStore,
+	sql?: RegistrySql | null,
 ): Promise<{ created: string[]; patched: string[]; message: string }> {
 	const seeds = configuration_parameter_seeds();
 	const modules = store.has('module-management')
@@ -159,6 +161,7 @@ export async function apply_missing_configuration_seeds(
 	await ensure_installed_subject_menus(
 		store,
 		installed_subjects_from_markers(store, modules),
+		sql,
 	);
 	const created = plan.inserts.map((row) => row._ref);
 	const patched = plan.module_id_patches.map((row) => row._ref);

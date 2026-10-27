@@ -860,7 +860,8 @@ export async function seed_default_data(ctx: ModuleCtx) {
 		},
 		{
 			module: 'Configuración',
-			run: async () => (await apply_missing_configuration_seeds(ctx.store)).created.length,
+			run: async () =>
+				(await apply_missing_configuration_seeds(ctx.store, ctx.sql)).created.length,
 		},
 		{
 			module: 'Menús de apps',
@@ -869,6 +870,7 @@ export async function seed_default_data(ctx: ModuleCtx) {
 				const created = await ensure_installed_subject_menus(
 					ctx.store,
 					ctx.store.subjects.filter((sub) => !disabled.has(sub.slug)),
+					ctx.sql,
 				);
 				return created.menus.length + created.rights.length;
 			},

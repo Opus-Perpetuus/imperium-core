@@ -1683,7 +1683,7 @@ async function cfdi_export(ctx: Ctx, kind: 'xml' | 'json') {
 }
 
 async function sync_missing_configuration_seeds(ctx: Ctx) {
-	const result = await apply_missing_configuration_seeds(ctx.store);
+	const result = await apply_missing_configuration_seeds(ctx.store, ctx.sql);
 	return ok(
 		[{ created: result.created, patched: result.patched }],
 		result.message,

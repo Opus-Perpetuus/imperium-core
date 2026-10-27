@@ -5200,7 +5200,7 @@ export class ImperiumStore {
 				const { apply_missing_configuration_seeds } = await import(
 					'./configuration-seed-sync.ts'
 				);
-				await apply_missing_configuration_seeds(this);
+				await apply_missing_configuration_seeds(this, this.sql);
 			} catch {
 				/* snapshot o tabla ausente */
 			}
@@ -5215,6 +5215,7 @@ export class ImperiumStore {
 				await ensure_installed_subject_menus(
 					this,
 					this.subjects.filter((sub) => !disabled.has(sub.slug)),
+					this.sql,
 				);
 			} catch {
 				/* subject_installs o menús ausentes */

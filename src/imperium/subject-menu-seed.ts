@@ -10,7 +10,12 @@
  * para verse; los AccessRights se siembran aparte para el picker de
  * Permisos de acceso.
  */
+import type { RegistrySql } from './app-registry.ts';
 import type { ImperiumDoc } from './envelope.ts';
+import {
+	load_installed_menu_snapshots,
+	overlay_snapshot_menus,
+} from './snapshot-menu-overlay.ts';
 import type { ImperiumStore, SubjectInfo } from './store.ts';
 
 export type MenuRow = {
@@ -208,6 +213,7 @@ async function collect_scan(
 export async function ensure_installed_subject_menus(
 	store: ImperiumStore,
 	installed: SubjectInfo[],
+	sql?: RegistrySql | null,
 ): Promise<{ menus: string[]; rights: string[] }> {
 	const created_menus: string[] = [];
 	const created_rights: string[] = [];
@@ -226,7 +232,11 @@ export async function ensure_installed_subject_menus(
 		if (ref && id) ref_to_id.set(ref, id);
 	}
 
-	for (const sub of installed) {
+	const subjects = overlay_snapshot_menus(
+		installed,
+		sql ? await load_installed_menu_snapshots(sql) : [],
+	);
+	for (const sub of subjects) {
 		if (!store.has('menu-management')) break;
 		const planned = plan_subject_menus(sub, menus);
 		for (const plan of planned) {

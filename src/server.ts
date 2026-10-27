@@ -85,6 +85,10 @@ import {
 	type SubjectModuleRef,
 } from './imperium/subject-identity.ts';
 import {
+	load_installed_menu_snapshots,
+	overlay_snapshot_menus,
+} from './imperium/snapshot-menu-overlay.ts';
+import {
 	resolve_subject_caller,
 	SUBJECT_CALL_PROXY_TIMEOUT_MS,
 } from './imperium/subject-caller.ts';
@@ -130,8 +134,17 @@ type Catalog = {
 		path: string;
 		kind: string;
 		menu_ref?: string;
-		modules?: SubjectModuleRef[];
-		menus?: Array<{ menu_ref: string; resources?: string[] }>;
+		modules?: Array<
+			SubjectModuleRef & { path?: string; name?: string; icon?: string }
+		>;
+		menus?: Array<{
+			menu_ref: string;
+			name?: string;
+			path?: string;
+			icon?: string;
+			parent_ref?: string;
+			resources?: string[];
+		}>;
 	}>;
 };
 
@@ -525,6 +538,42 @@ function subject_of(technical_id: string) {
 	return catalog.subjects.find((s) => s.technical_id === technical_id);
 }
 
+function catalog_menu_subject(technical_id: string) {
+	const sub = subject_of(technical_id);
+	if (!sub) return null;
+	return {
+		slug: sub.slug,
+		name: sub.name,
+		path: sub.path ?? '',
+		menu_ref: sub.menu_ref ?? `${sub.slug}-menu-root`,
+		technical_id: sub.technical_id,
+		image: sub.image ?? '',
+		modules: (sub.modules ?? []).map((mod) => ({
+			resource: mod.resource,
+			path: mod.path ?? '',
+			menu_ref: mod.menu_ref ?? '',
+			name: mod.name ?? mod.resource,
+			icon: mod.icon,
+			read_only: mod.read_only,
+		})),
+		menus: (sub.menus ?? []).map((menu) => ({
+			menu_ref: menu.menu_ref,
+			name: menu.name ?? menu.menu_ref,
+			path: menu.path,
+			icon: menu.icon || 'fa-circle',
+			parent_ref: menu.parent_ref,
+			resources: menu.resources,
+		})),
+	};
+}
+
+async function catalog_subject_with_snapshot(technical_id: string) {
+	const base = catalog_menu_subject(technical_id);
+	if (!base) return null;
+	const snapshots = await load_installed_menu_snapshots(sql);
+	return overlay_snapshot_menus([base], snapshots)[0] ?? base;
+}
+
 /** Identidad firmada para un salto del gateway, o el 401 del realm interno. */
 async function gateway_identity(
 	technical_id: string,
@@ -534,14 +583,16 @@ async function gateway_identity(
 	| { ok: true; identity: Awaited<ReturnType<typeof resolve_subject_identity>>['identity'] }
 	| { ok: false; response: Response }
 > {
-	const sub = subject_of(technical_id);
+	const sub = await catalog_subject_with_snapshot(technical_id);
 	const resolved = await resolve_subject_identity({
 		store: imperium.store,
 		sql,
 		req,
 		technical_id,
 		slug: sub?.slug ?? technical_id.replace(/^subject-/, ''),
-		modules: sub ? subject_grant_refs({ modules: sub.modules ?? [], menus: sub.menus }) : [],
+		modules: sub
+			? subject_grant_refs({ modules: sub.modules, menus: sub.menus })
+			: [],
 		realm,
 		session_key: session_key_of(req),
 	});
@@ -829,7 +880,7 @@ const server = Bun.serve({
 				if (call) {
 					if (!call.ok) return add_cors(req, call.response)!;
 					accepted_caller = call.caller;
-					const sub = subject_of(technical_id);
+					const sub = await catalog_subject_with_snapshot(technical_id);
 					return add_cors(
 						req,
 						await proxy_subject(

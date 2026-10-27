@@ -1688,7 +1688,7 @@ async function finish_subject_lifecycle(
 			const { ensure_installed_subject_menus } = await import(
 				'./subject-menu-seed.ts'
 			);
-			await ensure_installed_subject_menus(store, [sub]);
+			await ensure_installed_subject_menus(store, [sub], sql);
 		} catch {
 			/* menú-management ausente */
 		}

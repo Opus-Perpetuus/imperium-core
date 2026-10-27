@@ -18,6 +18,10 @@ import {
 } from './postgres-table-tracker.ts';
 import { disabled_subject_slugs } from './subjects-admin.ts';
 import {
+	load_installed_menu_snapshots,
+	overlay_snapshot_menus,
+} from './snapshot-menu-overlay.ts';
+import {
 	email_is_configured,
 	resolve_email_settings,
 	send_password_reset_email,
@@ -1427,8 +1431,14 @@ export async function build_menus(
 		rows.push(...page);
 	}
 	const disabled_subjects = await disabled_subject_slugs(store, sql);
+	const menu_view = {
+		subjects: overlay_snapshot_menus(
+			store.subjects,
+			await load_installed_menu_snapshots(sql),
+		),
+	};
 	if (access_has_full_admin_scope(access))
-		return reshape_subject_menus(store, rows, disabled_subjects, true).sort(
+		return reshape_subject_menus(menu_view, rows, disabled_subjects, true).sort(
 			by_order,
 		);
 	let filtered = filter_menus_for_access(rows, access);
@@ -1455,7 +1465,7 @@ export async function build_menus(
 	return keep_reshaped_menus_for_access(
 		filtered,
 		reshape_subject_menus(
-			store,
+			menu_view,
 			filtered,
 			disabled_subjects,
 			access.has_full_access === true,
