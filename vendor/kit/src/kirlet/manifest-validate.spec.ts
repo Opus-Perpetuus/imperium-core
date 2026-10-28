@@ -587,6 +587,92 @@ describe("leaf del manifiesto", () => {
     if (result.ok) expect(result.manifest.pages?.[0]?.leaf).toBeUndefined();
   });
 
+  test("define_kirlet conserva leaf de crud y de page en manifest().pages", () => {
+    const build = () => ({ page: { component: "nox.stack", props: { gap: 1 } } });
+    const def = define_kirlet({
+      id: "KIRLET-notas",
+      name: "Notas",
+      version: "0.1.0",
+      image: "kirel/kirlet-notas:0.1.0",
+      compat: { nox: ">=0.5.0", kit: "^0.5.0" },
+      modules: [
+        define_module({
+          resource: "notas",
+          labels: { singular: "Nota", plural: "Notas" },
+          routes: define_routes({
+            "GET /notas": async () => ({ data: [] }),
+          }),
+          pages: [
+            {
+              id: "notas-crud",
+              path: "notas",
+              leaf: { kind: "crud", appBase: "notas", appCreate: "notas/nueva" },
+              build,
+            },
+            {
+              id: "notas-page",
+              path: "notas-ficha",
+              leaf: { kind: "page", icon: "cart", listOnly: true },
+              build,
+            },
+            {
+              id: "notas-plain",
+              path: "/notas/interna",
+              build,
+            },
+          ],
+        }),
+      ],
+    });
+    const manifest = def.manifest();
+    const read = "kirlet.notas.notas.read";
+    expect(manifest.pages?.find((p) => p.id === "notas-crud")?.leaf).toEqual({
+      kind: "crud",
+      appBase: "notas",
+      appCreate: "notas/nueva",
+      permission: read,
+    });
+    expect(manifest.pages?.find((p) => p.id === "notas-page")?.leaf).toEqual({
+      kind: "page",
+      icon: "cart",
+      listOnly: true,
+      permission: read,
+    });
+    expect(manifest.pages?.find((p) => p.id === "notas-plain")?.leaf).toBeUndefined();
+    expect(manifest.manifestVersion).toBe(1);
+    expect(manifest.$schema).toBe(LEAF_SCHEMA);
+  });
+
+  test("sin leaf el manifiesto derivado no gana contrato 1.0", () => {
+    const def = define_kirlet({
+      id: "KIRLET-notas",
+      name: "Notas",
+      version: "0.1.0",
+      image: "kirel/kirlet-notas:0.1.0",
+      compat: { nox: ">=0.5.0", kit: "^0.5.0" },
+      modules: [
+        define_module({
+          resource: "notas",
+          labels: { singular: "Nota", plural: "Notas" },
+          routes: define_routes({
+            "GET /notas": async () => ({ data: [] }),
+          }),
+          pages: [
+            {
+              id: "notas-plain",
+              path: "/notas",
+              build: () => ({ page: { component: "nox.stack", props: { gap: 1 } } }),
+            },
+          ],
+        }),
+      ],
+    });
+    const manifest = def.manifest();
+    expect(manifest.pages?.[0]?.leaf).toBeUndefined();
+    expect(manifest.manifestVersion).toBeUndefined();
+    expect(manifest.$schema).toBeUndefined();
+  });
+
   test("el esquema vendored publica el mismo URI y el patrón de appBase", () => {
     const schema = JSON.parse(
       readFileSync(new URL("./kirlet-manifest-1.0.schema.json", import.meta.url), "utf8"),

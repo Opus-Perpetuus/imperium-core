@@ -21,7 +21,7 @@ import {
   type CompiledRoute,
   type ParamsOfPattern,
 } from "./router.js";
-import type { KirletPublicAccess } from "./manifest.js";
+import type { KirletManifestLeaf, KirletPublicAccess } from "./manifest.js";
 
 export type KirletCtx<P extends Record<string, string> = Record<string, string>> = {
   req: Request;
@@ -148,6 +148,8 @@ export type KirletPageDecl = {
   id: string;
   path: string;
   permission?: string;
+  /** Hoja de shell. El path tiene que ser segmento relativo: el validador lo exige. */
+  leaf?: KirletManifestLeaf;
   /** When set, page is listed under manifest.public.pages. */
   public_access?: KirletPublicAccess;
   /**
