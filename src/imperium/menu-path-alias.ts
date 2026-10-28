@@ -30,6 +30,7 @@ const GESTOR_ALIASES: ReadonlyArray<readonly [string, string]> = [
 const PAGE_ALIASES: ReadonlyArray<readonly [string, string]> = [
 	['/recordatorios', '/servicio-programado/recordatorios'],
 	['/costos-flota', '/vehicle/reporte-costos'],
+	['/model-tracker', '/postgres-table-tracker'],
 ];
 
 export function rewrite_menu_api_path(

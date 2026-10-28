@@ -4,7 +4,7 @@
   "kit": "@opus-perpetuus/imperium-core-kit",
   "core": "ghcr.io/opus-perpetuus/imperium-core:13.67.0",
   "forked_from": "@opus-perpetuus/kirel-nox-kit@0.5.18",
-  "count": 26,
+  "count": 24,
   "subjects": [
     {
       "slug": "almacen",
@@ -7104,6 +7104,86 @@
               "crud": "string",
               "component": "input-text",
               "label": "clave"
+            }
+          ]
+        },
+        {
+          "resource": "periodos-examen",
+          "table": "periodos_examen",
+          "name": "Periodos del ciclo",
+          "path": "/periodos-examen",
+          "collection": "periodos-examen",
+          "model_file": "components/control-escolar/periodos-examen/periodos-examen.model.ts",
+          "menu_ref": "control-escolar-periodos-examen",
+          "icon": "fa-calendar-week",
+          "columns": [
+            {
+              "name": "name",
+              "mongo": "name",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "nombre"
+            },
+            {
+              "name": "fecha_inicio",
+              "mongo": "fecha_inicio",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "inicio"
+            },
+            {
+              "name": "fecha_fin",
+              "mongo": "fecha_fin",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "fin"
+            }
+          ]
+        },
+        {
+          "resource": "tipos-incidencia",
+          "table": "tipos_incidencia",
+          "name": "Tipos de incidencia",
+          "path": "/tipos-incidencia",
+          "collection": "tipos-incidencia",
+          "model_file": "components/control-escolar/tipos-incidencia/tipos-incidencia.model.ts",
+          "menu_ref": "control-escolar-tipos-incidencia",
+          "icon": "fa-tags",
+          "columns": [
+            {
+              "name": "name",
+              "mongo": "name",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "nombre"
+            },
+            {
+              "name": "categoria",
+              "mongo": "categoria",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "categoria"
+            },
+            {
+              "name": "severidad",
+              "mongo": "severidad",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "severidad"
+            },
+            {
+              "name": "orden",
+              "mongo": "orden",
+              "pg": "integer",
+              "crud": "number",
+              "component": "input-number",
+              "label": "orden"
             }
           ]
         }
@@ -17405,6 +17485,17 @@
       "dir": "workspace/imperium-subject-herramientas",
       "modules": [
         {
+          "resource": "herr-inicio",
+          "table": "herr_inicio",
+          "name": "Inicio",
+          "path": "/herr-inicio",
+          "collection": "herr-inicio",
+          "model_file": "subjects/herramientas/herr-inicio",
+          "menu_ref": "herramientas-herr-inicio",
+          "icon": "fa-toolbox",
+          "columns": []
+        },
+        {
           "resource": "herr-tablas",
           "table": "herr_tablas",
           "name": "Tablas personalizadas",
@@ -17489,6 +17580,17 @@
           ]
         },
         {
+          "resource": "herr-tabla",
+          "table": "herr_tabla",
+          "name": "Ver tabla",
+          "path": "/herr-tabla",
+          "collection": "herr-tabla",
+          "model_file": "subjects/herramientas/herr-tabla",
+          "menu_ref": "herramientas-herr-tabla",
+          "icon": "fa-table",
+          "columns": []
+        },
+        {
           "resource": "herr-registros",
           "table": "herr_registros",
           "name": "Registros",
@@ -17523,6 +17625,17 @@
               "label": "calculados"
             }
           ]
+        },
+        {
+          "resource": "herr-registro",
+          "table": "herr_registro",
+          "name": "Capturar registro",
+          "path": "/herr-registro",
+          "collection": "herr-registro",
+          "model_file": "subjects/herramientas/herr-registro",
+          "menu_ref": "herramientas-herr-registro",
+          "icon": "fa-pen-to-square",
+          "columns": []
         },
         {
           "resource": "herr-cierres",
@@ -17771,6 +17884,28 @@
               "label": "notas"
             }
           ]
+        },
+        {
+          "resource": "herr-liquidacion",
+          "table": "herr_liquidacion",
+          "name": "Liquidación",
+          "path": "/herr-liquidacion",
+          "collection": "herr-liquidacion",
+          "model_file": "subjects/herramientas/herr-liquidacion",
+          "menu_ref": "herramientas-herr-liquidacion",
+          "icon": "fa-hand-holding-dollar",
+          "columns": []
+        },
+        {
+          "resource": "herr-jornada",
+          "table": "herr_jornada",
+          "name": "Jornada en curso",
+          "path": "/herr-jornada",
+          "collection": "herr-jornada",
+          "model_file": "subjects/herramientas/herr-jornada",
+          "menu_ref": "herramientas-herr-jornada",
+          "icon": "fa-motorcycle",
+          "columns": []
         },
         {
           "resource": "herr-pedidos",
@@ -18857,6 +18992,39 @@
           ]
         },
         {
+          "resource": "herr-telefono-android",
+          "table": "herr_telefono_android",
+          "name": "Teléfono Android",
+          "path": "/herr-telefono-android",
+          "collection": "herr-telefono-android",
+          "model_file": "subjects/herramientas/herr-telefono-android",
+          "menu_ref": "herramientas-herr-telefono-android",
+          "icon": "fa-mobile-screen",
+          "columns": []
+        },
+        {
+          "resource": "herr-telefono-llamadas",
+          "table": "herr_telefono_llamadas",
+          "name": "Llamadas",
+          "path": "/herr-telefono-llamadas",
+          "collection": "herr-telefono-llamadas",
+          "model_file": "subjects/herramientas/herr-telefono-llamadas",
+          "menu_ref": "herramientas-herr-telefono-llamadas",
+          "icon": "fa-phone-slash",
+          "columns": []
+        },
+        {
+          "resource": "herr-telefono-contactos",
+          "table": "herr_telefono_contactos",
+          "name": "Contactos",
+          "path": "/herr-telefono-contactos",
+          "collection": "herr-telefono-contactos",
+          "model_file": "subjects/herramientas/herr-telefono-contactos",
+          "menu_ref": "herramientas-herr-telefono-contactos",
+          "icon": "fa-address-book",
+          "columns": []
+        },
+        {
           "resource": "herr-voz",
           "table": "herr_voz",
           "name": "Asistente de voz",
@@ -18915,6 +19083,28 @@
               "label": "es activa"
             }
           ]
+        },
+        {
+          "resource": "herr-voz-bitacora",
+          "table": "herr_voz_bitacora",
+          "name": "Bitácora de voz",
+          "path": "/herr-voz-bitacora",
+          "collection": "herr-voz-bitacora",
+          "model_file": "subjects/herramientas/herr-voz-bitacora",
+          "menu_ref": "herramientas-herr-voz-bitacora",
+          "icon": "fa-scroll",
+          "columns": []
+        },
+        {
+          "resource": "herr-asistente",
+          "table": "herr_asistente",
+          "name": "Asistente",
+          "path": "/herr-asistente",
+          "collection": "herr-asistente",
+          "model_file": "subjects/herramientas/herr-asistente",
+          "menu_ref": "herramientas-herr-asistente",
+          "icon": "fa-microphone-lines",
+          "columns": []
         },
         {
           "resource": "herr-agenda",
@@ -18999,6 +19189,28 @@
               "label": "recordatorio en"
             }
           ]
+        },
+        {
+          "resource": "herr-agenda-dia",
+          "table": "herr_agenda_dia",
+          "name": "Hoy",
+          "path": "/herr-agenda-dia",
+          "collection": "herr-agenda-dia",
+          "model_file": "subjects/herramientas/herr-agenda-dia",
+          "menu_ref": "herramientas-herr-agenda-dia",
+          "icon": "fa-calendar-day",
+          "columns": []
+        },
+        {
+          "resource": "herr-utilidades",
+          "table": "herr_utilidades",
+          "name": "Utilidades",
+          "path": "/herr-utilidades",
+          "collection": "herr-utilidades",
+          "model_file": "subjects/herramientas/herr-utilidades",
+          "menu_ref": "herramientas-herr-utilidades",
+          "icon": "fa-screwdriver-wrench",
+          "columns": []
         }
       ],
       "menus": [
@@ -19364,6 +19576,192 @@
           "parent_ref": "herramientas-menu-root",
           "resources": [
             "herr-utilidades"
+          ]
+        }
+      ]
+    },
+    {
+      "slug": "ingresos",
+      "name": "Ingresos",
+      "path": "/ingresos",
+      "kind": "module",
+      "menu_ref": "ingresos-menu-root",
+      "catalog_id": "SUBJECT-ingresos",
+      "technical_id": "subject-ingresos",
+      "depends_on": [],
+      "image": "ghcr.io/opus-perpetuus/subject-ingresos:0.1.0",
+      "repo": "Opus-Perpetuus/imperium-subject-ingresos",
+      "dir": "workspace/imperium-subject-ingresos",
+      "modules": [
+        {
+          "resource": "contribuyente",
+          "table": "contribuyente",
+          "name": "Contribuyente",
+          "path": "/contribuyente",
+          "collection": "contribuyente",
+          "model_file": "plugins/contribuyente/contribuyente.model.ts",
+          "menu_ref": "contribuyente-menu-management-0",
+          "icon": "fa-id-card",
+          "columns": [
+            {
+              "name": "clave",
+              "mongo": "clave",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "clave"
+            }
+          ]
+        },
+        {
+          "resource": "concepto",
+          "table": "concepto",
+          "name": "Concepto",
+          "path": "/concepto",
+          "collection": "concepto",
+          "model_file": "plugins/concepto/concepto.model.ts",
+          "menu_ref": "concepto-menu-management-0",
+          "icon": "fa-tag",
+          "columns": [
+            {
+              "name": "clave",
+              "mongo": "clave",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "clave"
+            },
+            {
+              "name": "nombre",
+              "mongo": "nombre",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "nombre"
+            }
+          ]
+        },
+        {
+          "resource": "licencia",
+          "table": "licencia",
+          "name": "Licencia",
+          "path": "/licencia",
+          "collection": "licencia",
+          "model_file": "plugins/licencia/licencia.model.ts",
+          "menu_ref": "licencia-menu-management-0",
+          "icon": "fa-file-lines",
+          "columns": [
+            {
+              "name": "contribuyente_clave",
+              "mongo": "contribuyente_clave",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "clave de contribuyente"
+            },
+            {
+              "name": "folio",
+              "mongo": "folio",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "folio"
+            },
+            {
+              "name": "concepto_clave",
+              "mongo": "concepto_clave",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "clave de concepto"
+            }
+          ]
+        },
+        {
+          "resource": "adeudo",
+          "table": "adeudo",
+          "name": "Adeudo",
+          "path": "/adeudo",
+          "collection": "adeudo",
+          "model_file": "plugins/adeudo/adeudo.model.ts",
+          "menu_ref": "adeudo-menu-management-0",
+          "icon": "fa-file-invoice-dollar",
+          "columns": [
+            {
+              "name": "contribuyente_clave",
+              "mongo": "contribuyente_clave",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "clave de contribuyente"
+            },
+            {
+              "name": "concepto_clave",
+              "mongo": "concepto_clave",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "clave de concepto"
+            },
+            {
+              "name": "importe",
+              "mongo": "importe",
+              "pg": "real",
+              "crud": "number",
+              "component": "input-number",
+              "label": "importe"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "slug": "tramites",
+      "name": "Trámites",
+      "path": "/tramites",
+      "kind": "module",
+      "menu_ref": "tramites-menu-root",
+      "catalog_id": "SUBJECT-tramites",
+      "technical_id": "subject-tramites",
+      "depends_on": [],
+      "image": "ghcr.io/opus-perpetuus/subject-tramites:0.1.0",
+      "repo": "Opus-Perpetuus/imperium-subject-tramites",
+      "dir": "workspace/imperium-subject-tramites",
+      "modules": [
+        {
+          "resource": "solicitud",
+          "table": "solicitud",
+          "name": "Solicitud",
+          "path": "/solicitud",
+          "collection": "solicitud",
+          "model_file": "plugins/solicitud/solicitud.model.ts",
+          "menu_ref": "solicitud-menu-management-0",
+          "icon": "fa-file-lines",
+          "columns": [
+            {
+              "name": "tipo",
+              "mongo": "tipo",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "tipo"
+            },
+            {
+              "name": "estado",
+              "mongo": "estado",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "estado"
+            },
+            {
+              "name": "origen",
+              "mongo": "origen",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "origen"
+            }
           ]
         }
       ]

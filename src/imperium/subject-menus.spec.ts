@@ -810,7 +810,9 @@ describe('reshape_subject_menus vehiculos icons', () => {
 		expect(children.map((mod) => mod.menu_ref).sort()).toEqual(
 			[
 				'bitacora-menu',
+				'carga-combustible-menu',
 				'documento-vehiculo-menu',
+				'envio-revision-menu',
 				'falla-menu',
 				'lectura-uso-menu',
 				'mantenimiento-correctivo-menu',

@@ -80,6 +80,11 @@ describe('alias de path de menú al recurso que sí existe', () => {
 		expect(rewrite('/costos-flota/xyz')).toBe('/vehicle/reporte-costos/xyz');
 	});
 
+	test('configuracion: model-tracker alias a postgres-table-tracker', () => {
+		expect(rewrite('/model-tracker')).toBe('/postgres-table-tracker');
+		expect(rewrite('/model-tracker/abc')).toBe('/postgres-table-tracker/abc');
+	});
+
 	test('sin la colección no reescribe: el 404 sigue siendo 404', () => {
 		expect(rewrite_menu_api_path('/dbm-destinations', subjects, () => false)).toBe(
 			'/dbm-destinations',

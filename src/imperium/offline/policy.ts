@@ -189,6 +189,18 @@ const APP_OVERRIDES: Record<
 		primary: { name: "consultar", policy: "si" },
 		explanation: "La consulta usa el corte local.",
 	},
+	ingresos: {
+		create: "provisional",
+		edit: "no",
+		primary: { name: "registrar_ingreso", policy: "provisional" },
+		explanation: "El ingreso en efectivo queda provisional. La tarjeta no se reenvía.",
+	},
+	tramites: {
+		create: "provisional",
+		edit: "si",
+		primary: { name: "recibir_solicitud", policy: "provisional" },
+		explanation: "La solicitud queda provisional hasta que el servidor la reciba.",
+	},
 };
 
 export function catalog_slugs(): string[] {
