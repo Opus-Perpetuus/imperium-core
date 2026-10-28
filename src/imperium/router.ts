@@ -86,6 +86,7 @@ import {
 	portal_route_path,
 } from './portal.ts';
 import { portal_html_sanitize } from './portal-sanitize.ts';
+import { rewrite_menu_api_path } from './menu-path-alias.ts';
 import { share_binding_of } from './share-binding.ts';
 import { handle_share_api, share_allows_media } from './shares.ts';
 
@@ -212,7 +213,11 @@ export function create_imperium_layer(sql: Bun.SQL) {
 		async handle(req: Request): Promise<Response | null> {
 			const started_ms = Date.now();
 			const url = new URL(req.url);
-			const path = strip_api_prefix(url.pathname);
+			const path = rewrite_menu_api_path(
+				strip_api_prefix(url.pathname),
+				store.subjects,
+				(resource) => store.has(resource),
+			);
 			if (is_anonymous_portal_read(req)) {
 				const portal = await handle_portal_request(req, {
 					store: portal_store,
