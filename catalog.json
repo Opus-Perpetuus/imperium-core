@@ -2453,7 +2453,7 @@
         {
           "resource": "country",
           "table": "country",
-          "name": "Paises",
+          "name": "Países",
           "path": "/country",
           "collection": "country",
           "model_file": "components/country/country.model.ts",
@@ -2759,7 +2759,7 @@
         {
           "resource": "configuration",
           "table": "configuration",
-          "name": "Parametros del sistema",
+          "name": "Parámetros del sistema",
           "path": "/configuration",
           "collection": "configuration",
           "model_file": "components/configuration/configuration.model.ts",
@@ -11512,7 +11512,7 @@
         {
           "resource": "pos-order",
           "table": "pos_order",
-          "name": "Ordenes",
+          "name": "Órdenes",
           "path": "/pos-order",
           "collection": "pos_order",
           "model_file": "components/pos-order/pos-order.model.ts",
