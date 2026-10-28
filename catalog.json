@@ -11898,7 +11898,8 @@
           "name": "Reportes comerciales",
           "menu_ref": "pos-commercial-reports-menu-0",
           "path": "/reportes-comerciales",
-          "icon": "fa-chart-line"
+          "icon": "fa-chart-line",
+          "parent_ref": "pos_menu_root"
         }
       ]
     },

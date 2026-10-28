@@ -39,6 +39,8 @@ describe('menú de reportes comerciales', () => {
 			subjects: { slug: string; menus?: { menu_ref: string; path: string }[] }[];
 		};
 		const pos = catalog.subjects.find((s) => s.slug === 'pos');
-		expect(pos?.menus?.find((m) => m.menu_ref === 'pos-commercial-reports-menu-0')?.path).toBe('/reportes-comerciales');
+		const menu = pos?.menus?.find((m) => m.menu_ref === 'pos-commercial-reports-menu-0');
+		expect(menu?.path).toBe('/reportes-comerciales');
+		expect((menu as { parent_ref?: string } | undefined)?.parent_ref).toBe('pos_menu_root');
 	});
 });
