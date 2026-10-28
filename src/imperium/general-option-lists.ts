@@ -5,7 +5,7 @@
  */
 import { as_array, as_object, ok, type ImperiumDoc } from './envelope.ts';
 import { query_list } from './body.ts';
-import { fill_empty_presentation, insert_missing } from './option-seed.ts';
+import { fill_empty_presentation, insert_missing, sanitize_option_value } from './option-seed.ts';
 import type { ImperiumStore } from './store.ts';
 
 export const GENERAL_OPTION_LIST_TYPE = 'general-option-lists-by-module';
@@ -96,7 +96,8 @@ function configuration_ref(name: string) {
 function normalize_new_option(raw: unknown, user_defined: boolean): GeneralOption | null {
 	const rec = as_object(raw);
 	const label = text(rec.label) || text(rec.name);
-	const value = slug(text(rec.value) || label);
+	// Conserva mayúsculas del value (SAT O/E/AGU, USD/MXN); slug solo para list_key/refs.
+	const value = sanitize_option_value(text(rec.value) || label);
 	if (!value || !label) return null;
 	const option: GeneralOption = {
 		value,

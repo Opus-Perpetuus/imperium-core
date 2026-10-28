@@ -9,6 +9,13 @@ export type SeedIdentity = {
 	field_name?: unknown;
 };
 
+/** Valor de opción para guardar: limpia basura, conserva mayúsculas (SAT, USD/MXN). */
+export function sanitize_option_value(value: unknown): string {
+	const raw = typeof value === 'string' ? value.trim() : '';
+	if (!raw) return '';
+	return raw.replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+}
+
 export function option_keys(value: unknown): string[] {
 	const raw = typeof value === 'string' ? value.trim() : '';
 	if (!raw) return [];

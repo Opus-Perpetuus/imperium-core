@@ -3,7 +3,7 @@
  */
 import { as_array, as_object, ok, type ImperiumDoc } from './envelope.ts';
 import { query_list } from './body.ts';
-import { fill_empty_presentation, insert_missing } from './option-seed.ts';
+import { fill_empty_presentation, insert_missing, sanitize_option_value } from './option-seed.ts';
 import { builtin_status_seed_entries } from './state-fields.ts';
 import type { ImperiumStore } from './store.ts';
 
@@ -105,7 +105,8 @@ function normalize_options(value: unknown): StatusOption[] {
 		const name = text(rec.name);
 		const label = text(rec.label) || name;
 		const raw_value = text(rec.value) || label || name;
-		const normalized_value = slug(raw_value);
+		// Conserva mayúsculas del value; slug solo para claves de dedupe internas.
+		const normalized_value = sanitize_option_value(raw_value);
 		const type = text(rec.type) || STATUS_OPTION_DEFAULT_TYPE;
 		const option_field = field_name(rec.field_name);
 		if (!normalized_value || !label) continue;
@@ -120,13 +121,14 @@ function normalize_options(value: unknown): StatusOption[] {
 			is_user_defined:
 				rec.is_user_defined === true ? true : rec.is_user_defined === false ? false : undefined,
 		};
-		out.set(`${option.field_name || 'default'}::${option.value}`, option);
+		out.set(`${option.field_name || 'default'}::${slug(option.value)}`, option);
 	}
 	return [...out.values()];
 }
 
 function option_key(option: StatusOption) {
-	return `${option.field_name || 'default'}::${option.value}`;
+	// Clave case-insensitive: el value guardado puede conservar mayúsculas.
+	return `${option.field_name || 'default'}::${slug(option.value)}`;
 }
 
 function stamp_user_defined(options: StatusOption[], defaults: StatusOption[]) {
@@ -209,12 +211,22 @@ async function find_module(store: ImperiumStore, module_id: string) {
 	);
 }
 
-async function find_existing_configuration(store: ImperiumStore, module_id: string) {
+function config_matches(row: ImperiumDoc, module_id: string, model_id: string) {
+	const value = configuration_value(row);
+	const mid = text(row.module_id ?? value.module_id);
+	const model = text(row.model_id ?? value.model_id);
+	if (module_id && (mid === module_id || model === module_id)) return true;
+	if (model_id && (model === model_id || mid === model_id)) return true;
+	return false;
+}
+
+async function find_existing_configuration(
+	store: ImperiumStore,
+	module_id: string,
+	model_id = '',
+) {
 	const rows = await list_status_configurations(store);
-	return (
-		rows.find((row) => String(row.module_id ?? configuration_value(row).module_id ?? '') === module_id) ??
-		null
-	);
+	return rows.find((row) => config_matches(row, module_id, model_id)) ?? null;
 }
 
 function aliases_for_field(options: StatusOption[], field: string) {
@@ -258,19 +270,31 @@ async function upsert_configuration(
 	});
 }
 
-function build_record(module_record: ImperiumDoc, configuration: ImperiumDoc | null) {
+function build_record(
+	module_record: ImperiumDoc | null,
+	configuration: ImperiumDoc | null,
+	fallback?: { storage_id: string; model_id: string; module_name: string; name: string },
+) {
 	const value = configuration ? configuration_value(configuration) : {};
 	const fields = merge_fields(normalize_fields(value.status_fields), []);
 	const options = normalize_options(value.options);
-	const module_id = String(module_record._id);
+	const module_id = module_record?._id
+		? String(module_record._id)
+		: text(configuration?.module_id ?? value.module_id) || fallback?.storage_id || '';
 	return {
 		_id: module_id,
-		name: String(module_record.name ?? module_record.module_name ?? ''),
-		description: String(module_record.description ?? ''),
+		name: module_record
+			? String(module_record.name ?? module_record.module_name ?? '')
+			: fallback?.name || module_id,
+		description: String(module_record?.description ?? ''),
 		module_id,
-		module_name: String(module_record.module_name ?? ''),
-		model_id: String(module_record.model_id ?? ''),
-		is_enable: Boolean(module_record.is_enable),
+		module_name: module_record
+			? String(module_record.module_name ?? '')
+			: text(value.module_name) || fallback?.module_name || '',
+		model_id: module_record
+			? String(module_record.model_id ?? '')
+			: text(configuration?.model_id ?? value.model_id) || fallback?.model_id || '',
+		is_enable: module_record ? Boolean(module_record.is_enable) : true,
 		configuration_id: configuration?._id ? String(configuration._id) : undefined,
 		has_configuration: Boolean(configuration?._id),
 		status_options_count: options.length,
@@ -536,8 +560,12 @@ function matches_term(record: ImperiumDoc, fields: string[], termino: string) {
 	return fields.some((field) => String(record[field] ?? '').toLowerCase().includes(needle));
 }
 
-function build_option_rows(module_record: ImperiumDoc, configuration: ImperiumDoc | null) {
-	const projection = build_record(module_record, configuration);
+function build_option_rows(
+	module_record: ImperiumDoc | null,
+	configuration: ImperiumDoc | null,
+	fallback?: { storage_id: string; model_id: string; module_name: string; name: string },
+) {
+	const projection = build_record(module_record, configuration, fallback);
 	const options = as_array(projection.status_options);
 	return options.map((raw, index) => {
 		const option = as_object(raw);
@@ -601,21 +629,33 @@ export async function list_status_option_control(ctx: StatusCtx) {
 	const q = ctx.url ? query_list(ctx.url) : { skip: 0, take: 100, q: '' };
 	const module_filter = text(ctx.url?.searchParams.get('module'));
 	if (module_filter) {
-		if (!/^[a-f0-9]{24}$/i.test(module_filter)) {
+		if (!/^[A-Za-z0-9_./-]{1,120}$/.test(module_filter)) {
 			return with_list_instance_type(
 				ok([], 'No se encontró el módulo solicitado.'),
 				OPTION_LIST_INSTANCE_KEYS,
 			);
 		}
 		const module_record = await find_module(ctx.store, module_filter);
-		if (!module_record) {
+		const configuration = await find_existing_configuration(
+			ctx.store,
+			module_record?._id ? String(module_record._id) : module_filter,
+			text(module_record?.model_id) || module_filter,
+		);
+		if (!module_record && !configuration) {
 			return with_list_instance_type(
 				ok([], 'No se encontró el módulo solicitado.'),
 				OPTION_LIST_INSTANCE_KEYS,
 			);
 		}
-		const configuration = await find_existing_configuration(ctx.store, String(module_record._id));
-		const filtered = build_option_rows(module_record, configuration).filter((row) =>
+		const record_name = module_record
+			? String(module_record.name ?? module_record.module_name ?? '')
+			: text(configuration?.name) || module_filter;
+		const filtered = build_option_rows(module_record, configuration, {
+			storage_id: module_filter,
+			model_id: text(module_record?.model_id) || module_filter,
+			module_name: text(module_record?.module_name),
+			name: record_name,
+		}).filter((row) =>
 			matches_term(
 				row,
 				['name', 'description', 'option_field_name', 'option_type', 'option_color', 'option_icon'],
@@ -625,32 +665,42 @@ export async function list_status_option_control(ctx: StatusCtx) {
 		return with_list_instance_type(
 			ok(
 				filtered.slice(q.skip, q.skip + q.take),
-				`Opciones configuradas para ${module_record.name}.`,
+				`Opciones configuradas para ${record_name}.`,
 				filtered.length,
 			),
 			OPTION_LIST_INSTANCE_KEYS,
 		);
 	}
-	if (!ctx.store.has('module-management')) {
-		return with_list_instance_type(
-			ok([], 'Opciones de estado por módulo cargadas correctamente.'),
-			MODULE_LIST_INSTANCE_KEYS,
+	const configs = await list_status_configurations(ctx.store);
+	const modules: ImperiumDoc[] = [];
+	if (ctx.store.has('module-management')) {
+		for await (const page of ctx.store.scan('module-management', { include_inactive: true })) {
+			modules.push(...page);
+		}
+	}
+	const used = new Set<string>();
+	const rows = modules.map((module_record) => {
+		const module_id = String(module_record._id ?? '');
+		const model_id = text(module_record.model_id);
+		const configuration =
+			configs.find((row) => config_matches(row, module_id, model_id)) ?? null;
+		if (configuration?._id) used.add(String(configuration._id));
+		return build_record(module_record, configuration);
+	});
+	for (const configuration of configs) {
+		if (used.has(String(configuration._id ?? ''))) continue;
+		const value = configuration_value(configuration);
+		rows.push(
+			build_record(null, configuration, {
+				storage_id:
+					text(configuration.module_id ?? value.module_id) || text(value.model_id),
+				model_id: text(configuration.model_id ?? value.model_id),
+				module_name: text(value.module_name),
+				name: text(configuration.name) || text(value.model_id),
+			}),
 		);
 	}
-	const modules: ImperiumDoc[] = [];
-	for await (const page of ctx.store.scan('module-management', { include_inactive: true })) {
-		modules.push(...page);
-	}
-	const configs = await list_status_configurations(ctx.store);
-	const by_module = new Map<string, ImperiumDoc>();
-	for (const row of configs) {
-		const module_id = String(row.module_id ?? configuration_value(row).module_id ?? '');
-		if (module_id) by_module.set(module_id, row);
-	}
-	const filtered = modules
-		.map((module_record) =>
-			build_record(module_record, by_module.get(String(module_record._id)) ?? null),
-		)
+	const filtered = rows
 		.sort((a, b) => String(a.name).localeCompare(String(b.name), 'es'))
 		.filter((row) => matches_term(row, ['name', 'description', 'module_name', 'model_id'], q.q));
 	return with_list_instance_type(
@@ -669,13 +719,24 @@ export async function list_status_option_control(ctx: StatusCtx) {
 export async function read_status_option_control(ctx: StatusCtx) {
 	const module_id = text(ctx.params.id);
 	if (!module_id) throw new Error('Debes indicar el módulo a consultar.');
-	if (!/^[a-f0-9]{24}$/i.test(module_id)) {
-		throw new Error('No se encontró el módulo solicitado.');
-	}
 	const module_record = await find_module(ctx.store, module_id);
-	if (!module_record) throw new Error('No se encontró el módulo solicitado.');
-	const configuration = await find_existing_configuration(ctx.store, String(module_record._id));
-	return ok([build_record(module_record, configuration)], 'Ruta encontrada');
+	const configuration = await find_existing_configuration(
+		ctx.store,
+		module_record?._id ? String(module_record._id) : module_id,
+		text(module_record?.model_id) || module_id,
+	);
+	if (!module_record && !configuration) throw new Error('No se encontró el módulo solicitado.');
+	return ok(
+		[
+			build_record(module_record, configuration, {
+				storage_id: module_id,
+				model_id: text(module_record?.model_id) || module_id,
+				module_name: text(module_record?.module_name),
+				name: text(module_record?.name) || module_id,
+			}),
+		],
+		'Ruta encontrada',
+	);
 }
 
 type StatusSeedEntry = {
@@ -701,17 +762,7 @@ async function find_status_configuration_for_seed(
 	module_id: string,
 	model_id: string,
 ) {
-	const rows = await list_status_configurations(store);
-	return (
-		rows.find((row) => {
-			const value = configuration_value(row);
-			const mid = text(row.module_id ?? value.module_id);
-			const model = text(row.model_id ?? value.model_id);
-			if (module_id && (mid === module_id || model === module_id)) return true;
-			if (model_id && (model === model_id || mid === model_id)) return true;
-			return false;
-		}) ?? null
-	);
+	return find_existing_configuration(store, module_id, model_id);
 }
 
 /**

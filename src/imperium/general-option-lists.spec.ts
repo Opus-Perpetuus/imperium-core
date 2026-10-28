@@ -312,3 +312,67 @@ describe('seed fill-empty color/icon', () => {
 	});
 });
 
+
+describe('option value case', () => {
+	test('GOL seed conserva mayúsculas (USD/MXN)', async () => {
+		const store = memory_store({ configuration: [] });
+		const result = await seed_general_option_lists(
+			ctx(store, {
+				model_id: 'PosTickets',
+				module_name: 'pos-tickets',
+				lists: [
+					{
+						list_key: 'base_currency',
+						label: 'Moneda',
+						field_name: 'base_currency',
+						options: [
+							{ value: 'USD', label: 'Dólar' },
+							{ value: 'MXN', label: 'Peso' },
+						],
+					},
+				],
+			}) as never,
+		);
+		expect(result.data[0]?.inserted).toBe(2);
+		const lists = (store.data.configuration[0]?.value as { lists: Array<{ options: Array<{ value: string }> }> }).lists;
+		expect(lists[0]?.options.map((o) => o.value)).toEqual(['USD', 'MXN']);
+	});
+
+	test('SOS seed conserva códigos SAT (O/E/AGU) y no duplica vs minúsculas guardadas', async () => {
+		const kept = { value: 'agu', label: 'Aguascalientes guardado', field_name: 'estado', type: 'info', color: '#123456' };
+		const store = memory_store({
+			configuration: [
+				{
+					_id: '507f1f77bcf86cd7994390cc',
+					type: 'status-options-by-module',
+					module_id: 'Padron',
+					model_id: 'Padron',
+					value: {
+						module_id: 'Padron',
+						model_id: 'Padron',
+						module_name: 'padron',
+						status_fields: ['estado'],
+						options: [kept],
+					},
+				},
+			],
+		});
+		const result = await seed_status_defaults(
+			ctx(store, {
+				model_id: 'Padron',
+				module_name: 'padron',
+				status_fields: ['estado'],
+				options: [
+					{ value: 'AGU', label: 'Aguascalientes', field_name: 'estado', type: 'info' },
+					{ value: 'O', label: 'Persona moral', field_name: 'estado', type: 'info' },
+					{ value: 'E', label: 'Extranjero', field_name: 'estado', type: 'info' },
+				],
+			}) as never,
+		);
+		expect(result.data[0]?.inserted).toBe(2);
+		expect(result.data[0]?.skipped).toBe(1);
+		const options = (store.data.configuration[0]?.value as { options: Array<{ value: string }> }).options;
+		expect(options.map((o) => o.value)).toEqual(['agu', 'O', 'E']);
+		expect(options[0]).toBe(kept);
+	});
+});
