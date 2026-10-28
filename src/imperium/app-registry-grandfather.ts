@@ -6,5 +6,5 @@ export const GRANDFATHER_SEGMENTS: Readonly<Record<string, readonly string[]>> =
 	'ingresos': ['contribuyente', 'concepto', 'licencia', 'adeudo'],
 	'pos': ['pos-order'],
 	'tienda': ['providers', 'connectors', 'catalog', 'pricing', 'store-info', 'payment-gateways', 'sync', 'orders', 'store-home', 'store-catalog', 'store-product', 'store-cart', 'store-lists', 'store-favorites', 'store-checkout', 'store-checkout-result', 'store-order-detail', 'store-orders', 'store-account', 'store-addresses', 'store-payment-methods', 'store-about'],
-	'vehiculos': ['padron-vehiculos', 'plantilla-revision', 'bitacora', 'envio-revision', 'falla', 'mantenimiento-correctivo', 'mantenimiento-preventivo', 'servicio-programado', 'lectura-uso', 'documento-vehiculo', 'recordatorios'],
+	'vehiculos': ['padron-vehiculos', 'plantilla-revision', 'bitacora', 'envio-revision', 'falla', 'mantenimiento-correctivo', 'mantenimiento-preventivo', 'servicio-programado', 'lectura-uso', 'documento-vehiculo', 'recordatorios', 'costos-flota', 'carga-combustible'],
 };

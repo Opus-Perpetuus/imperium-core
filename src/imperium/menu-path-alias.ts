@@ -23,6 +23,15 @@ const GESTOR_ALIASES: ReadonlyArray<readonly [string, string]> = [
 	['/database-manager/health', '/db-admin/health'],
 ];
 
+/**
+ * Páginas del menú cuyo path no es un resource del subject (pages_extra /
+ * listPath anidado). Sin esto el gateway responde 404 aunque el subject sí.
+ */
+const PAGE_ALIASES: ReadonlyArray<readonly [string, string]> = [
+	['/recordatorios', '/servicio-programado/recordatorios'],
+	['/costos-flota', '/vehicle/reporte-costos'],
+];
+
 export function rewrite_menu_api_path(
 	path: string,
 	subjects: readonly MenuPathSubject[],
@@ -30,9 +39,10 @@ export function rewrite_menu_api_path(
 ): string {
 	const bare = path.length > 1 ? path.replace(/\/+$/, '') : path;
 	const prefixed = bare.startsWith('/') ? bare : `/${bare}`;
-	const candidates: Array<{ from: string; to: string }> = GESTOR_ALIASES.map(
-		([from, to]) => ({ from, to }),
-	);
+	const candidates: Array<{ from: string; to: string }> = [
+		...GESTOR_ALIASES,
+		...PAGE_ALIASES,
+	].map(([from, to]) => ({ from, to }));
 	for (const subject of subjects) {
 		for (const mod of subject.modules ?? []) {
 			const resource = String(mod.resource ?? '').trim();

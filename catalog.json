@@ -14022,6 +14022,98 @@
           ]
         },
         {
+          "resource": "envio-revision",
+          "table": "envio_revision",
+          "name": "Envíos a revisión",
+          "path": "/envio-revision",
+          "collection": "envio-revision",
+          "model_file": "components/envio-revision/envio-revision.model.ts",
+          "menu_ref": "envio-revision-menu",
+          "icon": "fa-file-signature",
+          "columns": [
+            {
+              "name": "modo",
+              "mongo": "modo",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "modo"
+            },
+            {
+              "name": "usuario_id",
+              "mongo": "usuario_id",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "usuario id"
+            },
+            {
+              "name": "usuario_nombre",
+              "mongo": "usuario_nombre",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "usuario nombre"
+            },
+            {
+              "name": "bitacora_ids",
+              "mongo": "bitacora_ids",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "bitacora ids"
+            },
+            {
+              "name": "firma",
+              "mongo": "firma",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "firma"
+            },
+            {
+              "name": "firmado_at",
+              "mongo": "firmado_at",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "firmado at"
+            },
+            {
+              "name": "firmante",
+              "mongo": "firmante",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "firmante"
+            },
+            {
+              "name": "estado",
+              "mongo": "estado",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "estado"
+            },
+            {
+              "name": "share_hint",
+              "mongo": "share_hint",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "share hint"
+            },
+            {
+              "name": "visitas",
+              "mongo": "visitas",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "visitas"
+            }
+          ]
+        },
+        {
           "resource": "falla",
           "table": "falla",
           "name": "Fallas",
@@ -14362,6 +14454,122 @@
           ]
         },
         {
+          "resource": "carga-combustible",
+          "table": "carga_combustible",
+          "name": "Cargas de combustible",
+          "path": "/carga-combustible",
+          "collection": "carga-combustible",
+          "model_file": "components/carga-combustible/carga-combustible.model.ts",
+          "menu_ref": "carga-combustible-menu",
+          "icon": "fa-gas-pump",
+          "columns": [
+            {
+              "name": "vehicle_id",
+              "mongo": "vehicle_id",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "vehicle id"
+            },
+            {
+              "name": "fecha",
+              "mongo": "fecha",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "fecha"
+            },
+            {
+              "name": "litros",
+              "mongo": "litros",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "litros"
+            },
+            {
+              "name": "precio_litro",
+              "mongo": "precio_litro",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "precio litro"
+            },
+            {
+              "name": "costo",
+              "mongo": "costo",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "costo"
+            },
+            {
+              "name": "odometro",
+              "mongo": "odometro",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "odometro"
+            },
+            {
+              "name": "tanque_lleno",
+              "mongo": "tanque_lleno",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "tanque lleno"
+            },
+            {
+              "name": "tipo_combustible",
+              "mongo": "tipo_combustible",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "tipo combustible"
+            },
+            {
+              "name": "estacion",
+              "mongo": "estacion",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "estacion"
+            },
+            {
+              "name": "conductor",
+              "mongo": "conductor",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "conductor"
+            },
+            {
+              "name": "km_recorridos",
+              "mongo": "km_recorridos",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "km recorridos"
+            },
+            {
+              "name": "rendimiento_km_l",
+              "mongo": "rendimiento_km_l",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "rendimiento km l"
+            },
+            {
+              "name": "comprobante",
+              "mongo": "comprobante",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "comprobante"
+            }
+          ]
+        },
+        {
           "resource": "documento-vehiculo",
           "table": "documento_vehiculo",
           "name": "Documentos del vehículo",
@@ -14428,6 +14636,13 @@
           "menu_ref": "vehiculos-recordatorios-menu",
           "path": "/recordatorios",
           "icon": "fa-bell",
+          "parent_ref": "vehicle-menu-management-0"
+        },
+        {
+          "name": "Costos por vehículo",
+          "menu_ref": "vehiculos-costos-flota-menu",
+          "path": "/costos-flota",
+          "icon": "currency",
           "parent_ref": "vehicle-menu-management-0"
         }
       ]

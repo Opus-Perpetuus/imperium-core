@@ -72,6 +72,14 @@ describe('alias de path de menú al recurso que sí existe', () => {
 		}
 	});
 
+
+	test('páginas vehiculos: recordatorios y costos-flota van al listPath real', () => {
+		expect(rewrite('/recordatorios')).toBe('/servicio-programado/recordatorios');
+		expect(rewrite('/recordatorios/')).toBe('/servicio-programado/recordatorios');
+		expect(rewrite('/costos-flota')).toBe('/vehicle/reporte-costos');
+		expect(rewrite('/costos-flota/xyz')).toBe('/vehicle/reporte-costos/xyz');
+	});
+
 	test('sin la colección no reescribe: el 404 sigue siendo 404', () => {
 		expect(rewrite_menu_api_path('/dbm-destinations', subjects, () => false)).toBe(
 			'/dbm-destinations',
