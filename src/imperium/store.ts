@@ -500,6 +500,26 @@ export function chat_index_sqls(input: {
 	});
 }
 
+const NAMED_PARTIAL_UNIQUE_INDEXES: Record<string, Array<{ name: string; on: string; where: string }>> = {
+	'inventory-reception': [
+		{
+			name: 'inventory_reception_unique_open_purchase_order',
+			on: 'purchase_order',
+			where: "is_active = true AND estado IN ('pendiente', 'parcial')",
+		},
+	],
+};
+
+export function named_partial_unique_index_sqls(input: {
+	resource: string;
+	quoted_table: string;
+}): Array<{ name: string; sql: string }> {
+	return (NAMED_PARTIAL_UNIQUE_INDEXES[input.resource] ?? []).map((index) => ({
+		name: index.name,
+		sql: `CREATE UNIQUE INDEX IF NOT EXISTS ${qident(index.name)} ON ${input.quoted_table} (${index.on}) WHERE ${index.where}`,
+	}));
+}
+
 /**
  * Respaldo de los 1:1 legados (`chat_backfill_direct`). Un lote es un conjunto de
  * `conversationKey` cuyos mensajes aún no tienen conversación: el WHERE es el cursor.
@@ -3432,6 +3452,19 @@ export class ImperiumStore {
 					await this.sql.unsafe(sql);
 				} catch {
 					/* tabla o columna aún no existen */
+				}
+			}
+			for (const index of named_partial_unique_index_sqls({
+				resource: loc.resource,
+				quoted_table: this.qt(loc.resource),
+			})) {
+				try {
+					await this.sql.unsafe(index.sql);
+				} catch (err) {
+					if (is_undefined_table(err)) continue;
+					console.warn(
+						`[índices] No se pudo crear ${index.name}: ${err instanceof Error ? err.message : String(err)}`,
+					);
 				}
 			}
 		}

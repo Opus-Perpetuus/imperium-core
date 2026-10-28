@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { mongo_match_to_sql } from './record-rules.ts';
 import {
 	calls_page_for_user_sql,
@@ -14,6 +14,7 @@ import {
 	json_bind_value,
 	list_select_sql,
 	lookup_index_sqls,
+	named_partial_unique_index_sqls,
 	populate_lite_select_sql,
 	scan_select_sql,
 	scan_omit_sql,
@@ -34,6 +35,8 @@ import {
 	documentation_page_current_sql,
 	documentation_page_neighbor_sql,
 	documentation_page_order_sql,
+	ImperiumStore,
+	load_catalog_path,
 } from './store.ts';
 import { debug_related_route_candidates } from './debug-log-flow.ts';
 import { list_projection_keys } from './list-projection.ts';
@@ -90,6 +93,75 @@ describe('unique_index_sqls', () => {
 		const src = readFileSync(new URL('./store.ts', import.meta.url), 'utf8');
 		expect(src).toContain('skip_total?: boolean');
 		expect(src).toMatch(/if\s*\(\s*!opts\.skip_total\s*\)/);
+	});
+});
+
+const RECEPTION_IDX = 'inventory_reception_unique_open_purchase_order';
+
+describe('named_partial_unique_index_sqls', () => {
+	test('recepción abierta única por orden de compra, con el nombre del índice de Mongoose', () => {
+		expect(
+			named_partial_unique_index_sqls({
+				resource: 'inventory-reception',
+				quoted_table: '"subject_almacen"."inventory_reception"',
+			}),
+		).toEqual([
+			{
+				name: RECEPTION_IDX,
+				sql: `CREATE UNIQUE INDEX IF NOT EXISTS "${RECEPTION_IDX}" ON "subject_almacen"."inventory_reception" (purchase_order) WHERE is_active = true AND estado IN ('pendiente', 'parcial')`,
+			},
+		]);
+		expect(named_partial_unique_index_sqls({ resource: 'products', quoted_table: '"x"."products"' })).toEqual([]);
+	});
+});
+
+describe('ensure_unique_indexes: únicos parciales con nombre', () => {
+	const warn = spyOn(console, 'warn').mockImplementation(() => {});
+	afterEach(() => warn.mockClear());
+
+	function store_with(fail: (sql: string) => unknown) {
+		const sqls: string[] = [];
+		const sql = {
+			unsafe: async (text: string) => {
+				sqls.push(text);
+				const err = fail(text);
+				if (err) throw err;
+				return [];
+			},
+		} as unknown as Bun.SQL;
+		return { store: new ImperiumStore(sql, load_catalog_path()), sqls };
+	}
+
+	test('emite el CREATE idempotente sobre la tabla real en cada arranque', async () => {
+		const { store, sqls } = store_with(() => null);
+		await store.ensure_unique_indexes();
+		await store.ensure_unique_indexes();
+		const emitted = sqls.filter((sql) => sql.includes(RECEPTION_IDX));
+		expect(emitted).toHaveLength(2);
+		expect(emitted[0]).toBe(emitted[1]);
+		expect(emitted[0]).toStartWith('CREATE UNIQUE INDEX IF NOT EXISTS');
+		expect(emitted[0]).toContain(` ON ${store.qt('inventory-reception')} `);
+		expect(warn).not.toHaveBeenCalled();
+	});
+
+	test('un fallo (duplicados) se registra con el nombre del índice y no lanza', async () => {
+		const { store } = store_with((sql) =>
+			sql.includes(RECEPTION_IDX)
+				? Object.assign(new Error('could not create unique index'), { errno: '23505' })
+				: null,
+		);
+		await expect(store.ensure_unique_indexes()).resolves.toBeUndefined();
+		expect(warn).toHaveBeenCalledTimes(1);
+		expect(String(warn.mock.calls[0]?.[0])).toContain(RECEPTION_IDX);
+		expect(String(warn.mock.calls[0]?.[0])).toContain('could not create unique index');
+	});
+
+	test('sin la tabla (almacén no instalado) no registra nada', async () => {
+		const { store } = store_with((sql) =>
+			sql.includes(RECEPTION_IDX) ? Object.assign(new Error('relation does not exist'), { errno: '42P01' }) : null,
+		);
+		await store.ensure_unique_indexes();
+		expect(warn).not.toHaveBeenCalled();
 	});
 });
 
