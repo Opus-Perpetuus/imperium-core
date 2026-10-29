@@ -77,6 +77,8 @@ function is_poison(err: unknown): boolean {
 		return true;
 	if (code === 'ECONNRESET' || code === 'EPIPE' || code === 'ECONNREFUSED') return true;
 	if (error_errno(err) === TERMINATED_BY_ADMIN) return true;
+	if (/bind message supplies \d+ parameters?, but prepared statement .* requires \d+/i.test(message))
+		return true;
 	return /bind message has \d+ result formats but query has \d+ columns/i.test(message);
 }
 

@@ -218,6 +218,48 @@ if (has_db) {
 			expect((await watch.usage()).total).toBeLessThanOrEqual(MAX);
 			expect((await watch.until((u) => u.total === 0, 6_000)).total).toBe(0);
 		}, 30_000);
+
+		test('bind message supplies N parameters recicla la conexión y la lectura se reintenta', async () => {
+			const bind_app = `bind-spec-${crypto.randomUUID().slice(0, 8)}`;
+			const schema = `pool208_bind_${crypto.randomUUID().slice(0, 8)}`;
+			const bind_sql = open_core_sql(DATABASE_URL, {
+				max: 1,
+				query_timeout_ms: 2_000,
+				application_name: bind_app,
+			});
+			const first_generation = () =>
+				sql.unsafe(
+					`SELECT count(*)::int AS n FROM pg_stat_activity WHERE application_name LIKE $1`,
+					[`${bind_app}:%:0`],
+				) as Promise<Array<{ n: number }>>;
+			try {
+				await sql.unsafe(`CREATE SCHEMA ${schema}`);
+				await sql.unsafe(
+					`CREATE FUNCTION ${schema}.glitch(app text) RETURNS int LANGUAGE plpgsql AS $fn$
+					BEGIN
+						IF current_setting('application_name') LIKE app || ':%:0' THEN
+							RAISE EXCEPTION USING ERRCODE = '08P01',
+								MESSAGE = 'bind message supplies 29 parameters, but prepared statement "PSELECT * FROM "subject_configuracion"."u$5" requires 1';
+						END IF;
+						RETURN 1;
+					END $fn$`,
+				);
+				const rows = (await bind_sql.unsafe(`SELECT ${schema}.glitch($1) AS n`, [
+					bind_app,
+				])) as Array<{ n: number }>;
+				expect(rows[0]?.n).toBe(1);
+				const end = Date.now() + 3_000;
+				let left = (await first_generation())[0]!.n;
+				while (left > 0 && Date.now() < end) {
+					await Bun.sleep(50);
+					left = (await first_generation())[0]!.n;
+				}
+				expect(left).toBe(0);
+			} finally {
+				await bind_sql.close({ timeout: 1 }).catch(() => {});
+				await sql.unsafe(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(() => {});
+			}
+		}, 15_000);
 	});
 } else {
 	describe.skip('pool del núcleo bajo user-group/mass-query (sin postgres)', () => {
