@@ -67,17 +67,7 @@ export function apply_odoo_image_sources(payload: unknown): ImageSourceSpec[] {
 		sources = clone_sources(DEFAULT_IMAGE_SOURCES);
 		return current_image_sources();
 	}
-	const parsed: ImageSourceSpec[] = [];
-	for (const raw of payload.split(/[;\n]/)) {
-		const parts = raw.trim().split(/\s+/).filter(Boolean);
-		if (!parts.length) continue;
-		const token = parts[0]!;
-		if (!token.startsWith('ghcr:')) continue;
-		const org = token.slice('ghcr:'.length).trim();
-		if (!ORG_RE.test(org)) continue;
-		const is_private = parts.slice(1).some((part) => part === 'private' || part === 'privado');
-		parsed.push({ org, private: is_private });
-	}
+	const parsed = parse_image_sources(payload);
 	if (!parsed.length) {
 		throw new Error('fuente de imágenes ilegible');
 	}
@@ -85,9 +75,36 @@ export function apply_odoo_image_sources(payload: unknown): ImageSourceSpec[] {
 	return current_image_sources();
 }
 
+/** Lee «ghcr:org [private]» separadas por «;» o renglón, sin tocar la lista vigente. */
+export function parse_image_sources(payload: string): ImageSourceSpec[] {
+	const parsed: ImageSourceSpec[] = [];
+	const seen = new Set<string>();
+	for (const raw of payload.split(/[;\n]/)) {
+		const parts = raw.trim().split(/\s+/).filter(Boolean);
+		if (!parts.length) continue;
+		const token = parts[0]!;
+		if (!token.startsWith('ghcr:')) continue;
+		const org = token.slice('ghcr:'.length).trim();
+		if (!ORG_RE.test(org) || seen.has(org.toLowerCase())) continue;
+		seen.add(org.toLowerCase());
+		const is_private = parts.slice(1).some((part) => part === 'private' || part === 'privado');
+		parsed.push({ org, private: is_private });
+	}
+	return parsed;
+}
+
+export function format_image_sources(list: readonly ImageSourceSpec[]): string {
+	return list.map((source) => `ghcr:${source.org}${source.private ? ' private' : ''}`).join('; ');
+}
+
 export async function apply_image_sources_from_store(
 	store: ImperiumStore,
 ): Promise<ImageSourceSpec[]> {
+	// Inactivo = Odoo apagó el autoescaneo: «Buscar» vuelve a las dos públicas.
+	if (store.has('configuration')) {
+		const row = await store.find_where('configuration', { _ref: IMAGE_SOURCES_CONFIG_REF }).catch(() => null);
+		if (row && row.is_active === false) return apply_odoo_image_sources('');
+	}
 	return apply_odoo_image_sources(await read_config_value(store, IMAGE_SOURCES_CONFIG_REF));
 }
 

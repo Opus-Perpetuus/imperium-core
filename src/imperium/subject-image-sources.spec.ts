@@ -211,7 +211,7 @@ describe('fuentes de imágenes', () => {
 		expect(second).toEqual([index_of('codice-progressio')]);
 	});
 
-	test('el registro de configuración usa el mismo ref que lee el escaneo', () => {
+	test('el parámetro de fuentes no se siembra: solo lo crea Odoo al encender el autoescaneo', () => {
 		const seed = readFileSync(
 			join(
 				dirname(fileURLToPath(import.meta.url)),
@@ -219,8 +219,12 @@ describe('fuentes de imágenes', () => {
 			),
 			'utf8',
 		);
-		expect(seed).toContain(`_ref: "${IMAGE_SOURCES_CONFIG_REF}"`);
-		expect(seed).toContain('ghcr:opus-perpetuus; ghcr:codice-progressio');
+		expect(seed).not.toContain(`_ref: "${IMAGE_SOURCES_CONFIG_REF}"`);
+		const json = readFileSync(
+			join(dirname(fileURLToPath(import.meta.url)), 'configuration-parameter-seeds.json'),
+			'utf8',
+		);
+		expect(json).not.toContain(IMAGE_SOURCES_CONFIG_REF);
 	});
 
 	test('el parámetro de sistema es el payload que el control de Odoo escribe', async () => {

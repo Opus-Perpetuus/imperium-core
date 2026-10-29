@@ -1,6 +1,11 @@
 /**
  * Enruta el contrato HTTP original de Imperium sobre SQL.
  */
+import {
+	apply_odoo_autoscan,
+	read_autoscan_state,
+	trigger_image_autoscan,
+} from './subject-image-autoscan.ts';
 import extra from './extra-routes.json';
 import type { BootState } from './health.ts';
 import {
@@ -794,6 +799,42 @@ async function handle_subject_catalog(
 		const body = (await req.json().catch(() => ({}))) as { slugs?: unknown };
 		const result = await set_odoo_authorized(store.subjects, sql, body.slugs);
 		return Response.json({ data: result, message: 'Apps autorizadas' });
+	}
+	if (rest === 'image-sources' && req.method === 'GET') {
+		const data = await read_autoscan_state(store, sql);
+		return Response.json({ data, message: 'Autoescaneo de repos de imágenes' });
+	}
+	if (rest === 'image-sources' && (req.method === 'PUT' || req.method === 'POST')) {
+		if (!is_master_request(req)) {
+			return Response.json(
+				{
+					error: 'master_required',
+					code: 'master_required',
+					message: 'El autoescaneo de repos de imágenes solo se habilita desde Odoo',
+				},
+				{ status: 403 },
+			);
+		}
+		const body = (await req.json().catch(() => ({}))) as { enabled?: unknown; sources?: unknown };
+		const data = await apply_odoo_autoscan(store, sql, body);
+		// Recién encendido: la primera pasada no espera al reloj.
+		if (data.enabled) void trigger_image_autoscan(store, sql).catch(() => {});
+		return Response.json({ data, message: 'Autoescaneo de repos de imágenes' });
+	}
+	if (rest === 'image-sources/scan' && req.method === 'POST') {
+		const state = await read_autoscan_state(store, sql);
+		if (!state.enabled) {
+			return Response.json(
+				{
+					error: 'autoscan_disabled',
+					code: 'autoscan_disabled',
+					message: 'El autoescaneo de repos de imágenes no está habilitado desde Odoo',
+				},
+				{ status: 409 },
+			);
+		}
+		const pass = await trigger_image_autoscan(store, sql);
+		return Response.json({ data: pass, message: 'Escaneo de repos de imágenes' });
 	}
 	const one = rest.match(/^(subject-[a-z0-9-]+)$/);
 	if (one && req.method === 'DELETE') {

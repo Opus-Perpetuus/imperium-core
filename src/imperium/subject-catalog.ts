@@ -15,7 +15,8 @@ import {
 	normalize_subject_slug,
 } from './subject-runtime.ts';
 
-export type CatalogSource = 'odoo' | 'manual' | 'registry';
+/** `image-source`: la dejó el autoescaneo que enciende Odoo; autoriza como Odoo. */
+export type CatalogSource = 'odoo' | 'manual' | 'registry' | 'image-source';
 
 export type CatalogEntry = {
 	technical_id: string;
@@ -70,7 +71,9 @@ export async function list_catalog_entries(sql: Bun.SQL): Promise<CatalogEntry[]
 		image: row.image ? String(row.image) : null,
 		repo: row.repo ? String(row.repo) : null,
 		source:
-			row.source === 'odoo' || row.source === 'registry' ? row.source : 'manual',
+			row.source === 'odoo' || row.source === 'registry' || row.source === 'image-source'
+				? row.source
+				: 'manual',
 		created_at: String(row.created_at),
 		updated_at: String(row.updated_at),
 	}));
@@ -98,7 +101,7 @@ export function catalog_visible(input: {
 	);
 }
 
-async function upsert_entry(
+export async function upsert_catalog_entry(
 	sql: Bun.SQL,
 	entry: Omit<CatalogEntry, 'created_at' | 'updated_at'>,
 ): Promise<void> {
@@ -158,7 +161,7 @@ export async function set_odoo_authorized(
 			unknown.push(slug);
 			continue;
 		}
-		await upsert_entry(sql, {
+		await upsert_catalog_entry(sql, {
 			technical_id: sub.technical_id,
 			slug,
 			name: sub.name,
@@ -229,7 +232,7 @@ export async function add_manual_entry(
 			'already_authorized',
 		);
 	}
-	await upsert_entry(sql, {
+	await upsert_catalog_entry(sql, {
 		technical_id,
 		slug,
 		name,
@@ -265,7 +268,7 @@ export async function remember_scanned_subjects(
 		if (is_base_subject_slug(sub.slug)) continue;
 		const prev = by_id.get(sub.technical_id);
 		if (!prev || prev.source === 'registry') continue;
-		await upsert_entry(sql, {
+		await upsert_catalog_entry(sql, {
 			technical_id: sub.technical_id,
 			slug: prev.slug,
 			name: prev.name || sub.name || sub.slug,
@@ -294,6 +297,13 @@ export async function remove_manual_entry(
 			'authorized_by_odoo',
 		);
 	}
+	if (rows[0]!.source === 'image-source') {
+		throw new SubjectCatalogError(
+			'La agregó el autoescaneo de repos de imágenes: se quita desde Odoo (fuentes del servidor)',
+			409,
+			'added_by_image_autoscan',
+		);
+	}
 	await sql.unsafe(`DELETE FROM public.subject_catalog WHERE technical_id = $1`, [
 		technical_id,
 	]);
@@ -307,7 +317,7 @@ export async function is_catalog_authorized(
 	await ensure_catalog_table(sql);
 	const rows = await sql.unsafe(
 		`SELECT 1 FROM public.subject_catalog
-      WHERE technical_id = $1 AND source IN ('odoo', 'manual')`,
+      WHERE technical_id = $1 AND source IN ('odoo', 'manual', 'image-source')`,
 		[technical_id],
 	);
 	return rows.length > 0;

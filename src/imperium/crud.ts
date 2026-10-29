@@ -1,6 +1,8 @@
 /**
  * CRUD Imperium: mismas rutas que `crud_routes()` del backend Express.
  */
+import { is_master_request } from './subject-secret.ts';
+import { odoo_only_config_denied } from './odoo-only-config.ts';
 import { decorate_list_instance_type } from './list-headers.ts';
 import { apply_public_user_create } from '@opus-perpetuus/imperium-core-kit';
 import { as_array, as_object, fail, ok, type ImperiumDoc } from './envelope.ts';
@@ -379,6 +381,11 @@ export async function handle_crud(
 	const method = req.method.toUpperCase();
 	const segs = rest.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean);
 	const body = async () => read_imperium_body(req);
+
+	if (resource === 'configuration' && method !== 'GET' && !is_master_request(req)) {
+		const denied = await odoo_only_config_denied(store, req, method, segs);
+		if (denied) return json(resource, fail(denied, 403, { code: 'odoo_only_parameter' }).body, 403);
+	}
 
 	if (is_postgres_table_tracker_resource(resource) && method !== 'GET') {
 		throw new Error('No disponible');

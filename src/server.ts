@@ -24,6 +24,7 @@ import { register_call_socket_handlers } from './imperium/calls-realtime.ts';
 import { start_chat_jobs } from './imperium/chat-jobs.ts';
 import { start_chat_realtime } from './imperium/chat-realtime.ts';
 import { start_subject_auto_update } from './imperium/subject-auto-update.ts';
+import { start_image_autoscan } from './imperium/subject-image-autoscan.ts';
 import { subject_files } from './imperium/subject-files.ts';
 import { start_support_sync } from './imperium/support-bridge.ts';
 import { seed_new_install } from './imperium/module-data.ts';
@@ -1070,6 +1071,9 @@ for (const warning of gateway_secret_warnings()) {
 // sistema esté en NO, que es como nace. Solo corre en el proceso del núcleo:
 // el operador arranca por `subject-operator.ts` y no pasa por aquí.
 start_subject_auto_update(imperium.store, sql);
+
+// Autoescaneo de repos de imágenes: solo hace algo si Odoo lo encendió.
+start_image_autoscan(imperium.store, sql);
 
 // Reintentos hacia el soporte en Odoo. Solo con TKSUPPORT en el entorno.
 start_support_sync(imperium.store);

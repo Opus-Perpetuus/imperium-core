@@ -782,7 +782,7 @@ export async function seed_missing_install_rows(
 const IMAGE_SCAN_TTL_MS = 60_000;
 let image_scan_cache: { key: string; at: number; packages: ScannedPackage[] } | null = null;
 
-function registered_from(subjects: readonly SubjectInfo[]): RegisteredSubject[] {
+export function registered_from(subjects: readonly SubjectInfo[]): RegisteredSubject[] {
 	return subjects.map((sub) => ({
 		technical_id: sub.technical_id,
 		slug: sub.slug,
@@ -792,7 +792,10 @@ function registered_from(subjects: readonly SubjectInfo[]): RegisteredSubject[] 
 	}));
 }
 
-function apply_scanned_subjects(store: ImperiumStore, merged: readonly RegisteredSubject[]) {
+export function apply_scanned_subjects(
+	store: ImperiumStore,
+	merged: readonly RegisteredSubject[],
+) {
 	const previous = new Map(store.subjects.map((sub) => [sub.technical_id, sub]));
 	const next = merged.map((sub) => {
 		const prev = previous.get(sub.technical_id);
@@ -920,7 +923,10 @@ export async function list_catalog_subjects(
 				installed: row.installed,
 				busy: row.busy,
 				status: row.status,
-				authorized: entry?.source === 'odoo' || entry?.source === 'manual',
+				authorized:
+					entry?.source === 'odoo' ||
+					entry?.source === 'manual' ||
+					entry?.source === 'image-source',
 			})
 		) {
 			continue;
