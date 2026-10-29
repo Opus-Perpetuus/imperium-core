@@ -136,7 +136,6 @@ export function core_pool_options(
 	);
 	return {
 		max,
-		// Bun.SQL corta la consulta en curso al vencer idleTimeout: nunca por debajo del tope de consulta.
 		idle_timeout_s: Math.max(Math.ceil(idle), Math.ceil(timeout_ms / 1000)),
 		connect_timeout_s: Math.ceil(connect),
 	};
@@ -147,7 +146,6 @@ function connect(database_url: string, pool: CorePoolOptions, application_name: 
 		max: pool.max,
 		idleTimeout: pool.idle_timeout_s,
 		connectionTimeout: pool.connect_timeout_s,
-		// Bun 1.3 cuelga consultas con sentencias preparadas con nombre (IN de largo variable).
 		prepare: false,
 		connection: { application_name },
 	});
@@ -170,7 +168,6 @@ export function open_core_sql(
 	const name_of = (gen: number) => `${tag}:${gen}`;
 	let inner = connect(database_url, pool, name_of(generation));
 
-	// close() espera a las consultas en curso; si el driver nunca resuelve, el pool viejo no suelta sus conexiones.
 	function recycle(seen: number) {
 		if (seen !== generation) return;
 		const dead = inner;
