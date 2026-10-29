@@ -1,4 +1,13 @@
 const DEFAULT_QUERY_TIMEOUT_MS = 30_000;
+const DEFAULT_POOL_MAX = 20;
+const DEFAULT_IDLE_TIMEOUT_S = 60;
+const DEFAULT_CONNECT_TIMEOUT_S = 10;
+const TERMINATED_BY_ADMIN = '57P01';
+
+function positive_env(name: string): number | undefined {
+	const value = Number(process.env[name] ?? '');
+	return Number.isFinite(value) && value > 0 ? value : undefined;
+}
 
 export function query_timeout_ms(override?: number): number {
 	if (override != null && Number.isFinite(override) && override > 0) return override;
@@ -50,6 +59,11 @@ function error_code(err: unknown): string {
 	return String((err as { code?: unknown }).code ?? '');
 }
 
+function error_errno(err: unknown): string {
+	if (!err || typeof err !== 'object' || !('errno' in err)) return '';
+	return String((err as { errno?: unknown }).errno ?? '');
+}
+
 function error_message(err: unknown): string {
 	return err instanceof Error ? err.message : String(err ?? '');
 }
@@ -62,6 +76,9 @@ function is_poison(err: unknown): boolean {
 	if (/^ERR_POSTGRES_(CONNECTION_|IDLE_TIMEOUT|LIFETIME_TIMEOUT|UNSUPPORTED_|INVALID_)/.test(code))
 		return true;
 	if (code === 'ECONNRESET' || code === 'EPIPE' || code === 'ECONNREFUSED') return true;
+	if (error_errno(err) === TERMINATED_BY_ADMIN) return true;
+	if (/bind message supplies \d+ parameters?, but prepared statement .* requires \d+/i.test(message))
+		return true;
 	return /bind message has \d+ result formats but query has \d+ columns/i.test(message);
 }
 
@@ -98,35 +115,73 @@ function query_text(value: unknown): string {
 	return '';
 }
 
-function pool_max(override?: number): number {
-	if (override != null && Number.isFinite(override) && override >= 1) return Math.floor(override);
-	return 10;
+export type CorePoolOptions = {
+	max: number;
+	idle_timeout_s: number;
+	connect_timeout_s: number;
+};
+
+export function core_pool_options(
+	timeout_ms: number,
+	overrides?: Partial<CorePoolOptions>,
+): CorePoolOptions {
+	const pick = (value: number | undefined, env: string, fallback: number) =>
+		value != null && Number.isFinite(value) && value > 0 ? value : (positive_env(env) ?? fallback);
+	const max = Math.max(1, Math.floor(pick(overrides?.max, 'CORE_SQL_POOL_MAX', DEFAULT_POOL_MAX)));
+	const idle = pick(overrides?.idle_timeout_s, 'CORE_SQL_IDLE_TIMEOUT_S', DEFAULT_IDLE_TIMEOUT_S);
+	const connect = pick(
+		overrides?.connect_timeout_s,
+		'CORE_SQL_CONNECT_TIMEOUT_S',
+		DEFAULT_CONNECT_TIMEOUT_S,
+	);
+	return {
+		max,
+		idle_timeout_s: Math.max(Math.ceil(idle), Math.ceil(timeout_ms / 1000)),
+		connect_timeout_s: Math.ceil(connect),
+	};
 }
 
-function connect(database_url: string, max: number): Bun.SQL {
+function connect(database_url: string, pool: CorePoolOptions, application_name: string): Bun.SQL {
 	return new Bun.SQL(database_url, {
-		max,
-		// Bun 1.3.14 mata la consulta en curso si idleTimeout es mayor que 0.
-		idleTimeout: 0,
-		connectionTimeout: 10,
+		max: pool.max,
+		idleTimeout: pool.idle_timeout_s,
+		connectionTimeout: pool.connect_timeout_s,
+		prepare: false,
+		connection: { application_name },
 	});
 }
 
 export function open_core_sql(
 	database_url: string,
-	opts?: { query_timeout_ms?: number; max?: number },
+	opts?: {
+		query_timeout_ms?: number;
+		max?: number;
+		idle_timeout_s?: number;
+		connect_timeout_s?: number;
+		application_name?: string;
+	},
 ): Bun.SQL {
 	const timeout_ms = query_timeout_ms(opts?.query_timeout_ms);
-	const max = pool_max(opts?.max);
-	let inner = connect(database_url, max);
+	const pool = core_pool_options(timeout_ms, opts);
+	const tag = `${(opts?.application_name ?? 'imperium-core').slice(0, 40)}:${crypto.randomUUID().slice(0, 8)}`;
 	let generation = 0;
+	const name_of = (gen: number) => `${tag}:${gen}`;
+	let inner = connect(database_url, pool, name_of(generation));
 
 	function recycle(seen: number) {
 		if (seen !== generation) return;
-		generation += 1;
 		const dead = inner;
-		inner = connect(database_url, max);
-		void dead.close({ timeout: 0 }).catch(() => {});
+		const dead_name = name_of(generation);
+		generation += 1;
+		inner = connect(database_url, pool, name_of(generation));
+		void inner
+			.unsafe(
+				`SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+				 WHERE application_name = $1 AND pid <> pg_backend_pid()`,
+				[dead_name],
+			)
+			.catch(() => {})
+			.finally(() => dead.close({ timeout: 0 }).catch(() => {}));
 	}
 
 	async function attempt<T>(op: (client: Bun.SQL) => Promise<T>): Promise<T> {
