@@ -1252,8 +1252,9 @@ export function is_public_extra_action(
 	);
 }
 
-function crud_flag(method: string): RecordRuleOperationFlag {
+function crud_flag(method: string, rest = ''): RecordRuleOperationFlag {
 	const m = method.toUpperCase();
+	if (m === 'POST' && rest.replace(/^\/+|\/+$/g, '') === 'mass-query') return 'allow_read';
 	if (m === 'POST') return 'allow_create';
 	if (m === 'PUT' || m === 'PATCH') return 'allow_update';
 	if (m === 'DELETE') return 'allow_delete';
@@ -1413,7 +1414,7 @@ export async function assert_http_access(
 		? 'allow_update'
 		: opts.extra && opts.action
 			? extra_flag(method, opts.action)
-			: crud_flag(method);
+			: crud_flag(method, opts.rest);
 	const { perms, model } = permissions_for_resource(access, canonical);
 	if (perms?.[flag]) return;
 	throw new HttpAccessDeniedError(
