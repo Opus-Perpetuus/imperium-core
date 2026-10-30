@@ -5,7 +5,7 @@ import {
 	read_general_option_list_options,
 	seed_general_option_lists,
 } from './general-option-lists.ts';
-import { seed_status_defaults } from './status-options.ts';
+import { retire_seeded_options, seed_status_defaults } from './status-options.ts';
 import type { ImperiumStore } from './store.ts';
 
 type Row = ImperiumDoc;
@@ -281,6 +281,48 @@ describe('status-option-control seed-defaults', () => {
 		const second = await seed_status_defaults(ctx(store, {}) as never);
 		expect(second.data[0]?.inserted).toBe(0);
 		expect(store.updates()).toBe(writes);
+	});
+});
+
+describe('status seed retire_values', () => {
+	const reparacion_seed = {
+		model_id: 'Ticket',
+		module_name: 'tickets',
+		status_fields: ['status'],
+		options: [
+			{ value: 'pendiente', label: 'Pendiente', field_name: 'status', type: 'info', color: '#ffc107' },
+			{ value: 'terminado', label: 'Terminado', field_name: 'status', type: 'success', color: '#198754' },
+		],
+		retire_values: ['abierto', 'cerrado'],
+	};
+	const sembrada = (value: string, field_name = 'status') => ({ value, label: value, field_name, color: '#111111', is_user_defined: false });
+
+	test('quita las opciones sembradas que se retiran y deja las del usuario y las de otros campos', async () => {
+		const store = memory_store({
+			configuration: [
+				status_config([{ ...abierto }, sembrada('cerrado'), sembrada('cerrado', 'otro')]),
+			],
+		});
+		const result = await seed_status_defaults(ctx(store, { entries: [reparacion_seed] }) as never);
+		const options = (store.data.configuration[0]?.value as { options: Array<{ value: string; field_name?: string }> }).options;
+		expect(options.map((o) => `${o.field_name}:${o.value}`)).toEqual(['status:abierto', 'otro:cerrado', 'status:pendiente', 'status:terminado']);
+		expect(result.data[0]?.retired).toBe(1);
+		expect(result.message).toContain('se retiraron 1 opciones');
+		const writes = store.updates();
+		const again = await seed_status_defaults(ctx(store, { entries: [reparacion_seed] }) as never);
+		expect(again.data[0]?.retired).toBe(0);
+		expect(store.updates()).toBe(writes);
+	});
+
+	test('no retira un valor que la misma semilla vuelve a pedir; sin retire_values no cambia nada', async () => {
+		const options = retire_seeded_options(
+			[sembrada('abierto'), sembrada('pendiente')] as never,
+			['abierto', 'pendiente'],
+			['status'],
+			[sembrada('pendiente')] as never,
+		);
+		expect(options.options.map((o) => o.value)).toEqual(['pendiente']);
+		expect(retire_seeded_options([sembrada('abierto')] as never, undefined, [], []).retired).toBe(0);
 	});
 });
 
