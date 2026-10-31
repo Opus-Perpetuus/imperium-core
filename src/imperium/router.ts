@@ -3,9 +3,11 @@
  */
 import {
 	apply_odoo_autoscan,
+	apply_self_autoscan,
 	read_autoscan_state,
 	trigger_image_autoscan,
 } from './subject-image-autoscan.ts';
+import { management_mode } from './management-mode.ts';
 import extra from './extra-routes.json';
 import type { BootState } from './health.ts';
 import {
@@ -751,7 +753,10 @@ async function install_refused(
 		{
 			error: 'subject_not_authorized',
 			code: 'subject_not_authorized',
-			message: `${sub.name} no está autorizada para este servidor: se autoriza desde Odoo o se agrega al catálogo`,
+			message:
+				management_mode() === 'self'
+					? `${sub.name} no está en el catálogo de este servidor: agrégala al catálogo o enciende la autodetección de apps con su repo como fuente`
+					: `${sub.name} no está autorizada para este servidor: se autoriza desde Odoo o se agrega al catálogo`,
 		},
 		{ status: 403 },
 	);
@@ -761,6 +766,12 @@ async function install_refused(
  * `GET` lista las filas del catálogo; `POST` da de alta una app a mano y
  * `DELETE /<technical_id>` la quita (solo el superadministrador: lo exige el
  * candado de `/subjects`). `PUT /authorized` lo usa Odoo, solo con el maestro.
+ *
+ * Autoescaneo (`image-sources`): en modo odoo solo el maestro lo cambia; en
+ * modo self lo cambia un administrador desde Módulos y el maestro (el
+ * `subjects-sync` del deploy) solo siembra lo del `.env` mientras nadie lo
+ * haya editado en Módulos. Un solo administrador: en self, Odoo ya no
+ * autoriza apps.
  */
 async function handle_subject_catalog(
 	store: ImperiumStore,
@@ -785,7 +796,19 @@ async function handle_subject_catalog(
 		const data = await list_catalog_subjects(store, sql, live_catalog_scan());
 		return Response.json({ data, total_elementos: data.length, message: 'Apps' });
 	}
+	const self_managed = management_mode() === 'self';
 	if (rest === 'authorized' && (req.method === 'PUT' || req.method === 'POST')) {
+		if (self_managed) {
+			return Response.json(
+				{
+					error: 'self_managed',
+					code: 'self_managed',
+					message:
+						'Servidor autoadministrado (IMPERIUM_MANAGEMENT_MODE=self): las apps se autorizan en Módulos (catálogo y autodetección), no desde Odoo',
+				},
+				{ status: 409 },
+			);
+		}
 		if (!is_master_request(req)) {
 			return Response.json(
 				{
@@ -805,6 +828,19 @@ async function handle_subject_catalog(
 		return Response.json({ data, message: 'Autoescaneo de repos de imágenes' });
 	}
 	if (rest === 'image-sources' && (req.method === 'PUT' || req.method === 'POST')) {
+		if (self_managed) {
+			const body = (await req.json().catch(() => ({}))) as { enabled?: unknown; sources?: unknown };
+			// El maestro es el deploy (`subjects-sync --image-sources`): siembra del `.env`.
+			const origin = is_master_request(req) ? 'env' : 'gui';
+			const data = await apply_self_autoscan(store, sql, body, origin);
+			if (data.enabled && !data.seed_ignored) void trigger_image_autoscan(store, sql).catch(() => {});
+			return Response.json({
+				data,
+				message: data.seed_ignored
+					? 'Autodetección de apps: se conserva lo editado en Módulos (el .env solo siembra)'
+					: 'Autodetección de apps',
+			});
+		}
 		if (!is_master_request(req)) {
 			return Response.json(
 				{
@@ -828,7 +864,9 @@ async function handle_subject_catalog(
 				{
 					error: 'autoscan_disabled',
 					code: 'autoscan_disabled',
-					message: 'El autoescaneo de repos de imágenes no está habilitado desde Odoo',
+					message: self_managed
+						? 'La autodetección de apps está apagada: enciéndela en Módulos'
+						: 'El autoescaneo de repos de imágenes no está habilitado desde Odoo',
 				},
 				{ status: 409 },
 			);
@@ -838,7 +876,7 @@ async function handle_subject_catalog(
 	}
 	const one = rest.match(/^(subject-[a-z0-9-]+)$/);
 	if (one && req.method === 'DELETE') {
-		const removed = await remove_manual_entry(sql, one[1]!);
+		const removed = await remove_manual_entry(sql, one[1]!, management_mode());
 		if (!removed) {
 			return Response.json({ error: `unknown entry ${one[1]}` }, { status: 404 });
 		}

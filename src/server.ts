@@ -1072,7 +1072,8 @@ for (const warning of gateway_secret_warnings()) {
 // el operador arranca por `subject-operator.ts` y no pasa por aquí.
 start_subject_auto_update(imperium.store, sql);
 
-// Autoescaneo de repos de imágenes: solo hace algo si Odoo lo encendió.
+// Autodetección de apps (repos Git y de imágenes): solo hace algo si la
+// encendió Odoo (modo odoo) o Módulos / el `.env` (IMPERIUM_MANAGEMENT_MODE=self).
 start_image_autoscan(imperium.store, sql);
 
 // Reintentos hacia el soporte en Odoo. Solo con TKSUPPORT en el entorno.

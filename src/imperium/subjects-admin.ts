@@ -821,7 +821,7 @@ async function scanned_subject_rows(
 	scan: CatalogImageScan,
 ): Promise<{ merged: RegisteredSubject[]; seen: RegisteredSubject[] }> {
 	const key = `${scan.token ? 't' : 'f'}|${current_image_sources()
-		.map((source) => `${source.org}:${source.private ? 1 : 0}`)
+		.map((source) => `${source.kind ?? 'ghcr'}:${source.org}/${source.repo ?? ''}:${source.private ? 1 : 0}`)
 		.join('|')}`;
 	let packages: ScannedPackage[];
 	if (

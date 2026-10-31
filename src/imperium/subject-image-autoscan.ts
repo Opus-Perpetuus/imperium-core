@@ -1,16 +1,23 @@
 /**
- * Autoescaneo de fuentes de imágenes de apps (varios repos).
+ * Autoescaneo de fuentes de apps (varios repos Git y/o repos de imágenes).
  *
- * El catálogo de Módulos siempre es dinámico («Buscar» lee las fuentes). Lo
- * que solo enciende Odoo es el autoescaneo: con él, el núcleo recorre cada
- * cierto tiempo las N fuentes de `configuration-subject-image-sources`, lee el
- * manifest de cada app nueva, la deja en el catálogo del tenant
- * (`source = 'image-source'`) y consulta versiones nuevas de las instaladas.
+ * El catálogo de Módulos siempre es dinámico («Buscar» lee las fuentes). El
+ * autoescaneo recorre cada cierto tiempo las N fuentes de
+ * `configuration-subject-image-sources` (`github:org`, `github:org/repo`,
+ * `ghcr:org`), lee el manifest de cada app nueva (del repo Git, o de la imagen
+ * si la fuente es GHCR), la deja en el catálogo del tenant
+ * (`source = 'image-source'`, autoriza instalar) y consulta versiones nuevas
+ * de las instaladas.
  *
- * El interruptor vive en `subject_catalog_settings`, no en un parámetro: un
- * administrador de Imperium no lo puede encender. El parámetro de fuentes solo
- * existe (activo) mientras Odoo tenga el autoescaneo encendido, y su lista la
- * manda Odoo en cada «Aplicar súbditos».
+ * Quién lo enciende depende del modo de administración (`management-mode.ts`),
+ * con un solo administrador a la vez:
+ * - `odoo`: solo Odoo (secreto maestro, «Aplicar súbditos»). Módulos lo muestra.
+ * - `self`: un administrador del núcleo desde Módulos (o la API). La fuente de
+ *   verdad es el núcleo (`subject_catalog_settings` + el parámetro). El `.env`
+ *   del deploy (`IMPERIUM_IMAGE_AUTOSCAN` / `IMPERIUM_IMAGE_SOURCES`) solo
+ *   siembra la configuración mientras nadie la haya editado en Módulos.
+ *
+ * El interruptor vive en `subject_catalog_settings`, no en un parámetro.
  */
 import type { ImperiumDoc } from './envelope.ts';
 import type { ImperiumStore } from './store.ts';
@@ -28,8 +35,10 @@ import {
 	IMAGE_SOURCES_CONFIG_REF,
 	apply_image_sources_from_store,
 	format_image_sources,
+	github_token,
 	live_catalog_scan,
 	merge_scanned_subjects,
+	parse_image_source,
 	parse_image_sources,
 	scan_image_sources,
 	type CatalogImageScan,
@@ -37,13 +46,21 @@ import {
 } from './subject-image-sources.ts';
 import { is_base_subject_slug, read_subject_image_manifest } from './subject-runtime.ts';
 import { apply_scanned_subjects, registered_from } from './subjects-admin.ts';
+import { management_mode, type ManagementMode } from './management-mode.ts';
 
 export const AUTOSCAN_SETTING_KEY = 'image_sources_autoscan';
 
+const SOURCES_SYNTAX =
+	'«github:org» (repos Git imperium-subject-* de la organización), «github:org/repo» o «ghcr:org» (paquetes de imagen), por línea o separadas por «;»; «private» si es privada (usa IMPERIUM_GITHUB_TOKEN).';
+
+export function image_sources_param_description(mode: ManagementMode = management_mode()): string {
+	return mode === 'self'
+		? `Fuentes de apps que recorre el autoescaneo: ${SOURCES_SYNTAX} Servidor autoadministrado: se edita en Módulos › Autodetección de apps. Cada escaneo agrega al catálogo las apps nuevas y busca versiones nuevas.`
+		: `Fuentes de apps que recorre el autoescaneo: ${SOURCES_SYNTAX} Lo habilita y lo llena Odoo (ficha del servidor › Autoescaneo de repos de imágenes); no se puede crear desde Imperium. Cada escaneo agrega al catálogo las apps nuevas y busca versiones nuevas.`;
+}
+
 const IMAGE_SOURCES_PARAM = {
-	name: 'Fuentes de imágenes de apps',
-	description:
-		'Repos de imágenes de apps que el autoescaneo recorre («ghcr:org» por línea o separadas por «;»; «private» si la organización es privada). Lo habilita y lo llena Odoo (ficha del servidor › Autoescaneo de repos de imágenes); no se puede crear desde Imperium. Cada escaneo agrega al catálogo las apps nuevas y busca versiones nuevas.',
+	name: 'Fuentes de apps (repos Git e imágenes)',
 	type: 'text',
 	is_system: true,
 };
@@ -64,13 +81,24 @@ export type AutoscanLastRun = {
 	discovered: string[];
 };
 
+/** Quién dejó la configuración vigente: Odoo, Módulos (`gui`) o el `.env` del deploy. */
+export type AutoscanOrigin = 'odoo' | 'gui' | 'env';
+
 export type AutoscanState = {
 	enabled: boolean;
-	managed_by: 'odoo';
+	/** El modo real del servidor (`IMPERIUM_MANAGEMENT_MODE`). */
+	managed_by: ManagementMode;
+	/** `true` = Módulos puede encenderlo, editar fuentes y escanear (modo self). */
+	editable: boolean;
+	configured_by: AutoscanOrigin | null;
+	/** Hay token de GitHub en el entorno (necesario para fuentes privadas). */
+	token_configured: boolean;
 	config_ref: string;
 	sources: ImageSourceSpec[];
 	last_run: AutoscanLastRun | null;
 	updated_at: string | null;
+	/** Siembra del `.env` que no se aplicó porque ya se editó en Módulos. */
+	seed_ignored?: boolean;
 };
 
 export async function ensure_settings_table(sql: Bun.SQL): Promise<void> {
@@ -83,9 +111,18 @@ export async function ensure_settings_table(sql: Bun.SQL): Promise<void> {
   `);
 }
 
-type StoredSetting = { enabled: boolean; last_run: AutoscanLastRun | null; updated_at: string | null };
+type SettingValue = {
+	enabled: boolean;
+	last_run: AutoscanLastRun | null;
+	configured_by: AutoscanOrigin | null;
+};
+type StoredSetting = SettingValue & { updated_at: string | null; exists: boolean };
 
-function parse_setting(raw: unknown): { enabled: boolean; last_run: AutoscanLastRun | null } {
+function parse_origin(raw: unknown): AutoscanOrigin | null {
+	return raw === 'odoo' || raw === 'gui' || raw === 'env' ? raw : null;
+}
+
+function parse_setting(raw: unknown): SettingValue {
 	let value = raw;
 	for (let i = 0; i < 3 && typeof value === 'string'; i++) {
 		try {
@@ -94,10 +131,10 @@ function parse_setting(raw: unknown): { enabled: boolean; last_run: AutoscanLast
 			break;
 		}
 	}
-	if (!value || typeof value !== 'object') return { enabled: false, last_run: null };
-	const obj = value as { enabled?: unknown; last_run?: unknown };
+	if (!value || typeof value !== 'object') return { enabled: false, last_run: null, configured_by: null };
+	const obj = value as { enabled?: unknown; last_run?: unknown; configured_by?: unknown };
 	const last = obj.last_run && typeof obj.last_run === 'object' ? (obj.last_run as AutoscanLastRun) : null;
-	return { enabled: obj.enabled === true, last_run: last };
+	return { enabled: obj.enabled === true, last_run: last, configured_by: parse_origin(obj.configured_by) };
 }
 
 async function read_setting(sql: Bun.SQL): Promise<StoredSetting> {
@@ -107,14 +144,11 @@ async function read_setting(sql: Bun.SQL): Promise<StoredSetting> {
 		[AUTOSCAN_SETTING_KEY],
 	)) as Array<{ value: unknown; updated_at: unknown }>;
 	const row = rows[0];
-	if (!row) return { enabled: false, last_run: null, updated_at: null };
-	return { ...parse_setting(row.value), updated_at: row.updated_at ? String(row.updated_at) : null };
+	if (!row) return { enabled: false, last_run: null, configured_by: null, updated_at: null, exists: false };
+	return { ...parse_setting(row.value), updated_at: row.updated_at ? String(row.updated_at) : null, exists: true };
 }
 
-async function write_setting(
-	sql: Bun.SQL,
-	value: { enabled: boolean; last_run: AutoscanLastRun | null },
-): Promise<void> {
+async function write_setting(sql: Bun.SQL, value: SettingValue): Promise<void> {
 	await ensure_settings_table(sql);
 	await sql.unsafe(
 		`INSERT INTO public.subject_catalog_settings (key, value, updated_at)
@@ -146,21 +180,23 @@ async function configuration_module_id(store: ImperiumStore): Promise<string | n
 	return make_module_id_resolver(modules)('NA');
 }
 
-/** Crea o reactiva el parámetro; con `value` lo reemplaza (lo manda Odoo). */
+/** Crea o reactiva el parámetro; con `value` lo reemplaza (lo manda Odoo o Módulos). */
 async function enable_image_sources_param(store: ImperiumStore, value: string | null) {
 	if (!store.has('configuration')) return;
 	const row = await image_sources_row(store);
+	const description = image_sources_param_description();
 	if (!row?._id) {
 		await store.insert('configuration', {
 			_ref: IMAGE_SOURCES_CONFIG_REF,
 			...IMAGE_SOURCES_PARAM,
+			description,
 			module_id: (await configuration_module_id(store)) ?? 'NA',
 			value: value ?? format_image_sources(DEFAULT_IMAGE_SOURCES),
 			is_active: true,
 		} as ImperiumDoc);
 		return;
 	}
-	const patch: Record<string, unknown> = { is_active: true, description: IMAGE_SOURCES_PARAM.description };
+	const patch: Record<string, unknown> = { is_active: true, name: IMAGE_SOURCES_PARAM.name, description };
 	if (value != null) patch.value = value;
 	await store.update('configuration', String(row._id), patch as never);
 }
@@ -186,10 +222,12 @@ async function drop_image_source_entries(sql: Bun.SQL, keep: ReadonlySet<string>
 }
 
 /**
- * Normaliza lo que manda Odoo: lista de «ghcr:org [private]» o de objetos
- * `{org, private}`. `undefined` = Odoo no mandó lista (se deja la vigente).
+ * Normaliza una lista de fuentes (de Odoo, de Módulos o del `.env`):
+ * «ghcr:org [private]», «github:org[/repo] [private]», una org suelta (= ghcr)
+ * u objetos `{org, private, kind?, repo?}`. `undefined` = no mandó lista (se
+ * deja la vigente).
  */
-export function odoo_sources_value(raw: unknown): string | null | undefined {
+export function odoo_sources_value(raw: unknown, strict = false): string | null | undefined {
 	if (raw === undefined || raw === null) return undefined;
 	const lines: string[] = [];
 	const items = Array.isArray(raw) ? raw : typeof raw === 'string' ? raw.split(/[;\n]/) : null;
@@ -198,20 +236,52 @@ export function odoo_sources_value(raw: unknown): string | null | undefined {
 	}
 	for (const item of items) {
 		if (item && typeof item === 'object') {
-			const org = String((item as { org?: unknown }).org ?? '').trim();
-			const priv = (item as { private?: unknown }).private === true;
-			if (org) lines.push(`ghcr:${org}${priv ? ' private' : ''}`);
+			const obj = item as { org?: unknown; private?: unknown; kind?: unknown; repo?: unknown };
+			const org = String(obj.org ?? '').trim();
+			const priv = obj.private === true;
+			const kind = obj.kind === 'github' ? 'github' : 'ghcr';
+			const repo = kind === 'github' ? String(obj.repo ?? '').trim() : '';
+			if (org) lines.push(`${kind}:${org}${repo ? `/${repo}` : ''}${priv ? ' private' : ''}`);
 			continue;
 		}
 		const text = String(item ?? '').trim();
-		if (text) lines.push(text.startsWith('ghcr:') ? text : `ghcr:${text}`);
+		if (text) lines.push(/^(ghcr|github):/.test(text) ? text : `ghcr:${text}`);
 	}
 	if (!lines.length) return null;
+	// Módulos avisa de una fuente mal escrita; lo de Odoo se sigue filtrando como antes.
+	for (const line of strict ? lines : []) {
+		const [token, ...flags] = line.split(/[;\s]+/).filter(Boolean);
+		if (!token || !parse_image_source(token, flags.includes('private'))) {
+			throw new SubjectCatalogError(`Fuente ilegible: «${line}»`, 400, 'invalid_sources');
+		}
+	}
 	const parsed = parse_image_sources(lines.join('; '));
 	if (!parsed.length) {
-		throw new SubjectCatalogError('Ninguna fuente de imágenes es legible', 400, 'invalid_sources');
+		throw new SubjectCatalogError('Ninguna fuente de apps es legible', 400, 'invalid_sources');
 	}
-	return format_image_sources(parsed);
+	return format_image_sources(parsed.slice(0, 50));
+}
+
+/** Enciende o apaga y deja las fuentes; quien lo hizo queda en `configured_by`. */
+async function apply_autoscan(
+	store: ImperiumStore,
+	sql: Bun.SQL,
+	body: { enabled?: unknown; sources?: unknown },
+	origin: AutoscanOrigin,
+): Promise<AutoscanState> {
+	if (typeof body.enabled !== 'boolean') {
+		throw new SubjectCatalogError('Se esperaba { "enabled": true|false }', 400, 'invalid_payload');
+	}
+	const value = body.enabled ? odoo_sources_value(body.sources, origin === 'gui') : undefined;
+	const prev = await read_setting(sql);
+	if (body.enabled) {
+		await enable_image_sources_param(store, value ?? null);
+	} else {
+		await disable_image_sources_param(store);
+		await drop_image_source_entries(sql, new Set());
+	}
+	await write_setting(sql, { enabled: body.enabled, last_run: prev.last_run, configured_by: origin });
+	return read_autoscan_state(store, sql);
 }
 
 /**
@@ -224,19 +294,52 @@ export async function apply_odoo_autoscan(
 	sql: Bun.SQL,
 	body: { enabled?: unknown; sources?: unknown },
 ): Promise<AutoscanState> {
-	if (typeof body.enabled !== 'boolean') {
-		throw new SubjectCatalogError('Se esperaba { "enabled": true|false }', 400, 'invalid_payload');
+	return apply_autoscan(store, sql, body, 'odoo');
+}
+
+/**
+ * Modo self. `gui`: un administrador desde Módulos; manda siempre. `env`: la
+ * siembra del `.env` del deploy (`subjects-sync --image-sources` o el
+ * arranque del núcleo); solo aplica mientras nadie lo haya editado en Módulos,
+ * para que un update no pise lo que se cambió en la GUI.
+ */
+export async function apply_self_autoscan(
+	store: ImperiumStore,
+	sql: Bun.SQL,
+	body: { enabled?: unknown; sources?: unknown },
+	origin: 'gui' | 'env',
+): Promise<AutoscanState> {
+	if (origin === 'env') {
+		const prev = await read_setting(sql);
+		if (prev.configured_by === 'gui') {
+			if (typeof body.enabled !== 'boolean') {
+				throw new SubjectCatalogError('Se esperaba { "enabled": true|false }', 400, 'invalid_payload');
+			}
+			return { ...(await read_autoscan_state(store, sql)), seed_ignored: true };
+		}
 	}
-	const prev = await read_setting(sql);
-	if (body.enabled) {
-		const value = odoo_sources_value(body.sources);
-		await enable_image_sources_param(store, value ?? null);
-	} else {
-		await disable_image_sources_param(store);
-		await drop_image_source_entries(sql, new Set());
-	}
-	await write_setting(sql, { enabled: body.enabled, last_run: prev.last_run });
-	return read_autoscan_state(store, sql);
+	return apply_autoscan(store, sql, body, origin);
+}
+
+/**
+ * Al arrancar en modo self: siembra desde el entorno del núcleo
+ * (`IMPERIUM_IMAGE_AUTOSCAN` / `IMPERIUM_IMAGE_SOURCES`, que el compose copia
+ * del `.env`) si nadie lo editó en Módulos. Sin esas variables no hace nada.
+ */
+export async function seed_self_autoscan_from_env(
+	store: ImperiumStore,
+	sql: Bun.SQL,
+	env: Record<string, string | undefined> = process.env,
+): Promise<AutoscanState | null> {
+	if (management_mode(env) !== 'self') return null;
+	const raw_enabled = String(env.IMPERIUM_IMAGE_AUTOSCAN ?? '').trim().toLowerCase();
+	const raw_sources = String(env.IMPERIUM_IMAGE_SOURCES ?? '').trim();
+	if (!raw_enabled && !raw_sources) return null;
+	const enabled = !['off', 'false', '0', 'no'].includes(raw_enabled);
+	const body = enabled
+		? { enabled, sources: raw_sources ? raw_sources.split(/[;,\n]/).map((s) => s.trim()).filter(Boolean) : undefined }
+		: { enabled };
+	return apply_self_autoscan(store, sql, body, 'env');
 }
 
 export async function read_autoscan_state(store: ImperiumStore, sql: Bun.SQL): Promise<AutoscanState> {
@@ -247,9 +350,13 @@ export async function read_autoscan_state(store: ImperiumStore, sql: Bun.SQL): P
 	} catch {
 		sources = DEFAULT_IMAGE_SOURCES.map((source) => ({ ...source }));
 	}
+	const mode = management_mode();
 	return {
 		enabled: setting.enabled,
-		managed_by: 'odoo',
+		managed_by: mode,
+		editable: mode === 'self',
+		configured_by: setting.configured_by,
+		token_configured: Boolean(github_token()),
 		config_ref: IMAGE_SOURCES_CONFIG_REF,
 		sources,
 		last_run: setting.last_run,
@@ -352,7 +459,11 @@ export async function run_image_autoscan_pass(
 			}
 			const changed = !prev || prev.image !== sub.image;
 			let name = prev?.name || before.get(sub.technical_id)?.name || sub.name || sub.slug;
-			if (changed && manifests < MAX_MANIFESTS_PER_PASS && sub.image.includes(':')) {
+			if (pkg.display_name || pkg.depends_on) {
+				// El repo Git ya trajo su manifest: no hace falta bajar la imagen.
+				name = pkg.display_name ?? name;
+				if (pkg.depends_on?.length && !before.has(sub.technical_id)) sub.depends_on = [...pkg.depends_on];
+			} else if (changed && manifests < MAX_MANIFESTS_PER_PASS && sub.image.includes(':')) {
 				manifests += 1;
 				const manifest = await read_manifest(sub.slug, sub.image).catch(() => null);
 				name = manifest_name(manifest) ?? name;
@@ -365,7 +476,7 @@ export async function run_image_autoscan_pass(
 				slug: sub.slug,
 				name,
 				image: sub.image,
-				repo: `ghcr.io/${pkg.org}/${pkg.name}`,
+				repo: pkg.source_ref ?? `ghcr.io/${pkg.org}/${pkg.name}`,
 				source: 'image-source',
 			});
 			if (!prev || prev.source === 'registry') out.added.push(sub.slug);
@@ -381,7 +492,7 @@ export async function run_image_autoscan_pass(
 		out.error = err instanceof Error ? err.message : String(err);
 	}
 	const { enabled: _enabled, ...last_run } = out;
-	await write_setting(sql, { enabled: setting.enabled, last_run }).catch(() => {});
+	await write_setting(sql, { enabled: setting.enabled, last_run, configured_by: setting.configured_by }).catch(() => {});
 	return out;
 }
 
@@ -390,6 +501,9 @@ export async function run_image_autoscan_pass(
  * tenía sembrado). Con él, se reactiva si alguien lo hubiera desactivado.
  */
 export async function reconcile_image_sources_param(store: ImperiumStore, sql: Bun.SQL): Promise<void> {
+	await seed_self_autoscan_from_env(store, sql).catch((err) => {
+		print_console_log('warning', `autoescaneo (self): la siembra del .env no se aplicó: ${err}`);
+	});
 	const enabled = await read_autoscan_enabled(sql);
 	if (enabled) await enable_image_sources_param(store, null);
 	else await disable_image_sources_param(store);
