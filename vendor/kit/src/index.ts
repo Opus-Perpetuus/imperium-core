@@ -17,6 +17,7 @@ export * from './descriptors/ui-action.js';
 export * from './descriptors/landing.js';
 export * from './descriptors/feature-shell.js';
 export * from './descriptors/option-lists.js';
+export * from './descriptors/subtable.js';
 export * from './html/html-profile.js';
 export * from './html/normalize-html.js';
 export * from './html/sanitize-html.js';
