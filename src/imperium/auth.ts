@@ -1754,6 +1754,7 @@ const BRANDING_REFS = [
 	'configuration-branding-logo-width',
 	'configuration-branding-logo-height',
 	'configuration-branding-logo-text-position',
+	'configuration-branding-logo-color',
 	'configuration-default-theme',
 ] as const;
 
@@ -1796,6 +1797,11 @@ async function branding_json(store: ImperiumStore): Promise<Response> {
 			unwrap_config(
 				docs.get('configuration-branding-logo-text-position')?.value,
 			) ?? null,
+		logo_color:
+			String(
+				unwrap_config(docs.get('configuration-branding-logo-color')?.value) ??
+					'original',
+			).trim() || 'original',
 		default_theme:
 			String(
 				unwrap_config(docs.get('configuration-default-theme')?.value) ??

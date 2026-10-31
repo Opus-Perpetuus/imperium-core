@@ -72,6 +72,15 @@
 		"value": ""
 	},
 	{
+		"_ref": "configuration-branding-logo-color",
+		"description": "Color del logo de la empresa: original (colores del archivo), theme (color de texto del tema activo) o primary (color primario del tema). Con theme o primary el logo se pinta como silueta y cambia de color con cada tema; conviene un SVG/PNG de un solo color con fondo transparente.",
+		"is_system": true,
+		"module_id": "NA",
+		"name": "Color del logo",
+		"type": "select",
+		"value": "original"
+	},
+	{
 		"_ref": "configuration-login-background",
 		"description": "Imagen de fondo del inicio de sesión interno. Vacío conserva la fotografía de esa pantalla.",
 		"is_system": true,
