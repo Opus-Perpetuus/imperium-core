@@ -117,6 +117,12 @@ export type SubjectInfo = {
 		/** Recursos de la app que habilita (`recurso` o `recurso:read`). */
 		resources?: string[];
 	}>;
+	/** Rutas que la app retiró: el arranque apaga su fila (`is_active=false`). */
+	retired_menu_paths?: string[];
+	/** Ruta vieja → ruta buena: el arranque corrige el `path` de su fila (mismo id). */
+	renamed_menu_paths?: Record<string, string>;
+	/** Carpetas (`_ref`) que el arranque apaga mientras no tengan hijos activos. */
+	hidden_empty_menu_refs?: string[];
 };
 
 export const PREFER_OWNER: Record<string, string> = {
@@ -3241,6 +3247,66 @@ const ORPHAN_COLUMNS: Record<string, ExtraCol[]> = {
 	'chat-meeting-transcripts': physical_cols({ call_id: 'text', meeting_id: 'text', seq: 'real' }),
 };
 
+/** Una app tal como la declara `catalog.json`. */
+export type CatalogSubject = {
+	slug: string;
+	name?: string;
+	path?: string;
+	menu_ref?: string;
+	technical_id: string;
+	image?: string;
+	depends_on?: string[];
+	modules?: Array<{
+		resource: string;
+		table: string;
+		collection: string;
+		name: string;
+		path?: string;
+		menu_ref?: string;
+		icon?: string;
+		columns?: ExtraCol[];
+	}>;
+	menus?: Array<{
+		menu_ref: string;
+		name: string;
+		path?: string;
+		icon: string;
+		parent_ref?: string;
+		resources?: string[];
+	}>;
+	retired_menu_paths?: string[];
+	renamed_menu_paths?: Record<string, string>;
+	hidden_empty_menu_refs?: string[];
+};
+
+/**
+ * `SubjectInfo` de una entrada del catálogo. Todo campo que lean la siembra
+ * de menús o el overlay pasa por aquí (antes `retired_menu_paths` se perdía y
+ * `/model-tracker` nunca se apagaba).
+ */
+export function subject_info_from_catalog(s: CatalogSubject): SubjectInfo {
+	return {
+		slug: s.slug,
+		name: s.name ?? s.slug,
+		path: s.path ?? '',
+		menu_ref: s.menu_ref ?? `${s.slug}-menu-root`,
+		technical_id: s.technical_id ?? `subject-${s.slug}`,
+		image: s.image ?? '',
+		depends_on: [...(s.depends_on ?? [])],
+		modules: (s.modules ?? []).map((m) => ({
+			resource: m.resource,
+			path: m.path ?? `/${m.resource}`,
+			menu_ref: m.menu_ref ?? '',
+			name: m.name,
+			icon: m.icon,
+		})),
+		menus: s.menus,
+		retired_menu_paths: [...(s.retired_menu_paths ?? [])],
+		renamed_menu_paths: { ...(s.renamed_menu_paths ?? {}) },
+		hidden_empty_menu_refs: [...(s.hidden_empty_menu_refs ?? [])],
+	};
+}
+
 export class ImperiumStore {
 	readonly locs = new Map<string, ModuleLoc>();
 	readonly all_locs: ModuleLoc[] = [];
@@ -3256,52 +3322,10 @@ export class ImperiumStore {
 		catalog_path: string,
 	) {
 		const catalog = JSON.parse(readFileSync(catalog_path, 'utf8')) as {
-			subjects: Array<{
-				slug: string;
-				name?: string;
-				path?: string;
-				menu_ref?: string;
-				technical_id: string;
-				image?: string;
-				depends_on?: string[];
-				modules?: Array<{
-					resource: string;
-					table: string;
-					collection: string;
-					name: string;
-					path?: string;
-					menu_ref?: string;
-					icon?: string;
-					columns?: ExtraCol[];
-				}>;
-				menus?: Array<{
-					menu_ref: string;
-					name: string;
-					path?: string;
-					icon: string;
-					parent_ref?: string;
-					resources?: string[];
-				}>;
-			}>;
+			subjects: CatalogSubject[];
 		};
 		for (const s of catalog.subjects) {
-			this.subjects.push({
-				slug: s.slug,
-				name: s.name ?? s.slug,
-				path: s.path ?? '',
-				menu_ref: s.menu_ref ?? `${s.slug}-menu-root`,
-				technical_id: s.technical_id ?? `subject-${s.slug}`,
-				image: s.image ?? '',
-				depends_on: [...(s.depends_on ?? [])],
-				modules: (s.modules ?? []).map((m) => ({
-					resource: m.resource,
-					path: m.path ?? `/${m.resource}`,
-					menu_ref: m.menu_ref ?? '',
-					name: m.name,
-					icon: m.icon,
-				})),
-				menus: s.menus,
-			});
+			this.subjects.push(subject_info_from_catalog(s));
 			for (const m of s.modules ?? []) {
 				const loc: ModuleLoc = {
 					slug: s.slug,
@@ -5674,6 +5698,13 @@ export class ImperiumStore {
 			const table = this.loc(resource).table;
 			await this.sql
 				.unsafe(`CREATE INDEX IF NOT EXISTS ${qident(`idx_${table}_ref_geo`)} ON ${this.qt(resource)} (ref)`)
+				.catch(() => undefined);
+			// La lista ordena por nombre: sin este índice, cada página de las 145 mil
+			// colonias era seq scan + sort (≈50 ms, 290 ms con carga en el G85).
+			await this.sql
+				.unsafe(
+					`CREATE INDEX IF NOT EXISTS ${qident(`idx_${table}_active_name`)} ON ${this.qt(resource)} (name, id) WHERE is_active IS DISTINCT FROM false`,
+				)
 				.catch(() => undefined);
 		}
 		return seed_geo_catalog({ sql: this.sql, has: (r) => this.has(r), qt: (r) => this.qt(r) });

@@ -1831,8 +1831,27 @@
           "path": "/inventory-movement/traslado",
           "icon": "fa-dolly",
           "parent_ref": "menu-management-inventory"
+        },
+        {
+          "name": "Surtido",
+          "menu_ref": "almacen-folder-menu-management-inventory-picking",
+          "icon": "fa-folder",
+          "parent_ref": "menu-management-inventory"
+        },
+        {
+          "name": "Por surtir",
+          "menu_ref": "almacen-pedidos-surtir",
+          "path": "/pedidos/surtir",
+          "icon": "fa-dolly",
+          "parent_ref": "almacen-folder-menu-management-inventory-picking",
+          "resources": [
+            "pedidos-surtir"
+          ]
         }
-      ]
+      ],
+      "renamed_menu_paths": {
+        "/pedidos-surtir": "/pedidos/surtir"
+      }
     },
     {
       "slug": "configuraciones-de-vista",
@@ -3868,6 +3887,9 @@
             }
           ]
         }
+      ],
+      "retired_menu_paths": [
+        "/model-tracker"
       ]
     },
     {
@@ -6605,6 +6627,9 @@
           "icon": "fa-bookmark",
           "parent_ref": "control-emergencias-nav-categorias"
         }
+      ],
+      "hidden_empty_menu_refs": [
+        "control-emergencias-nav-categorias"
       ]
     },
     {
@@ -8774,7 +8799,28 @@
             }
           ]
         }
-      ]
+      ],
+      "menus": [
+        {
+          "name": "Agua potable",
+          "menu_ref": "control-municipal-folder-agua-menu-root",
+          "icon": "fa-folder",
+          "parent_ref": "control-municipal-menu-root"
+        },
+        {
+          "name": "Captura de campo",
+          "menu_ref": "control-municipal-lectura-campo",
+          "path": "/lectura/campo",
+          "icon": "fa-mobile-screen-button",
+          "parent_ref": "control-municipal-folder-agua-menu-root",
+          "resources": [
+            "lectura-campo"
+          ]
+        }
+      ],
+      "renamed_menu_paths": {
+        "/lectura-campo": "/lectura/campo"
+      }
     },
     {
       "slug": "dispositivos-fisicos",
@@ -11342,6 +11388,10 @@
             }
           ]
         }
+      ],
+      "retired_menu_paths": [
+        "/delivery-package-manifiesto",
+        "/delivery-route-mapa"
       ]
     },
     {
@@ -13348,6 +13398,11 @@
           "menu_ref": "proyectos-task-menu-management-0",
           "columns": []
         }
+      ],
+      "retired_menu_paths": [
+        "/planeacion-proyectos",
+        "/planeacion-mis-tareas",
+        "/planeacion-proyectos-task"
       ]
     },
     {
@@ -19578,6 +19633,14 @@
             "herr-utilidades"
           ]
         }
+      ],
+      "hidden_empty_menu_refs": [
+        "herramientas-nav-tablas",
+        "herramientas-nav-reparto",
+        "herramientas-nav-menu",
+        "herramientas-nav-telefono",
+        "herramientas-nav-voz",
+        "herramientas-nav-agenda"
       ]
     },
     {

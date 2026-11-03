@@ -13,7 +13,7 @@ import {
 import { handle_service_plane, service_plane_match } from './service-plane.ts';
 import { add_cors, create_imperium_layer } from './imperium/router.ts';
 import { restore_gate } from './imperium/db-admin-restore-gate.ts';
-import { CORE_VERSION, health_status, probe_database } from './imperium/health.ts';
+import { CORE_VERSION, health_status, min_app_version, probe_database } from './imperium/health.ts';
 import {
 	current_user,
 	ensure_session_table,
@@ -360,11 +360,14 @@ async function data_plane(
 		const field = String(body.field ?? '');
 		if (!is_column_name(field)) throw new Error('invalid field');
 		const q = String(body.q ?? '').trim();
-		const params: unknown[] = [];
-		let extra = '';
+		// El mismo `where` que la lista (baja lógica): sin él, field-values
+		// enseñaba valores de filas archivadas que la lista ya no muestra.
+		const w = where_sql(body.where as Record<string, unknown> | undefined);
+		const params: unknown[] = [...w.params];
+		let extra = w.sql;
 		if (q) {
 			params.push(`%${q}%`);
-			extra = ` WHERE ${qident(field)}::text ILIKE $1`;
+			extra += `${w.sql ? ' AND' : ' WHERE'} ${qident(field)}::text ILIKE $${params.length}`;
 		}
 		const rows = await sql.unsafe(
 			`SELECT DISTINCT ${qident(field)} AS v FROM ${qt}${extra} LIMIT 200`,
@@ -697,6 +700,7 @@ const server = Bun.serve({
 						boot,
 						db: db_ok,
 						version: CORE_VERSION,
+						min_version: min_app_version(),
 						unit: 'imperium-core',
 						subjects: catalog.subjects.length,
 						catalog_hash: CATALOG_HASH,

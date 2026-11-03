@@ -9,6 +9,7 @@
  * externa. Una app externa se lista, pero este núcleo no la corre mientras su
  * definición no esté en el catálogo del servidor.
  */
+import { once_per_client } from './schema-once.ts';
 import type { SubjectInfo } from './store.ts';
 import {
 	is_base_subject_slug,
@@ -42,7 +43,11 @@ export class SubjectCatalogError extends Error {
 const MAX_NAME = 120;
 const MAX_TEXT = 300;
 
-export async function ensure_catalog_table(sql: Bun.SQL): Promise<void> {
+export function ensure_catalog_table(sql: Bun.SQL): Promise<void> {
+	return once_per_client(sql, 'subject_catalog', () => create_catalog_table(sql));
+}
+
+async function create_catalog_table(sql: Bun.SQL): Promise<void> {
 	await sql.unsafe(`
     CREATE TABLE IF NOT EXISTS public.subject_catalog (
       technical_id TEXT PRIMARY KEY,

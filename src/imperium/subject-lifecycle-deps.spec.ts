@@ -988,6 +988,7 @@ describe('actualizar a una versión descubierta pasa por el operador con esa ima
 		'CORE_SUBJECT_GATEWAY_SECRET',
 		'SUBJECT_URL_pos',
 		'SUBJECT_REGISTRY_URL',
+		'IMPERIUM_APP_REGISTRY',
 	] as const;
 	const saved: Partial<Record<(typeof KEYS)[number], string | undefined>> = {};
 	const IMAGE_FOUND = 'ghcr.io/opus-perpetuus/subject-pos:0.3.0';
@@ -1038,6 +1039,9 @@ describe('actualizar a una versión descubierta pasa por el operador con esa ima
 			CORE_SUBJECT_GATEWAY_SECRET: 'maestro',
 			SUBJECT_URL_pos: base,
 			SUBJECT_REGISTRY_URL: base,
+			// Aquí se prueba la elección de imagen; el registro de menús tras instalar
+			// (sync_registry_after_lifecycle) reintenta /manifest ~8 s y tiene su propia spec.
+			IMPERIUM_APP_REGISTRY: 'off',
 		});
 	});
 	afterAll(() => {

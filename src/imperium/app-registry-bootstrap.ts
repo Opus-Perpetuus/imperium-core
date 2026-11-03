@@ -92,7 +92,23 @@ function leaf_name(snapshot: AppManifestSnapshotBody, leaf: RegistryLeafSnapshot
 		}
 		return null;
 	};
-	return walk(snapshot.menu) ?? leaf.pageId;
+	return walk(snapshot.menu) ?? permission_label(snapshot, leaf) ?? humanize_leaf_id(leaf);
+}
+
+/** «Ver crédito» del permiso de lectura de la hoja → «Crédito». */
+function permission_label(snapshot: AppManifestSnapshotBody, leaf: RegistryLeafSnapshot): string | null {
+	const label = snapshot.permissions?.find((item) => item.id === leaf.permission)?.label?.trim() ?? '';
+	const bare = label.replace(/^(ver|leer|consultar)\s+/i, '').trim();
+	if (!bare) return null;
+	return bare.charAt(0).toUpperCase() + bare.slice(1);
+}
+
+/** `pos.pos-credit` → «Pos credit»: nunca el id crudo en el lanzador. */
+export function humanize_leaf_id(leaf: Pick<RegistryLeafSnapshot, 'pageId' | 'segment'>): string {
+	const raw = (leaf.pageId.split('.').pop() || leaf.segment || leaf.pageId).replace(/^\/+/, '');
+	const words = raw.replace(/[-_]+/g, ' ').replace(/([a-z0-9])([A-Z])/g, '$1 $2').trim().toLowerCase();
+	if (!words) return leaf.pageId;
+	return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 export function wire_leaf(

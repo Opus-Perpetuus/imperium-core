@@ -643,6 +643,10 @@ describe('lanzador de almacén', () => {
 		const planned = plan_subject_menus(almacen!, [
 			{ _ref: 'menu-management-inventory' },
 			...almacen!.modules.map((mod) => ({ _ref: mod.menu_ref })),
+			// Surtido/Por surtir ya están guardados en un almacén instalado.
+			...(almacen!.menus ?? [])
+				.filter((menu) => menu.menu_ref !== 'inventory-movement-traslado-menu-0')
+				.map((menu) => ({ _ref: menu.menu_ref })),
 		]);
 		expect(planned.map((row) => row._ref)).toEqual(['inventory-movement-traslado-menu-0']);
 		expect(planned[0]).toMatchObject({

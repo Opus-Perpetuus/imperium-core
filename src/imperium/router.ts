@@ -42,7 +42,7 @@ import { serve_media } from './media.ts';
 import { guest_media_reader } from './meetings-flow.ts';
 import { recover_orphan_processing_uploads } from './uploads.ts';
 import { ImperiumStore, load_catalog_path } from './store.ts';
-import { caught_http_error, fail } from './envelope.ts';
+import { caught_http_error, fail, humanize_caught_error } from './envelope.ts';
 import { PinChallengeError } from './user-pin.ts';
 import {
 	bind_debug_store,

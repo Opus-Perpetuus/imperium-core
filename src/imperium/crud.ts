@@ -172,6 +172,9 @@ import { can_manage_user_groups, is_seed_admin } from './group-access.ts';
 import {
 	apply_related_labels,
 	field_value_ids_needing_label,
+	FIELD_VALUES_ALLOW,
+	field_values_denied,
+	FIELD_VALUES_DENIED_MESSAGE,
 	field_values_from_distinct,
 	field_values_message,
 	field_values_missing_field_error,
@@ -250,7 +253,7 @@ async function label_ref_field_values(
 }
 
 /** Alcance de toda ruta del CRUD: las reglas de registro del actor y, para cualquiera, sin las filas del chat. */
-async function record_rule_scope(
+export async function record_rule_scope(
 	store: ImperiumStore,
 	actor: ImperiumDoc | null,
 	resource: string,
@@ -369,6 +372,36 @@ async function assert_id_in_scope(
 	await assert_record_in_scope(store, resource, id, scope, method);
 }
 
+export function field_value_columns(store: ImperiumStore, resource: string): ReadonlyArray<{ name: string; pg?: string }> {
+	if (typeof store.loc !== 'function' || !store.has?.(resource)) return [];
+	return store.loc(resource)?.columns ?? [];
+}
+
+/**
+ * Columnas de la lista que no admiten field-values (misma regla que el
+ * endpoint): el filtro de columna del front cae a texto libre en vez de pedir
+ * valores y pintar el error.
+ */
+/** Refs del schema (FK reales) del recurso; vacío si el store no las conoce. */
+export function field_value_refs(store: ImperiumStore, resource: string): Readonly<Record<string, string>> {
+	if (typeof store.field_refs !== 'function') return {};
+	return store.field_refs(resource) ?? {};
+}
+
+export function list_fv_denied(
+	store: ImperiumStore,
+	resource: string,
+	keys: Iterable<string>,
+): string[] {
+	const columns = field_value_columns(store, resource);
+	const names = new Set<string>(keys);
+	for (const column of columns) names.add(column.name);
+	const refs = field_value_refs(store, resource);
+	return [...names].filter(
+		(name) => name !== '_id' && field_values_denied(resource, name, columns, FIELD_VALUES_ALLOW, refs),
+	);
+}
+
 export async function handle_crud(
 	store: ImperiumStore,
 	req: Request,
@@ -440,6 +473,15 @@ export async function handle_crud(
 	if (method === 'GET' && segs[0] === 'field-values' && segs[1]) {
 		const field_path = decodeURIComponent(segs[1] ?? '').trim();
 		if (!field_path) throw new Error(field_values_missing_field_error());
+		const columns = field_value_columns(store, resource);
+		if (field_values_denied(resource, field_path, columns, FIELD_VALUES_ALLOW, field_value_refs(store, resource))) {
+			return json(
+				resource,
+				fail(FIELD_VALUES_DENIED_MESSAGE, 400, { code: 'validation_error', field: field_path })
+					.body,
+				400,
+			);
+		}
 		const termino = String(url.searchParams.get('termino') ?? '').trim();
 		const scope = await record_rule_scope(store, actor, resource, method);
 		const values = await store.distinct(resource, field_path, termino, scope.match);
@@ -666,10 +708,12 @@ export async function handle_crud(
 			instance_type(store, resource, listed.rows),
 			list_fields,
 		);
+		const fv_denied = list_fv_denied(store, resource, Object.keys(tipo));
 		if (listed.empty_project) {
 			return json(resource, await with_module_info(store, resource, {
 				...ok([], 'Sin proyecto especificado', 0),
 				tipo_de_instancia: tipo,
+				fv_denied,
 				schema_validation,
 			}));
 		}
@@ -680,6 +724,7 @@ export async function handle_crud(
 				listed.total,
 			),
 			tipo_de_instancia: tipo,
+			fv_denied,
 			schema_validation,
 		}));
 	}

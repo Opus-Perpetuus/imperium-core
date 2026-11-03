@@ -2,6 +2,7 @@
  * Instalar / desinstalar apps del catálogo: SQL is_enable, menús y permisos,
  * corte de acceso inmediato y ciclo Docker (imagen/contenedor) vía el operador.
  */
+import { forget_once, once_per_client } from './schema-once.ts';
 import { CORE_VERSION } from './health.ts';
 import { pg_schema_name } from '@opus-perpetuus/imperium-core-kit';
 import {
@@ -28,7 +29,8 @@ import {
 	type SubjectRuntimeResult,
 } from './subject-runtime.ts';
 import { record_applied_registry_tag } from './app-registry-catalog.ts';
-import { ensure_app_registry_schema } from './app-registry.ts';
+import { ensure_app_registry_schema, read_app_registry_enabled } from './app-registry.ts';
+import { live_manifest_reader, sync_slug_manifest } from './app-registry-sync.ts';
 import { registry_tag_index, sql_app_registry } from './app-registry-store.ts';
 import {
 	APPS_AL_PIN,
@@ -201,7 +203,16 @@ function resource_matches(model_id: string, resource: string) {
 	return Boolean(a && b && (a === b || a.includes(b) || b.includes(a)));
 }
 
-export async function ensure_install_table(sql: Bun.SQL): Promise<void> {
+export function ensure_install_table(sql: Bun.SQL): Promise<void> {
+	return once_per_client(sql, 'subject_installs', () => create_install_table(sql));
+}
+
+/** Tras una restauración la tabla puede no estar: la siguiente llamada la vuelve a crear. */
+export function forget_install_table(sql: Bun.SQL): void {
+	forget_once(sql, 'subject_installs');
+}
+
+async function create_install_table(sql: Bun.SQL): Promise<void> {
 	await sql.unsafe(`
     CREATE TABLE IF NOT EXISTS public.subject_installs (
       technical_id TEXT PRIMARY KEY,
@@ -352,13 +363,33 @@ type InstallRec = {
 	last_error_at: string | null;
 };
 
-async function install_records(sql: Bun.SQL): Promise<Map<string, InstallRec>> {
-	await ensure_install_table(sql);
-	const rows = (await sql.unsafe(
-		`SELECT technical_id, installed, status, installed_at, uninstalled_at, version, installed_image,
+const INSTALL_RECORDS_SQL = `SELECT technical_id, installed, status, installed_at, uninstalled_at, version, installed_image,
             discovered_image, discovered_created_at, discovered_note, last_error, last_error_at
-     FROM public.subject_installs`,
-	)) as Array<{
+     FROM public.subject_installs`;
+
+function is_missing_relation(err: unknown): boolean {
+	const e = err as { errno?: unknown; code?: unknown; message?: unknown } | null;
+	return (
+		String(e?.errno ?? '') === '42P01' ||
+		String(e?.code ?? '') === '42P01' ||
+		/(relation|column) .* does not exist/i.test(String(e?.message ?? ''))
+	);
+}
+
+async function read_install_rows(sql: Bun.SQL): Promise<unknown> {
+	await ensure_install_table(sql);
+	try {
+		return await sql.unsafe(INSTALL_RECORDS_SQL);
+	} catch (err) {
+		if (!is_missing_relation(err)) throw err;
+		forget_install_table(sql);
+		await ensure_install_table(sql);
+		return await sql.unsafe(INSTALL_RECORDS_SQL);
+	}
+}
+
+async function install_records(sql: Bun.SQL): Promise<Map<string, InstallRec>> {
+	const rows = (await read_install_rows(sql)) as Array<{
 		technical_id: string;
 		installed: boolean;
 		status: string;
@@ -1570,6 +1601,46 @@ async function begin_subject_lifecycle(
 	return { ver, busy_status, was_installed };
 }
 
+/**
+ * Al quedar sana una app instalada o actualizada, su manifiesto pasa al
+ * registro en ese momento. Antes solo lo hacía el cold-sync del arranque, y
+ * hasta reiniciar el núcleo las hojas nuevas daban 404 (G85).
+ * Nunca rompe la instalación: un fallo queda como aviso en el job.
+ */
+export async function sync_registry_after_lifecycle(
+	store: ImperiumStore,
+	sql: Bun.SQL,
+	sub: SubjectInfo,
+	image: string | null,
+	job?: JobCtx | null,
+	read = live_manifest_reader(subject_base_url(sub.technical_id), image),
+): Promise<{ synced: boolean; status?: number }> {
+	try {
+		if (!(await read_app_registry_enabled(store))) return { synced: false };
+		await ensure_app_registry_schema(sql);
+		const outcome = await sync_slug_manifest(sql_app_registry(sql), sub.slug, read, null);
+		const synced = outcome.status === 200 && !outcome.body.skipped;
+		if (!synced) {
+			emit_subject_event(
+				{
+					technical_id: sub.technical_id,
+					slug: sub.slug,
+					name: sub.name,
+					installed: true,
+					status: 'installing',
+					phase: 'registry',
+					level: 'warning',
+					message: `${sub.name} quedó instalada, pero su menú no se registró (${String(outcome.body.error ?? 'sin manifiesto')}); se reintenta al reiniciar el núcleo`,
+				},
+				job,
+			);
+		}
+		return { synced, status: outcome.status };
+	} catch {
+		return { synced: false };
+	}
+}
+
 async function finish_subject_lifecycle(
 	store: ImperiumStore,
 	sql: Bun.SQL,
@@ -1710,6 +1781,9 @@ async function finish_subject_lifecycle(
 		installed && !docker.skipped ? docker.image : null,
 	);
 	store.mark_subject_installed(technical_id, installed);
+	if (installed && docker.ok && !docker.skipped) {
+		await sync_registry_after_lifecycle(store, sql, sub, docker.image || image, job);
+	}
 	// Sin esperar al próximo arranque: el empleado predeterminado del admin.
 	if (installed && technical_id === 'subject-rh') await store.seed_default_employee();
 	const wanted_docker = docker_runtime_wanted();
@@ -2602,6 +2676,9 @@ export async function run_subject_update(
 		}
 	}
 	store.mark_subject_installed(technical_id, true);
+	if (docker.ok && !docker.skipped) {
+		await sync_registry_after_lifecycle(store, sql, sub, applied_image, job);
+	}
 	emit_subject_event(
 		{
 			technical_id,

@@ -103,13 +103,67 @@ function pool_max(override?: number): number {
 	return 10;
 }
 
-function connect(database_url: string, max: number): Bun.SQL {
+function connect(database_url: string, max: number, application_name: string): Bun.SQL {
 	return new Bun.SQL(database_url, {
 		max,
 		// Bun 1.3.14 mata la consulta en curso si idleTimeout es mayor que 0.
 		idleTimeout: 0,
 		connectionTimeout: 10,
+		// Cada generación del pool lleva su nombre para poder cerrar sus conexiones
+		// desde Postgres si el driver no las suelta.
+		connection: { application_name },
 	});
+}
+
+// Bun 1.3.14: close({ timeout: 0 }) no cierra el pool si tiene una consulta colgada,
+// y sus conexiones quedan abiertas para siempre. Cada reciclaje dejaba `max`
+// conexiones huérfanas hasta agotar max_connections (88/100 en el G85).
+const REAP_DELAY_MS = 1_000;
+const REAP_SQL =
+	'SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = $1 AND pid <> pg_backend_pid()';
+
+/**
+ * Bun 1.3.14 corrompe el protocolo cuando hay más consultas en vuelo que
+ * conexiones: con 50 llamadas sobre `max: 10` sale `Failed to read data`
+ * (ERR_POSTGRES_UNSUPPORTED_INTEGER_SIZE), el pool se cuelga y, peor, algunas
+ * lecturas vuelven con datos ajenos (en el G85, «Almacén no está instalada»
+ * con la app instalada). Con a lo más `max` en vuelo no se reproduce, así que
+ * el resto espera turno aquí, en orden de llegada.
+ */
+type Gate = { acquire(ms: number): Promise<() => void> };
+
+function create_gate(slots: number): Gate {
+	let active = 0;
+	const queue: Array<() => void> = [];
+	const release = () => {
+		const next = queue.shift();
+		if (next) next();
+		else active -= 1;
+	};
+	return {
+		acquire(ms) {
+			if (active < slots) {
+				active += 1;
+				return Promise.resolve(release);
+			}
+			return new Promise((resolve, reject) => {
+				const grant = () => {
+					clearTimeout(timer);
+					resolve(release);
+				};
+				const timer = setTimeout(() => {
+					const at = queue.indexOf(grant);
+					if (at >= 0) queue.splice(at, 1);
+					reject(sql_timeout_error());
+				}, ms);
+				queue.push(grant);
+			});
+		},
+	};
+}
+
+function pool_name(boot: string, generation: number): string {
+	return `imperium-core-${boot}-g${generation}`;
 }
 
 export function open_core_sql(
@@ -118,18 +172,36 @@ export function open_core_sql(
 ): Bun.SQL {
 	const timeout_ms = query_timeout_ms(opts?.query_timeout_ms);
 	const max = pool_max(opts?.max);
-	let inner = connect(database_url, max);
+	const boot = Math.random().toString(36).slice(2, 8);
 	let generation = 0;
+	let inner = connect(database_url, max, pool_name(boot, generation));
 
 	function recycle(seen: number) {
 		if (seen !== generation) return;
-		generation += 1;
 		const dead = inner;
-		inner = connect(database_url, max);
+		const dead_name = pool_name(boot, generation);
+		generation += 1;
+		inner = connect(database_url, max, pool_name(boot, generation));
 		void dead.close({ timeout: 0 }).catch(() => {});
+		const reap = setTimeout(() => {
+			void inner.unsafe(REAP_SQL, [dead_name]).catch(() => {});
+		}, REAP_DELAY_MS);
+		(reap as { unref?: () => void }).unref?.();
 	}
 
+	const gate = create_gate(max);
+
 	async function attempt<T>(op: (client: Bun.SQL) => Promise<T>): Promise<T> {
+		// Esperar turno no envenena el pool: un plazo vencido aquí es saturación.
+		const release = await gate.acquire(timeout_ms);
+		try {
+			return await attempt_now(op);
+		} finally {
+			release();
+		}
+	}
+
+	async function attempt_now<T>(op: (client: Bun.SQL) => Promise<T>): Promise<T> {
 		const seen = generation;
 		const client = inner;
 		let timer: ReturnType<typeof setTimeout> | undefined;

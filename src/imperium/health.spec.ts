@@ -1,9 +1,16 @@
 import { describe, expect, test } from 'bun:test';
-import { CORE_VERSION, health_status, probe_database } from './health.ts';
+import { CORE_VERSION, health_status, min_app_version, probe_database } from './health.ts';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 
 describe('/health', () => {
+	test('min_version solo sale con un semver configurado', () => {
+		expect(min_app_version({})).toBeNull();
+		expect(min_app_version({ IMPERIUM_MIN_APP_VERSION: '' })).toBeNull();
+		expect(min_app_version({ IMPERIUM_MIN_APP_VERSION: 'latest' })).toBeNull();
+		expect(min_app_version({ IMPERIUM_MIN_APP_VERSION: ' 13.112.0 ' })).toBe('13.112.0');
+	});
+
 	test('solo está sano con el arranque listo y la base contestando', () => {
 		expect(health_status('ready', true)).toBe(200);
 		expect(health_status('running', true)).toBe(503);

@@ -1,3 +1,4 @@
+import { without_chat_rows } from './chat-access.ts';
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { reshape_subject_menus } from './auth.ts';
@@ -571,6 +572,105 @@ describe('PostGressTableTracker field-values (shipped path)', () => {
 			{ value: 'closed', label: 'closed', count: 1, is_reference: false },
 			{ value: 'open', label: 'open', count: 2, is_reference: false },
 		]);
+	});
+
+	test('credenciales, PII, firmas y json: 400 validation_error sin tocar la base', async () => {
+		const tracker: ImperiumDoc = { _id: 'tracker-user', __model_name: 'User', __schema_fields: [] };
+		let touched = 0;
+		const store = {
+			has: (resource: string) => resource === TRACKER_RESOURCE || resource === 'user',
+			loc: (resource: string) => ({ resource, columns: [{ name: 'ajustes', pg: 'jsonb' }, { name: 'name', pg: 'text' }] }),
+			available_mongoose_models: () => [],
+			is_model_installed: () => true,
+			resource_for_model: (model: string) => (model === 'User' ? 'user' : null),
+			field_refs: () => ({}),
+			find_id: async () => null,
+			find_where: async (_r: string, where: Record<string, unknown>) =>
+				where.__model_name === 'User' ? tracker : null,
+			value_counts: async () => {
+				touched += 1;
+				return [{ value: 'x', count: 1 }];
+			},
+			async *scan() {
+				touched += 1;
+				yield [];
+			},
+		};
+		for (const field_path of [
+			'password',
+			'reset_password_token_hash',
+			'pin_hash',
+			'accessToken',
+			'payload.clientSecret',
+			'rfc',
+			'curp',
+			'firma_digital',
+			'img_signature_owner',
+			'config_json',
+			'custom_data',
+			'ajustes',
+		]) {
+			const err = await postgres_table_tracker_field_values({
+				store: store as never,
+				actor: { _id: 'admin', _ref: 'user-menu-management-0' },
+				params: { model_tracker_id: 'User', field_path },
+				url: new URL(`http://imperium.test/api/postgres-table-tracker/global/User/field-values/${field_path}`),
+			}).then(
+				() => null,
+				(e: unknown) => e as { status?: number; code?: string },
+			);
+			expect(err?.status).toBe(400);
+			expect(err?.code).toBe('validation_error');
+		}
+		expect(touched).toBe(0);
+		const ok_res = await postgres_table_tracker_field_values({
+			store: store as never,
+			actor: { _id: 'admin', _ref: 'user-menu-management-0' },
+			params: { model_tracker_id: 'User', field_path: 'name' },
+			url: new URL('http://imperium.test/api/postgres-table-tracker/global/User/field-values/name'),
+		});
+		expect(ok_res.total_elementos).toBe(1);
+	});
+
+	test('etiquetas de ref: con el alcance del actor y solo las refs de sus filas', async () => {
+		const tracker: ImperiumDoc = {
+			_id: 'tracker-ticket',
+			__model_name: 'Ticket',
+			__schema_fields: [{ path: 'adjunto', is_reference: true, ref: 'AttachmentManagement' }],
+		};
+		const scans: Array<{ resource: string; mongo_match: unknown }> = [];
+		const store = {
+			has: (resource: string) => [TRACKER_RESOURCE, 'ticket', 'attachment-management'].includes(resource),
+			loc: (resource: string) => ({ resource, columns: [{ name: 'adjunto', pg: 'text' }] }),
+			available_mongoose_models: () => [],
+			is_model_installed: () => true,
+			resource_for_model: (model: string) =>
+				model === 'Ticket' ? 'ticket' : model === 'AttachmentManagement' ? 'attachment-management' : null,
+			field_refs: () => ({}),
+			find_id: async () => null,
+			find_where: async (_r: string, where: Record<string, unknown>) =>
+				where.__model_name === 'Ticket' ? tracker : null,
+			value_counts: async () => [],
+			async *scan(resource: string, opts: { mongo_match?: unknown }) {
+				scans.push({ resource, mongo_match: opts.mongo_match ?? null });
+				if (resource === 'ticket') yield [{ _id: 't1', adjunto: 'a1' }];
+				else yield [
+					{ _id: 'a1', name: 'Oficio.pdf' },
+					{ _id: 'a2', name: 'Ajeno.pdf' },
+				];
+			},
+		};
+		const result = await postgres_table_tracker_field_values({
+			store: store as never,
+			actor: { _id: 'admin', _ref: 'user-menu-management-0' },
+			params: { model_tracker_id: 'Ticket', field_path: 'adjunto' },
+			url: new URL('http://imperium.test/api/postgres-table-tracker/global/Ticket/field-values/adjunto'),
+		});
+		const ref_scan = scans.find((scan) => scan.resource === 'attachment-management');
+		// El alcance del modelo referido (aquí, sin adjuntos de chat) llega al scan.
+		expect(ref_scan?.mongo_match).toEqual(without_chat_rows('attachment-management', null));
+		expect(ref_scan?.mongo_match).not.toBeNull();
+		expect(result.data).toEqual([{ value: 'a1', label: 'Oficio.pdf', count: 1, is_reference: true }]);
 	});
 
 	test('nested/array/ref paths scan a projection, not take 20000', async () => {

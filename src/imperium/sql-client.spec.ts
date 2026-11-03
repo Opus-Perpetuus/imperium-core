@@ -37,6 +37,44 @@ if (has_db) {
 			const rows = (await sql.unsafe('SELECT 1 AS n')) as Array<{ n: number }>;
 			expect(rows[0]?.n).toBe(1);
 		}, { timeout: 20_000 });
+
+		test('más llamadas que conexiones no corrompen las lecturas', async () => {
+			// Bun 1.3.14 sin turno: «Failed to read data» y el pool colgado.
+			const wide = open_core_sql(DATABASE_URL, { max: 10, query_timeout_ms: 5_000 });
+			const read = async (k: number) => {
+				if (k % 3 === 0) {
+					const rows = (await wide.unsafe(
+						"SELECT technical_id, installed FROM (VALUES ('subject-almacen', true), ('subject-pos', true)) t(technical_id, installed)",
+					)) as Array<{ technical_id: string; installed: boolean }>;
+					return rows.some((row) => row.technical_id === 'subject-almacen' && row.installed === true);
+				}
+				if (k % 3 === 1) {
+					const n = 50 + (k % 100);
+					const rows = (await wide.unsafe(
+						'SELECT g AS id, md5(g::text) AS v FROM generate_series(1, 200) g WHERE g <= $1',
+						[n],
+					)) as Array<{ id: number; v: string }>;
+					return rows.length === n && typeof rows[0]?.v === 'string';
+				}
+				const rows = (await wide.unsafe('SELECT pg_sleep(0.002), $1::int AS k', [k])) as Array<{
+					k: number;
+				}>;
+				return rows[0]?.k === k;
+			};
+			try {
+				let next = 0;
+				const worker = async () => {
+					const seen: boolean[] = [];
+					while (next < 3_000) seen.push(await read(next++));
+					return seen;
+				};
+				const results = (await Promise.all(Array.from({ length: 50 }, worker))).flat();
+				expect(results.length).toBe(3_000);
+				expect(results.every(Boolean)).toBe(true);
+			} finally {
+				await wide.close({ timeout: 1 });
+			}
+		}, { timeout: 30_000 });
 	});
 } else {
 	describe.skip('open_core_sql (sin postgres)', () => {

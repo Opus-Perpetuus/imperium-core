@@ -4,6 +4,7 @@
  * Las apps no abren Postgres: history/counters/params viven aquí.
  */
 import type { SubjectFiles } from "./imperium/subject-files.ts";
+import { once_per_client } from "./imperium/schema-once.ts";
 
 export function service_plane_match(path: string): {
   tid: string;
@@ -14,7 +15,11 @@ export function service_plane_match(path: string): {
   return { tid: decodeURIComponent(m[1]!), rest: m[2] ?? "/" };
 }
 
-export async function ensure_svc_tables(sql: Bun.SQL): Promise<void> {
+export function ensure_svc_tables(sql: Bun.SQL): Promise<void> {
+  return once_per_client(sql, "svc_tables", () => create_svc_tables(sql));
+}
+
+async function create_svc_tables(sql: Bun.SQL): Promise<void> {
   await sql.unsafe(`
     CREATE TABLE IF NOT EXISTS public.subject_history (
       id TEXT PRIMARY KEY,
@@ -63,8 +68,8 @@ const DOUBLE_ENCODED_COLUMNS = [
  * cualquiera que no parsee no tumba el arranque. El precio es que un valor que
  * de verdad fuera el texto `"hola"` —con comillas— también se desenvuelve.
  *
- * Corre en cada arranque a propósito: durante un despliegue escalonado un
- * núcleo viejo todavía puede escribir en el formato anterior.
+ * Corre una vez por arranque del núcleo (no por petición): durante un despliegue
+ * escalonado un núcleo viejo todavía puede escribir en el formato anterior.
  */
 async function unwrap_double_encoded_jsonb(sql: Bun.SQL): Promise<void> {
   for (const [table, column] of DOUBLE_ENCODED_COLUMNS) {

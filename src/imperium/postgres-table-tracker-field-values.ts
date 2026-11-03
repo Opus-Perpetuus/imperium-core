@@ -3,15 +3,30 @@
  * mismo contrato que el tracker Mongo: `{ value, label, count, is_reference }`.
  */
 import { assert_target_model_read } from './auth.ts';
-import { without_chat_rows } from './chat-access.ts';
 import { as_array, as_object, ok, type ImperiumDoc } from './envelope.ts';
-import { field_values_message } from './field-values.ts';
+import { field_value_columns, field_value_refs, record_rule_scope } from './crud.ts';
+import {
+	FIELD_VALUES_ALLOW,
+	FIELD_VALUES_DENIED_MESSAGE,
+	field_values_denied,
+	field_values_message,
+} from './field-values.ts';
 import {
 	lookup_tracker,
 	TRACKER_RESOURCE,
 	type TrackerSchemaField,
 } from './postgres-table-tracker.ts';
 import type { ImperiumStore } from './store.ts';
+
+/** Mismo 400 que `GET /:resource/field-values/:campo` del CRUD. */
+export class TrackerFieldValuesDeniedError extends Error {
+	status = 400;
+	code = 'validation_error';
+	constructor(readonly field: string) {
+		super(FIELD_VALUES_DENIED_MESSAGE);
+		this.name = 'TrackerFieldValuesDeniedError';
+	}
+}
 
 type FieldValueOption = {
 	value: string;
@@ -139,6 +154,20 @@ export async function postgres_table_tracker_field_values(ctx: TrackerFieldValue
 	}
 	// La ruta solo exige sesión: el permiso de lectura del modelo se revisa aquí.
 	await assert_target_model_read(ctx.store, ctx.actor, resource);
+	// Misma regla que el CRUD: credenciales, PII, firmas y blobs json no se listan.
+	if (
+		field_values_denied(
+			resource,
+			field_path,
+			field_value_columns(ctx.store, resource),
+			FIELD_VALUES_ALLOW,
+			field_value_refs(ctx.store, resource),
+		)
+	) {
+		throw new TrackerFieldValuesDeniedError(field_path);
+	}
+	// Y solo cuenta las filas que el actor puede leer (reglas de registro + sin chat).
+	const scope = await record_rule_scope(ctx.store, ctx.actor, resource, 'GET');
 
 	const termino = text(ctx.url.searchParams.get('termino'));
 	const desde = Math.max(Number.parseInt(ctx.url.searchParams.get('desde') ?? '0', 10) || 0, 0);
@@ -158,7 +187,7 @@ export async function postgres_table_tracker_field_values(ctx: TrackerFieldValue
 	 * siguen en scan: `payload ->>` no es el id de serialize_field_value. */
 	const use_sql_counts = !dotted && !as_array_field && !is_reference;
 
-	const mongo_match = without_chat_rows(resource, null);
+	const mongo_match = scope.match;
 	const counts = new Map<string, number>();
 	if (use_sql_counts) {
 		const counted = await ctx.store.value_counts(resource, field_path, {
@@ -179,14 +208,17 @@ export async function postgres_table_tracker_field_values(ctx: TrackerFieldValue
 	let options: FieldValueOption[];
 	if (is_reference && ref_resource) {
 		const merged = new Map<string, FieldValueOption>();
+		// Etiquetas solo de refs que el actor puede leer y que aparecen en sus
+		// filas: antes salía el catálogo entero del modelo referido.
+		const ref_scope = await record_rule_scope(ctx.store, ctx.actor, ref_resource, 'GET');
 		for await (const refs of ctx.store.scan(ref_resource, {
 			include_inactive: true,
 			populate_lite: true,
-			mongo_match: without_chat_rows(ref_resource, null),
+			mongo_match: ref_scope.match,
 		})) {
 			for (const doc of refs) {
 				const value = String(doc._id ?? '');
-				if (!value) continue;
+				if (!value || !counts.has(value)) continue;
 				const label = reference_label(doc, value);
 				if (!usable_label(label)) continue;
 				merged.set(value, {

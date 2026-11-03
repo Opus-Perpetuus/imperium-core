@@ -37,6 +37,8 @@ type Session = {
 	pinged_at: number;
 	ponged_at: number;
 	over_quota: number;
+	/** Quién abrió la sesión (`ip:…` o `sid:…`), para contar sus sesiones vivas. */
+	client: string | null;
 };
 
 /** `auth_sid`: la sesión HTTP que la respalda; al cerrarla se cierra el socket. */
@@ -45,7 +47,7 @@ export type SocketIdentity =
 	| { kind: 'guest'; guest_id: string; meeting_id: string };
 
 /** `sid` vacío hasta abrir un WS directo; `probe`: sonda de una sesión en polling. */
-export type SocketWsData = { sid: string; probe: boolean; cookie_sid: string };
+export type SocketWsData = { sid: string; probe: boolean; cookie_sid: string; client?: string | null };
 
 export type SocketEventContext = { session_id: string; identity: SocketIdentity };
 
@@ -60,6 +62,19 @@ const MESSAGE_TO_ROOM_MAX_BYTES = 4096;
 const MESSAGE_TO_ROOM_RATE = { capacity: 10, refill_per_s: 10 };
 const EVENTS_PER_SESSION = { capacity: 60, refill_per_s: 60 };
 const HANDSHAKES_PER_CLIENT = { capacity: 60, refill_per_s: 1 };
+/**
+ * Con menos sesiones vivas que esto, un cliente se reconecta sin gastar su
+ * cubo: recargar, abrir pestañas o reconectar tras un reinicio no es abuso y
+ * responder 429 ahí solo alarga la reconexión. Pasado el tope rige el cubo,
+ * y el tope global sigue contando todo.
+ */
+export const LIVE_SESSIONS_PER_CLIENT = 16;
+const live_by_client = new Map<string, number>();
+
+function live_sessions_of(client: string): number {
+	return live_by_client.get(client) ?? 0;
+}
+
 /**
  * Tope de todo el núcleo, el único que queda si nada identifica al cliente: la
  * reconexión masiva tras un reinicio (un handshake por pestaña) cabe en la
@@ -200,7 +215,11 @@ function is_socket_path(pathname: string): boolean {
 	return pathname.startsWith('/api/socket.io') || pathname === '/socket.io/';
 }
 
-function open_session(cookie_sid: string, ws: Bun.ServerWebSocket<SocketWsData> | null): Session {
+function open_session(
+	cookie_sid: string,
+	ws: Bun.ServerWebSocket<SocketWsData> | null,
+	client: string | null = null,
+): Session {
 	const id = crypto.randomUUID().replace(/-/g, '');
 	const now = Date.now();
 	const session: Session = {
@@ -219,8 +238,10 @@ function open_session(cookie_sid: string, ws: Bun.ServerWebSocket<SocketWsData> 
 		pinged_at: now,
 		ponged_at: now,
 		over_quota: 0,
+		client,
 	};
 	sessions.set(id, session);
+	if (client) live_by_client.set(client, live_sessions_of(client) + 1);
 	return session;
 }
 
@@ -247,7 +268,8 @@ function handshake_client(req: Request): string | null {
 
 function too_many_handshakes(req: Request, headers: Record<string, string>): Response | null {
 	const client = handshake_client(req);
-	const own = client ? take_token(`socket-handshake:${client}`, HANDSHAKES_PER_CLIENT) : null;
+	const reconnecting = !!client && live_sessions_of(client) < LIVE_SESSIONS_PER_CLIENT;
+	const own = client && !reconnecting ? take_token(`socket-handshake:${client}`, HANDSHAKES_PER_CLIENT) : null;
 	const verdict = own && !own.ok ? own : take_token('socket-handshake', HANDSHAKES_TOTAL);
 	if (verdict.ok) return null;
 	const res = rate_limited_response(verdict.retry_after_s);
@@ -277,7 +299,7 @@ export function handle_socket_io(
 	if (req.method === 'GET' && !sid) {
 		const limited = too_many_handshakes(req, headers);
 		if (limited) return limited;
-		const session = open_session(cookie_origin_allowed(req) ? session_cookie(req) : '', null);
+		const session = open_session(cookie_origin_allowed(req) ? session_cookie(req) : '', null, handshake_client(req));
 		return new Response(open_packet(session.id, ['websocket']), { headers });
 	}
 	const session = sid ? sessions.get(sid) : undefined;
@@ -318,7 +340,12 @@ export function upgrade_socket_io(
 	} else {
 		const limited = too_many_handshakes(req, {});
 		if (limited) return limited;
-		data = { sid: '', probe: false, cookie_sid: cookie_origin_allowed(req) ? session_cookie(req) : '' };
+		data = {
+			sid: '',
+			probe: false,
+			cookie_sid: cookie_origin_allowed(req) ? session_cookie(req) : '',
+			client: handshake_client(req),
+		};
 	}
 	return server.upgrade(req, { data }) ? 'upgraded' : new Response('6', { status: 400 });
 }
@@ -328,7 +355,7 @@ export const socket_websocket_handler: Bun.WebSocketHandler<SocketWsData> = {
 	idleTimeout: SOCKET_IO_IDLE_TIMEOUT_SECONDS,
 	open(ws) {
 		if (ws.data.probe) return;
-		const session = open_session(ws.data.cookie_sid, ws);
+		const session = open_session(ws.data.cookie_sid, ws, ws.data.client ?? null);
 		ws.data.sid = session.id;
 		ws.send(open_packet(session.id, []));
 	},
@@ -492,6 +519,11 @@ function deliver(session: Session, packet: string, ephemeral: boolean): void {
 /** `farewell` sale antes del cierre: `41` corta la reconexión automática del cliente. */
 function end_session(session: Session, farewell: string[] = []): void {
 	if (!sessions.delete(session.id)) return;
+	if (session.client) {
+		const left = live_sessions_of(session.client) - 1;
+		if (left > 0) live_by_client.set(session.client, left);
+		else live_by_client.delete(session.client);
+	}
 	if (session.waiting) {
 		clearTimeout(session.waiting.timer);
 		session.waiting.resolve([...farewell, '1'].join('\x1e'));

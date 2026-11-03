@@ -10,6 +10,7 @@ import {
 	emit_to_users,
 	handle_socket_io,
 	join_room_server,
+	LIVE_SESSIONS_PER_CLIENT,
 	on_socket_close,
 	on_socket_event,
 	online_user_ids,
@@ -284,7 +285,7 @@ describe('límites del socket', () => {
 		await ana.closed;
 	});
 
-	test('60 handshakes por minuto por IP', async () => {
+	test('60 handshakes por minuto por IP, pasadas las sesiones vivas que se toleran', async () => {
 		// La cubeta es del proceso: sin esto, lo que gastó otro spec cuenta como de esta IP.
 		const ip = '203.0.113.90';
 		const stamp = Date.now();
@@ -298,7 +299,7 @@ describe('límites del socket', () => {
 		};
 		const limited = (() => {
 			try {
-				for (let i = 0; i < 60; i++) expect(handshake().status).toBe(200);
+				for (let i = 0; i < LIVE_SESSIONS_PER_CLIENT + 60; i++) expect(handshake().status).toBe(200);
 				return handshake();
 			} finally {
 				pin_rate_clock(null);
@@ -307,6 +308,39 @@ describe('límites del socket', () => {
 		expect(limited.status).toBe(429);
 		expect(Number(limited.headers.get('retry-after'))).toBeGreaterThan(0);
 		expect(((await limited.json()) as Record<string, unknown>).code).toBe('rate_limited');
+	});
+
+	test('reconectar sin dejar sesiones vivas nunca responde 429; las vivas sí topan', async () => {
+		const ip = '203.0.113.91';
+		const stamp = Date.now();
+		pin_rate_clock(stamp);
+		drop_rate_bucket(`socket-handshake:ip:${ip}`);
+		const handshake = () => {
+			const req = new Request(POLLING);
+			remember_socket_ip(req, ip);
+			return handle_socket_io(req) as Response;
+		};
+		const close = async (res: Response) => {
+			const sid = (JSON.parse((await res.text()).slice(1)) as { sid: string }).sid;
+			const req = new Request(`${POLLING}&sid=${sid}`, { method: 'POST', body: '1' });
+			remember_socket_ip(req, ip);
+			await (handle_socket_io(req) as Promise<Response>);
+		};
+		try {
+			// Recargas y reconexiones: cada una cierra la anterior. Muchas más que el cubo.
+			for (let i = 0; i < 200; i++) {
+				const res = handshake();
+				expect(res.status).toBe(200);
+				await close(res);
+			}
+			// Quien acumula sesiones sin cerrarlas sí topa con el cubo.
+			const statuses: number[] = [];
+			for (let i = 0; i < LIVE_SESSIONS_PER_CLIENT + 61; i++) statuses.push(handshake().status);
+			expect(statuses.slice(0, LIVE_SESSIONS_PER_CLIENT + 60).every((s) => s === 200)).toBe(true);
+			expect(statuses.at(-1)).toBe(429);
+		} finally {
+			pin_rate_clock(null);
+		}
 	});
 
 	describe('detrás de un proxy', () => {
@@ -325,7 +359,7 @@ describe('límites del socket', () => {
 			delete process.env.TRUST_PROXY_HEADERS;
 			const tenant = crypto.randomUUID();
 			for (let i = 0; i < 61; i++) expect(handshake(`${tenant}-${i}`).status).toBe(200);
-			for (let i = 0; i < 60; i++) expect(handshake(`${tenant}-reconecta`).status).toBe(200);
+			for (let i = 0; i < LIVE_SESSIONS_PER_CLIENT + 60; i++) expect(handshake(`${tenant}-reconecta`).status).toBe(200);
 			expect(handshake(`${tenant}-reconecta`).status).toBe(429);
 		});
 
@@ -333,7 +367,7 @@ describe('límites del socket', () => {
 			process.env.TRUST_PROXY_HEADERS = '1';
 			const tenant = crypto.randomUUID();
 			const from = { 'x-forwarded-for': '198.51.100.23' };
-			for (let i = 0; i < 60; i++) expect(handshake(`${tenant}-${i}`, from).status).toBe(200);
+			for (let i = 0; i < LIVE_SESSIONS_PER_CLIENT + 60; i++) expect(handshake(`${tenant}-${i}`, from).status).toBe(200);
 			expect(handshake(`${tenant}-otra`, from).status).toBe(429);
 			expect(handshake(`${tenant}-otra`, { 'x-forwarded-for': '198.51.100.24' }).status).toBe(200);
 		});

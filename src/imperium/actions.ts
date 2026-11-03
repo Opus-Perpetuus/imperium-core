@@ -73,7 +73,8 @@ import {
 	messaging_settings,
 	validate_interinstance_api_key,
 } from './interinstance.ts';
-import { mitec_create_link, mitec_decrypt_payload, mitec_parse_callback } from './mitec.ts';
+import { mitec_create_link, mitec_parse_callback } from './mitec.ts';
+import { assert_stripe_webhook, mitec_callback_xml } from './webhook-guards.ts';
 import {
 	email_is_configured,
 	resolve_email_settings,
@@ -6297,7 +6298,7 @@ async function cobranza_mitec_webhook(ctx: Ctx) {
 	const encoded = String(ctx.body.strResponse ?? ctx.body.xml ?? '');
 	if (!encoded) throw new Error('Falta la respuesta de Mitec.');
 	const key = await cobranza_config_text(ctx, 'configuration-payments-mitec-key', 'MITEC_KEY');
-	const xml = encoded.trim().startsWith('<') ? encoded : mitec_decrypt_payload(encoded, key);
+	const xml = mitec_callback_xml(encoded, key);
 	const parsed = mitec_parse_callback(xml);
 	if (!parsed.approved) return { received: true };
 	const charge = await ctx.store.find_where('cobranza', { reference: parsed.reference });
@@ -6318,9 +6319,9 @@ async function cobranza_stripe_webhook(ctx: Ctx) {
 		'STRIPE_WEBHOOK_SECRET',
 	);
 	const raw = JSON.stringify(ctx.body ?? {});
-	if (secret && !stripe_verify_webhook(raw, ctx.req.headers.get('stripe-signature'), secret)) {
-		throw new Error('Firma de webhook Stripe inválida.');
-	}
+	assert_stripe_webhook(secret, () =>
+		stripe_verify_webhook(raw, ctx.req.headers.get('stripe-signature'), secret),
+	);
 	const event = ctx.body as {
 		type?: string;
 		data?: { object?: { id?: string; amount_total?: number; metadata?: { charge_id?: string } } };
@@ -6704,9 +6705,9 @@ async function payments_webhook(ctx: Ctx) {
 		'STRIPE_WEBHOOK_SECRET',
 	);
 	const raw = JSON.stringify(ctx.body ?? {});
-	if (secret && !stripe_verify_webhook(raw, ctx.req.headers.get('stripe-signature'), secret)) {
-		throw new Error('Firma de webhook Stripe inválida.');
-	}
+	assert_stripe_webhook(secret, () =>
+		stripe_verify_webhook(raw, ctx.req.headers.get('stripe-signature'), secret),
+	);
 	const event = ctx.body as {
 		id?: string;
 		type?: string;

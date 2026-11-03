@@ -2,6 +2,7 @@
 
 import { new_id, now_iso } from "./http.js";
 import { KirletHttpError } from "./errors.js";
+import { field_name_denied } from "./field-values-rule.js";
 import { define_routes, type KirletRouteTable, type KirletCtx } from "./define-module.js";
 import type { DomainRow, FindManyOptions } from "./data-client.js";
 
@@ -18,7 +19,39 @@ export type CrudFieldSpec = {
   sortable?: boolean;
   normalize?: (value: unknown) => unknown;
   validate?: (value: unknown) => string | null;
+  /** Credencial o dato sensible: `field-values` no lo lista. */
+  secret?: boolean;
+  /**
+   * Permite `GET /<recurso>/field-values/<campo>` en un campo que por defecto
+   * se niega (json, secret, o nombre de credencial). Solo si sus valores
+   * distintos se pueden mostrar a cualquiera con lectura del recurso.
+   */
+  field_values?: boolean;
+  /**
+   * `false` = el campo no viaja en la lista (`GET /recurso`): fotos, firmas y
+   * adjuntos en base64. El detalle (`GET /recurso/:id`) lo sigue entregando.
+   */
+  list?: boolean;
+  /**
+   * FK real: recurso/tabla al que apunta. Un `_id`/`_ref` con nombre sensible
+   * (`domicilio_id`) solo admite field-values si lo declara.
+   */
+  ref?: string;
 };
+
+export { field_name_denied, JSON_BLOB_FIELDS, snake_field_name, type FieldNameOptions } from "./field-values-rule.js";
+
+/**
+ * `field-values` devuelve los valores distintos de una columna a quien tenga
+ * lectura del recurso. Un json, una credencial o PII se niegan salvo que el campo
+ * lo permita con `field_values: true`.
+ */
+export function field_values_denied(field: string, spec: CrudFieldSpec | undefined): boolean {
+  if (spec?.field_values === true) return false;
+  // `list: false` marca fotos, firmas y adjuntos: tampoco salen por field-values.
+  if (spec?.secret === true || spec?.list === false || spec?.type === "json") return true;
+  return field_name_denied(field, { is_reference: Boolean(spec?.ref), is_boolean: spec?.type === "boolean" });
+}
 
 export type CrudHooks = {
   before_create?: (ctx: KirletCtx, row: DomainRow) => Promise<DomainRow> | DomainRow;
@@ -208,6 +241,8 @@ export function define_crud(opts: DefineCrudOptions): KirletRouteTable {
   const id_prefix = opts.id_prefix ?? resource.replace(/s$/, "").slice(0, 8);
   const unknown_to_payload = opts.unknown_to_payload === true || opts.imperium === true;
   const imperium = opts.imperium !== false;
+  /** Columnas sin field-values: el filtro de la lista pasa a texto libre. */
+  const fv_denied = Object.keys(fields).filter((name) => field_values_denied(name, fields[name]));
 
   const history_resource = (ctx: KirletCtx) => {
     // full resource id filled by serve layer via slug; here use relative name
@@ -323,7 +358,15 @@ export function define_crud(opts: DefineCrudOptions): KirletRouteTable {
         };
       }
       const total = await ctx.data.count(table, find_opts.where, find_opts.search);
-      return { data: rows, total_elementos: total, message: "Ruta encontrada" };
+      const omit = Object.entries(fields).filter(([, spec]) => spec.list === false).map(([name]) => name);
+      const data = omit.length
+        ? rows.map((row) => {
+            const copy = { ...row };
+            for (const name of omit) delete copy[name];
+            return copy;
+          })
+        : rows;
+      return { data, total_elementos: total, message: "Ruta encontrada", fv_denied };
     },
 
     ...(imperium
@@ -346,8 +389,28 @@ export function define_crud(opts: DefineCrudOptions): KirletRouteTable {
             if (!/^[a-z_][a-z0-9_]*$/i.test(field)) {
               throw new KirletHttpError(400, "validation_error", "Campo inválido");
             }
+            // Un campo que la tabla no tiene llegaba al SQL y salía 500.
+            const columna_base = field === "id" || field === "created_at" || field === "updated_at" || field === soft_field;
+            if (!columna_base && !fields[field]) {
+              throw new KirletHttpError(400, "validation_error", `Campo desconocido: ${field}`, { field });
+            }
+            if (!columna_base && field_values_denied(field, fields[field])) {
+              throw new KirletHttpError(
+                400,
+                "validation_error",
+                `El campo ${field} no admite field-values`,
+                { field },
+              );
+            }
             const termino = String(ctx.query.get("termino") ?? "");
-            const values = await ctx.data.distinct(table, field, termino);
+            // Igual que la lista: sin `include_inactive`, solo filas activas.
+            const include_inactive = ctx.query.get("include_inactive") === "1" ||
+              ctx.query.get("include_inactive") === "true" ||
+              ctx.query.get("show_archived") === "true";
+            const where: FindManyOptions["where"] = soft && !include_inactive
+              ? { [soft_field]: active_val as string | number | boolean }
+              : undefined;
+            const values = await ctx.data.distinct(table, field, termino, where);
             const data = values.map((value) => ({
               value,
               label: String(value),

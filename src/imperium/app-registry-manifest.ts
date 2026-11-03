@@ -15,6 +15,8 @@ export type RegistryLeafSnapshot = {
 	pageId: string;
 	permission: string;
 	kind: 'crud' | 'page';
+	/** La página está en `public.pages`: es del escaparate, no del menú interno. */
+	public?: true;
 	appBase?: string;
 	appBaseEffective?: string;
 	appCreate?: string;
@@ -90,6 +92,9 @@ export function project_registry_snapshot(
 
 	const prefix = `subject.${installed_slug}.`;
 	const leaves: RegistryLeafSnapshot[] = [];
+	const public_pages = new Set(
+		(manifest.public?.pages ?? []).map((page) => page.id).filter(Boolean),
+	);
 	for (const [index, page] of (manifest.pages ?? []).entries()) {
 		if (!page.leaf) continue;
 		const permission = page.leaf.permission ?? page.permission ?? '';
@@ -137,6 +142,7 @@ export function project_registry_snapshot(
 			leaf.appCreate = page.leaf.appCreate;
 			leaf.appCreateEffective = effective;
 		}
+		if (public_pages.has(page.id)) leaf.public = true;
 		if (page.leaf.icon) leaf.icon = page.leaf.icon;
 		if (page.leaf.listHeaders) leaf.listHeaders = page.leaf.listHeaders;
 		if (page.leaf.formLabels) leaf.formLabels = page.leaf.formLabels;
