@@ -143,6 +143,19 @@ async function call(store: ImperiumStore, action: string, json: Record<string, u
 	return (await res.json()) as { data: Row[] };
 }
 
+describe('tomar el siguiente turno con fila vacía', () => {
+	test('responde 200 sin turno cuando no hay pendientes', async () => {
+		const seed = desk();
+		seed['ticketing-system-turn'] = [];
+		const res = await call(memory_store(seed), 'take_next_turn', {
+			box_config_id: 'box-1',
+		});
+		expect(res.data).toEqual([]);
+		expect(res.total_elementos).toBe(0);
+		expect(res.message).toBe('Sin turnos a la espera');
+	});
+});
+
 describe('tomar el siguiente turno avisa al tablero una vez', () => {
 	test('take y el notify del botón emiten un solo notify_turn con la caja', async () => {
 		const store = memory_store(desk());
@@ -234,13 +247,83 @@ describe('turno en atención de la caja (#185, PR 459)', () => {
 	});
 });
 
+describe('cajas con turno en atención (boxes_attending_turns)', () => {
+	const open_turn = (id: string, box: string, updatedAt: string, extra: Row = {}): Row => ({
+		_id: id,
+		name: id.toUpperCase(),
+		status: 'en_atencion',
+		estado: 'en_atencion',
+		services: ['svc-1'],
+		customer_type: 'type-1',
+		assigned_box: box,
+		createdAt: '2026-01-01T00:00:00.000Z',
+		updatedAt,
+		is_active: true,
+		...extra,
+	});
+
+	test('caja con turno en atención aparece; vacía no', async () => {
+		const seed = desk();
+		seed['ticketing-system-box-config']!.push({
+			_id: 'box-2',
+			name: 'Caja vacía',
+			is_active: true,
+			allowed_services: ['svc-1'],
+			allowed_customer_types: ['type-1'],
+		});
+		seed['ticketing-system-turn']!.push(
+			open_turn('b001', 'box-1', '2026-01-01T10:00:00.000Z'),
+			open_turn('b002', 'box-1', '2026-01-01T11:00:00.000Z'),
+			open_turn('b003', 'box-otra', '2026-01-01T12:00:00.000Z'),
+			open_turn('b004', 'box-1', '2026-01-01T13:00:00.000Z', { is_active: false }),
+		);
+		const res = await call(memory_store(seed), 'boxes_attending_turns', {});
+		const by_box = Object.fromEntries(
+			(res.data as Array<Row>).map((row) => [String(row.box_config_id), row]),
+		);
+		expect(by_box['box-1']).toEqual({
+			box_config_id: 'box-1',
+			turn_id: 'b002',
+			turn_name: 'B002',
+		});
+		expect(by_box['box-otra']).toEqual({
+			box_config_id: 'box-otra',
+			turn_id: 'b003',
+			turn_name: 'B003',
+		});
+		expect(by_box['box-2']).toBeUndefined();
+		expect(res.total_elementos).toBe(2);
+	});
+
+	test('sin turnos en atención responde lista vacía', async () => {
+		const res = await call(memory_store(desk()), 'boxes_attending_turns', {});
+		expect(res.data).toEqual([]);
+		expect(res.total_elementos).toBe(0);
+	});
+
+	test('la ruta está declarada en extra-routes', async () => {
+		const routes = (await import('./extra-routes.json')).default as Array<Record<string, string>>;
+		expect(routes).toContainEqual({
+			resource: 'ticketing-system-turn',
+			method: 'post',
+			path: '/boxes-attending-turns',
+			action: 'boxes_attending_turns',
+		});
+	});
+});
+
 describe('resumen de pendientes de la caja (box-turns-summary)', () => {
 	test('devuelve la cola de la caja con su box_config_id', async () => {
 		const res = await call(memory_store(desk()), 'box_turns_summary', { box_config_id: 'box-1' });
 		expect(res.data).toHaveLength(1);
 		const summary = res.data[0] as Row;
 		expect(summary.box_config_id).toBe('box-1');
-		expect((summary.pending_queue as Row[]).map((row) => row._id)).toEqual(['turn-waiting']);
+		const pending = summary.pending_queue as Row[];
+		expect(pending.map((row) => row._id)).toEqual(['turn-waiting']);
+		expect((pending[0]?.customer_type as Row | undefined)?.name).toBe('General');
+		expect(((pending[0]?.services as Row[] | undefined) ?? []).map((row) => row.name)).toEqual([
+			'Trámite',
+		]);
 		expect(Object.keys(summary.turns_by_service as Row)).toEqual(['Trámite']);
 		expect(Object.keys(summary.turns_by_user_type as Row)).toEqual(['General']);
 		expect(res.total_elementos).toBe(1);

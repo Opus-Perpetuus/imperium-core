@@ -1147,6 +1147,7 @@ const SESSION_SCOPED_EXTRAS = new Set([
 	'ticketing-system-turn:notify_turn',
 	'ticketing-system-turn:end_attending_turn',
 	'ticketing-system-turn:attending_turn_for_box',
+	'ticketing-system-turn:boxes_attending_turns',
 	'ticketing-system-turn:box_turns_summary',
 	'citizen-report:reverse_geocode',
 	'purchase-order:replenish_from_order',

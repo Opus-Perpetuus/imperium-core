@@ -185,7 +185,12 @@ async function box_turns_summary(store: ImperiumStore, box: ImperiumDoc) {
 		const type_ok = allowed_types.includes(type_id);
 		if (services_ok && type_ok) matching.push(turn);
 	}
-	const pending_queue = await sort_pending(store, matching);
+	// La pantalla de caja muestra customer_type.name y services[].name;
+	// sin populate llegan ids crudos (ObjectId) y el front los pinta tal cual.
+	const pending_queue = await populate_turns(
+		store,
+		await sort_pending(store, matching),
+	);
 	const turns_by_service: Record<string, ImperiumDoc[]> = {};
 	const turns_by_user_type: Record<string, ImperiumDoc[]> = {};
 	for (const turn of pending_queue) {
@@ -293,7 +298,7 @@ export async function prepare_ticketing_turn_create(
 export async function take_next_turn(
 	store: ImperiumStore,
 	box_config_id: string,
-): Promise<{ turn: ImperiumDoc; waiting: number }> {
+): Promise<{ turn: ImperiumDoc | null; waiting: number }> {
 	const box_id = text(box_config_id);
 	if (!box_id) throw new Error('Se necesita una caja para tomar el siguiente turno');
 	const box = await store.find_id('ticketing-system-box-config', box_id);
@@ -301,7 +306,8 @@ export async function take_next_turn(
 	const allowed_services = as_id_list(box.allowed_services);
 	const allowed_types = as_id_list(box.allowed_customer_types);
 	const waiting = await pending_turns(store);
-	if (!waiting.length) throw new Error('Sin turnos a la espera');
+	// Fila vacía: aviso 200 sin turno (mismo contrato que el backend Mongo).
+	if (!waiting.length) return { turn: null, waiting: 0 };
 	const matching: ImperiumDoc[] = [];
 	for (const turn of waiting) {
 		const services = as_id_list(turn.services);
@@ -386,6 +392,10 @@ export async function notify_turn(store: ImperiumStore, raw_id: unknown): Promis
 	return shown;
 }
 
+function attending_stamp(row: ImperiumDoc): string {
+	return text(row.updatedAt ?? row.updated_at ?? row.createdAt ?? row.created_at);
+}
+
 /**
  * Turno que la caja dejó «en atención» (el más reciente). La pantalla de la
  * caja lo pide al abrir para avisar «Turno sin terminar» aunque el turno se
@@ -399,10 +409,32 @@ export async function attending_turn_for_box(
 	if (!box_id) throw new Error('Se necesita box_config_id');
 	const rows = (await attending_turns(store)).filter((row) => ref_id(row.assigned_box) === box_id);
 	if (!rows.length) return null;
-	const stamp = (row: ImperiumDoc) => text(row.updatedAt ?? row.updated_at ?? row.createdAt ?? row.created_at);
-	rows.sort((a, b) => stamp(b).localeCompare(stamp(a)));
+	rows.sort((a, b) => attending_stamp(b).localeCompare(attending_stamp(a)));
 	const [populated] = await populate_turns(store, [rows[0]]);
 	return populated ?? rows[0];
+}
+
+/**
+ * Por cada caja con turno en atención, el más reciente (misma regla de stamp
+ * que attending_turn_for_box). Sirve al modal «Abrir caja» para señalarlo.
+ */
+export async function boxes_attending_turns(
+	store: ImperiumStore,
+): Promise<Array<{ box_config_id: string; turn_id: string; turn_name: string }>> {
+	const by_box = new Map<string, ImperiumDoc>();
+	for (const row of await attending_turns(store)) {
+		const box_id = ref_id(row.assigned_box);
+		if (!box_id) continue;
+		const prev = by_box.get(box_id);
+		if (!prev || attending_stamp(row).localeCompare(attending_stamp(prev)) > 0) {
+			by_box.set(box_id, row);
+		}
+	}
+	return [...by_box.entries()].map(([box_config_id, turn]) => ({
+		box_config_id,
+		turn_id: text(turn._id),
+		turn_name: text(turn.name),
+	}));
 }
 
 export async function end_attending_turn(

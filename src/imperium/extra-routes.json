@@ -1754,6 +1754,12 @@
   {
     "resource": "ticketing-system-turn",
     "method": "post",
+    "path": "/boxes-attending-turns",
+    "action": "boxes_attending_turns"
+  },
+  {
+    "resource": "ticketing-system-turn",
+    "method": "post",
     "path": "/box-turns-summary",
     "action": "box_turns_summary"
   },

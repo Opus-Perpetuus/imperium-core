@@ -359,6 +359,7 @@ import {
 import {
 	attending_turn_for_box as ticketing_attending_turn_for_box,
 	box_turns_summary_for_box as ticketing_box_turns_summary,
+	boxes_attending_turns as ticketing_boxes_attending_turns,
 	end_attending_turn as end_ticketing_turn,
 	notify_turn as notify_ticketing_turn,
 	take_next_turn as take_ticketing_turn,
@@ -1158,6 +1159,8 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return end_attending_turn(ctx);
 		case 'ticketing-system-turn:attending_turn_for_box':
 			return attending_turn_for_box(ctx);
+		case 'ticketing-system-turn:boxes_attending_turns':
+			return boxes_attending_turns(ctx);
 		case 'ticketing-system-turn:box_turns_summary':
 			return box_turns_summary(ctx);
 		case 'citizen-report:reverse_geocode':
@@ -6364,6 +6367,9 @@ async function take_next_turn(ctx: Ctx) {
 		ctx.store,
 		String(ctx.body.box_config_id ?? ctx.body.box ?? ctx.body.caja ?? ''),
 	);
+	if (!taken.turn) {
+		return ok([], 'Sin turnos a la espera', 0);
+	}
 	return ok([taken.turn], 'Turno tomado', taken.waiting);
 }
 
@@ -6378,6 +6384,11 @@ async function attending_turn_for_box(ctx: Ctx) {
 		String(ctx.body.box_config_id ?? ctx.body.box ?? ctx.body.caja ?? ''),
 	);
 	return ok(turn ? [turn] : [], turn ? 'Turno en atención' : 'Sin turno en atención');
+}
+
+async function boxes_attending_turns(ctx: Ctx) {
+	const rows = await ticketing_boxes_attending_turns(ctx.store);
+	return ok(rows, rows.length ? 'Cajas con turno en atención' : 'Sin cajas con turno en atención');
 }
 
 async function box_turns_summary(ctx: Ctx) {
