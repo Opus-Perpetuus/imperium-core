@@ -96,6 +96,8 @@ function dev_identity(technical_id: string): KirletIdentity {
     is_admin: true,
     kirlet_id: technical_id,
     grants: [],
+    user_type: "internal",
+    realm: "internal",
   };
 }
 

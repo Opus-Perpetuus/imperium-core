@@ -60,8 +60,9 @@ export {
  */
 export function field_values_session(identity: KirletIdentity | null | undefined): boolean {
   if (!identity || !identity.user_id || identity.user_id === ANONYMOUS_USER_ID) return false;
-  if ((identity.user_type ?? "internal") !== "internal") return false;
-  return (identity.realm ?? "internal") === "internal";
+  // Negar por defecto: sin user_type/realm explícitos no cuenta como sesión interna
+  // (verify v1 y la identidad de desarrollo los fijan en "internal").
+  return identity.user_type === "internal" && identity.realm === "internal";
 }
 
 /** Clase de acceso de un campo de `define_crud` (ver `field_name_access`). */

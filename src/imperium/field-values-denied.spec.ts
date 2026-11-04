@@ -222,9 +222,12 @@ describe('field-values fase 4: PII de todas las apps (orden de Yael 2026-11-04)'
 		// Delegación con ref al catálogo pasa; sin ref es domicilio.
 		expect(field_values_denied('citizen-report', 'borough', [], undefined, { borough: 'Boroughs' })).toBe(false);
 		expect(field_values_denied('citizen-report', 'borough')).toBe(true);
-		for (const field of ['habitus_exterior', 'status', 'name', 'ubicacion_destino']) {
+		for (const field of ['status', 'name', 'ubicacion_destino']) {
 			expect([field, field_values_denied('medical-file', field)]).toEqual([field, false]);
 		}
+		// Fase 5b: en el expediente clínico `habitus_exterior` es dato clínico (solo con sesión).
+		expect(field_values_denied('medical-file', 'habitus_exterior')).toBe(true);
+		expect(field_values_denied('medical-file', 'habitus_exterior', [], undefined, {}, true)).toBe(false);
 	});
 });
 
@@ -261,7 +264,8 @@ describe('fase 5: PII solo con sesión interna; credenciales y blobs nunca', () 
 		expect(field_values_session(null)).toBe(false);
 		expect(field_values_session({ _id: 'u', type: 'external' } as never)).toBe(false);
 		expect(field_values_session({ _id: 'u', type: 'internal' } as never)).toBe(true);
-		expect(field_values_session({ _id: 'u' } as never)).toBe(true);
+		// Fase 5b: sin tipo explícito no es sesión interna (la sesión lo fija al cargarse).
+		expect(field_values_session({ _id: 'u' } as never)).toBe(false);
 		const store = {
 			has: () => true,
 			loc: () => ({ columns: [{ name: 'plates', pg: 'text' }, { name: 'password', pg: 'text' }, { name: 'estado', pg: 'text' }] }),

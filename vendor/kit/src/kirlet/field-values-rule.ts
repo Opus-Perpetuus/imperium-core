@@ -53,10 +53,11 @@ const PII_WORDS = [
   // Fase 5. Nombres de personas.
   "apellido", "apellidos", "apellido_paterno", "apellido_materno", "nombre_completo",
   "first_name", "last_name", "full_name", "surname", "given_name", "firmante", "firmantes",
+  "lastname", "lastnames", "firstname",
   // Datos clínicos.
   "alergia", "alergias", "allergy", "allergies", "enfermedad", "enfermedades", "disease", "diseases",
   "diagnostico", "diagnosticos", "diagnostica", "diagnosis", "padecimiento", "padecimientos",
-  "sintoma", "sintomas", "medicamento", "medicamentos",
+  "sintoma", "sintomas", "medicamento", "medicamentos", "farmacologico", "farmacologicos",
   "edad", "age", "sexo", "sex", "genero", "gender", "estado_civil", "marital_status",
   "tipo_sangre", "grupo_sanguineo", "blood_type",
   // Placas de vehículos.
@@ -80,10 +81,40 @@ const PERSON_WORDS = new Set([
   "responsable", "propietario", "owner", "conductor", "chofer", "driver", "solicitante", "tutor",
   "beneficiario", "titular", "persona", "person", "medico", "doctor", "voluntario", "reportante",
   "denunciante", "infractor", "testigo", "padre", "madre", "partner", "asignado", "assignee",
+  // CFDI: receptor/emisor y el nombre fiscal pueden ser una persona física.
+  "receptor", "emisor", "fiscal",
 ]);
-/** Recursos cuyas filas son personas: ahí `nombre`/`name` también es PII. */
+/** Campo que es solo la persona (`vehicle.chofer`, `carga-combustible.conductor`): guarda su nombre. */
+const BARE_PERSON = new Set([
+  "chofer", "choferes", "conductor", "conductores", "driver", "solicitante", "alertante", "paciente",
+  "infractor", "beneficiario", "titular", "propietario",
+]);
+/**
+ * Recursos cuyas filas son personas: ahí `nombre`/`name` también es PII. Se mira
+ * el último segmento del recurso: `citizen-report-problem` o
+ * `violation-user-id-type` son catálogos, no personas.
+ */
 const PERSON_RESOURCE_RE =
-  /(^|[-_])(patient|patients|paciente|pacientes|employee|employees|empleado|empleados|alumno|alumnos|student|students|citizen|citizens|ciudadano|ciudadanos|contacto|contactos|contact|contacts|voluntario|voluntarios|voluntariado|cliente|clientes|customer|customers|persona|personas|tutor|tutores|conductor|conductores|chofer|choferes|driver|drivers|user|users|usuario|usuarios)([-_]|$)/;
+  /^(patient|patients|paciente|pacientes|employee|employees|empleado|empleados|alumno|alumnos|student|students|citizen|citizens|ciudadano|ciudadanos|contacto|contactos|contact|contacts|voluntario|voluntarios|voluntariado|cliente|clientes|customer|customers|persona|personas|tutor|tutores|conductor|conductores|chofer|choferes|driver|drivers|user|users|usuario|usuarios)$/;
+/** Recibo de nómina: `nombre` es el del empleado. */
+const PERSON_RESOURCE_WHOLE_RE = /(^|[-_/])(payroll|nomina)[-_](receipt|receipts|recibo|recibos)$/;
+/** Recursos clínicos (pacientes, expediente, kiosco del hospital). */
+const CLINICAL_RESOURCE_RE = /(^|[-_/])(patient|patients|paciente|pacientes|medical|medico|kiosk|expediente|expedientes|triage|consulta|consultas|hospital|clinica|clinic)([-_/]|$)/;
+/** Datos clínicos con nombre ambiguo fuera del hospital (`peso` de un artículo, `talla` de ropa). */
+const CLINICAL_CONTEXT_WORDS = new Set([
+  "peso", "talla", "estatura", "imc", "habitus", "signos", "tratamiento", "tratamientos",
+]);
+
+function last_resource_segment(resource: string | undefined): string {
+  const r = String(resource ?? "").toLowerCase();
+  const segs = r.split(/[-_/]/).filter(Boolean);
+  return segs[segs.length - 1] ?? "";
+}
+
+function person_resource(resource: string | undefined): boolean {
+  const r = String(resource ?? "").toLowerCase();
+  return PERSON_RESOURCE_RE.test(last_resource_segment(r)) || PERSON_RESOURCE_WHOLE_RE.test(r);
+}
 
 /** Cuenta bancaria: solo nombres completos (`cuenta` sola es ambigua en contabilidad). */
 const WHOLE_NAMES = new Set([
@@ -163,7 +194,11 @@ const PII_WHOLE = new Set(["blood_type", "tipo_sangre", "estado_civil", "marital
 function person_name(parts: string[], resource: string | undefined): boolean {
   if (!parts.some((p) => NAME_WORDS.has(p))) return false;
   if (parts.some((p) => PERSON_WORDS.has(p))) return true;
-  return parts.every((p) => NAME_WORDS.has(p)) && PERSON_RESOURCE_RE.test(String(resource ?? "").toLowerCase());
+  return parts.every((p) => NAME_WORDS.has(p)) && person_resource(resource);
+}
+
+function clinical_in_context(parts: string[], resource: string | undefined): boolean {
+  return parts.some((p) => CLINICAL_CONTEXT_WORDS.has(p)) && CLINICAL_RESOURCE_RE.test(String(resource ?? "").toLowerCase());
 }
 
 /** Clase de acceso de un segmento (sin puntos) por su nombre. */
@@ -183,8 +218,17 @@ export function field_name_access(field: string, opts: FieldNameOptions = {}): F
   if (parts.some((p) => ACCOUNT_WORDS.has(p)) && parts.some((p) => BANK_QUALIFIERS.has(p))) return "session";
   if (parts.length > 1 && KEY_SUFFIXES.has(last) && opts.is_reference === true) return "open";
   if (CREDENTIAL_RE.test(snake) || SIGNATURE_RE.test(snake)) return "denied";
-  if (CITY_RE.test(snake)) return opts.is_reference === true ? "open" : "session";
-  if (PII_RE.test(snake) || BARE_PLACE_RE.test(snake) || person_name(parts, opts.resource)) return "session";
+  // Ciudad: con ref al catálogo o como clave (`city_zone_id`) es el catálogo, no el dato.
+  if (CITY_RE.test(snake)) return opts.is_reference === true || KEY_SUFFIXES.has(last) ? "open" : "session";
+  if (
+    PII_RE.test(snake) ||
+    BARE_PLACE_RE.test(snake) ||
+    person_name(parts, opts.resource) ||
+    (parts.length === 1 && BARE_PERSON.has(snake)) ||
+    clinical_in_context(parts, opts.resource)
+  ) {
+    return "session";
+  }
   return "open";
 }
 

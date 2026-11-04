@@ -648,10 +648,24 @@ async function login_on_surface(
 	);
 }
 
+/**
+ * Tipo explícito del principal de una sesión. Las sesiones solo nacen del login:
+ * el público y el registro graban `type: 'external'`, así que una sesión (o el
+ * dueño de un enlace compartido) sin tipo es del personal —los usuarios legados
+ * no tienen `type`, igual que en `principal_kind` del kit—. Solo en esta
+ * frontera se completa `internal`; fuera de ella `principal_type_of` niega.
+ */
+export function with_session_principal_type(user: ImperiumDoc): ImperiumDoc {
+	const type = user.type;
+	if (type !== undefined && type !== null && String(type) !== '') return user;
+	return { ...user, type: 'internal' };
+}
+
 async function create_session(
 	sql: Bun.SQL,
-	user: ImperiumDoc,
+	raw_user: ImperiumDoc,
 ): Promise<Session> {
+	const user = with_session_principal_type(raw_user);
 	const id = crypto.randomUUID();
 	const expires = Date.now() + 7 * 24 * 3600 * 1000;
 	const session: Session = { id, user, expires };
@@ -724,7 +738,11 @@ async function load_session(
 	// traiga su propia cookie.
 	const shared = share_binding_of(req);
 	if (shared) {
-		return { id: `share:${shared.share_id}`, user: shared.owner, expires: Number.MAX_SAFE_INTEGER };
+		return {
+			id: `share:${shared.share_id}`,
+			user: with_session_principal_type(shared.owner),
+			expires: Number.MAX_SAFE_INTEGER,
+		};
 	}
 	const id = read_sid(req);
 	return id ? stored_session(sql, id) : null;
@@ -747,7 +765,7 @@ async function stored_session(sql: Bun.SQL, id: string): Promise<Session | null>
 	);
 	const row = rows[0] as { payload: unknown; exp: number } | undefined;
 	if (!row || Number(row.exp) < Date.now()) return null;
-	const user = as_object(row.payload) as ImperiumDoc;
+	const user = with_session_principal_type(as_object(row.payload) as ImperiumDoc);
 	const session: Session = { id, user, expires: Number(row.exp) };
 	memory.set(id, session);
 	return session;

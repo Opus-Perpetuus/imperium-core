@@ -197,10 +197,15 @@ export function service_subject_identity(input: {
 	};
 }
 
-/** Tipo de principal de una sesión Imperium, en el vocabulario del kit. */
+/**
+ * Tipo de principal de una sesión Imperium, en el vocabulario del kit. Niega por
+ * defecto: solo `type: 'internal'` explícito es interno; sin tipo o con otro
+ * valor es externo. La sesión fija el tipo al cargarse
+ * (`with_session_principal_type` en auth.ts).
+ */
 export function principal_type_of(user: ImperiumDoc | null): KirletPrincipalType {
 	if (!user) return 'anonymous';
-	return String(user.type ?? '') === 'external' ? 'external' : 'internal';
+	return String(user.type ?? '') === 'internal' ? 'internal' : 'external';
 }
 
 type CacheEntry = { at: number; grants: KirletGrant[]; is_admin: boolean };

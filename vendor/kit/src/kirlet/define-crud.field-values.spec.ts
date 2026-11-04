@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { define_crud, field_values_denied } from "./define-crud.js";
+import { define_crud, field_values_denied, field_values_session } from "./define-crud.js";
 import { define_kirlet } from "./define-kirlet.js";
 import { define_module } from "./define-module.js";
 import { create_kirlet_test_context } from "./serve.js";
@@ -314,6 +314,20 @@ describe("field-values: FK real y booleanos por todos los caminos del kit", () =
       const ok = /field_name_denied\(.*is_reference.*is_boolean/.test(call) || /field_values_denied\(\w+, fields\[\w+\], (ctx\.)?identity, resource\)/.test(call);
       expect([call, ok]).toEqual([call, true]);
     }
+  });
+});
+
+describe("field_values_session: niega por defecto (fase 5b)", () => {
+  const base: KirletIdentity = { user_id: "u-1", email: "u@x.mx", is_admin: false, kirlet_id: "K", grants: [] };
+  test("sin user_type o realm explícitos no hay sesión", () => {
+    expect(field_values_session(base)).toBe(false);
+    expect(field_values_session({ ...base, user_type: "internal" })).toBe(false);
+    expect(field_values_session({ ...base, realm: "internal" })).toBe(false);
+    expect(field_values_session({ ...base, user_type: "external", realm: "internal" })).toBe(false);
+    expect(field_values_session(null)).toBe(false);
+  });
+  test("interno explícito sí", () => {
+    expect(field_values_session({ ...base, user_type: "internal", realm: "internal" })).toBe(true);
   });
 });
 

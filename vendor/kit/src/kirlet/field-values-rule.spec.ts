@@ -126,7 +126,7 @@ describe("field_name_access: fase 5 y clases (denied / session / open)", () => {
     }
   });
   test("nombre suelto: session solo en recursos de personas", () => {
-    for (const r of ["patient", "employee", "alumnos", "citizen-report-x", "contactos", "directorio-contactos", "user", "voluntariado"]) {
+    for (const r of ["patient", "employee", "alumnos", "citizen", "payroll-receipt", "herr-telefono/contactos", "contactos", "directorio-contactos", "user", "voluntariado"]) {
       expect([r, field_name_access("nombre", { resource: r })]).toEqual([r, "session"]);
       expect([r, field_name_access("name", { resource: r })]).toEqual([r, "session"]);
     }
@@ -134,6 +134,31 @@ describe("field_name_access: fase 5 y clases (denied / session / open)", () => {
       expect([r, field_name_access("nombre", { resource: r })]).toEqual([r, "open"]);
     }
     expect(field_name_access("nombre")).toBe("open");
+  });
+  test("fase 5b: catálogos municipales con nombre y city_zone_id abiertos", () => {
+    for (const r of ["citizen-report-reporting-medium", "citizen-report-problem", "violation-user-id-type", "user-group"]) {
+      expect([r, field_name_access("name", { resource: r })]).toEqual([r, "open"]);
+    }
+    expect(field_name_access("city_zone_id")).toBe("open");
+    expect(field_name_access("city_zone")).toBe("session");
+  });
+  test("fase 5b: choferes, apellidos, CFDI y clínicos en contexto", () => {
+    for (const f of [
+      "chofer", "conductor", "solicitante", "partner_lastname", "client_lastname", "lastname",
+      "receptor_nombre", "emisor_nombre", "nombre_fiscal", "tratamiento_farmacologico",
+    ]) {
+      expect([f, field_name_access(f)]).toEqual([f, "session"]);
+    }
+    for (const r of ["medical-file", "kiosk", "patient", "medical"]) {
+      for (const f of ["peso", "talla", "habitus_exterior", "imc", "signos_vitales"]) {
+        expect([r, f, field_name_access(f, { resource: r })]).toEqual([r, f, "session"]);
+      }
+    }
+    // Fuera del hospital `peso`/`talla` son del artículo; `chofer_id` con ref es la FK.
+    for (const [f, r] of [["peso", "articulo"], ["peso_kg", "envio"], ["talla", "producto"], ["pesos", "venta"], ["regimen_fiscal", "factura"]]) {
+      expect([f, r, field_name_access(f!, { resource: r })]).toEqual([f, r, "open"]);
+    }
+    expect(field_name_access("chofer_id", { is_reference: true })).toBe("open");
   });
   test("ciudad/localidad con ref al catálogo pasa; sin falsos positivos", () => {
     expect(field_name_access("localidad_id", { is_reference: true })).toBe("open");
