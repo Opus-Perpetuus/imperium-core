@@ -281,3 +281,75 @@ describe("field-values: FK real y booleanos por todos los caminos del kit", () =
     }
   });
 });
+
+describe("field-values: PII de las apps (orden de Yael 2026-11-04)", () => {
+  // Un campo por cada dato que pidió bloquear: rh, hospital, emergencias,
+  // ciudadanos, clientes, usuarios y logística.
+  const PII_FIELDS = [
+    "cuenta", "clabe", "salario_diario", "fecha_nacimiento",
+    "telefono_paciente", "telefono_familiar", "domicilio_completo",
+    "telefono", "alertante_telefono", "direccion_exacta", "direccion_postal",
+    "citizen_email", "citizen_phone", "citizen_street", "building_number_external", "building_number_internal", "neighborhood",
+    "email", "customer_email", "email_contacto",
+    "pedido_contacto_domicilio", "pedido_contacto_url_maps", "delivery_address_coordinates",
+    "street", "exterior_number", "interior_number", "postal_code", "boroughs", "exterior", "interior", "urlMaps",
+  ];
+  const personas_table = {
+    name: "personas",
+    columns: [
+      { name: "id", type: "text" as const, primaryKey: true },
+      { name: "name", type: "text" as const, notNull: true },
+      ...PII_FIELDS.map((name) => ({ name, type: "text" as const })),
+      { name: "created_at", type: "timestamptz" as const },
+      { name: "updated_at", type: "timestamptz" as const },
+    ],
+  };
+  function personas() {
+    const fields: Record<string, { type: "string"; required?: boolean }> = { name: { type: "string", required: true } };
+    for (const f of PII_FIELDS) fields[f] = { type: "string" };
+    return define_kirlet({
+      id: "KIRLET-personas",
+      name: "Personas",
+      version: "0.1.0",
+      image: "kirel/kirlet-personas:0.1.0",
+      compat: { nox: ">=0.5.0", kit: "^0.5.0" },
+      schema_version: 1,
+      modules: [
+        define_module({
+          resource: "personas",
+          labels: { singular: "Persona", plural: "Personas" },
+          routes: define_crud({ resource: "personas", table: "personas", fields }),
+          tables: [personas_table],
+          pages: [],
+        }),
+      ],
+    });
+  }
+
+  test("GET /personas/field-values/<campo PII> es 400 y no devuelve el dato; la lista lo anuncia en fv_denied", async () => {
+    const server = create_kirlet_test_context(personas(), { auth_disabled: true });
+    const row: Record<string, string> = { name: "Ana" };
+    for (const f of PII_FIELDS) row[f] = `SECRETO_${f}`;
+    const created = await server.fetch(
+      new Request("http://t/personas", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(row),
+      }),
+    );
+    expect(created.status).toBeLessThan(300);
+    for (const f of PII_FIELDS) {
+      const res = await server.fetch(new Request(`http://t/personas/field-values/${f}`));
+      const text = await res.text();
+      expect([f, res.status]).toEqual([f, 400]);
+      expect(text).toContain("validation_error");
+      expect(text).not.toContain("SECRETO_");
+    }
+    const name = await server.fetch(new Request("http://t/personas/field-values/name"));
+    expect(name.status).toBe(200);
+    expect(await name.text()).toContain("Ana");
+    const list = (await (await server.fetch(new Request("http://t/personas"))).json()) as { fv_denied: string[] };
+    expect([...list.fv_denied].sort()).toEqual([...PII_FIELDS].sort());
+    server.stop();
+  });
+});

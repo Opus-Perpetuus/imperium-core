@@ -33,6 +33,11 @@ const PII_WORDS = [
   // Domicilio partido.
   "calle", "colonia", "codigo_postal", "postal_code", "zip_code", "zipcode", "cp",
   "numero_exterior", "num_ext", "numero_interior", "num_int",
+  // Domicilio partido en inglés y ligas a mapas (rh, ciudadanos, logística, contactos).
+  "street", "streets", "street_address", "neighborhood", "neighborhoods", "neighbourhood",
+  "exterior_number", "interior_number", "number_exterior", "number_interior",
+  "number_external", "number_internal", "ext_no", "int_no",
+  "url_maps", "maps_url", "google_maps", "maps_link",
   "nacimiento", "fecha_nac", "birth", "birthday", "birthdate", "dob",
   "salario", "salary", "sueldo",
   "lat", "lng", "lon", "latitude", "longitude", "latitud", "longitud",
@@ -43,7 +48,15 @@ const PII_WORDS = [
 const WHOLE_NAMES = new Set([
   "cuenta", "cuenta_bancaria", "numero_cuenta", "no_cuenta", "num_cuenta",
   "bank_account", "account_number",
+  // Número exterior/interior del domicilio (`contrato.exterior`); `habitus_exterior` no.
+  "exterior", "interior",
 ]);
+
+/**
+ * Delegación/alcaldía: texto libre (`employee.boroughs`) es parte del domicilio;
+ * con ref al catálogo (`citizen-report.borough`) el valor es el id y pasa.
+ */
+const AREA_RE = /(^|_)(borough|boroughs)(_|$)/;
 
 /**
  * Cuenta bancaria compuesta: `banco_cuenta`, `cuenta_deposito`,
@@ -118,6 +131,7 @@ export function field_name_denied(field: string, opts: FieldNameOptions = {}): b
   if (parts.length > 1 && TEMPLATE_SUFFIXES.has(last)) return CREDENTIAL_RE.test(parts.slice(0, -1).join("_"));
   if (parts.length > 1 && METADATA_SUFFIXES.has(last)) return false;
   if (parts.length > 1 && KEY_SUFFIXES.has(last) && opts.is_reference === true) return false;
+  if (AREA_RE.test(snake)) return opts.is_reference !== true;
   return CREDENTIAL_RE.test(snake) || PII_RE.test(snake) || BARE_PLACE_RE.test(snake);
 }
 //   #endregion

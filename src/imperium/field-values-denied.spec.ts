@@ -200,3 +200,29 @@ describe('fase 3b: FK real y booleanos por todos los caminos del núcleo', () =>
 		expect(list_fv_denied(make_store({}) as never, 'envio', ['domicilio_id', 'home'])).toEqual(['domicilio_id']);
 	});
 });
+
+describe('field-values fase 4: PII de todas las apps (orden de Yael 2026-11-04)', () => {
+	test('núcleo y tracker niegan rh, pacientes, emergencias, ciudadanos, clientes, user.email y logística', () => {
+		const cases: Array<[string, string]> = [
+			['employee', 'cuenta'], ['employee', 'salario_diario'], ['employee', 'fecha_nacimiento'],
+			['employee', 'street'], ['employee', 'exterior_number'], ['employee', 'interior_number'], ['employee', 'boroughs'],
+			['patient', 'telefono_paciente'], ['patient', 'telefono_familiar'], ['patient', 'domicilio_completo'],
+			['registro-emergencias', 'alertante_telefono'], ['registro-emergencias', 'direccion_exacta'],
+			['citizen-report', 'citizen_email'], ['citizen-report', 'citizen_phone'], ['citizen-report', 'citizen_street'],
+			['citizen-report', 'building_number_external'], ['citizen-report', 'neighborhood'],
+			['contrato', 'exterior'], ['contrato', 'interior'],
+			['contacto', 'email'], ['contacto', 'urlMaps'], ['payments', 'customer_email'], ['user', 'email'],
+			['pedidos', 'pedido_contacto_domicilio'], ['pedidos', 'pedido_contacto_url_maps'],
+			['envio', 'user.email'], ['envio', 'contacto.street'],
+		];
+		for (const [resource, field] of cases) {
+			expect([resource, field, field_values_denied(resource, field)]).toEqual([resource, field, true]);
+		}
+		// Delegación con ref al catálogo pasa; sin ref es domicilio.
+		expect(field_values_denied('citizen-report', 'borough', [], undefined, { borough: 'Boroughs' })).toBe(false);
+		expect(field_values_denied('citizen-report', 'borough')).toBe(true);
+		for (const field of ['habitus_exterior', 'status', 'name', 'ubicacion_destino']) {
+			expect([field, field_values_denied('medical-file', field)]).toEqual([field, false]);
+		}
+	});
+});

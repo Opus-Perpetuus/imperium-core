@@ -75,6 +75,21 @@ describe("field_name_denied: credenciales, PII y blobs; no metadatos", () => {
     }
   });
 
+  test("fase 4: domicilio en inglés, número ext/int suelto, liga a mapas y delegación libre", () => {
+    for (const f of [
+      "street", "citizen_street", "street_address", "neighborhood", "neighbourhood",
+      "exterior_number", "interior_number", "building_number_external", "building_number_internal",
+      "ext_no", "int_no", "exterior", "interior", "pedido_contacto_url_maps", "urlMaps", "maps_url", "boroughs",
+    ]) expect([f, field_name_denied(f)]).toEqual([f, true]);
+    // Delegación con ref al catálogo: el valor es el id.
+    expect(field_name_denied("borough", { is_reference: true })).toBe(false);
+    expect(field_name_denied("borough")).toBe(true);
+    // Sin falsos positivos: exploración clínica, parámetros y nombres de mapa de ruta.
+    for (const f of ["habitus_exterior", "neighbor_params", "streetwise", "mapa", "delivery_route_mapa", "interiorismo"]) {
+      expect([f, field_name_denied(f)]).toEqual([f, false]);
+    }
+  });
+
   test("fase 3b: plantilla con credencial, cuenta bancaria compuesta, zip/home y booleanos", () => {
     for (const f of [
       "password_template", "token_plantilla", "pin_template", "secret_templates", "contrasena_plantilla",
