@@ -1,6 +1,7 @@
 /**
  * CRUD Imperium: mismas rutas que `crud_routes()` del backend Express.
  */
+import { principal_type_of } from './subject-identity.ts';
 import { is_master_request } from './subject-secret.ts';
 import { odoo_only_config_denied } from './odoo-only-config.ts';
 import { decorate_list_instance_type } from './list-headers.ts';
@@ -388,17 +389,23 @@ export function field_value_refs(store: ImperiumStore, resource: string): Readon
 	return store.field_refs(resource) ?? {};
 }
 
+/** PII en field-values: solo con sesión de usuario interno (no anónimo, no externo, no la app sembrando). */
+export function field_values_session(actor: ImperiumDoc | null | undefined): boolean {
+	return Boolean(actor) && principal_type_of(actor ?? null) === 'internal';
+}
+
 export function list_fv_denied(
 	store: ImperiumStore,
 	resource: string,
 	keys: Iterable<string>,
+	has_session = false,
 ): string[] {
 	const columns = field_value_columns(store, resource);
 	const names = new Set<string>(keys);
 	for (const column of columns) names.add(column.name);
 	const refs = field_value_refs(store, resource);
 	return [...names].filter(
-		(name) => name !== '_id' && field_values_denied(resource, name, columns, FIELD_VALUES_ALLOW, refs),
+		(name) => name !== '_id' && field_values_denied(resource, name, columns, FIELD_VALUES_ALLOW, refs, has_session),
 	);
 }
 
@@ -474,7 +481,16 @@ export async function handle_crud(
 		const field_path = decodeURIComponent(segs[1] ?? '').trim();
 		if (!field_path) throw new Error(field_values_missing_field_error());
 		const columns = field_value_columns(store, resource);
-		if (field_values_denied(resource, field_path, columns, FIELD_VALUES_ALLOW, field_value_refs(store, resource))) {
+		if (
+			field_values_denied(
+				resource,
+				field_path,
+				columns,
+				FIELD_VALUES_ALLOW,
+				field_value_refs(store, resource),
+				field_values_session(actor),
+			)
+		) {
 			return json(
 				resource,
 				fail(FIELD_VALUES_DENIED_MESSAGE, 400, { code: 'validation_error', field: field_path })
@@ -708,7 +724,7 @@ export async function handle_crud(
 			instance_type(store, resource, listed.rows),
 			list_fields,
 		);
-		const fv_denied = list_fv_denied(store, resource, Object.keys(tipo));
+		const fv_denied = list_fv_denied(store, resource, Object.keys(tipo), field_values_session(actor));
 		if (listed.empty_project) {
 			return json(resource, await with_module_info(store, resource, {
 				...ok([], 'Sin proyecto especificado', 0),

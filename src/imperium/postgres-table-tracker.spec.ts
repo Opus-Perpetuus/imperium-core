@@ -612,7 +612,8 @@ describe('PostGressTableTracker field-values (shipped path)', () => {
 		]) {
 			const err = await postgres_table_tracker_field_values({
 				store: store as never,
-				actor: { _id: 'admin', _ref: 'user-menu-management-0' },
+				// Usuario externo: sin sesión interna la PII tampoco sale.
+				actor: { _id: 'admin', _ref: 'user-menu-management-0', type: 'external' },
 				params: { model_tracker_id: 'User', field_path },
 				url: new URL(`http://imperium.test/api/postgres-table-tracker/global/User/field-values/${field_path}`),
 			}).then(
@@ -623,6 +624,28 @@ describe('PostGressTableTracker field-values (shipped path)', () => {
 			expect(err?.code).toBe('validation_error');
 		}
 		expect(touched).toBe(0);
+		// Con sesión interna: credenciales, firmas y json siguen en 400; la PII sí lista.
+		for (const field_path of ['password', 'firma_digital', 'config_json', 'ajustes']) {
+			const err = await postgres_table_tracker_field_values({
+				store: store as never,
+				actor: { _id: 'admin', _ref: 'user-menu-management-0' },
+				params: { model_tracker_id: 'User', field_path },
+				url: new URL(`http://imperium.test/api/postgres-table-tracker/global/User/field-values/${field_path}`),
+			}).then(
+				() => null,
+				(e: unknown) => e as { status?: number },
+			);
+			expect([field_path, err?.status]).toEqual([field_path, 400]);
+		}
+		expect(touched).toBe(0);
+		const pii_res = await postgres_table_tracker_field_values({
+			store: store as never,
+			actor: { _id: 'admin', _ref: 'user-menu-management-0' },
+			params: { model_tracker_id: 'User', field_path: 'rfc' },
+			url: new URL('http://imperium.test/api/postgres-table-tracker/global/User/field-values/rfc'),
+		});
+		expect(pii_res.total_elementos).toBe(1);
+		touched = 0;
 		const ok_res = await postgres_table_tracker_field_values({
 			store: store as never,
 			actor: { _id: 'admin', _ref: 'user-menu-management-0' },

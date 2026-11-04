@@ -2,7 +2,8 @@
 
 import { new_id, now_iso } from "./http.js";
 import { KirletHttpError } from "./errors.js";
-import { field_name_denied } from "./field-values-rule.js";
+import { field_name_access, type FieldValuesAccess } from "./field-values-rule.js";
+import { ANONYMOUS_USER_ID, type KirletIdentity } from "./identity.types.js";
 import { define_routes, type KirletRouteTable, type KirletCtx } from "./define-module.js";
 import type { DomainRow, FindManyOptions } from "./data-client.js";
 
@@ -33,24 +34,70 @@ export type CrudFieldSpec = {
    */
   list?: boolean;
   /**
+   * PII aunque el nombre no lo diga (`llamadas.numero` = teléfono): field-values
+   * solo con sesión interna válida.
+   */
+  pii?: boolean;
+  /**
    * FK real: recurso/tabla al que apunta. Un `_id`/`_ref` con nombre sensible
    * (`domicilio_id`) solo admite field-values si lo declara.
    */
   ref?: string;
 };
 
-export { field_name_denied, JSON_BLOB_FIELDS, snake_field_name, type FieldNameOptions } from "./field-values-rule.js";
+export {
+  field_name_access,
+  field_name_denied,
+  JSON_BLOB_FIELDS,
+  snake_field_name,
+  type FieldNameOptions,
+  type FieldValuesAccess,
+} from "./field-values-rule.js";
+
+/**
+ * Sesión interna válida: usuario firmado por el núcleo, no anónimo ni del realm
+ * público. Es la condición para listar valores de un campo PII.
+ */
+export function field_values_session(identity: KirletIdentity | null | undefined): boolean {
+  if (!identity || !identity.user_id || identity.user_id === ANONYMOUS_USER_ID) return false;
+  if ((identity.user_type ?? "internal") !== "internal") return false;
+  return (identity.realm ?? "internal") === "internal";
+}
+
+/** Clase de acceso de un campo de `define_crud` (ver `field_name_access`). */
+export function field_values_access(
+  field: string,
+  spec: CrudFieldSpec | undefined,
+  resource?: string,
+): FieldValuesAccess {
+  if (spec?.field_values === true) return "open";
+  // `list: false` marca fotos, firmas y adjuntos: tampoco salen por field-values.
+  if (spec?.secret === true || spec?.list === false || spec?.type === "json") return "denied";
+  const by_name = field_name_access(field, {
+    is_reference: Boolean(spec?.ref),
+    is_boolean: spec?.type === "boolean",
+    resource,
+  });
+  if (by_name === "open" && spec?.pii === true) return "session";
+  return by_name;
+}
 
 /**
  * `field-values` devuelve los valores distintos de una columna a quien tenga
- * lectura del recurso. Un json, una credencial o PII se niegan salvo que el campo
- * lo permita con `field_values: true`.
+ * lectura del recurso. Credenciales, firmas y json no salen nunca; la PII solo
+ * con sesión interna (`identity`). Sin `identity` se evalúa como sin sesión.
+ * `field_values: true` abre el campo.
  */
-export function field_values_denied(field: string, spec: CrudFieldSpec | undefined): boolean {
-  if (spec?.field_values === true) return false;
-  // `list: false` marca fotos, firmas y adjuntos: tampoco salen por field-values.
-  if (spec?.secret === true || spec?.list === false || spec?.type === "json") return true;
-  return field_name_denied(field, { is_reference: Boolean(spec?.ref), is_boolean: spec?.type === "boolean" });
+export function field_values_denied(
+  field: string,
+  spec: CrudFieldSpec | undefined,
+  identity?: KirletIdentity | null,
+  resource?: string,
+): boolean {
+  const access = field_values_access(field, spec, resource);
+  if (access === "open") return false;
+  if (access === "denied") return true;
+  return !field_values_session(identity);
 }
 
 export type CrudHooks = {
@@ -242,7 +289,8 @@ export function define_crud(opts: DefineCrudOptions): KirletRouteTable {
   const unknown_to_payload = opts.unknown_to_payload === true || opts.imperium === true;
   const imperium = opts.imperium !== false;
   /** Columnas sin field-values: el filtro de la lista pasa a texto libre. */
-  const fv_denied = Object.keys(fields).filter((name) => field_values_denied(name, fields[name]));
+  const fv_denied_for = (identity: KirletIdentity | null) =>
+    Object.keys(fields).filter((name) => field_values_denied(name, fields[name], identity, resource));
 
   const history_resource = (ctx: KirletCtx) => {
     // full resource id filled by serve layer via slug; here use relative name
@@ -366,7 +414,7 @@ export function define_crud(opts: DefineCrudOptions): KirletRouteTable {
             return copy;
           })
         : rows;
-      return { data, total_elementos: total, message: "Ruta encontrada", fv_denied };
+      return { data, total_elementos: total, message: "Ruta encontrada", fv_denied: fv_denied_for(ctx.identity) };
     },
 
     ...(imperium
@@ -394,11 +442,14 @@ export function define_crud(opts: DefineCrudOptions): KirletRouteTable {
             if (!columna_base && !fields[field]) {
               throw new KirletHttpError(400, "validation_error", `Campo desconocido: ${field}`, { field });
             }
-            if (!columna_base && field_values_denied(field, fields[field])) {
+            if (!columna_base && field_values_denied(field, fields[field], ctx.identity, resource)) {
+              const access = field_values_access(field, fields[field], resource);
               throw new KirletHttpError(
                 400,
                 "validation_error",
-                `El campo ${field} no admite field-values`,
+                access === "session"
+                  ? `El campo ${field} solo admite field-values con sesión`
+                  : `El campo ${field} no admite field-values`,
                 { field },
               );
             }

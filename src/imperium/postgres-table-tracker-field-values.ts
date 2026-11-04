@@ -4,7 +4,7 @@
  */
 import { assert_target_model_read } from './auth.ts';
 import { as_array, as_object, ok, type ImperiumDoc } from './envelope.ts';
-import { field_value_columns, field_value_refs, record_rule_scope } from './crud.ts';
+import { field_value_columns, field_value_refs, field_values_session, record_rule_scope } from './crud.ts';
 import {
 	FIELD_VALUES_ALLOW,
 	FIELD_VALUES_DENIED_MESSAGE,
@@ -162,6 +162,7 @@ export async function postgres_table_tracker_field_values(ctx: TrackerFieldValue
 			field_value_columns(ctx.store, resource),
 			FIELD_VALUES_ALLOW,
 			field_value_refs(ctx.store, resource),
+			field_values_session(ctx.actor),
 		)
 	) {
 		throw new TrackerFieldValuesDeniedError(field_path);

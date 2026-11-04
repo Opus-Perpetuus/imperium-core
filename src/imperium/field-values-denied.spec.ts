@@ -44,7 +44,7 @@ describe('field-values no lista credenciales ni blobs json', () => {
 		]) {
 			expect(field_values_denied('x', field)).toBe(true);
 		}
-		for (const field of ['firmado_at', 'nssa', 'passenger_no', 'clientName', 'pinned', 'payload.estadoActual']) {
+		for (const field of ['firmado_at', 'nssa', 'passenger_no', 'client_id', 'pinned', 'payload.estadoActual']) {
 			expect(field_values_denied('x', field)).toBe(false);
 		}
 		expect(field_values_denied('x', 'rfc', [], new Set(['x:rfc']))).toBe(false);
@@ -158,7 +158,7 @@ describe('fase 3b: FK real y booleanos por todos los caminos del núcleo', () =>
 		}
 		expect(calls.length).toBeGreaterThanOrEqual(3);
 		for (const call of calls) {
-			expect([call, /field_value_refs\(|refs\)/.test(call.split(')) {')[0] ?? call)]).toEqual([call, true]);
+			expect([call, /field_value_refs\(|refs(, has_session)?\)/.test(call.split(')) {')[0] ?? call)]).toEqual([call, true]);
 		}
 	});
 
@@ -179,10 +179,11 @@ describe('fase 3b: FK real y booleanos por todos los caminos del núcleo', () =>
 				yield [];
 			},
 		});
+		// Sin sesión interna (externo): la PII sin FK real se niega.
 		const run = (refs: Record<string, string>, field_path: string) =>
 			postgres_table_tracker_field_values({
 				store: make_store(refs) as never,
-				actor: { _id: 'admin', _ref: 'user-menu-management-0' },
+				actor: { _id: 'admin', _ref: 'user-menu-management-0', type: 'external' },
 				params: { model_tracker_id: 'Envio', field_path },
 				url: new URL(`http://imperium.test/api/postgres-table-tracker/global/Envio/field-values/${field_path}`),
 			}).then(
@@ -224,5 +225,49 @@ describe('field-values fase 4: PII de todas las apps (orden de Yael 2026-11-04)'
 		for (const field of ['habitus_exterior', 'status', 'name', 'ubicacion_destino']) {
 			expect([field, field_values_denied('medical-file', field)]).toEqual([field, false]);
 		}
+	});
+});
+
+describe('fase 5: PII solo con sesión interna; credenciales y blobs nunca', () => {
+	const PII = [
+		'rfc', 'curp', 'email', 'telefono', 'clabe', 'street', 'fecha_nacimiento',
+		'contacto_nombre', 'firmante', 'nombre_paciente', 'apellido_paterno', 'clientName',
+		'alergias', 'enfermedad', 'impresion_diagnostica', 'edad', 'sexo', 'estado_civil',
+		'localidad', 'ciudad', 'plates', 'placa', 'payload.plates',
+	];
+	test('sin sesión: la PII se niega (como hasta ahora)', () => {
+		for (const f of PII) expect([f, field_values_denied('r', f)]).toEqual([f, true]);
+		expect(field_values_denied('patient', 'name')).toBe(true);
+	});
+	test('con sesión: la PII sí lista valores', () => {
+		for (const f of PII) expect([f, field_values_denied('r', f, [], undefined, {}, true)]).toEqual([f, false]);
+		expect(field_values_denied('patient', 'name', [], undefined, {}, true)).toBe(false);
+	});
+	test('con sesión: credenciales, firmas y blobs json siguen negados', () => {
+		for (const f of ['password', 'api_key', 'firma', 'img_signature_owner', 'config_json', 'payload', 'custom_data.secret']) {
+			expect([f, field_values_denied('r', f, [], undefined, {}, true)]).toEqual([f, true]);
+		}
+		expect(field_values_denied('x', 'ajustes', [{ name: 'ajustes', pg: 'jsonb' }], undefined, {}, true)).toBe(true);
+	});
+	test('lo no bloqueado no cambia con o sin sesión', () => {
+		for (const f of ['estado', 'categoria', 'marca', 'municipio', 'payload.estado', 'nombre_producto']) {
+			expect([f, field_values_denied('productos', f)]).toEqual([f, false]);
+			expect([f, field_values_denied('productos', f, [], undefined, {}, true)]).toEqual([f, false]);
+		}
+		expect(field_values_denied('productos', 'name')).toBe(false);
+	});
+	test('sesión = usuario interno; anónimo, externo o la app sembrando no', async () => {
+		const { field_values_session, list_fv_denied } = await import('./crud.ts');
+		expect(field_values_session(null)).toBe(false);
+		expect(field_values_session({ _id: 'u', type: 'external' } as never)).toBe(false);
+		expect(field_values_session({ _id: 'u', type: 'internal' } as never)).toBe(true);
+		expect(field_values_session({ _id: 'u' } as never)).toBe(true);
+		const store = {
+			has: () => true,
+			loc: () => ({ columns: [{ name: 'plates', pg: 'text' }, { name: 'password', pg: 'text' }, { name: 'estado', pg: 'text' }] }),
+			field_refs: () => ({}),
+		};
+		expect(list_fv_denied(store as never, 'violation', ['_id']).sort()).toEqual(['password', 'plates']);
+		expect(list_fv_denied(store as never, 'violation', ['_id'], true)).toEqual(['password']);
 	});
 });

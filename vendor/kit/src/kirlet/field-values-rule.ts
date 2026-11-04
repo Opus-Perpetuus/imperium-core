@@ -2,8 +2,13 @@
 //
 // Una sola regla para el kit (define_crud) y el núcleo (CRUD y tracker global):
 // `GET …/field-values/<campo>` devuelve los valores distintos de una columna a
-// cualquiera con lectura del recurso. Credenciales, PII y blobs no salen por
-// ahí; el filtro de esa columna en la lista pasa a texto libre (`fv_denied`).
+// quien tenga lectura del recurso. Tres clases (`field_name_access`):
+//   - "denied": credenciales, firmas y blobs json; nadie los lista.
+//   - "session": PII (contacto, domicilio, identificadores, nombres de
+//     personas, datos clínicos, ciudad, placas). Solo con sesión interna
+//     válida; anónimo o externo (realm público) → 400.
+//   - "open": lo demás, igual que siempre.
+// Un campo que no se puede listar pasa a texto libre en la lista (`fv_denied`).
 
 /** `clientSecret` → `client_secret`; `APIKey` → `api_key`. */
 export function snake_field_name(field: string): string {
@@ -24,8 +29,11 @@ const CREDENTIAL_WORDS = [
 ];
 
 /** PII: identificadores fiscales y bancarios, firmas, contacto, domicilio, nacimiento, salario, coordenadas. */
+/** Firmas: imagen o trazo; no son valores de filtro para nadie. */
+const SIGNATURE_WORDS = ["firma", "firmas", "signature", "signatures"];
+
 const PII_WORDS = [
-  "rfc", "curp", "nss", "clabe", "firma", "firmas", "signature", "signatures",
+  "rfc", "curp", "nss", "clabe",
   "ine", "pasaporte", "passport",
   "email", "emails", "e_mail", "correo", "phone", "telefono", "celular", "movil", "mobile",
   "tel", "cel", "whatsapp",
@@ -42,7 +50,40 @@ const PII_WORDS = [
   "salario", "salary", "sueldo",
   "lat", "lng", "lon", "latitude", "longitude", "latitud", "longitud",
   "coords", "coordinates", "coordenadas",
+  // Fase 5. Nombres de personas.
+  "apellido", "apellidos", "apellido_paterno", "apellido_materno", "nombre_completo",
+  "first_name", "last_name", "full_name", "surname", "given_name", "firmante", "firmantes",
+  // Datos clínicos.
+  "alergia", "alergias", "allergy", "allergies", "enfermedad", "enfermedades", "disease", "diseases",
+  "diagnostico", "diagnosticos", "diagnostica", "diagnosis", "padecimiento", "padecimientos",
+  "sintoma", "sintomas", "medicamento", "medicamentos",
+  "edad", "age", "sexo", "sex", "genero", "gender", "estado_civil", "marital_status",
+  "tipo_sangre", "grupo_sanguineo", "blood_type",
+  // Placas de vehículos.
+  "placa", "placas", "plate", "plates", "license_plate",
 ];
+
+/**
+ * Ciudad/localidad en texto libre; con ref al catálogo el valor es el id y
+ * pasa (igual que la delegación).
+ */
+const CITY_RE = /(^|_)(localidad|localidades|ciudad|ciudades|city|cities|town|borough|boroughs)(_|$)/;
+
+/**
+ * Nombre de una persona: `contacto_nombre`, `nombre_paciente`, `alertante_name`.
+ * `nombre` solo (`producto.nombre`) no, salvo en un recurso de personas.
+ */
+const NAME_WORDS = new Set(["nombre", "nombres", "name", "names"]);
+const PERSON_WORDS = new Set([
+  "paciente", "pacientes", "patient", "contacto", "contact", "alertante", "familiar", "familiares",
+  "cliente", "client", "customer", "ciudadano", "citizen", "empleado", "employee", "alumno", "student",
+  "responsable", "propietario", "owner", "conductor", "chofer", "driver", "solicitante", "tutor",
+  "beneficiario", "titular", "persona", "person", "medico", "doctor", "voluntario", "reportante",
+  "denunciante", "infractor", "testigo", "padre", "madre", "partner", "asignado", "assignee",
+]);
+/** Recursos cuyas filas son personas: ahí `nombre`/`name` también es PII. */
+const PERSON_RESOURCE_RE =
+  /(^|[-_])(patient|patients|paciente|pacientes|employee|employees|empleado|empleados|alumno|alumnos|student|students|citizen|citizens|ciudadano|ciudadanos|contacto|contactos|contact|contacts|voluntario|voluntarios|voluntariado|cliente|clientes|customer|customers|persona|personas|tutor|tutores|conductor|conductores|chofer|choferes|driver|drivers|user|users|usuario|usuarios)([-_]|$)/;
 
 /** Cuenta bancaria: solo nombres completos (`cuenta` sola es ambigua en contabilidad). */
 const WHOLE_NAMES = new Set([
@@ -51,12 +92,6 @@ const WHOLE_NAMES = new Set([
   // Número exterior/interior del domicilio (`contrato.exterior`); `habitus_exterior` no.
   "exterior", "interior",
 ]);
-
-/**
- * Delegación/alcaldía: texto libre (`employee.boroughs`) es parte del domicilio;
- * con ref al catálogo (`citizen-report.borough`) el valor es el id y pasa.
- */
-const AREA_RE = /(^|_)(borough|boroughs)(_|$)/;
 
 /**
  * Cuenta bancaria compuesta: `banco_cuenta`, `cuenta_deposito`,
@@ -102,7 +137,11 @@ const KEY_SUFFIXES = new Set(["id", "ids", "ref", "refs"]);
  */
 const BARE_PLACE_RE = /(^|_)(ubicacion|ubicaciones|location|locations|geo|geolocation|geolocalizacion|home|zip)$/;
 
+export type FieldValuesAccess = "open" | "session" | "denied";
+
 export type FieldNameOptions = {
+  /** Recurso dueño del campo: en recursos de personas `nombre` también es PII. */
+  resource?: string;
   /** El campo es una FK real (ref en el schema). */
   is_reference?: boolean;
   /** Booleano: sus valores (true/false) no revelan el dato (`home`, `has_pin`). */
@@ -116,22 +155,44 @@ function word_re(words: readonly string[]): RegExp {
   return new RegExp(`(^|_)(${words.join("|")})(_|$)`);
 }
 const CREDENTIAL_RE = word_re(CREDENTIAL_WORDS);
+const SIGNATURE_RE = word_re(SIGNATURE_WORDS);
 const PII_RE = word_re(PII_WORDS);
+/** `blood_type`/`tipo_sangre` terminan en sufijo de metadato pero son el dato. */
+const PII_WHOLE = new Set(["blood_type", "tipo_sangre", "estado_civil", "marital_status"]);
 
-/** Un segmento (sin puntos) que por su nombre no admite field-values. */
-export function field_name_denied(field: string, opts: FieldNameOptions = {}): boolean {
+function person_name(parts: string[], resource: string | undefined): boolean {
+  if (!parts.some((p) => NAME_WORDS.has(p))) return false;
+  if (parts.some((p) => PERSON_WORDS.has(p))) return true;
+  return parts.every((p) => NAME_WORDS.has(p)) && PERSON_RESOURCE_RE.test(String(resource ?? "").toLowerCase());
+}
+
+/** Clase de acceso de un segmento (sin puntos) por su nombre. */
+export function field_name_access(field: string, opts: FieldNameOptions = {}): FieldValuesAccess {
   const snake = snake_field_name(field);
-  if (!snake) return false;
-  if (JSON_BLOB_FIELDS.has(snake) || snake.endsWith("_json")) return true;
-  if (opts.is_boolean === true) return false;
-  if (WHOLE_NAMES.has(snake)) return true;
+  if (!snake) return "open";
+  if (JSON_BLOB_FIELDS.has(snake) || snake.endsWith("_json")) return "denied";
+  if (opts.is_boolean === true) return "open";
   const parts = snake.split("_").filter(Boolean);
-  if (parts.some((p) => ACCOUNT_WORDS.has(p)) && parts.some((p) => BANK_QUALIFIERS.has(p))) return true;
   const last = parts[parts.length - 1] ?? "";
-  if (parts.length > 1 && TEMPLATE_SUFFIXES.has(last)) return CREDENTIAL_RE.test(parts.slice(0, -1).join("_"));
-  if (parts.length > 1 && METADATA_SUFFIXES.has(last)) return false;
-  if (parts.length > 1 && KEY_SUFFIXES.has(last) && opts.is_reference === true) return false;
-  if (AREA_RE.test(snake)) return opts.is_reference !== true;
-  return CREDENTIAL_RE.test(snake) || PII_RE.test(snake) || BARE_PLACE_RE.test(snake);
+  if (parts.length > 1 && TEMPLATE_SUFFIXES.has(last)) {
+    return CREDENTIAL_RE.test(parts.slice(0, -1).join("_")) ? "denied" : "open";
+  }
+  if (PII_WHOLE.has(snake)) return "session";
+  if (parts.length > 1 && METADATA_SUFFIXES.has(last)) return "open";
+  if (WHOLE_NAMES.has(snake)) return "session";
+  if (parts.some((p) => ACCOUNT_WORDS.has(p)) && parts.some((p) => BANK_QUALIFIERS.has(p))) return "session";
+  if (parts.length > 1 && KEY_SUFFIXES.has(last) && opts.is_reference === true) return "open";
+  if (CREDENTIAL_RE.test(snake) || SIGNATURE_RE.test(snake)) return "denied";
+  if (CITY_RE.test(snake)) return opts.is_reference === true ? "open" : "session";
+  if (PII_RE.test(snake) || BARE_PLACE_RE.test(snake) || person_name(parts, opts.resource)) return "session";
+  return "open";
+}
+
+/**
+ * ¿Se niega a quien no tiene sesión? (`true` también para credenciales.)
+ * Para saber si se niega con sesión, usar `field_name_access(...) === "denied"`.
+ */
+export function field_name_denied(field: string, opts: FieldNameOptions = {}): boolean {
+  return field_name_access(field, opts) !== "open";
 }
 //   #endregion

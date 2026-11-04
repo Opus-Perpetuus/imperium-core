@@ -2,7 +2,7 @@
  * `GET /:resource/field-values/:field` — mismo contrato que
  * `$Controller.controller_read_field_values`.
  */
-import { field_name_denied, JSON_BLOB_FIELDS, snake_field_name } from '@opus-perpetuus/imperium-core-kit';
+import { field_name_access, JSON_BLOB_FIELDS, snake_field_name } from '@opus-perpetuus/imperium-core-kit';
 import { as_object, type ImperiumDoc } from './envelope.ts';
 import {
 	GROUP_REF_ALMACEN,
@@ -48,9 +48,11 @@ export const FIELD_VALUES_DENIED_MESSAGE = 'Ese campo no admite valores (field-v
 
 /**
  * `field-values` devuelve los valores distintos de una columna a quien tenga
- * lectura del recurso. Credenciales, PII y blobs json enteros no salen por ahí
- * (regla del kit: `field_name_denied`);
- * un subcampo de `payload`/`custom_data` sí, salvo que se llame como credencial.
+ * lectura del recurso. Credenciales, firmas y blobs json enteros no salen nunca;
+ * la PII (contacto, domicilio, nombres, datos clínicos, ciudad, placas) solo sale
+ * con sesión interna (`has_session`), sin sesión ni para externos
+ * (regla del kit: `field_name_access`).
+ * Un subcampo de `payload`/`custom_data` sí, salvo que se llame como credencial.
  */
 export function field_values_denied(
 	resource: string,
@@ -59,6 +61,8 @@ export function field_values_denied(
 	allow: ReadonlySet<string> = FIELD_VALUES_ALLOW,
 	/** `store.field_refs(resource)`: un `_id`/`_ref` sensible solo pasa si es FK real. */
 	refs: Readonly<Record<string, string>> = {},
+	/** Sesión interna válida: la PII sí lista valores; credenciales y blobs no. */
+	has_session = false,
 ): boolean {
 	if (allow.has(`${resource}:${field_path}`)) return false;
 	const raw_segments = field_path.split('.');
@@ -74,7 +78,7 @@ export function field_values_denied(
 		segments.some(
 			(segment, i) =>
 				!(i === 0 && opens_blob) &&
-				field_name_denied(segment, { is_reference: is_reference(i), is_boolean }),
+				denied_for(field_name_access(segment, { is_reference: is_reference(i), is_boolean, resource }), has_session),
 		)
 	) {
 		return true;
@@ -83,6 +87,11 @@ export function field_values_denied(
 	if (segments.length > 1) return false;
 	if (JSON_BLOB_FIELDS.has(root)) return true;
 	return /json/i.test(pg);
+}
+
+function denied_for(access: 'open' | 'session' | 'denied', has_session: boolean): boolean {
+	if (access === 'denied') return true;
+	return access === 'session' && !has_session;
 }
 
 export function field_values_missing_field_error() {
