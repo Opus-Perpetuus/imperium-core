@@ -587,12 +587,35 @@ export type FaltanteExistencia = {
  * (`existencia - existenciaApartada`) del producto. Un producto inexistente
  * cuenta como disponible 0. Se agrupa por producto para no aprobar dos renglones
  * del mismo artículo que juntos rebasan la existencia. Con `almacen` cuenta
- * solo la existencia de ese almacén (el del vendedor).
+ * solo la existencia de ese almacén (el del vendedor). `comprometido` resta
+ * lo ya aceptado en el mismo lote, con clave almacén resuelto y producto.
  */
+function clave_comprometido(scope_id: string, product_id: string): string {
+	return `${scope_id}|${product_id}`;
+}
+
+export function acumular_comprometido(
+	comprometido: Map<string, number>,
+	scope_id: string,
+	articulos_raw: unknown,
+): void {
+	for (const articulo of as_array(articulos_raw).map(as_object)) {
+		const product_id = ref_id(articulo.product);
+		const quantity = round_qty(Number(articulo.cantidad ?? 0));
+		if (!product_id || !(quantity > 0)) continue;
+		const key = clave_comprometido(scope_id, product_id);
+		comprometido.set(key, round_qty((comprometido.get(key) ?? 0) + quantity));
+	}
+}
+
 export async function faltantes_de_existencia(
 	store: ImperiumStore,
 	articulos_raw: unknown,
-	opts: { modo?: 'pedido' | 'surtido'; almacen?: unknown } = {},
+	opts: {
+		modo?: 'pedido' | 'surtido';
+		almacen?: unknown;
+		comprometido?: Map<string, number>;
+	} = {},
 ): Promise<FaltanteExistencia[]> {
 	if (!store.has('products')) return [];
 	const surtido = opts.modo === 'surtido';
@@ -612,6 +635,7 @@ export async function faltantes_de_existencia(
 	}
 	const faltantes: FaltanteExistencia[] = [];
 	const scope = grouped.size ? await warehouse_scope(store, opts.almacen) : null;
+	const scope_id = scope ? String(scope.almacen._id) : '';
 	for (const [product_id, requerido] of grouped) {
 		const product = await store.find_id('products', product_id);
 		const disponible = !product
@@ -622,12 +646,14 @@ export async function faltantes_de_existencia(
 					Number(product.existencia ?? 0) -
 						(surtido ? 0 : Math.max(Number(product.existenciaApartada ?? 0), 0)),
 				);
-		if (requerido > disponible) {
+		const ya = opts.comprometido?.get(clave_comprometido(scope_id, product_id)) ?? 0;
+		const neto = round_qty(disponible - ya);
+		if (requerido > neto) {
 			faltantes.push({
 				product_id,
 				nombre: String(product?.name ?? product_id),
 				requerido,
-				disponible: Math.max(disponible, 0),
+				disponible: Math.max(neto, 0),
 			});
 		}
 	}

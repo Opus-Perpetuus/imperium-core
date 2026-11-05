@@ -65,6 +65,42 @@ describe('sync offline de pedidos con existencia', () => {
 		expect(store.data.pedidos[0].estado).toBe('confirmado');
 	});
 
+	test('en un mismo lote lo ya confirmado se resta del siguiente', async () => {
+		const store = memory_store([{ _id: PRODUCTO, name: 'Codo', existencia: 10 }]);
+		const res = await pedidos_sync_offline({
+			store,
+			actor: ADMIN,
+			body: {
+				pedidos: [
+					{
+						offline_uuid: 'u-1',
+						folio: 'F-1',
+						estado: 'confirmado',
+						articulos: [{ product: PRODUCTO, cantidad: 6, precio: 1 }],
+					},
+					{
+						offline_uuid: 'u-2',
+						folio: 'F-2',
+						estado: 'confirmado',
+						articulos: [{ product: PRODUCTO, cantidad: 6, precio: 1 }],
+					},
+					{
+						offline_uuid: 'u-3',
+						folio: 'F-3',
+						estado: 'confirmado',
+						articulos: [{ product: PRODUCTO, cantidad: 4, precio: 1 }],
+					},
+				],
+			},
+		} as never);
+		const out = (await res.json()) as {
+			resultados: Array<{ estado?: string; aviso?: string }>;
+		};
+		expect(out.resultados.map((r) => r.estado)).toEqual(['confirmado', 'borrador', 'confirmado']);
+		expect(out.resultados[1].aviso).toContain('Codo (pide 6, hay 4)');
+		expect(store.data.pedidos.map((p) => p.estado)).toEqual(['confirmado', 'borrador', 'confirmado']);
+	});
+
 	test('sin existencia queda en borrador (pendiente) con aviso', async () => {
 		const store = memory_store([
 			{ _id: PRODUCTO, name: 'Codo', existencia: 2 },

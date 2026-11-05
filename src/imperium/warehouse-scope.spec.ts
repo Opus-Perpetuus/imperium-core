@@ -457,6 +457,34 @@ describe('pedidos del vendedor: salen de su almacén', () => {
 		expect(store.data.pedidos.map((p) => p.almacen)).toEqual([ALM_RUTA, ALM_RUTA]);
 	});
 
+	test('sync offline: el lote acumula contra el almacén del vendedor', async () => {
+		const store = store_con([quant(ALM_RUTA, 5), quant(GENERAL, 50)]);
+		const res = await pedidos_sync_offline({
+			store,
+			actor: vendedor,
+			body: {
+				pedidos: [
+					{
+						offline_uuid: 'u-a',
+						folio: 'F-a',
+						estado: 'confirmado',
+						articulos: [{ product: PRODUCTO, cantidad: 3, precio: 1 }],
+					},
+					{
+						offline_uuid: 'u-b',
+						folio: 'F-b',
+						estado: 'confirmado',
+						articulos: [{ product: PRODUCTO, cantidad: 3, precio: 1 }],
+					},
+				],
+			},
+		} as never);
+		const out = (await res.json()) as { resultados: Array<{ estado?: string; aviso?: string }> };
+		expect(out.resultados.map((r) => r.estado)).toEqual(['confirmado', 'borrador']);
+		expect(out.resultados[1].aviso).toContain('Codo (pide 3, hay 2)');
+		expect(out.resultados[1].aviso).not.toContain('50');
+	});
+
 	test('surtir: bloquea con la existencia de su almacén y la salida sale de ahí', async () => {
 		const store = store_con([quant(ALM_RUTA, 3), quant(GENERAL, 50)]);
 		const articulos = [{ product: PRODUCTO, cantidad: 4 }];

@@ -266,6 +266,7 @@ import {
 	is_seed_admin,
 } from './group-access.ts';
 import {
+	acumular_comprometido,
 	allow_negative_stock,
 	aviso_faltantes,
 	emit_pedidos_updated,
@@ -4460,6 +4461,11 @@ export async function pedidos_sync_offline(ctx: Ctx) {
 	}> = [];
 	const avisos: string[] = [];
 	const folios_del_lote = new Set<string>();
+	const negativos = await allow_negative_stock(ctx.store);
+	const almacen_vendedor = await user_warehouse_id(ctx.store, ctx.actor);
+	const scope_vendedor = await warehouse_scope(ctx.store, almacen_vendedor);
+	const scope_id = scope_vendedor ? String(scope_vendedor.almacen._id) : '';
+	const comprometido = new Map<string, number>();
 	for (const raw of incoming) {
 		const pedido = as_object(raw);
 		const offline_uuid = String(pedido.offline_uuid ?? pedido._id ?? '').trim();
@@ -4508,9 +4514,10 @@ export async function pedidos_sync_offline(ctx: Ctx) {
 			// Sin existencia suficiente no se confirma: queda en borrador
 			// (pendiente) y se avisa al capturista.
 			const faltantes =
-				estado === 'confirmado' && !(await allow_negative_stock(ctx.store))
+				estado === 'confirmado' && !negativos
 					? await faltantes_de_existencia(ctx.store, pedido.articulos, {
-							almacen: await user_warehouse_id(ctx.store, ctx.actor),
+							almacen: almacen_vendedor,
+							comprometido,
 						})
 					: [];
 			const aviso = faltantes.length ? aviso_faltantes(folio_cliente, faltantes) : undefined;
@@ -4542,6 +4549,9 @@ export async function pedidos_sync_offline(ctx: Ctx) {
 					is_active: true,
 				});
 				if (folio_cliente) folios_del_lote.add(folio_cliente);
+				if (estado === 'confirmado' && !negativos) {
+					acumular_comprometido(comprometido, scope_id, pedido.articulos);
+				}
 				resultados.push({
 					offline_uuid,
 					_id: String(created._id),
