@@ -415,6 +415,12 @@
   },
   {
     "resource": "inventory-movement",
+    "method": "post",
+    "path": "/manual",
+    "action": "register_manual"
+  },
+  {
+    "resource": "inventory-movement",
     "method": "get",
     "path": "/kardex/:producto_id",
     "action": "read_kardex"

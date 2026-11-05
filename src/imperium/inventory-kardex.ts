@@ -5,8 +5,8 @@
 import type { ImperiumDoc } from './envelope.ts';
 import type { ImperiumStore } from './store.ts';
 
-const ENTRY_TYPES = new Set(['recepcion_compra', 'recepcion_devolucion']);
-const EXIT_TYPES = new Set(['salida_entrega']);
+const ENTRY_TYPES = new Set(['recepcion_compra', 'recepcion_devolucion', 'entrada_manual']);
+const EXIT_TYPES = new Set(['salida_entrega', 'salida_manual']);
 
 export type KardexRange = { desde?: string; hasta?: string };
 

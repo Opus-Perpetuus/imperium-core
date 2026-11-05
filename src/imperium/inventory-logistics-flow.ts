@@ -4,6 +4,7 @@
  * Empaque post-surtido: no-op (el stock ya salió al pasar a «surtido»).
  * Empaque pre-surtido: aparta existencia y la descuenta al confirmar entrega.
  */
+import { allow_negative_stock, mensaje_negativos } from './negative-stock.ts';
 import { as_array, as_object, type ImperiumDoc } from './envelope.ts';
 import { consume_exit_quants } from './inventory-exit.ts';
 import type { ImperiumStore } from './store.ts';
@@ -357,9 +358,15 @@ export async function register_package_delivery_exit(
 		const quantity = grouped_item.quantity;
 		const stock_total_previo = round_qty(Number(product.existencia ?? 0));
 		const stock_apartado_previo = round_qty(Number(product.existenciaApartada ?? 0));
-		if (quantity > stock_total_previo) {
+		if (quantity > stock_total_previo && !(await allow_negative_stock(store))) {
 			throw new Error(
-				`No hay existencia suficiente para entregar ${quantity} de ${product.name}`,
+				mensaje_negativos('entregar', [
+					{
+						nombre: String(product.name ?? product_id),
+						requerido: quantity,
+						disponible: Math.max(stock_total_previo, 0),
+					},
+				]),
 			);
 		}
 		if (quantity > stock_apartado_previo) {

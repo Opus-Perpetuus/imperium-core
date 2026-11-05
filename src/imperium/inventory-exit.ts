@@ -7,6 +7,7 @@ import { apply_quant_delta, find_warehouse_location, type QuantLot } from './del
 import { as_array, as_object, type ImperiumDoc } from './envelope.ts';
 import { compute_picking_route, round_quantity } from './inventory-picking.ts';
 import { kit_components_of } from './pos-product-rules.ts';
+import { allow_negative_stock, assert_salida_sin_negativos } from './negative-stock.ts';
 import type { ImperiumStore } from './store.ts';
 
 /**
@@ -73,7 +74,43 @@ export function exit_lot_trace(touched: Array<QuantLot & { cantidad: number }>):
 	};
 }
 
-/** Venta POS: resta lo vendido de la existencia del producto (nunca por debajo de 0). */
+/** Cantidad que sale por producto en una venta POS (kits → componentes). */
+async function pos_ticket_exits(
+	store: ImperiumStore,
+	ticket: ImperiumDoc,
+): Promise<Map<string, number>> {
+	const out = new Map<string, number>();
+	if (String(ticket.ticket_type ?? 'VENTA').toUpperCase() !== 'VENTA') return out;
+	if (!store.has('products')) return out;
+	const add = (id: string, q: number) => out.set(id, round_quantity((out.get(id) ?? 0) + q));
+	for (const item of as_array(ticket.items).map(as_object)) {
+		const pid = String(item.item_id ?? item.producto ?? item.product_id ?? '');
+		const qty = Number(item.quantity ?? item.cantidad ?? 0);
+		if (!pid || !qty) continue;
+		const product = await store.find_id('products', pid);
+		if (!product) continue;
+		const components = kit_components_of(product);
+		if (components.length) {
+			for (const c of components) add(c.producto, round_quantity(qty * c.cantidad));
+			continue;
+		}
+		add(pid, qty);
+	}
+	return out;
+}
+
+/** Antes de crear una venta POS: bloquea si dejaría existencia negativa (salvo que se permita). */
+export async function assert_pos_ticket_stock(
+	store: ImperiumStore,
+	ticket: ImperiumDoc,
+): Promise<void> {
+	await assert_salida_sin_negativos(store, 'vender', await pos_ticket_exits(store, ticket));
+}
+
+/**
+ * Venta POS: resta lo vendido de la existencia del producto. Sin permiso de
+ * negativos no baja de 0 (la venta ya se bloqueó antes); con permiso, sí.
+ */
 export async function register_pos_ticket_exit(
 	store: ImperiumStore,
 	ticket: ImperiumDoc,
@@ -102,7 +139,9 @@ export async function register_pos_ticket_exit(
 async function exit_product(store: ImperiumStore, ticket: ImperiumDoc, product: ImperiumDoc, qty: number): Promise<void> {
 	const pid = String(product._id ?? '');
 	const previa = Number(product.existencia ?? 0);
-	const next = Math.max(previa - qty, 0);
+	const next = (await allow_negative_stock(store))
+		? round_quantity(previa - qty)
+		: Math.max(previa - qty, 0);
 	await store.update('products', pid, { existencia: next });
 	const touched = await consume_exit_quants(store, product, previa - next);
 	await insert_pos_sale_movement(store, ticket, product, qty, previa, next, exit_lot_trace(touched));

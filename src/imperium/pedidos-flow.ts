@@ -9,6 +9,13 @@ import {
 	assert_state_transition_allowed,
 } from './group-access.ts';
 import { consume_exit_quants } from './inventory-exit.ts';
+import {
+	ALLOW_NEGATIVE_STOCK_REF,
+	allow_negative_stock,
+	mensaje_negativos,
+} from './negative-stock.ts';
+
+export { ALLOW_NEGATIVE_STOCK_REF, allow_negative_stock };
 import { broadcast_event } from './socket-stub.ts';
 import type { ImperiumStore } from './store.ts';
 
@@ -138,6 +145,13 @@ export async function prepare_pedido_update(
 		previous?.estado != null ? String(previous.estado) : undefined,
 		out.estado != null ? String(out.estado) : undefined,
 	);
+	if (
+		previous &&
+		String(previous.estado ?? '') !== 'surtido' &&
+		String(out.estado ?? '') === 'surtido'
+	) {
+		await assert_surtido_sin_negativos(store, out.articulos ?? previous.articulos);
+	}
 	if (previous?.folio_interno != null && previous.folio_interno !== '') {
 		out.folio_interno = previous.folio_interno;
 	}
@@ -548,4 +562,78 @@ export async function pedidos_sales_stats(
 			sales_by_state,
 		},
 	};
+}
+
+export type FaltanteExistencia = {
+	product_id: string;
+	nombre: string;
+	requerido: number;
+	disponible: number;
+};
+
+/**
+ * Renglones de un pedido que no alcanzan con la existencia libre
+ * (`existencia - existenciaApartada`) del producto. Un producto inexistente
+ * cuenta como disponible 0. Se agrupa por producto para no aprobar dos renglones
+ * del mismo artículo que juntos rebasan la existencia.
+ */
+export async function faltantes_de_existencia(
+	store: ImperiumStore,
+	articulos_raw: unknown,
+	opts: { modo?: 'pedido' | 'surtido' } = {},
+): Promise<FaltanteExistencia[]> {
+	if (!store.has('products')) return [];
+	const surtido = opts.modo === 'surtido';
+	const articulos = as_array(articulos_raw).map(as_object);
+	// Al surtir se descuenta lo capturado (`cantidad_surtida`) si hay captura,
+	// igual que `register_order_fulfillment_exit`; y del total, no de lo libre.
+	const hay_captura =
+		surtido && articulos.some((a) => round_qty(Number(a.cantidad_surtida ?? 0)) > 0);
+	const grouped = new Map<string, number>();
+	for (const articulo of articulos) {
+		const product_id = ref_id(articulo.product);
+		const quantity = round_qty(
+			Number(hay_captura ? articulo.cantidad_surtida ?? 0 : articulo.cantidad ?? 0),
+		);
+		if (!product_id || !(quantity > 0)) continue;
+		grouped.set(product_id, round_qty((grouped.get(product_id) ?? 0) + quantity));
+	}
+	const faltantes: FaltanteExistencia[] = [];
+	for (const [product_id, requerido] of grouped) {
+		const product = await store.find_id('products', product_id);
+		const disponible = product
+			? round_qty(
+					Number(product.existencia ?? 0) -
+						(surtido ? 0 : Math.max(Number(product.existenciaApartada ?? 0), 0)),
+				)
+			: 0;
+		if (requerido > disponible) {
+			faltantes.push({
+				product_id,
+				nombre: String(product?.name ?? product_id),
+				requerido,
+				disponible: Math.max(disponible, 0),
+			});
+		}
+	}
+	return faltantes;
+}
+
+export function aviso_faltantes(folio: string, faltantes: FaltanteExistencia[]): string {
+	const detalle = faltantes
+		.map((f) => `${f.nombre} (pide ${f.requerido}, hay ${f.disponible})`)
+		.join(', ');
+	const nombre = folio ? `El pedido ${folio}` : 'El pedido';
+	return `${nombre} quedó pendiente (borrador) por falta de existencia: ${detalle}.`;
+}
+
+/** Bloquea el paso a `surtido` si la salida dejaría existencia negativa. */
+export async function assert_surtido_sin_negativos(
+	store: ImperiumStore,
+	articulos: unknown,
+): Promise<void> {
+	if (await allow_negative_stock(store)) return;
+	const faltantes = await faltantes_de_existencia(store, articulos, { modo: 'surtido' });
+	if (!faltantes.length) return;
+	throw new Error(mensaje_negativos('surtir', faltantes));
 }

@@ -481,7 +481,9 @@
           "salida_entrega",
           "transferencia_interna",
           "ajuste_manual",
-          "recepcion_devolucion"
+          "recepcion_devolucion",
+          "entrada_manual",
+          "salida_manual"
         ],
         "message": "El tipo de movimiento \"{VALUE}\" no existe"
       }

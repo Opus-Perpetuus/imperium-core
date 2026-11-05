@@ -248,6 +248,8 @@ const RAW_DEFAULTS: Record<
 				v('transferencia_interna', 'secondary', 'Transferencia interna'),
 				v('ajuste_manual', 'danger', 'Ajuste manual'),
 				v('recepcion_devolucion', 'info', 'Recepción devolución'),
+				v('entrada_manual', 'success', 'Entrada manual'),
+				v('salida_manual', 'warning', 'Salida manual'),
 			],
 			{ read_only: true },
 		),

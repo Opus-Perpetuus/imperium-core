@@ -2,6 +2,7 @@
  * Acciones custom de Imperium, portadas a documentos SQL.
  * Cada handler replica la transición / efecto del service original.
  */
+import { register_manual_movement } from './inventory-manual-movement.ts';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -264,7 +265,14 @@ import {
 	assert_state_transition_allowed,
 	is_seed_admin,
 } from './group-access.ts';
-import { emit_pedidos_updated, prepare_pedido_create } from './pedidos-flow.ts';
+import {
+	allow_negative_stock,
+	aviso_faltantes,
+	emit_pedidos_updated,
+	faltantes_de_existencia,
+	prepare_pedido_create,
+	type FaltanteExistencia,
+} from './pedidos-flow.ts';
 import { decidir_sync_offline } from './pedidos-sync-offline.ts';
 import {
 	compute_picking_route,
@@ -752,6 +760,8 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return import_location_tree(ctx);
 		case 'inventory-movement:register_transfer':
 			return register_transfer(ctx);
+		case 'inventory-movement:register_manual':
+			return register_manual(ctx);
 		case 'inventory-movement:read_kardex':
 			return ok(
 				[
@@ -3405,6 +3415,25 @@ export async function import_location_tree_from_body(
 	return import_location_tree({ store, body } as Ctx);
 }
 
+async function register_manual(ctx: Ctx) {
+	const doc = await register_manual_movement(ctx.store, {
+		tipo: String(ctx.body.tipo ?? ctx.body.tipo_movimiento ?? ''),
+		producto: String(ctx.body.producto ?? ''),
+		ubicacion: String(ctx.body.ubicacion ?? '') || undefined,
+		cantidad: Number(ctx.body.cantidad ?? 0),
+		motivo: String(ctx.body.motivo ?? ''),
+		costo_unitario: ctx.body.costo_unitario == null ? undefined : Number(ctx.body.costo_unitario),
+	});
+	return {
+		data: [doc],
+		total_elementos: 1,
+		message:
+			doc.tipo_movimiento === 'salida_manual'
+				? 'Salida registrada correctamente'
+				: 'Entrada registrada correctamente',
+	};
+}
+
 async function register_transfer(ctx: Ctx) {
 	await register_internal_transfer(ctx.store, {
 		producto: String(ctx.body.producto ?? ctx.body.product_id ?? ''),
@@ -4403,7 +4432,7 @@ const PEDIDO_ESTADOS = new Set([
  * `POST /pedidos/offline/sincronizar` del backend original: `{ ok, total, resultados }`
  * con dedupe por `offline_uuid` y por el folio local (`folio_offline`).
  */
-async function pedidos_sync_offline(ctx: Ctx) {
+export async function pedidos_sync_offline(ctx: Ctx) {
 	const incoming = as_array(ctx.body.pedidos);
 	const resultados: Array<{
 		offline_uuid: string;
@@ -4412,7 +4441,11 @@ async function pedidos_sync_offline(ctx: Ctx) {
 		status: 'creado' | 'duplicado' | 'error';
 		motivo?: 'uuid' | 'folio';
 		error?: string;
+		estado?: string;
+		aviso?: string;
+		faltantes?: FaltanteExistencia[];
 	}> = [];
+	const avisos: string[] = [];
 	const folios_del_lote = new Set<string>();
 	for (const raw of incoming) {
 		const pedido = as_object(raw);
@@ -4456,9 +4489,17 @@ async function pedidos_sync_offline(ctx: Ctx) {
 				if (folio_cliente) folios_del_lote.add(folio_cliente);
 				continue;
 			}
-			const estado = PEDIDO_ESTADOS.has(String(pedido.estado))
+			let estado = PEDIDO_ESTADOS.has(String(pedido.estado))
 				? String(pedido.estado)
 				: 'confirmado';
+			// Sin existencia suficiente no se confirma: queda en borrador
+			// (pendiente) y se avisa al capturista.
+			const faltantes =
+				estado === 'confirmado' && !(await allow_negative_stock(ctx.store))
+					? await faltantes_de_existencia(ctx.store, pedido.articulos)
+					: [];
+			const aviso = faltantes.length ? aviso_faltantes(folio_cliente, faltantes) : undefined;
+			if (faltantes.length) estado = 'borrador';
 			const prepared = await prepare_pedido_create(
 				ctx.store,
 				{
@@ -4491,7 +4532,10 @@ async function pedidos_sync_offline(ctx: Ctx) {
 					_id: String(created._id),
 					folio_interno: created.folio_interno,
 					status: 'creado',
+					estado,
+					...(aviso ? { aviso, faltantes } : {}),
 				});
+				if (aviso) avisos.push(aviso);
 			} catch (insert_error) {
 				if (!is_unique_violation(insert_error)) throw insert_error;
 				if (folio_cliente) folios_del_lote.add(folio_cliente);
@@ -4515,7 +4559,12 @@ async function pedidos_sync_offline(ctx: Ctx) {
 	if (resultados.some((item) => item.status === 'creado')) {
 		emit_pedidos_updated();
 	}
-	return Response.json({ ok: true, total: resultados.length, resultados });
+	return Response.json({
+		ok: true,
+		total: resultados.length,
+		resultados,
+		...(avisos.length ? { avisos } : {}),
+	});
 }
 
 /**

@@ -9,6 +9,15 @@
 		"value": "inventory-internal-location-receptions"
 	},
 	{
+		"_ref": "configuration-inventory-allow-negative-stock",
+		"name": "Inventario · Permitir existencia negativa",
+		"description": "Si está en NO (por defecto), ninguna salida de inventario puede dejar existencia negativa: se bloquean surtir pedidos, ventas de caja, entregas de bultos y cancelar devoluciones de caja; los pedidos offline sin existencia quedan en borrador con aviso. Si está en SÍ, esas salidas se permiten aunque la existencia quede negativa y los pedidos offline se confirman como antes.",
+		"is_system": true,
+		"module_id": "NA",
+		"type": "switch",
+		"value": false
+	},
+	{
 		"_ref": "configuration-inventory-transito-entrada-location",
 		"name": "Inventario · Ubicación de tránsito de entrada",
 		"description": "Ubicación informativa que etiqueta la mercancía en camino (comprada, aún no recibida).",

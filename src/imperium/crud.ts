@@ -63,7 +63,7 @@ import {
 	decorate_inventory_reception_list,
 	ensure_pending_reception_from_purchase_order,
 } from './inventory-reception-flow.ts';
-import { register_pos_ticket_exit } from './inventory-exit.ts';
+import { assert_pos_ticket_stock, register_pos_ticket_exit } from './inventory-exit.ts';
 import { register_layaway_effects, release_layaway_on_cancel } from './pos-layaway.ts';
 import { register_quote_conversion } from './pos-quote.ts';
 import {
@@ -328,7 +328,7 @@ const INVENTORY_LEDGER_WRITE_ERRORS: Record<
 	{ create: string; update: string; delete: string; batch: string }
 > = {
 	'inventory-movement': {
-		create: 'Los movimientos de inventario se generan automáticamente desde compras y logística',
+		create: 'Los movimientos de inventario se generan automáticamente. Para una entrada o salida manual usa «Entrada / salida» en Movimientos',
 		update: 'Los movimientos de inventario no se pueden editar manualmente',
 		delete: 'Los movimientos de inventario no se pueden eliminar manualmente',
 		batch: 'Los movimientos de inventario no soportan operaciones batch',
@@ -1984,6 +1984,7 @@ async function before_create(
 	actor: ImperiumDoc | null,
 ): Promise<ImperiumDoc> {
 	const incoming = { ...doc };
+	if (resource === 'pos-tickets') await assert_pos_ticket_stock(store, incoming);
 	if (actor?._id && incoming.created_by === undefined) {
 		incoming.created_by = String(actor._id);
 	}

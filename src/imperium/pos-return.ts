@@ -16,6 +16,7 @@
  * - Dos devoluciones simultáneas de la misma venta: la posterior que exceda lo
  *   vendido se cancela sola (`assert_return_within_sale`).
  */
+import { allow_negative_stock, assert_salida_sin_negativos } from './negative-stock.ts';
 import { apply_quant_delta, find_warehouse_location } from './delivery-return-flow.ts';
 import { as_array, as_object, type ImperiumDoc } from './envelope.ts';
 import { round_quantity } from './inventory-picking.ts';
@@ -392,13 +393,16 @@ export async function revert_pos_return_entry(store: ImperiumStore, ticket: Impe
 		const q = Math.max(delta_of(m), 0);
 		if (pid && q > 0) by_product.set(pid, round_quantity((by_product.get(pid) ?? 0) + q));
 	}
+	// Revertir el reingreso es una salida: misma regla de negativos.
+	await assert_salida_sin_negativos(store, 'cancelar la devolución', by_product);
+	const negativos = await allow_negative_stock(store);
 	const warehouse = by_product.size ? await find_warehouse_location(store) : null;
 	let count = 0;
 	for (const [producto, amount] of by_product) {
 		const product = await store.find_id('products', producto);
 		if (!product) continue;
 		const previa = round_quantity(Number(product.existencia ?? 0));
-		const next = round_quantity(Math.max(previa - amount, 0));
+		const next = round_quantity(negativos ? previa - amount : Math.max(previa - amount, 0));
 		await store.update('products', producto, { existencia: next });
 		if (warehouse?._id && previa - next > 0) {
 			await apply_quant_delta(store, {
