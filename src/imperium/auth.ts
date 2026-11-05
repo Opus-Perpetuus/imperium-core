@@ -1708,6 +1708,15 @@ export function reshape_subject_menus(
 			menus.find((m) => !m.parent_id && String(m.name) === sub.name);
 		if (root) disabled_ids.add(String(root._id));
 	}
+	// Un path que también declara una app instalada no se oculta: logística
+	// sin instalar comparte `/pedidos` con Ventas y Almacén.
+	for (const sub of store.subjects) {
+		if (disabled_subjects.has(sub.slug)) continue;
+		if (sub.path) disabled_paths.delete(norm(sub.path));
+		for (const mod of sub.modules) {
+			if (mod.path) disabled_paths.delete(norm(mod.path));
+		}
+	}
 	let grew = true;
 	while (grew) {
 		grew = false;
