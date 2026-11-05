@@ -3,11 +3,13 @@ import type { ImperiumDoc } from './envelope.ts';
 import type { ImperiumStore } from './store.ts';
 import { pedidos_sync_offline, read_offline_stock } from './actions.ts';
 import { assert_pos_ticket_stock, register_pos_ticket_exit } from './inventory-exit.ts';
+import { register_package_delivery_exit } from './inventory-logistics-flow.ts';
 import { register_internal_transfer } from './inventory-reception-flow.ts';
 import { ALLOW_NEGATIVE_STOCK_REF } from './negative-stock.ts';
 import {
 	assert_surtido_sin_negativos,
 	prepare_pedido_create,
+	prepare_pedido_update,
 	register_order_fulfillment_exit,
 } from './pedidos-flow.ts';
 import { cancel_layaway, prepare_layaway_rules, register_layaway_effects } from './pos-layaway.ts';
@@ -27,6 +29,8 @@ const SESION_NORTE = '507f1f77bcf86cd799439042';
 const VENDEDOR = '507f1f77bcf86cd799439051';
 const CAJERO = '507f1f77bcf86cd799439052';
 const PEDIDO = '507f1f77bcf86cd799439061';
+const BULTO = '507f1f77bcf86cd799439071';
+const ADMIN = { _id: 'admin', _ref: 'user-menu-management-0', name: 'admin' } as ImperiumDoc;
 
 type Row = ImperiumDoc;
 
@@ -510,6 +514,143 @@ describe('pedidos del vendedor: salen de su almacén', () => {
 	test('con existencia negativa permitida el surtido no se bloquea', async () => {
 		const store = store_con([quant(ALM_RUTA, 1)], { negativos: true });
 		await assert_surtido_sin_negativos(store, [{ product: PRODUCTO, cantidad: 4 }], ALM_RUTA);
+	});
+
+	test('un pedido viejo sin almacén se surte del almacén actual del vendedor', async () => {
+		const store = store_con([quant(ALM_RUTA, 3), quant(GENERAL, 50)]);
+		const mucho = [{ product: PRODUCTO, cantidad: 4 }];
+		await expect(
+			prepare_pedido_update(
+				store,
+				{ estado: 'surtido', articulos: mucho },
+				ADMIN,
+				{ _id: PEDIDO, estado: 'surtiendo', articulos: mucho, usuario: VENDEDOR },
+			),
+		).rejects.toThrow(/hay 3/);
+		const articulos = [{ product: PRODUCTO, cantidad: 2 }];
+		const out = await prepare_pedido_update(
+			store,
+			{ estado: 'surtido', articulos },
+			ADMIN,
+			{ _id: PEDIDO, estado: 'surtiendo', articulos, usuario: VENDEDOR },
+		);
+		expect(out.almacen).toBe(ALM_RUTA);
+		await register_order_fulfillment_exit(store, { ...out, _id: PEDIDO, articulos, usuario: VENDEDOR });
+		expect(cantidades(store)).toEqual({ RUT: 1, GEN: 50 });
+		expect(store.data['inventory-movement'][0].ubicacion_origen).toBe(ALM_RUTA);
+	});
+
+	test('un pedido viejo sigue global si el vendedor no tiene almacén', async () => {
+		const store = store_con([quant(ALM_RUTA, 3), quant(GENERAL, 50)]);
+		const articulos = [{ product: PRODUCTO, cantidad: 4 }];
+		const out = await prepare_pedido_update(
+			store,
+			{ estado: 'surtido', articulos },
+			ADMIN,
+			{ _id: PEDIDO, estado: 'surtiendo', articulos, usuario: CAJERO },
+		);
+		expect(out.almacen).toBeUndefined();
+		await register_order_fulfillment_exit(store, { ...out, _id: PEDIDO, articulos, usuario: CAJERO });
+		expect(store.data['inventory-movement'][0].ubicacion_origen).toBe(GENERAL);
+		expect((await store.find_id('products', PRODUCTO))?.existencia).toBe(49);
+	});
+
+	test('entregar un bulto de un pedido viejo sin almacén sale del almacén del vendedor', async () => {
+		const store = store_con([quant(ALM_RUTA, 3), quant(GENERAL, 50)]);
+		store.data.products[0].existenciaApartada = 4;
+		store.data.pedidos.push({
+			_id: PEDIDO,
+			estado: 'confirmado',
+			usuario: VENDEDOR,
+		});
+		await register_package_delivery_exit(
+			store,
+			{
+				_id: BULTO,
+				name: 'BULTO-1',
+				pedido: PEDIDO,
+				contenido: [{ product: PRODUCTO, quantity: 4 }],
+			},
+			'evento-1',
+			'2026-11-05T12:00:00.000Z',
+		);
+		expect(cantidades(store)).toEqual({ RUT: -1, GEN: 50 });
+	});
+});
+
+describe('apartados POS anteriores a 13.119', () => {
+	const APARTADO = '507f1f77bcf86cd799439081';
+
+	function apartado_viejo(store: ReturnType<typeof store_con>, created_by: string) {
+		store.data.products[0].existenciaApartada = 2;
+		const ruta = store.data['inventory-stock-quant'].find((row) => row.ubicacion === ALM_RUTA);
+		if (ruta) {
+			ruta.cantidad_apartada = 2;
+			ruta.cantidad_disponible = 1;
+		}
+		store.data['pos-tickets'] = [
+			{
+				_id: APARTADO,
+				ticket_type: 'APARTADO',
+				ticket_sequence: 'VIEJO-1',
+				layaway_status: 'abierto',
+				created_by,
+				client_id: 'cli-1',
+				subtotal: 10,
+				total_paid: 1,
+				items: [{ item_id: PRODUCTO, quantity: 2 }],
+				is_active: true,
+			},
+		];
+		store.data['inventory-movement'].push({
+			documento_id: APARTADO,
+			documento_tipo: 'pos-ticket',
+			tipo_movimiento: 'apartado_logistica',
+			producto: PRODUCTO,
+			cantidad: 2,
+			dedupe_key: `pos-layaway:${APARTADO}:reserve:${PRODUCTO}`,
+		});
+	}
+
+	test('cancelar suelta lo apartado en el almacén del vendedor aunque el movimiento no traiga @ubicacion', async () => {
+		const store = store_con([quant(ALM_RUTA, 3), quant(GENERAL, 50)]);
+		apartado_viejo(store, VENDEDOR);
+		await cancel_layaway(store, APARTADO);
+		const ruta = store.data['inventory-stock-quant'].find((row) => row.ubicacion === ALM_RUTA);
+		const general = store.data['inventory-stock-quant'].find((row) => row.ubicacion === GENERAL);
+		expect(ruta?.cantidad_apartada).toBe(0);
+		expect(ruta?.cantidad).toBe(3);
+		expect(general?.cantidad_apartada ?? 0).toBe(0);
+		expect(general?.cantidad).toBe(50);
+		expect((await store.find_id('products', PRODUCTO))?.existenciaApartada).toBe(0);
+	});
+
+	test('liquidar descuenta el almacén del vendedor y suelta su apartado', async () => {
+		const store = store_con([quant(ALM_RUTA, 3), quant(GENERAL, 50)]);
+		apartado_viejo(store, VENDEDOR);
+		const abono = await store.insert('pos-tickets', {
+			_id: '507f1f77bcf86cd799439082',
+			ticket_type: 'ABONO_APARTADO',
+			original_ticket: APARTADO,
+			subtotal: 9,
+			created_by: CAJERO,
+		});
+		await register_layaway_effects(store, abono);
+		expect(cantidades(store)).toEqual({ RUT: 1, GEN: 50 });
+		const ruta = store.data['inventory-stock-quant'].find((row) => row.ubicacion === ALM_RUTA);
+		expect(ruta?.cantidad_apartada).toBe(0);
+		expect((await store.find_id('products', PRODUCTO))?.existencia).toBe(51);
+		expect((await store.find_id('products', PRODUCTO))?.existenciaApartada).toBe(0);
+	});
+
+	test('sin almacén de vendedor ni de sucursal, cancelar no reescribe ubicaciones', async () => {
+		const store = store_con([quant(ALM_RUTA, 3), quant(GENERAL, 50)]);
+		apartado_viejo(store, CAJERO);
+		await cancel_layaway(store, APARTADO);
+		const ruta = store.data['inventory-stock-quant'].find((row) => row.ubicacion === ALM_RUTA);
+		expect(ruta?.cantidad_apartada).toBe(2);
+		expect(ruta?.cantidad).toBe(3);
+		expect((await store.find_id('products', PRODUCTO))?.existenciaApartada).toBe(0);
 	});
 });
 

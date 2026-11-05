@@ -8,7 +8,13 @@ import { allow_negative_stock, mensaje_negativos } from './negative-stock.ts';
 import { as_array, as_object, type ImperiumDoc } from './envelope.ts';
 import { product_has_quants } from './delivery-return-flow.ts';
 import { consume_exit_quants } from './inventory-exit.ts';
-import { is_general_warehouse, scope_stock, warehouse_scope, type WarehouseScope } from './warehouse-scope.ts';
+import {
+	is_general_warehouse,
+	pedido_warehouse_id,
+	scope_stock,
+	warehouse_scope,
+	type WarehouseScope,
+} from './warehouse-scope.ts';
 import type { ImperiumStore } from './store.ts';
 
 const WAREHOUSE_REF = 'inventory-internal-location-warehouse';
@@ -354,7 +360,7 @@ export async function register_package_delivery_exit(
 		const pedido = await store.find_id('pedidos', pedido_id);
 		const estado = text(pedido?.estado);
 		if (estado === 'surtido' || estado === 'enviado') return;
-		almacen_pedido = pedido?.almacen;
+		if (pedido) almacen_pedido = await pedido_warehouse_id(store, pedido);
 	}
 	if (!store.has('products')) return;
 	const scope = await warehouse_scope(store, almacen_pedido);

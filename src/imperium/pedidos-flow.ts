@@ -9,7 +9,7 @@ import {
 	assert_state_transition_allowed,
 } from './group-access.ts';
 import { consume_exit_quants } from './inventory-exit.ts';
-import { scope_stock, user_warehouse_id, warehouse_scope } from './warehouse-scope.ts';
+import { pedido_warehouse_id, scope_stock, user_warehouse_id, warehouse_scope } from './warehouse-scope.ts';
 import {
 	ALLOW_NEGATIVE_STOCK_REF,
 	allow_negative_stock,
@@ -155,10 +155,15 @@ export async function prepare_pedido_update(
 		String(previous.estado ?? '') !== 'surtido' &&
 		String(out.estado ?? '') === 'surtido'
 	) {
+		const almacen = await pedido_warehouse_id(store, {
+			almacen: out.almacen ?? previous.almacen,
+			usuario: out.usuario ?? previous.usuario,
+		});
+		if (almacen && !ref_id(out.almacen ?? previous.almacen)) out.almacen = almacen;
 		await assert_surtido_sin_negativos(
 			store,
 			out.articulos ?? previous.articulos,
-			out.almacen ?? previous.almacen,
+			almacen || undefined,
 		);
 	}
 	if (previous?.folio_interno != null && previous.folio_interno !== '') {
@@ -210,7 +215,7 @@ export async function register_order_fulfillment_exit(
 		}
 	}
 	if (!grouped.size) return;
-	const scope = await warehouse_scope(store, pedido.almacen);
+	const scope = await warehouse_scope(store, await pedido_warehouse_id(store, pedido));
 	const warehouse = scope?.almacen ?? (await location_by_ref(store, WAREHOUSE_REF));
 	const customer = await location_by_ref(store, CUSTOMER_REF);
 	const folio_referencia = String(pedido.folio_interno ?? pedido.folio ?? '');
@@ -268,8 +273,12 @@ export async function after_pedido_mutate(
 		String(current.estado ?? '') === 'surtido'
 	) {
 		const articulos = current.articulos ?? previous.articulos;
-		const almacen = current.almacen ?? previous.almacen;
-		await register_order_fulfillment_exit(store, { ...current, articulos, almacen });
+		await register_order_fulfillment_exit(store, {
+			...current,
+			articulos,
+			almacen: current.almacen ?? previous.almacen,
+			usuario: current.usuario ?? previous.usuario,
+		});
 	}
 	emit_pedidos_updated();
 }

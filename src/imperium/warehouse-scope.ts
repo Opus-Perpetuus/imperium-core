@@ -84,6 +84,16 @@ export async function branch_warehouse_id(store: ImperiumStore, branch_id: unkno
 	return almacenes[0]?._id ? String(almacenes[0]._id) : '';
 }
 
+/** Almacén guardado en el pedido, o el del vendedor si el documento no trae uno. */
+export async function pedido_warehouse_id(
+	store: ImperiumStore,
+	pedido: { almacen?: unknown; usuario?: unknown } | null | undefined,
+): Promise<string> {
+	const stored = ref_id(pedido?.almacen);
+	if (stored) return stored;
+	return user_warehouse_id(store, pedido?.usuario);
+}
+
 /** Almacén asignado al usuario (vendedor). */
 export async function user_warehouse_id(store: ImperiumStore, user: unknown): Promise<string> {
 	if (user && typeof user === 'object' && 'almacen' in (user as object)) {

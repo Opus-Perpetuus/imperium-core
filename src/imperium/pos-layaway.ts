@@ -319,16 +319,18 @@ async function reserve_on_quants(
 	return out;
 }
 
-/** Suelta lo apartado en las ubicaciones que marcó el propio apartado. */
+/** Suelta lo apartado en las ubicaciones del movimiento; si no las trae, en el almacén resuelto. */
 async function release_on_quants(
 	store: ImperiumStore,
 	layaway: ImperiumDoc,
 	product_id: string,
+	scope: WarehouseScope | null,
 ): Promise<LugarApartado[]> {
 	if (!store.has('inventory-movement') || !store.has('inventory-stock-quant')) return [];
 	const product = await store.find_id('products', product_id);
 	if (!product) return [];
 	const nets = new Map<string, number>();
+	let sin_ubicacion = 0;
 	for await (const page of store.scan('inventory-movement', {
 		where: { documento_id: String(layaway._id ?? ''), documento_tipo: 'pos-ticket' },
 	})) {
@@ -336,13 +338,30 @@ async function release_on_quants(
 			if (text(movement.producto ?? movement.producto_id) !== product_id) continue;
 			const tipo = text(movement.tipo_movimiento);
 			if (tipo !== 'apartado_logistica' && tipo !== 'liberacion_logistica') continue;
+			const qty = Number(movement.cantidad ?? 0) * (tipo === 'apartado_logistica' ? 1 : -1);
 			const key = text(movement.dedupe_key);
 			const at = key.lastIndexOf('@');
-			if (at < 0) continue;
+			if (at < 0) {
+				sin_ubicacion = round_quantity(sin_ubicacion + qty);
+				continue;
+			}
 			const loc = key.slice(at + 1);
 			if (!loc) continue;
-			const qty = Number(movement.cantidad ?? 0) * (tipo === 'apartado_logistica' ? 1 : -1);
 			nets.set(loc, round_quantity((nets.get(loc) ?? 0) + qty));
+		}
+	}
+	if (!nets.size && sin_ubicacion > 0 && scope) {
+		let restante = sin_ubicacion;
+		for (const loc of scope.ids) {
+			if (restante <= 0) break;
+			const rows = await quants_en(store, product_id, loc);
+			const tiene = round_quantity(
+				rows.reduce((sum, row) => sum + Math.max(Number(row.cantidad_apartada ?? 0), 0), 0),
+			);
+			const soltar = round_quantity(Math.min(tiene, restante));
+			if (soltar <= 0) continue;
+			nets.set(loc, soltar);
+			restante = round_quantity(restante - soltar);
 		}
 	}
 	const out: LugarApartado[] = [];
@@ -403,7 +422,9 @@ async function move_reserved(
 		const resultante = round_quantity(Math.max(previo + sign * qty, 0));
 		await store.update('products', id, { existenciaApartada: resultante });
 		const lugares =
-			sign > 0 ? await reserve_on_quants(store, product, qty, scope) : await release_on_quants(store, layaway, id);
+			sign > 0
+				? await reserve_on_quants(store, product, qty, scope)
+				: await release_on_quants(store, layaway, id, scope);
 		if (!store.has('inventory-movement')) continue;
 		const total = round_quantity(Number(product.existencia ?? 0));
 		const partes: LugarApartado[] = lugares.length
