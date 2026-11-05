@@ -35,7 +35,7 @@ export const APP_CREATE_FORMS: Record<string, Record<string, unknown>> = {
 	"control-hospitalario": {
 		_id: "nota-14",
 		paciente_id: "507f1f77bcf86cd799439021",
-		numero_expediente: "EXP-2026-014",
+		numero_expediente: "CON-2026-014",
 		nombre_paciente: "Ana López",
 		fecha_consulta: "2026-10-09",
 		hora_consulta: "09:30",

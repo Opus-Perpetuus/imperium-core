@@ -928,6 +928,13 @@ const SCHEMA_INCREMENTS = [
 		index_name: 'servicios_realizados_name',
 		custom_pattern: 'SRV-[seq;ceros=6]',
 	},
+	{
+		model_name: 'Patient',
+		// Folio de consultante (persona), no del expediente clínico.
+		increment_field: 'numero_expediente',
+		index_name: 'patient_numero_expediente',
+		custom_pattern: 'CON-[seq;ceros=6]',
+	},
 ];
 
 /**
@@ -942,13 +949,26 @@ async function ensure_schema_increments(
 ): Promise<void> {
 	for (const declared of SCHEMA_INCREMENTS) {
 		if (store.resource_for_model(declared.model_name) !== resource) continue;
-		const exists = rows.some(
+		const existing = rows.find(
 			(row) =>
 				String(row.model_name ?? '') === declared.model_name &&
 				field_matches(row, declared.increment_field) &&
 				is_global_ref(row.ref_value),
 		);
-		if (exists) continue;
+		if (existing) {
+			// Alinea el patrón declarado (p. ej. Patient EXP→CON) sin resetear la secuencia.
+			if (
+				String(existing.custom_pattern ?? '') !== declared.custom_pattern &&
+				typeof store.update === 'function' &&
+				existing._id
+			) {
+				const updated = await store.update('auto-increment-control', String(existing._id), {
+					custom_pattern: declared.custom_pattern,
+				});
+				Object.assign(existing, updated ?? { custom_pattern: declared.custom_pattern });
+			}
+			continue;
+		}
 		const control = { ...declared, collection: resource, type: 'custom' };
 		const unique = tracker_unique_ref(control, null);
 		try {
