@@ -273,6 +273,11 @@ import {
 	prepare_pedido_create,
 	type FaltanteExistencia,
 } from './pedidos-flow.ts';
+import {
+	scope_stock_snapshot,
+	user_warehouse_id,
+	warehouse_scope,
+} from './warehouse-scope.ts';
 import { decidir_sync_offline } from './pedidos-sync-offline.ts';
 import {
 	compute_picking_route,
@@ -939,6 +944,8 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return asignar_empleado(ctx);
 		case 'pedidos:sync_offline':
 			return pedidos_sync_offline(ctx);
+		case 'pedidos:read_offline_stock':
+			return read_offline_stock(ctx);
 		case 'lista-de-precios:sync_offline':
 			return lista_de_precios_sync_offline(ctx);
 		case 'sku:sync_offline':
@@ -3441,6 +3448,7 @@ async function register_transfer(ctx: Ctx) {
 		ubicacion_destino: String(ctx.body.ubicacion_destino ?? ctx.body.destino ?? ''),
 		cantidad: Number(ctx.body.cantidad ?? 0),
 		lote: String(ctx.body.lote ?? '') || undefined,
+		desde_almacen: ctx.body.desde_almacen === true || ctx.body.desde_almacen === 'true',
 	});
 	return {
 		data: null,
@@ -3821,7 +3829,12 @@ async function picking_route(ctx: Ctx) {
 	if (!(cantidad > 0)) {
 		throw new Error('Debes indicar una cantidad mayor a cero');
 	}
-	const ruta = await compute_picking_route(ctx.store, producto, cantidad);
+	const almacen = String(ctx.url.searchParams.get('almacen') ?? ctx.body.almacen ?? '').trim();
+	const scope = almacen ? await warehouse_scope(ctx.store, almacen) : null;
+	if (almacen && !scope) throw new Error('No se encontró el almacén indicado');
+	const ruta = await compute_picking_route(ctx.store, producto, cantidad, {
+		ubicaciones: scope?.ids,
+	});
 	return ok([ruta], 'Ruta de surtimiento calculada');
 }
 
@@ -4496,7 +4509,9 @@ export async function pedidos_sync_offline(ctx: Ctx) {
 			// (pendiente) y se avisa al capturista.
 			const faltantes =
 				estado === 'confirmado' && !(await allow_negative_stock(ctx.store))
-					? await faltantes_de_existencia(ctx.store, pedido.articulos)
+					? await faltantes_de_existencia(ctx.store, pedido.articulos, {
+							almacen: await user_warehouse_id(ctx.store, ctx.actor),
+						})
 					: [];
 			const aviso = faltantes.length ? aviso_faltantes(folio_cliente, faltantes) : undefined;
 			if (faltantes.length) estado = 'borrador';
@@ -4606,6 +4621,25 @@ const SKU_OFFLINE_OMIT = new Set([
  * `GET|USE /sku/offline/sincronizar` del original: `{ skus }` sin
  * producción, almacenes, lotes ni proveedores.
  */
+/**
+ * Existencia libre del almacén del vendedor para vender offline. Sin almacén
+ * asignado `existencias` es null y el modo offline usa la existencia global.
+ */
+export async function read_offline_stock(ctx: Ctx) {
+	const permitir_negativos = await allow_negative_stock(ctx.store);
+	const scope = await warehouse_scope(ctx.store, await user_warehouse_id(ctx.store, ctx.actor));
+	if (!scope) return Response.json({ almacen: null, permitir_negativos, existencias: null });
+	return Response.json({
+		almacen: {
+			_id: String(scope.almacen._id),
+			name: scope.almacen.name ?? '',
+			codigo: scope.almacen.codigo ?? '',
+		},
+		permitir_negativos,
+		existencias: await scope_stock_snapshot(ctx.store, scope),
+	});
+}
+
 async function sku_sync_offline(ctx: Ctx) {
 	if (!ctx.store.has('sku')) return Response.json({ skus: [] });
 	const rows = await collect_scan(ctx.store, 'sku', {

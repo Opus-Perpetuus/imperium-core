@@ -1150,6 +1150,7 @@ const SESSION_SCOPED_EXTRAS = new Set([
 	'delivery-package:apply_logistics_event',
 	'delivery-package:cancel_package',
 	'pedidos:sync_offline',
+	'pedidos:read_offline_stock',
 	'pedidos:reclamar_surtir',
 	'pedidos:asignar_empleado',
 	'physical-device:report',

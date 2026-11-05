@@ -9,6 +9,7 @@ import {
 	assert_state_transition_allowed,
 } from './group-access.ts';
 import { consume_exit_quants } from './inventory-exit.ts';
+import { scope_stock, user_warehouse_id, warehouse_scope } from './warehouse-scope.ts';
 import {
 	ALLOW_NEGATIVE_STOCK_REF,
 	allow_negative_stock,
@@ -115,6 +116,10 @@ export async function prepare_pedido_create(
 	await recompute_totals(store, out);
 	await assert_pedido_create_estado(store, actor, out.estado ? String(out.estado) : undefined);
 	out.usuario = actor?._id ? String(actor._id) : out.usuario;
+	if (!ref_id(out.almacen) && actor?._id) {
+		const almacen = await user_warehouse_id(store, actor);
+		if (almacen) out.almacen = almacen;
+	}
 	out.folio = build_folio(actor);
 	out.folio_interno = await store.next_auto_increment('Pedidos', 'folio_interno', {
 		resource: 'pedidos',
@@ -150,7 +155,11 @@ export async function prepare_pedido_update(
 		String(previous.estado ?? '') !== 'surtido' &&
 		String(out.estado ?? '') === 'surtido'
 	) {
-		await assert_surtido_sin_negativos(store, out.articulos ?? previous.articulos);
+		await assert_surtido_sin_negativos(
+			store,
+			out.articulos ?? previous.articulos,
+			out.almacen ?? previous.almacen,
+		);
 	}
 	if (previous?.folio_interno != null && previous.folio_interno !== '') {
 		out.folio_interno = previous.folio_interno;
@@ -201,7 +210,8 @@ export async function register_order_fulfillment_exit(
 		}
 	}
 	if (!grouped.size) return;
-	const warehouse = await location_by_ref(store, WAREHOUSE_REF);
+	const scope = await warehouse_scope(store, pedido.almacen);
+	const warehouse = scope?.almacen ?? (await location_by_ref(store, WAREHOUSE_REF));
 	const customer = await location_by_ref(store, CUSTOMER_REF);
 	const folio_referencia = String(pedido.folio_interno ?? pedido.folio ?? '');
 	const documento_nombre = pedido.folio ? `PEDIDO-${pedido.folio}` : '';
@@ -212,7 +222,7 @@ export async function register_order_fulfillment_exit(
 		const stock_apartado_previo = round_qty(Number(product.existenciaApartada ?? 0));
 		const stock_total_resultante = round_qty(stock_total_previo - quantity);
 		await store.update('products', product_id, { existencia: stock_total_resultante });
-		await consume_exit_quants(store, product, quantity);
+		await consume_exit_quants(store, product, quantity, scope);
 		if (!store.has('inventory-movement')) continue;
 		await store.insert('inventory-movement', {
 			name: `Salida ${product.name ?? product_id}`,
@@ -258,7 +268,8 @@ export async function after_pedido_mutate(
 		String(current.estado ?? '') === 'surtido'
 	) {
 		const articulos = current.articulos ?? previous.articulos;
-		await register_order_fulfillment_exit(store, { ...current, articulos });
+		const almacen = current.almacen ?? previous.almacen;
+		await register_order_fulfillment_exit(store, { ...current, articulos, almacen });
 	}
 	emit_pedidos_updated();
 }
@@ -575,12 +586,13 @@ export type FaltanteExistencia = {
  * Renglones de un pedido que no alcanzan con la existencia libre
  * (`existencia - existenciaApartada`) del producto. Un producto inexistente
  * cuenta como disponible 0. Se agrupa por producto para no aprobar dos renglones
- * del mismo artículo que juntos rebasan la existencia.
+ * del mismo artículo que juntos rebasan la existencia. Con `almacen` cuenta
+ * solo la existencia de ese almacén (el del vendedor).
  */
 export async function faltantes_de_existencia(
 	store: ImperiumStore,
 	articulos_raw: unknown,
-	opts: { modo?: 'pedido' | 'surtido' } = {},
+	opts: { modo?: 'pedido' | 'surtido'; almacen?: unknown } = {},
 ): Promise<FaltanteExistencia[]> {
 	if (!store.has('products')) return [];
 	const surtido = opts.modo === 'surtido';
@@ -599,14 +611,17 @@ export async function faltantes_de_existencia(
 		grouped.set(product_id, round_qty((grouped.get(product_id) ?? 0) + quantity));
 	}
 	const faltantes: FaltanteExistencia[] = [];
+	const scope = grouped.size ? await warehouse_scope(store, opts.almacen) : null;
 	for (const [product_id, requerido] of grouped) {
 		const product = await store.find_id('products', product_id);
-		const disponible = product
-			? round_qty(
+		const disponible = !product
+			? 0
+			: scope
+				? await scope_stock(store, product, scope, { libre: !surtido })
+				: round_qty(
 					Number(product.existencia ?? 0) -
 						(surtido ? 0 : Math.max(Number(product.existenciaApartada ?? 0), 0)),
-				)
-			: 0;
+				);
 		if (requerido > disponible) {
 			faltantes.push({
 				product_id,
@@ -631,9 +646,10 @@ export function aviso_faltantes(folio: string, faltantes: FaltanteExistencia[]):
 export async function assert_surtido_sin_negativos(
 	store: ImperiumStore,
 	articulos: unknown,
+	almacen?: unknown,
 ): Promise<void> {
 	if (await allow_negative_stock(store)) return;
-	const faltantes = await faltantes_de_existencia(store, articulos, { modo: 'surtido' });
+	const faltantes = await faltantes_de_existencia(store, articulos, { modo: 'surtido', almacen });
 	if (!faltantes.length) return;
 	throw new Error(mensaje_negativos('surtir', faltantes));
 }

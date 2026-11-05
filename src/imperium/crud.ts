@@ -1984,10 +1984,10 @@ async function before_create(
 	actor: ImperiumDoc | null,
 ): Promise<ImperiumDoc> {
 	const incoming = { ...doc };
-	if (resource === 'pos-tickets') await assert_pos_ticket_stock(store, incoming);
 	if (actor?._id && incoming.created_by === undefined) {
 		incoming.created_by = String(actor._id);
 	}
+	if (resource === 'pos-tickets') await assert_pos_ticket_stock(store, incoming);
 	return assign_document_increments(store, resource, incoming);
 }
 

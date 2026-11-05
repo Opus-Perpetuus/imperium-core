@@ -5,6 +5,7 @@
  */
 import { coerce_flag, read_config_value } from './subject-versions.ts';
 import type { ImperiumStore } from './store.ts';
+import { scope_stock, type WarehouseScope } from './warehouse-scope.ts';
 
 export const ALLOW_NEGATIVE_STOCK_REF = 'configuration-inventory-allow-negative-stock';
 export const ALLOW_NEGATIVE_STOCK_LABEL = 'Inventario · Permitir existencia negativa';
@@ -33,12 +34,14 @@ export function mensaje_negativos(accion: string, faltantes: FaltanteSalida[]): 
 
 /**
  * Lanza si alguna salida (producto → cantidad) dejaría la existencia total
- * por debajo de 0 y los negativos no están permitidos.
+ * por debajo de 0 y los negativos no están permitidos. Con `scope` cuenta
+ * solo la existencia de ese almacén.
  */
 export async function assert_salida_sin_negativos(
 	store: ImperiumStore,
 	accion: string,
 	salidas: Map<string, number>,
+	scope: WarehouseScope | null = null,
 ): Promise<void> {
 	if (!salidas.size || !store.has('products')) return;
 	if (await allow_negative_stock(store)) return;
@@ -46,7 +49,9 @@ export async function assert_salida_sin_negativos(
 	for (const [product_id, requerido] of salidas) {
 		if (!(requerido > 0)) continue;
 		const product = await store.find_id('products', product_id);
-		const disponible = round_qty(Number(product?.existencia ?? 0));
+		const disponible = round_qty(
+			product && scope ? await scope_stock(store, product, scope) : Number(product?.existencia ?? 0),
+		);
 		if (requerido > disponible) {
 			faltantes.push({
 				nombre: String(product?.name ?? product_id),
@@ -55,5 +60,7 @@ export async function assert_salida_sin_negativos(
 			});
 		}
 	}
-	if (faltantes.length) throw new Error(mensaje_negativos(accion, faltantes));
+	if (!faltantes.length) return;
+	const donde = scope ? ` en ${String(scope.almacen.name ?? scope.almacen.codigo ?? 'el almacén')}` : '';
+	throw new Error(mensaje_negativos(`${accion}${donde}`, faltantes));
 }

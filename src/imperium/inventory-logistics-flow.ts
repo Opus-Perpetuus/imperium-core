@@ -7,6 +7,7 @@
 import { allow_negative_stock, mensaje_negativos } from './negative-stock.ts';
 import { as_array, as_object, type ImperiumDoc } from './envelope.ts';
 import { consume_exit_quants } from './inventory-exit.ts';
+import { warehouse_scope } from './warehouse-scope.ts';
 import type { ImperiumStore } from './store.ts';
 
 const WAREHOUSE_REF = 'inventory-internal-location-warehouse';
@@ -336,12 +337,15 @@ export async function register_package_delivery_exit(
 	if (!grouped.size) return;
 
 	const pedido_id = ref_id(package_record.pedido) || text(package_record.pedido);
+	let almacen_pedido: unknown;
 	if (pedido_id && is_id(pedido_id) && store.has('pedidos')) {
 		const pedido = await store.find_id('pedidos', pedido_id);
 		const estado = text(pedido?.estado);
 		if (estado === 'surtido' || estado === 'enviado') return;
+		almacen_pedido = pedido?.almacen;
 	}
 	if (!store.has('products')) return;
+	const scope = await warehouse_scope(store, almacen_pedido);
 
 	const logistics = await location_by_ref(store, LOGISTICS_REF);
 	const customer = await location_by_ref(store, CUSTOMER_REF);
@@ -380,7 +384,7 @@ export async function register_package_delivery_exit(
 			existencia: stock_total_resultante,
 			existenciaApartada: stock_apartado_resultante,
 		});
-		await consume_exit_quants(store, product, quantity);
+		await consume_exit_quants(store, product, quantity, scope);
 		await insert_movement(store, {
 			producto: product_id,
 			producto_id: product_id,

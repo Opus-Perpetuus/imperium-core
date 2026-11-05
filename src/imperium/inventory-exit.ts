@@ -1,13 +1,15 @@
 /**
  * Salidas de inventario (surtido de pedido, entrega de bulto, venta POS).
  * Además de `products.existencia`, descuentan las existencias por ubicación:
- * primero las de la ruta de surtido y el resto en el almacén general.
+ * primero las de la ruta de surtido y el resto en el almacén general. Con un
+ * almacén (`WarehouseScope`) solo se toma de él y el resto sale de él mismo.
  */
 import { apply_quant_delta, find_warehouse_location, type QuantLot } from './delivery-return-flow.ts';
 import { as_array, as_object, type ImperiumDoc } from './envelope.ts';
 import { compute_picking_route, round_quantity } from './inventory-picking.ts';
 import { kit_components_of } from './pos-product-rules.ts';
 import { allow_negative_stock, assert_salida_sin_negativos } from './negative-stock.ts';
+import { pos_ticket_warehouse_id, warehouse_scope, type WarehouseScope } from './warehouse-scope.ts';
 import type { ImperiumStore } from './store.ts';
 
 /**
@@ -20,6 +22,7 @@ export async function consume_exit_quants(
 	store: ImperiumStore,
 	product: ImperiumDoc,
 	cantidad: number,
+	scope: WarehouseScope | null = null,
 ): Promise<Array<QuantLot & { cantidad: number }>> {
 	const touched: Array<QuantLot & { cantidad: number }> = [];
 	const producto = String(product._id ?? '');
@@ -30,7 +33,9 @@ export async function consume_exit_quants(
 		producto_nombre: String(product.name ?? ''),
 		producto_codigo: String(product.codigo ?? ''),
 	};
-	const route = await compute_picking_route(store, producto, requerido);
+	const route = await compute_picking_route(store, producto, requerido, {
+		ubicaciones: scope?.ids,
+	});
 	for (const renglon of route.renglones) {
 		touched.push(
 			...(await apply_quant_delta(store, {
@@ -42,7 +47,7 @@ export async function consume_exit_quants(
 		);
 	}
 	if (route.faltante <= 0) return touched;
-	const warehouse = await find_warehouse_location(store);
+	const warehouse = scope?.almacen ?? (await find_warehouse_location(store));
 	if (!warehouse?._id) return touched;
 	touched.push(
 		...(await apply_quant_delta(store, {
@@ -99,12 +104,25 @@ async function pos_ticket_exits(
 	return out;
 }
 
-/** Antes de crear una venta POS: bloquea si dejaría existencia negativa (salvo que se permita). */
+/** Almacén de la venta: el de la sucursal de la caja o, si no, el del vendedor. */
+export async function pos_ticket_scope(
+	store: ImperiumStore,
+	ticket: ImperiumDoc,
+): Promise<WarehouseScope | null> {
+	return warehouse_scope(store, await pos_ticket_warehouse_id(store, ticket));
+}
+
+/**
+ * Antes de crear una venta POS: bloquea si dejaría existencia negativa (salvo
+ * que se permita). Con almacén de sucursal o vendedor, cuenta solo la de él.
+ */
 export async function assert_pos_ticket_stock(
 	store: ImperiumStore,
 	ticket: ImperiumDoc,
 ): Promise<void> {
-	await assert_salida_sin_negativos(store, 'vender', await pos_ticket_exits(store, ticket));
+	const salidas = await pos_ticket_exits(store, ticket);
+	if (!salidas.size) return;
+	await assert_salida_sin_negativos(store, 'vender', salidas, await pos_ticket_scope(store, ticket));
 }
 
 /**
@@ -117,6 +135,7 @@ export async function register_pos_ticket_exit(
 ): Promise<void> {
 	if (String(ticket.ticket_type ?? 'VENTA').toUpperCase() !== 'VENTA') return;
 	const items = as_array(ticket.items).map(as_object);
+	const scope = items.length ? await pos_ticket_scope(store, ticket) : null;
 	for (const item of items) {
 		const pid = String(item.item_id ?? item.producto ?? item.product_id ?? '');
 		const qty = Number(item.quantity ?? item.cantidad ?? 0);
@@ -128,23 +147,31 @@ export async function register_pos_ticket_exit(
 		if (components.length) {
 			for (const c of components) {
 				const component = await store.find_id('products', c.producto);
-				if (component) await exit_product(store, ticket, component, round_quantity(qty * c.cantidad));
+				if (component) {
+					await exit_product(store, ticket, component, round_quantity(qty * c.cantidad), scope);
+				}
 			}
 			continue;
 		}
-		await exit_product(store, ticket, product, qty);
+		await exit_product(store, ticket, product, qty, scope);
 	}
 }
 
-async function exit_product(store: ImperiumStore, ticket: ImperiumDoc, product: ImperiumDoc, qty: number): Promise<void> {
+async function exit_product(
+	store: ImperiumStore,
+	ticket: ImperiumDoc,
+	product: ImperiumDoc,
+	qty: number,
+	scope: WarehouseScope | null,
+): Promise<void> {
 	const pid = String(product._id ?? '');
 	const previa = Number(product.existencia ?? 0);
 	const next = (await allow_negative_stock(store))
 		? round_quantity(previa - qty)
 		: Math.max(previa - qty, 0);
 	await store.update('products', pid, { existencia: next });
-	const touched = await consume_exit_quants(store, product, previa - next);
-	await insert_pos_sale_movement(store, ticket, product, qty, previa, next, exit_lot_trace(touched));
+	const touched = await consume_exit_quants(store, product, previa - next, scope);
+	await insert_pos_sale_movement(store, ticket, product, qty, previa, next, exit_lot_trace(touched), scope);
 }
 
 async function insert_pos_sale_movement(
@@ -155,10 +182,11 @@ async function insert_pos_sale_movement(
 	stock_total_previo: number,
 	stock_total_resultante: number,
 	lot_trace: ImperiumDoc = {},
+	scope: WarehouseScope | null = null,
 ): Promise<void> {
 	if (!store.has('inventory-movement')) return;
 	const { lotes_detalle, ...lot_fields } = lot_trace;
-	const warehouse = await find_warehouse_location(store);
+	const warehouse = scope?.almacen ?? (await find_warehouse_location(store));
 	const producto = String(product._id ?? '');
 	const apartado = round_quantity(Number(product.existenciaApartada ?? 0));
 	await store.insert('inventory-movement', {

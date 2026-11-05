@@ -18,6 +18,7 @@
  */
 import { allow_negative_stock, assert_salida_sin_negativos } from './negative-stock.ts';
 import { apply_quant_delta, find_warehouse_location } from './delivery-return-flow.ts';
+import { ref_id } from './warehouse-scope.ts';
 import { as_array, as_object, type ImperiumDoc } from './envelope.ts';
 import { round_quantity } from './inventory-picking.ts';
 import { CREDIT_METHOD, credit_refund_for_return } from './pos-credit.ts';
@@ -261,10 +262,11 @@ export async function register_pos_return_entry(
 				(m) => text(m.tipo_movimiento) === 'recepcion_devolucion',
 			)
 		: [];
-	const warehouse = await find_warehouse_location(store);
+	const general = await find_warehouse_location(store);
 	const results: RestockResult[] = [];
 	for (const [producto, devuelto] of requested) {
 		const mine = sale_moves.filter((m) => text(m.producto ?? m.producto_id) === producto);
+		const warehouse = (await movement_location(store, mine[0], 'ubicacion_origen')) ?? general;
 		const subtracted = round_quantity(mine.reduce((s, m) => s + Math.max(-delta_of(m), 0), 0));
 		const already = round_quantity(
 			prior_moves
@@ -329,6 +331,17 @@ export async function register_pos_return_entry(
 		results.push({ producto, devuelto, reingresado: amount, motivo: 'reingresado' });
 	}
 	return results;
+}
+
+/** Ubicación registrada en un movimiento (la venta salió de ahí; ahí reingresa). */
+async function movement_location(
+	store: ImperiumStore,
+	move: ImperiumDoc | undefined,
+	field: 'ubicacion_origen' | 'ubicacion_destino',
+): Promise<ImperiumDoc | null> {
+	const id = ref_id(move?.[`${field}_id`]) || ref_id(move?.[field]);
+	if (!id || !store.has('inventory-internal-location')) return null;
+	return (await store.find_id('inventory-internal-location', id)) ?? null;
 }
 
 function moment_of(row: ImperiumDoc): number {
@@ -396,9 +409,13 @@ export async function revert_pos_return_entry(store: ImperiumStore, ticket: Impe
 	// Revertir el reingreso es una salida: misma regla de negativos.
 	await assert_salida_sin_negativos(store, 'cancelar la devolución', by_product);
 	const negativos = await allow_negative_stock(store);
-	const warehouse = by_product.size ? await find_warehouse_location(store) : null;
+	const general = by_product.size ? await find_warehouse_location(store) : null;
 	let count = 0;
 	for (const [producto, amount] of by_product) {
+		const entry = moves.find(
+			(m) => text(m.tipo_movimiento) === 'recepcion_devolucion' && text(m.producto ?? m.producto_id) === producto,
+		);
+		const warehouse = (await movement_location(store, entry, 'ubicacion_destino')) ?? general;
 		const product = await store.find_id('products', producto);
 		if (!product) continue;
 		const previa = round_quantity(Number(product.existencia ?? 0));

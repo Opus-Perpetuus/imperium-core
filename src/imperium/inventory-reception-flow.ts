@@ -10,6 +10,8 @@ import {
 } from './delivery-return-flow.ts';
 import { resolve_reception_location, supplier_display_name } from './purchase-order-flow.ts';
 import { is_record_id } from './record-id.ts';
+import { compute_picking_route } from './inventory-picking.ts';
+import { owning_warehouse, warehouse_scope } from './warehouse-scope.ts';
 import type { ImperiumStore } from './store.ts';
 
 function text(value: unknown): string {
@@ -357,9 +359,11 @@ async function quant_disponible(
 }
 
 /**
- * Traslado entre ubicaciones. Con `lote` mueve ese lote; sin él toma lo que
- * no tiene lote y luego los lotes por caducidad, y cada lote llega igual al
- * destino (un movimiento por lote).
+ * Traslado entre ubicaciones o entre almacenes. Con `lote` mueve ese lote; sin
+ * él toma lo que no tiene lote y luego los lotes por caducidad, y cada lote
+ * llega igual al destino (un movimiento por lote). Si el origen es un almacén
+ * que no guarda producto en sí mismo (o `desde_almacen`), toma de sus
+ * sububicaciones en orden de surtido: un movimiento por ubicación y lote.
  */
 export async function register_internal_transfer(
 	store: ImperiumStore,
@@ -369,6 +373,7 @@ export async function register_internal_transfer(
 		ubicacion_destino: string;
 		cantidad: number;
 		lote?: string;
+		desde_almacen?: boolean;
 	},
 ): Promise<void> {
 	const cantidad = round_qty(params.cantidad);
@@ -380,7 +385,13 @@ export async function register_internal_transfer(
 	const origen = await store.find_id('inventory-internal-location', params.ubicacion_origen);
 	const destino = await store.find_id('inventory-internal-location', params.ubicacion_destino);
 	if (!origen || !destino) throw new Error('La ubicación de origen o destino no existe');
-	if (!allows_storage(origen) || !allows_storage(destino)) {
+	const lote = text(params.lote) || undefined;
+	const scope =
+		!lote && (params.desde_almacen || !allows_storage(origen))
+			? await warehouse_scope(store, origen._id)
+			: null;
+	const desde_sububicaciones = Boolean(scope && scope.ids.size > 1);
+	if ((!desde_sububicaciones && !allows_storage(origen)) || !allows_storage(destino)) {
 		throw new Error('Origen y destino deben ser ubicaciones que permiten almacenaje');
 	}
 	if (String(origen._id) === String(destino._id)) {
@@ -388,73 +399,110 @@ export async function register_internal_transfer(
 	}
 	const product = await store.find_id('products', producto_id);
 	if (!product) throw new Error('No se encontró el producto indicado');
-	const sin_filas_previas = !(await product_has_quants(store, producto_id));
 	const existencia_previa = round_qty(Number(product.existencia ?? 0));
-	const lote = text(params.lote) || undefined;
-	const disponible = await quant_disponible(store, producto_id, String(origen._id), lote);
-	if (cantidad > disponible) {
-		throw new Error(
-			`No hay existencia disponible suficiente en ${text(origen.codigo)} (disponible ${disponible})`,
-		);
+	if (!(await product_has_quants(store, producto_id))) {
+		// Sin filas por ubicación toda la existencia está en el almacén general.
+		await recompute_product_existencia(store, producto_id, {
+			sin_filas_previas: true,
+			delta: 0,
+			existencia_previa,
+		});
 	}
+	const fuentes: Array<{ ubicacion: ImperiumDoc; cantidad: number }> = [];
+	if (desde_sububicaciones && scope) {
+		const ruta = await compute_picking_route(store, producto_id, cantidad, { ubicaciones: scope.ids });
+		if (ruta.faltante > 0) {
+			throw new Error(
+				`No hay existencia disponible suficiente en ${text(origen.name || origen.codigo)} (disponible ${round_qty(cantidad - ruta.faltante)})`,
+			);
+		}
+		const por_ubicacion = new Map<string, number>();
+		for (const r of ruta.renglones) {
+			if (r.ubicacion === String(destino._id)) continue;
+			por_ubicacion.set(r.ubicacion, round_qty((por_ubicacion.get(r.ubicacion) ?? 0) + r.tomar));
+		}
+		const tomado = round_qty([...por_ubicacion.values()].reduce((a, b) => a + b, 0));
+		if (tomado < cantidad) {
+			throw new Error('El destino está dentro del almacén de origen; elige una ubicación de origen');
+		}
+		for (const [ubicacion_id, qty] of por_ubicacion) {
+			const ubicacion = await store.find_id('inventory-internal-location', ubicacion_id);
+			if (ubicacion) fuentes.push({ ubicacion, cantidad: qty });
+		}
+	} else {
+		const disponible = await quant_disponible(store, producto_id, String(origen._id), lote);
+		if (cantidad > disponible) {
+			throw new Error(
+				`No hay existencia disponible suficiente en ${text(origen.codigo)} (disponible ${disponible})`,
+			);
+		}
+		fuentes.push({ ubicacion: origen, cantidad });
+	}
+	const almacen_origen = await owning_warehouse(store, origen._id);
+	const almacen_destino = await owning_warehouse(store, destino._id);
+	const entre_almacenes =
+		Boolean(almacen_origen && almacen_destino) &&
+		String(almacen_origen?._id) !== String(almacen_destino?._id);
 	const base = {
 		producto: producto_id,
 		producto_nombre: text(product.name),
 		producto_codigo: text(product.codigo),
 	};
-	const portions = await apply_quant_delta(store, {
-		...base,
-		ubicacion: String(origen._id),
-		ubicacion_codigo: text(origen.codigo),
-		delta: -cantidad,
-		lote,
-	});
-	const stock_total = round_qty(Number(product.existencia ?? 0));
+	const stock_total = round_qty(Number(product.existencia ?? existencia_previa));
 	const stock_apartado = round_qty(Number(product.existenciaApartada ?? 0));
-	for (const portion of portions) {
-		const lote_fields = portion.lote
-			? {
-					lote: portion.lote,
-					lote_codigo: portion.lote_codigo,
-					fecha_caducidad: portion.fecha_caducidad,
-				}
-			: {};
-		await apply_quant_delta(store, {
+	for (const fuente of fuentes) {
+		const desde = fuente.ubicacion;
+		const portions = await apply_quant_delta(store, {
 			...base,
-			ubicacion: String(destino._id),
-			ubicacion_codigo: text(destino.codigo),
-			delta: portion.cantidad,
-			...lote_fields,
+			ubicacion: String(desde._id),
+			ubicacion_codigo: text(desde.codigo),
+			delta: -fuente.cantidad,
+			lote,
 		});
-		if (!store.has('inventory-movement')) continue;
-		await store.insert('inventory-movement', {
-			name: `Traslado ${text(product.name)}`,
-			...base,
-			producto_id,
-			tipo_movimiento: 'transferencia_interna',
-			ubicacion_origen: String(origen._id),
-			ubicacion_origen_id: String(origen._id),
-			ubicacion_origen_nombre: text(origen.name),
-			ubicacion_destino: String(destino._id),
-			ubicacion_destino_id: String(destino._id),
-			ubicacion_destino_nombre: text(destino.name),
-			documento_tipo: 'traslado',
-			description: `Traslado interno ${text(origen.codigo)} → ${text(destino.codigo)}`,
-			cantidad: portion.cantidad,
-			stock_total_previo: stock_total,
-			stock_total_resultante: stock_total,
-			stock_apartado_previo: stock_apartado,
-			stock_apartado_resultante: stock_apartado,
-			stock_disponible_resultante: round_qty(stock_total - stock_apartado),
-			fecha_movimiento: new Date().toISOString(),
-			...lote_fields,
-		});
+		const description = entre_almacenes
+			? `Traslado entre almacenes ${text(almacen_origen?.name || almacen_origen?.codigo)} → ${text(almacen_destino?.name || almacen_destino?.codigo)} (${text(desde.codigo)} → ${text(destino.codigo)})`
+			: `Traslado interno ${text(desde.codigo)} → ${text(destino.codigo)}`;
+		for (const portion of portions) {
+			const lote_fields = portion.lote
+				? {
+						lote: portion.lote,
+						lote_codigo: portion.lote_codigo,
+						fecha_caducidad: portion.fecha_caducidad,
+					}
+				: {};
+			await apply_quant_delta(store, {
+				...base,
+				ubicacion: String(destino._id),
+				ubicacion_codigo: text(destino.codigo),
+				delta: portion.cantidad,
+				...lote_fields,
+			});
+			if (!store.has('inventory-movement')) continue;
+			await store.insert('inventory-movement', {
+				name: `Traslado ${text(product.name)}`,
+				...base,
+				producto_id,
+				tipo_movimiento: 'transferencia_interna',
+				ubicacion_origen: String(desde._id),
+				ubicacion_origen_id: String(desde._id),
+				ubicacion_origen_nombre: text(desde.name),
+				ubicacion_destino: String(destino._id),
+				ubicacion_destino_id: String(destino._id),
+				ubicacion_destino_nombre: text(destino.name),
+				documento_tipo: 'traslado',
+				description,
+				cantidad: portion.cantidad,
+				stock_total_previo: stock_total,
+				stock_total_resultante: stock_total,
+				stock_apartado_previo: stock_apartado,
+				stock_apartado_resultante: stock_apartado,
+				stock_disponible_resultante: round_qty(stock_total - stock_apartado),
+				fecha_movimiento: new Date().toISOString(),
+				...lote_fields,
+			});
+		}
 	}
-	await recompute_product_existencia(store, producto_id, {
-		sin_filas_previas,
-		delta: 0,
-		existencia_previa,
-	});
+	await recompute_product_existencia(store, producto_id);
 }
 
 export async function acomodar_reception(

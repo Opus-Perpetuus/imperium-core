@@ -1308,6 +1308,12 @@
     "action": "sync_offline"
   },
   {
+    "resource": "pedidos",
+    "method": "get",
+    "path": "/offline/existencia-almacen",
+    "action": "read_offline_stock"
+  },
+  {
     "resource": "lista-de-precios",
     "method": "get",
     "path": "/offline/sincronizar",

@@ -500,6 +500,14 @@
               "crud": "boolean",
               "component": "input-checkbox",
               "label": "is system"
+            },
+            {
+              "name": "sucursal",
+              "mongo": "sucursal",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "sucursal"
             }
           ]
         },
@@ -1258,6 +1266,14 @@
               "crud": "string",
               "component": "input-text",
               "label": "offline uuid"
+            },
+            {
+              "name": "almacen",
+              "mongo": "almacen",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "almacen"
             }
           ]
         },
@@ -1485,6 +1501,14 @@
               "crud": "string",
               "component": "input-text",
               "label": "offline uuid"
+            },
+            {
+              "name": "almacen",
+              "mongo": "almacen",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "almacen"
             }
           ]
         },
@@ -2165,6 +2189,14 @@
               "crud": "string",
               "component": "input-text",
               "label": "listaDePrecios"
+            },
+            {
+              "name": "almacen",
+              "mongo": "almacen",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "almacen"
             }
           ]
         },
@@ -15391,6 +15423,14 @@
               "crud": "string",
               "component": "input-text",
               "label": "offline uuid"
+            },
+            {
+              "name": "almacen",
+              "mongo": "almacen",
+              "pg": "text",
+              "crud": "string",
+              "component": "input-text",
+              "label": "almacen"
             }
           ]
         },
