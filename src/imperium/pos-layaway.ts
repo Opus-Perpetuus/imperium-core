@@ -17,12 +17,14 @@
  * `layaway_status`: abierto → liquidado | cancelado.
  */
 import { as_array, as_object, type ImperiumDoc } from './envelope.ts';
-import { find_warehouse_location } from './delivery-return-flow.ts';
-import { register_pos_ticket_exit } from './inventory-exit.ts';
-import { round_quantity } from './inventory-picking.ts';
+import { find_warehouse_location, product_has_quants } from './delivery-return-flow.ts';
+import { pos_ticket_scope, register_pos_ticket_exit } from './inventory-exit.ts';
+import { compute_picking_route, round_quantity } from './inventory-picking.ts';
+import { allow_negative_stock } from './negative-stock.ts';
 import { expand_kit_quantities } from './pos-product-rules.ts';
 import { PAYMENT_CASH, PAYMENT_METHODS, read_payments } from './pos-payments.ts';
 import type { ImperiumStore } from './store.ts';
+import { scope_stock, type WarehouseScope } from './warehouse-scope.ts';
 
 export const TICKET_APARTADO = 'APARTADO';
 export const TICKET_ABONO_APARTADO = 'ABONO_APARTADO';
@@ -118,13 +120,19 @@ export async function prepare_layaway_rules(store: ImperiumStore, doc: ImperiumD
 		const { amount, payment_method } = validate_payments(doc);
 		if (!(amount > 0)) throw new Error('El apartado requiere un anticipo mayor a 0');
 		if (amount - total > 0.005) throw new Error('El anticipo no puede pasar del total del apartado');
-		if (store.has('products')) {
+		if (store.has('products') && !(await allow_negative_stock(store))) {
+			const scope = await pos_ticket_scope(store, doc);
 			for (const [id, qty] of await reserve_quantities(store, doc)) {
 				const product = await store.find_id('products', id);
 				if (!product) continue;
 				const name = text(product.name) || items.get(id)?.name || id;
-				const free = round_quantity(Number(product.existencia ?? 0) - Math.max(Number(product.existenciaApartada ?? 0), 0));
-				if (qty > free) throw new Error(`No hay existencia libre para apartar ${qty} de ${name} (libre ${free})`);
+				const free = await free_to_reserve(store, product, scope);
+				if (qty > free) {
+					const donde = scope
+						? ` en ${text(scope.almacen.name) || text(scope.almacen.codigo) || 'el almacén'}`
+						: '';
+					throw new Error(`No hay existencia libre para apartar ${qty} de ${name}${donde} (libre ${free})`);
+				}
 			}
 		}
 		return {
@@ -166,6 +174,187 @@ export async function prepare_layaway_rules(store: ImperiumStore, doc: ImperiumD
 	return doc;
 }
 
+/** Libre para apartar: la del almacén de la caja o del vendedor, o la global si no hay. */
+async function free_to_reserve(
+	store: ImperiumStore,
+	product: ImperiumDoc,
+	scope: WarehouseScope | null,
+): Promise<number> {
+	if (scope) return scope_stock(store, product, scope, { libre: true });
+	return round_quantity(Number(product.existencia ?? 0) - Math.max(Number(product.existenciaApartada ?? 0), 0));
+}
+
+function quant_libre(row: ImperiumDoc): number {
+	if (row.cantidad_disponible != null && row.cantidad_disponible !== '') return Number(row.cantidad_disponible);
+	return Number(row.cantidad ?? 0) - Number(row.cantidad_apartada ?? 0);
+}
+
+async function quants_en(
+	store: ImperiumStore,
+	producto: string,
+	ubicacion: string,
+): Promise<ImperiumDoc[]> {
+	if (!store.has('inventory-stock-quant') || !producto || !ubicacion) return [];
+	const { rows } = await store.find_many('inventory-stock-quant', {
+		where: { producto, ubicacion },
+		take: 500,
+		include_inactive: true,
+		populate: false,
+	});
+	return rows;
+}
+
+async function write_apartada(store: ImperiumStore, row: ImperiumDoc, apartada: number): Promise<void> {
+	const cantidad = round_quantity(Number(row.cantidad ?? 0));
+	const cantidad_apartada = round_quantity(apartada);
+	await store.update('inventory-stock-quant', String(row._id), {
+		cantidad_apartada,
+		cantidad_disponible: round_quantity(cantidad - cantidad_apartada),
+	});
+	row.cantidad_apartada = cantidad_apartada;
+	row.cantidad_disponible = round_quantity(cantidad - cantidad_apartada);
+}
+
+/** Sube o baja lo apartado en la ubicación, sin mover la existencia. */
+async function adjust_apartada(
+	store: ImperiumStore,
+	product: ImperiumDoc,
+	ubicacion: string,
+	delta: number,
+	codigo: string,
+): Promise<void> {
+	const producto = String(product._id ?? '');
+	const rows = await quants_en(store, producto, ubicacion);
+	if (delta > 0) {
+		let restante = round_quantity(delta);
+		const orden = [...rows].sort((a, b) => {
+			const lote = Number(Boolean(text(a.lote))) - Number(Boolean(text(b.lote)));
+			if (lote) return lote;
+			return (text(a.fecha_caducidad) || '9999').localeCompare(text(b.fecha_caducidad) || '9999');
+		});
+		for (const row of orden) {
+			if (restante <= 0) break;
+			const tomar = round_quantity(Math.min(Math.max(quant_libre(row), 0), restante));
+			if (tomar <= 0) continue;
+			await write_apartada(store, row, Number(row.cantidad_apartada ?? 0) + tomar);
+			restante = round_quantity(restante - tomar);
+		}
+		if (restante <= 0) return;
+		const sin_lote = rows.find((row) => !text(row.lote)) ?? rows[0];
+		if (sin_lote) {
+			await write_apartada(store, sin_lote, Number(sin_lote.cantidad_apartada ?? 0) + restante);
+			return;
+		}
+		await store.insert('inventory-stock-quant', {
+			name: `${text(product.codigo) || text(product.name) || producto} @ ${codigo}`,
+			producto,
+			producto_id: producto,
+			producto_nombre: product.name,
+			producto_codigo: product.codigo,
+			ubicacion,
+			ubicacion_id: ubicacion,
+			ubicacion_codigo: codigo,
+			cantidad: 0,
+			cantidad_apartada: restante,
+			cantidad_disponible: round_quantity(-restante),
+			is_active: true,
+		});
+		return;
+	}
+	let restante = round_quantity(-delta);
+	for (const row of [...rows].sort((a, b) => Number(b.cantidad_apartada ?? 0) - Number(a.cantidad_apartada ?? 0))) {
+		if (restante <= 0) break;
+		const tiene = round_quantity(Math.max(Number(row.cantidad_apartada ?? 0), 0));
+		const soltar = round_quantity(Math.min(tiene, restante));
+		if (soltar <= 0) continue;
+		await write_apartada(store, row, tiene - soltar);
+		restante = round_quantity(restante - soltar);
+	}
+}
+
+type LugarApartado = { doc: ImperiumDoc | null; cantidad: number; quant: boolean };
+
+/** Aparta en las ubicaciones del almacén, en el orden de surtido. Sin filas, no toca quants. */
+async function reserve_on_quants(
+	store: ImperiumStore,
+	product: ImperiumDoc,
+	qty: number,
+	scope: WarehouseScope | null,
+): Promise<LugarApartado[]> {
+	if (!scope || !store.has('inventory-stock-quant')) return [];
+	const producto = String(product._id ?? '');
+	if (!(await product_has_quants(store, producto))) return [];
+	const route = await compute_picking_route(store, producto, qty, { ubicaciones: scope.ids });
+	const por = new Map<string, { codigo: string; cantidad: number }>();
+	for (const renglon of route.renglones) {
+		const prev = por.get(renglon.ubicacion);
+		por.set(renglon.ubicacion, {
+			codigo: renglon.ubicacion_codigo || prev?.codigo || '',
+			cantidad: round_quantity((prev?.cantidad ?? 0) + renglon.tomar),
+		});
+	}
+	if (route.faltante > 0) {
+		if (!(await allow_negative_stock(store))) {
+			const donde = text(scope.almacen.name) || text(scope.almacen.codigo) || 'el almacén';
+			const libre = round_quantity(qty - route.faltante);
+			throw new Error(
+				`No hay existencia libre para apartar ${qty} de ${text(product.name) || producto} en ${donde} (libre ${libre})`,
+			);
+		}
+		const id = String(scope.almacen._id ?? '');
+		const prev = por.get(id);
+		por.set(id, {
+			codigo: text(scope.almacen.codigo) || prev?.codigo || '',
+			cantidad: round_quantity((prev?.cantidad ?? 0) + route.faltante),
+		});
+	}
+	const out: LugarApartado[] = [];
+	for (const [id, info] of por) {
+		await adjust_apartada(store, product, id, info.cantidad, info.codigo);
+		const doc =
+			(await store.find_id('inventory-internal-location', id)) ??
+			({ _id: id, name: info.codigo, codigo: info.codigo } as ImperiumDoc);
+		out.push({ doc, cantidad: info.cantidad, quant: true });
+	}
+	return out;
+}
+
+/** Suelta lo apartado en las ubicaciones que marcó el propio apartado. */
+async function release_on_quants(
+	store: ImperiumStore,
+	layaway: ImperiumDoc,
+	product_id: string,
+): Promise<LugarApartado[]> {
+	if (!store.has('inventory-movement') || !store.has('inventory-stock-quant')) return [];
+	const product = await store.find_id('products', product_id);
+	if (!product) return [];
+	const nets = new Map<string, number>();
+	for await (const page of store.scan('inventory-movement', {
+		where: { documento_id: String(layaway._id ?? ''), documento_tipo: 'pos-ticket' },
+	})) {
+		for (const movement of page) {
+			if (text(movement.producto ?? movement.producto_id) !== product_id) continue;
+			const tipo = text(movement.tipo_movimiento);
+			if (tipo !== 'apartado_logistica' && tipo !== 'liberacion_logistica') continue;
+			const key = text(movement.dedupe_key);
+			const at = key.lastIndexOf('@');
+			if (at < 0) continue;
+			const loc = key.slice(at + 1);
+			if (!loc) continue;
+			const qty = Number(movement.cantidad ?? 0) * (tipo === 'apartado_logistica' ? 1 : -1);
+			nets.set(loc, round_quantity((nets.get(loc) ?? 0) + qty));
+		}
+	}
+	const out: LugarApartado[] = [];
+	for (const [loc, net] of nets) {
+		if (net <= 0) continue;
+		const doc = await store.find_id('inventory-internal-location', loc);
+		await adjust_apartada(store, product, loc, -net, text(doc?.codigo));
+		if (doc) out.push({ doc, cantidad: net, quant: true });
+	}
+	return out;
+}
+
 /** Lo que aparta un apartado: sus artículos, con los kits cambiados por sus componentes. */
 async function reserve_quantities(store: ImperiumStore, layaway: ImperiumDoc): Promise<Map<string, number>> {
 	const plain = new Map([...qty_by_product(layaway.items)].map(([id, v]) => [id, v.qty]));
@@ -201,7 +390,8 @@ async function move_reserved(
 	reason: string,
 ): Promise<void> {
 	if (!store.has('products')) return;
-	const warehouse = store.has('inventory-movement') ? await find_warehouse_location(store) : null;
+	const scope = await pos_ticket_scope(store, layaway);
+	const warehouse = scope?.almacen ?? (store.has('inventory-movement') ? await find_warehouse_location(store) : null);
 	const quantities =
 		sign > 0
 			? await reserve_quantities(store, layaway)
@@ -212,32 +402,44 @@ async function move_reserved(
 		const previo = round_quantity(Math.max(Number(product.existenciaApartada ?? 0), 0));
 		const resultante = round_quantity(Math.max(previo + sign * qty, 0));
 		await store.update('products', id, { existenciaApartada: resultante });
+		const lugares =
+			sign > 0 ? await reserve_on_quants(store, product, qty, scope) : await release_on_quants(store, layaway, id);
 		if (!store.has('inventory-movement')) continue;
 		const total = round_quantity(Number(product.existencia ?? 0));
-		await store.insert('inventory-movement', {
-			name: `${sign > 0 ? 'Apartado' : 'Liberación'} POS ${text(product.name) || id}`,
-			producto: id,
-			producto_id: id,
-			producto_nombre: product.name,
-			producto_codigo: product.codigo,
-			tipo_movimiento: sign > 0 ? 'apartado_logistica' : 'liberacion_logistica',
-			ubicacion_origen: warehouse?._id,
-			ubicacion_origen_id: warehouse?._id,
-			ubicacion_origen_nombre: warehouse?.name,
-			documento_tipo: 'pos-ticket',
-			documento_id: String(layaway._id ?? ''),
-			documento_modelo: 'PosTickets',
-			documento_nombre: text(layaway.ticket_sequence),
-			documento_referencia: text(layaway.ticket_sequence),
-			description: reason,
-			cantidad: qty,
-			stock_total_previo: total,
-			stock_total_resultante: total,
-			stock_apartado_previo: previo,
-			stock_apartado_resultante: resultante,
-			fecha_movimiento: new Date().toISOString(),
-			dedupe_key: `pos-layaway:${String(layaway._id ?? '')}:${sign > 0 ? 'reserve' : 'release'}:${id}`,
-		});
+		const partes: LugarApartado[] = lugares.length
+			? lugares
+			: [{ doc: warehouse, cantidad: qty, quant: false }];
+		let running = previo;
+		const layaway_id = String(layaway._id ?? '');
+		for (const parte of partes) {
+			const next = round_quantity(Math.max(running + sign * parte.cantidad, 0));
+			const loc = parte.doc;
+			await store.insert('inventory-movement', {
+				name: `${sign > 0 ? 'Apartado' : 'Liberación'} POS ${text(product.name) || id}`,
+				producto: id,
+				producto_id: id,
+				producto_nombre: product.name,
+				producto_codigo: product.codigo,
+				tipo_movimiento: sign > 0 ? 'apartado_logistica' : 'liberacion_logistica',
+				ubicacion_origen: loc?._id,
+				ubicacion_origen_id: loc?._id,
+				ubicacion_origen_nombre: loc?.name,
+				documento_tipo: 'pos-ticket',
+				documento_id: layaway_id,
+				documento_modelo: 'PosTickets',
+				documento_nombre: text(layaway.ticket_sequence),
+				documento_referencia: text(layaway.ticket_sequence),
+				description: reason,
+				cantidad: parte.cantidad,
+				stock_total_previo: total,
+				stock_total_resultante: total,
+				stock_apartado_previo: running,
+				stock_apartado_resultante: next,
+				fecha_movimiento: new Date().toISOString(),
+				dedupe_key: `pos-layaway:${layaway_id}:${sign > 0 ? 'reserve' : 'release'}:${id}${parte.quant && loc?._id ? `@${loc._id}` : ''}`,
+			});
+			running = next;
+		}
 	}
 }
 
@@ -255,7 +457,8 @@ export async function register_layaway_effects(store: ImperiumStore, created: Im
 	if (balance > 0.005) return null;
 	await move_reserved(store, layaway, -1, 'Apartado liquidado: se entrega al cliente');
 	const sale = await insert_layaway_sale(store, layaway, created);
-	await register_pos_ticket_exit(store, sale);
+	const reserved_at = await pos_ticket_scope(store, layaway);
+	await register_pos_ticket_exit(store, sale, reserved_at ?? undefined);
 	return store.update('pos-tickets', String(layaway._id), { layaway_status: LAYAWAY_PAID });
 }
 

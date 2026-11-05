@@ -122,7 +122,9 @@ export async function assert_pos_ticket_stock(
 ): Promise<void> {
 	const salidas = await pos_ticket_exits(store, ticket);
 	if (!salidas.size) return;
-	await assert_salida_sin_negativos(store, 'vender', salidas, await pos_ticket_scope(store, ticket));
+	await assert_salida_sin_negativos(store, 'vender', salidas, await pos_ticket_scope(store, ticket), {
+		libre: true,
+	});
 }
 
 /**
@@ -132,10 +134,12 @@ export async function assert_pos_ticket_stock(
 export async function register_pos_ticket_exit(
 	store: ImperiumStore,
 	ticket: ImperiumDoc,
+	scope_override?: WarehouseScope | null,
 ): Promise<void> {
 	if (String(ticket.ticket_type ?? 'VENTA').toUpperCase() !== 'VENTA') return;
 	const items = as_array(ticket.items).map(as_object);
-	const scope = items.length ? await pos_ticket_scope(store, ticket) : null;
+	const scope =
+		scope_override !== undefined ? scope_override : items.length ? await pos_ticket_scope(store, ticket) : null;
 	for (const item of items) {
 		const pid = String(item.item_id ?? item.producto ?? item.product_id ?? '');
 		const qty = Number(item.quantity ?? item.cantidad ?? 0);

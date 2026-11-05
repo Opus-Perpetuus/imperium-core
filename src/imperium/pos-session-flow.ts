@@ -531,6 +531,7 @@ export async function prepare_pos_ticket_create(
 		Object.assign(out, await prepare_credit_rules(store, out));
 	}
 	if (ticket_type === TICKET_APARTADO || ticket_type === TICKET_ABONO_APARTADO) {
+		if (!text(out.created_by)) out.created_by = current_user_id;
 		Object.assign(out, await prepare_layaway_rules(store, out));
 	}
 	if (ticket_type === TICKET_ENTRADA) {

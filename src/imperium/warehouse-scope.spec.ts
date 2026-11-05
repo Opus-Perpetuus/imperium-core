@@ -10,7 +10,8 @@ import {
 	prepare_pedido_create,
 	register_order_fulfillment_exit,
 } from './pedidos-flow.ts';
-import { pos_ticket_warehouse_id, scope_stock_snapshot, warehouse_scope } from './warehouse-scope.ts';
+import { cancel_layaway, prepare_layaway_rules, register_layaway_effects } from './pos-layaway.ts';
+import { scope_stock, pos_ticket_warehouse_id, scope_stock_snapshot, warehouse_scope } from './warehouse-scope.ts';
 
 const PRODUCTO = '507f1f77bcf86cd799439013';
 const GENERAL = '507f1f77bcf86cd799439021';
@@ -217,6 +218,45 @@ describe('traslados entre almacenes', () => {
 		expect(store.data['inventory-movement'][0].description).toBe('Traslado interno CEN-A1 → CEN-A2');
 	});
 
+	test('desde_almacen toma las sububicaciones aunque el origen permita almacenaje', async () => {
+		const store = store_con([quant(ALM_RUTA, 1)]);
+		const hijo = '507f1f77bcf86cd799439027';
+		await store.insert('inventory-internal-location', {
+			_id: hijo,
+			codigo: 'RUT-A',
+			name: 'Cajón',
+			parent: ALM_RUTA,
+			tipo: 'almacen',
+			permite_almacenaje: true,
+			secuencia_surtido: 1,
+		});
+		await store.insert('inventory-stock-quant', {
+			_id: 'q-hijo',
+			producto: PRODUCTO,
+			ubicacion: hijo,
+			ubicacion_codigo: 'RUT-A',
+			cantidad: 4,
+			cantidad_apartada: 0,
+			cantidad_disponible: 4,
+		});
+		await expect(
+			register_internal_transfer(store, {
+				producto: PRODUCTO,
+				ubicacion_origen: ALM_RUTA,
+				ubicacion_destino: GENERAL,
+				cantidad: 3,
+			}),
+		).rejects.toThrow(/disponible 1/);
+		await register_internal_transfer(store, {
+			producto: PRODUCTO,
+			ubicacion_origen: ALM_RUTA,
+			ubicacion_destino: GENERAL,
+			cantidad: 3,
+			desde_almacen: true,
+		});
+		expect(cantidades(store)).toMatchObject({ RUT: 0, 'RUT-A': 2, GEN: 3 });
+	});
+
 	test('no traslada más de lo que tiene el almacén de origen', async () => {
 		const store = store_con([quant(ALM_CENTRO_A1, 1), quant(GENERAL, 50)]);
 		await expect(
@@ -270,6 +310,103 @@ describe('POS: sale del almacén de la sucursal', () => {
 			ubicacion_origen: ALM_CENTRO,
 			cantidad: 3,
 		});
+	});
+
+	test('un apartado reserva el almacén de la sucursal, no la existencia de otros', async () => {
+		const store = store_con([quant(ALM_CENTRO_A1, 2), quant(ALM_CENTRO_A2, 5), quant(GENERAL, 50)]);
+		const apartado = (quantity: number) => ({
+			ticket_type: 'APARTADO',
+			ticket_sequence: 'CAJA-1',
+			pos_session: SESION_CENTRO,
+			created_by: CAJERO,
+			client_id: 'cli-1',
+			subtotal: 10,
+			items: [{ item_id: PRODUCTO, item_name: 'Codo', quantity }],
+			payments: [{ method: 'efectivo', amount: 1 }],
+		});
+		await expect(prepare_layaway_rules(store, apartado(8))).rejects.toThrow(/Almacén Centro/);
+		const prepared = await prepare_layaway_rules(store, apartado(4));
+		const layaway = await store.insert('pos-tickets', { ...prepared, _id: 'ap-1' });
+		await register_layaway_effects(store, layaway);
+		const apartada = (codigo: string) =>
+			store.data['inventory-stock-quant'].find((row) => row.ubicacion_codigo === codigo)?.cantidad_apartada;
+		expect(apartada('CEN-A1')).toBe(2);
+		expect(apartada('CEN-A2')).toBe(2);
+		expect(apartada('GEN')).toBe(0);
+		expect((await store.find_id('products', PRODUCTO))?.existenciaApartada).toBe(4);
+		expect((await store.find_id('products', PRODUCTO))?.existencia).toBe(57);
+		const holds = store.data['inventory-movement'].filter((row) => row.tipo_movimiento === 'apartado_logistica');
+		expect(holds.map((row) => row.ubicacion_origen).sort()).toEqual([ALM_CENTRO_A1, ALM_CENTRO_A2]);
+		const scope = await warehouse_scope(store, ALM_CENTRO);
+		expect(await scope_stock(store, (await store.find_id('products', PRODUCTO))!, scope!, { libre: true })).toBe(3);
+		await expect(assert_pos_ticket_stock(store, {
+			ticket_type: 'VENTA',
+			pos_session: SESION_CENTRO,
+			items: [{ item_id: PRODUCTO, quantity: 4 }],
+		})).rejects.toThrow(/Almacén Centro/);
+		await cancel_layaway(store, 'ap-1');
+		expect(apartada('CEN-A1')).toBe(0);
+		expect(apartada('CEN-A2')).toBe(0);
+		expect((await store.find_id('products', PRODUCTO))?.existenciaApartada).toBe(0);
+	});
+
+	test('liquidar el apartado saca la mercancía del mismo almacén', async () => {
+		const store = store_con([quant(ALM_CENTRO_A1, 2), quant(ALM_CENTRO_A2, 5), quant(GENERAL, 50)]);
+		const prepared = await prepare_layaway_rules(store, {
+			ticket_type: 'APARTADO',
+			ticket_sequence: 'CAJA-2',
+			pos_session: SESION_CENTRO,
+			created_by: CAJERO,
+			client_id: 'cli-1',
+			subtotal: 10,
+			items: [{ item_id: PRODUCTO, quantity: 4 }],
+			payments: [{ method: 'efectivo', amount: 1 }],
+		});
+		const layaway = await store.insert('pos-tickets', { ...prepared, _id: 'ap-2' });
+		await register_layaway_effects(store, layaway);
+		const abono = await store.insert('pos-tickets', {
+			_id: 'ab-2',
+			ticket_type: 'ABONO_APARTADO',
+			original_ticket: 'ap-2',
+			subtotal: 9,
+			pos_session: SESION_NORTE,
+			created_by: VENDEDOR,
+		});
+		await register_layaway_effects(store, abono);
+		expect(cantidades(store)).toEqual({ 'CEN-A1': 0, 'CEN-A2': 3, GEN: 50 });
+		expect((await store.find_id('products', PRODUCTO))?.existencia).toBe(53);
+		expect((await store.find_id('products', PRODUCTO))?.existenciaApartada).toBe(0);
+		const salida = store.data['inventory-movement'].find((row) => row.tipo_movimiento === 'salida_entrega');
+		expect(salida?.ubicacion_origen).toBe(ALM_CENTRO);
+	});
+
+	test('sin almacén de sucursal aparta el del vendedor', async () => {
+		const store = store_con([quant(ALM_RUTA, 3), quant(GENERAL, 50)]);
+		const prepared = await prepare_layaway_rules(store, {
+			ticket_type: 'APARTADO',
+			pos_session: SESION_NORTE,
+			created_by: VENDEDOR,
+			client_id: 'cli-1',
+			subtotal: 10,
+			items: [{ item_id: PRODUCTO, quantity: 2 }],
+			payments: [{ method: 'efectivo', amount: 1 }],
+		});
+		const layaway = await store.insert('pos-tickets', { ...prepared, _id: 'ap-3' });
+		await register_layaway_effects(store, layaway);
+		const ruta = store.data['inventory-stock-quant'].find((row) => row.ubicacion === ALM_RUTA);
+		expect(ruta?.cantidad_apartada).toBe(2);
+		expect(ruta?.cantidad).toBe(3);
+		const scope = await warehouse_scope(store, ALM_RUTA);
+		expect(await scope_stock_snapshot(store, scope!)).toEqual([{ producto: PRODUCTO, cantidad: 1 }]);
+		await expect(prepare_layaway_rules(store, {
+			ticket_type: 'APARTADO',
+			pos_session: SESION_NORTE,
+			created_by: VENDEDOR,
+			client_id: 'cli-1',
+			subtotal: 10,
+			items: [{ item_id: PRODUCTO, quantity: 2 }],
+			payments: [{ method: 'efectivo', amount: 1 }],
+		})).rejects.toThrow(/Camioneta ruta 1/);
 	});
 
 	test('sin almacén configurado sigue la existencia global', async () => {

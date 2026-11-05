@@ -35,13 +35,14 @@ export function mensaje_negativos(accion: string, faltantes: FaltanteSalida[]): 
 /**
  * Lanza si alguna salida (producto → cantidad) dejaría la existencia total
  * por debajo de 0 y los negativos no están permitidos. Con `scope` cuenta
- * solo la existencia de ese almacén.
+ * solo ese almacén; `libre` descuenta lo apartado.
  */
 export async function assert_salida_sin_negativos(
 	store: ImperiumStore,
 	accion: string,
 	salidas: Map<string, number>,
 	scope: WarehouseScope | null = null,
+	opts: { libre?: boolean } = {},
 ): Promise<void> {
 	if (!salidas.size || !store.has('products')) return;
 	if (await allow_negative_stock(store)) return;
@@ -50,7 +51,9 @@ export async function assert_salida_sin_negativos(
 		if (!(requerido > 0)) continue;
 		const product = await store.find_id('products', product_id);
 		const disponible = round_qty(
-			product && scope ? await scope_stock(store, product, scope) : Number(product?.existencia ?? 0),
+			product && scope
+				? await scope_stock(store, product, scope, { libre: opts.libre })
+				: Number(product?.existencia ?? 0),
 		);
 		if (requerido > disponible) {
 			faltantes.push({
