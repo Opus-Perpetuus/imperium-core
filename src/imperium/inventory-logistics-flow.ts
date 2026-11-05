@@ -6,8 +6,9 @@
  */
 import { allow_negative_stock, mensaje_negativos } from './negative-stock.ts';
 import { as_array, as_object, type ImperiumDoc } from './envelope.ts';
+import { product_has_quants } from './delivery-return-flow.ts';
 import { consume_exit_quants } from './inventory-exit.ts';
-import { warehouse_scope } from './warehouse-scope.ts';
+import { is_general_warehouse, scope_stock, warehouse_scope, type WarehouseScope } from './warehouse-scope.ts';
 import type { ImperiumStore } from './store.ts';
 
 const WAREHOUSE_REF = 'inventory-internal-location-warehouse';
@@ -157,6 +158,10 @@ async function plan_order_logistics_reservation(
 	if (!pedido) throw new Error('No se encontró el pedido para sincronizar inventario');
 	const estado = text(pedido.estado);
 	if (estado === 'surtido' || estado === 'enviado') return null;
+	const scope = await warehouse_scope(store, pedido.almacen);
+	const apartado_en_scope = scope
+		? await apartado_logistica_por_almacen(store, String(scope.almacen._id))
+		: null;
 
 	const steps: Array<{
 		product: ImperiumDoc;
@@ -180,7 +185,14 @@ async function plan_order_logistics_reservation(
 		const stock_total_previo = round_qty(Number(product.existencia ?? 0));
 		const stock_apartado_previo = round_qty(Number(product.existenciaApartada ?? 0));
 		if (difference > 0) {
-			const available = round_qty(stock_total_previo - stock_apartado_previo);
+			const available = await disponible_para_apartar(
+				store,
+				product,
+				scope,
+				apartado_en_scope,
+				stock_total_previo,
+				stock_apartado_previo,
+			);
 			if (difference > available) {
 				const item: InventoryInconsistency = {
 					product: product_id,
@@ -416,6 +428,63 @@ export async function register_package_delivery_exit(
 
 function round_qty(value: unknown): number {
 	return Number(Number(value ?? 0).toFixed(4));
+}
+
+async function disponible_para_apartar(
+	store: ImperiumStore,
+	product: ImperiumDoc,
+	scope: WarehouseScope | null,
+	apartado_en_scope: Map<string, number> | null,
+	stock_total_previo: number,
+	stock_apartado_previo: number,
+): Promise<number> {
+	const global_libre = round_qty(stock_total_previo - stock_apartado_previo);
+	if (!scope) return global_libre;
+	const product_id = String(product._id ?? '');
+	if (!(await product_has_quants(store, product_id))) {
+		return is_general_warehouse(scope.almacen) ? global_libre : 0;
+	}
+	const libre = await scope_stock(store, product, scope, { libre: true });
+	const ya = apartado_en_scope?.get(product_id) ?? 0;
+	return Math.min(global_libre, round_qty(libre - ya));
+}
+
+async function apartado_logistica_por_almacen(
+	store: ImperiumStore,
+	almacen_id: string,
+): Promise<Map<string, number>> {
+	const out = new Map<string, number>();
+	if (!almacen_id || !store.has('inventory-movement') || !store.has('pedidos')) return out;
+	const nets = new Map<string, Map<string, number>>();
+	for await (const page of store.scan('inventory-movement', {
+		where: {
+			documento_tipo: 'pedido',
+			tipo_movimiento: { in: [RESERVATION, RELEASE] },
+		},
+		include_inactive: true,
+	})) {
+		for (const row of page) {
+			const tipo = text(row.tipo_movimiento);
+			if (tipo !== RESERVATION && tipo !== RELEASE) continue;
+			if (text(row.documento_tipo) !== 'pedido') continue;
+			const pedido_id = text(row.documento_id);
+			const product_id = ref_id(row.producto) || text(row.producto_id);
+			if (!pedido_id || !product_id) continue;
+			const signed = tipo === RESERVATION ? Number(row.cantidad ?? 0) : -Number(row.cantidad ?? 0);
+			const by_product = nets.get(pedido_id) ?? new Map<string, number>();
+			by_product.set(product_id, round_qty((by_product.get(product_id) ?? 0) + signed));
+			nets.set(pedido_id, by_product);
+		}
+	}
+	for (const [pedido_id, by_product] of nets) {
+		const doc = await store.find_id('pedidos', pedido_id);
+		if (ref_id(doc?.almacen) !== almacen_id) continue;
+		for (const [product_id, qty] of by_product) {
+			if (!(qty > 0)) continue;
+			out.set(product_id, round_qty((out.get(product_id) ?? 0) + qty));
+		}
+	}
+	return out;
 }
 
 /** `__get_statistics` de existencias: cantidad total y ubicaciones con stock. */
