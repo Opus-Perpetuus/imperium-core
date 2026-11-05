@@ -3,15 +3,20 @@ import type { ImperiumDoc } from './envelope.ts';
 import type { ImperiumStore } from './store.ts';
 import { assert_pos_ticket_stock, register_pos_ticket_exit } from './inventory-exit.ts';
 import { register_package_delivery_exit } from './inventory-logistics-flow.ts';
-import { ALLOW_NEGATIVE_STOCK_REF } from './negative-stock.ts';
+import { ALLOW_NEGATIVE_STOCK_REF, assert_salida_sin_negativos } from './negative-stock.ts';
 import { revert_pos_return_entry } from './pos-return.ts';
 
 const P = '507f1f77bcf86cd799439013';
 type Row = ImperiumDoc;
 
-function store_con(existencia: number, extra: Record<string, Row[]> = {}, permitir?: boolean) {
+function store_con(
+	existencia: number,
+	extra: Record<string, Row[]> = {},
+	permitir?: boolean,
+	apartado?: number,
+) {
 	const data: Record<string, Row[]> = {
-		products: [{ _id: P, name: 'Codo', codigo: 'C1', existencia, existenciaApartada: existencia + 10 }],
+		products: [{ _id: P, name: 'Codo', codigo: 'C1', existencia, existenciaApartada: apartado ?? existencia + 10 }],
 		'inventory-movement': [],
 		...extra,
 	};
@@ -66,14 +71,24 @@ const existencia = async (s: ImperiumStore) => (await s.find_id('products', P))?
 
 describe('caja / POS', () => {
 	test('por defecto bloquea la venta que dejaría existencia negativa', async () => {
-		const s = store_con(2);
+		const s = store_con(2, {}, undefined, 0);
 		await expect(assert_pos_ticket_stock(s, venta(5))).rejects.toThrow(
 			'No se puede vender: la existencia quedaría negativa en Codo (sale 5, hay 2)',
 		);
 	});
 
 	test('con existencia suficiente no bloquea', async () => {
-		await expect(assert_pos_ticket_stock(store_con(5), venta(5))).resolves.toBeUndefined();
+		await expect(assert_pos_ticket_stock(store_con(5, {}, undefined, 0), venta(5))).resolves.toBeUndefined();
+	});
+
+	test('sin almacén, lo libre descuenta lo apartado', async () => {
+		const s = store_con(10, {}, undefined, 4);
+		const salidas = new Map([[P, 7]]);
+		await expect(assert_salida_sin_negativos(s, 'vender', salidas, null, { libre: true })).rejects.toThrow(
+			'Codo (sale 7, hay 6)',
+		);
+		await expect(assert_salida_sin_negativos(s, 'vender', new Map([[P, 6]]), null, { libre: true })).resolves.toBeUndefined();
+		await expect(assert_salida_sin_negativos(s, 'vender', salidas, null)).resolves.toBeUndefined();
 	});
 
 	test('con el interruptor en SÍ vende y la existencia queda negativa', async () => {

@@ -50,10 +50,11 @@ export async function assert_salida_sin_negativos(
 	for (const [product_id, requerido] of salidas) {
 		if (!(requerido > 0)) continue;
 		const product = await store.find_id('products', product_id);
+		const apartado = opts.libre ? Math.max(Number(product?.existenciaApartada ?? 0), 0) : 0;
 		const disponible = round_qty(
 			product && scope
 				? await scope_stock(store, product, scope, { libre: opts.libre })
-				: Number(product?.existencia ?? 0),
+				: Number(product?.existencia ?? 0) - apartado,
 		);
 		if (requerido > disponible) {
 			faltantes.push({
