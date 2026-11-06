@@ -307,13 +307,12 @@ describe('POS: sale del almacén de la sucursal', () => {
 		});
 		expect(cantidades(store)).toEqual({ 'CEN-A2': 2, 'CEN-A1': 0, GEN: 50 });
 		expect((await store.find_id('products', PRODUCTO))?.existencia).toBe(52);
-		const [mov] = store.data['inventory-movement'];
-		expect(mov).toMatchObject({
-			tipo_movimiento: 'salida_entrega',
-			documento_tipo: 'pos-ticket',
-			ubicacion_origen: ALM_CENTRO,
-			cantidad: 3,
-		});
+		const movs = store.data['inventory-movement'];
+		expect(movs.every((m) => m.tipo_movimiento === 'salida_entrega' && m.documento_tipo === 'pos-ticket')).toBe(true);
+		expect(movs.map((m) => [m.ubicacion_origen, m.cantidad])).toEqual([
+			[ALM_CENTRO_A1, 1],
+			[ALM_CENTRO_A2, 2],
+		]);
 	});
 
 	test('un apartado reserva el almacén de la sucursal, no la existencia de otros', async () => {
@@ -380,8 +379,11 @@ describe('POS: sale del almacén de la sucursal', () => {
 		expect(cantidades(store)).toEqual({ 'CEN-A1': 0, 'CEN-A2': 3, GEN: 50 });
 		expect((await store.find_id('products', PRODUCTO))?.existencia).toBe(53);
 		expect((await store.find_id('products', PRODUCTO))?.existenciaApartada).toBe(0);
-		const salida = store.data['inventory-movement'].find((row) => row.tipo_movimiento === 'salida_entrega');
-		expect(salida?.ubicacion_origen).toBe(ALM_CENTRO);
+		const salidas = store.data['inventory-movement'].filter((row) => row.tipo_movimiento === 'salida_entrega');
+		expect(salidas.map((row) => [row.ubicacion_origen, row.cantidad])).toEqual([
+			[ALM_CENTRO_A1, 2],
+			[ALM_CENTRO_A2, 2],
+		]);
 	});
 
 	test('sin almacén de sucursal aparta el del vendedor', async () => {

@@ -30,8 +30,10 @@ function memory_store(seed: Record<string, Row[]>) {
 		async find_where(r: string, where: Record<string, unknown>) {
 			return (data[r] ?? []).find((row) => matches(row, where)) ?? null;
 		},
-		async find_many(r: string, o: { where?: Record<string, unknown>; take?: number } = {}) {
-			const rows = (data[r] ?? []).filter((row) => matches(row, o.where));
+		async find_many(r: string, o: { where?: Record<string, unknown>; take?: number; ids?: string[] } = {}) {
+			const rows = (data[r] ?? []).filter(
+				(row) => matches(row, o.where) && (!o.ids || o.ids.includes(String(row._id))),
+			);
 			return { rows: rows.slice(0, o.take ?? rows.length), total: rows.length };
 		},
 		async *scan(r: string, o: { where?: Record<string, unknown> } = {}) {
@@ -214,6 +216,70 @@ describe('devoluciones POS ligadas a la venta', () => {
 		const again = await register_pos_return_entry(store, other.created);
 		expect(again[0].motivo).toBe('ya_reingresado');
 		expect(created._id).toBeTruthy();
+	});
+
+	test('la devolución vuelve a los anaqueles de los que salió la venta', async () => {
+		const A1 = '507f1f77bcf86cd7994390a1';
+		const A2 = '507f1f77bcf86cd7994390a2';
+		const store = memory_store({
+			products: [{ _id: P1, name: 'Codo', codigo: 'C1', existencia: 6 }],
+			'pos-tickets': [
+				{
+					_id: 'venta-anaquel',
+					ticket_type: 'VENTA',
+					ticket_sequence: 'CAJA-2-1',
+					state: 'confirmado',
+					items: [{ item_id: P1, item_name: 'Codo', quantity: 4, unit_price: 10 }],
+				},
+			],
+			'inventory-movement': [],
+			'inventory-stock-quant': [
+				{
+					_id: 'q1',
+					producto: P1,
+					ubicacion: A1,
+					ubicacion_codigo: 'A1',
+					cantidad: 1,
+					cantidad_apartada: 0,
+					cantidad_disponible: 1,
+				},
+				{
+					_id: 'q2',
+					producto: P1,
+					ubicacion: A2,
+					ubicacion_codigo: 'A2',
+					cantidad: 5,
+					cantidad_apartada: 0,
+					cantidad_disponible: 5,
+				},
+			],
+			'inventory-internal-location': [
+				{ _id: ALM, codigo: 'ALM', name: 'General', _ref: 'inventory-internal-location-warehouse' },
+				{ _id: A1, codigo: 'A1', name: 'Anaquel 1', secuencia_surtido: 1 },
+				{ _id: A2, codigo: 'A2', name: 'Anaquel 2', secuencia_surtido: 2 },
+			],
+		});
+		await register_pos_ticket_exit(store, store.data['pos-tickets'][0]);
+		const salidas = store.data['inventory-movement'].filter((m) => m.tipo_movimiento === 'salida_entrega');
+		expect(salidas.map((m) => [m.ubicacion_origen, m.cantidad])).toEqual([
+			[A1, 1],
+			[A2, 3],
+		]);
+		const { created } = await create_return(store, {
+			original_ticket: 'venta-anaquel',
+			items: [{ item_id: P1, quantity: 4 }],
+		});
+		const reingresos = store.data['inventory-movement'].filter(
+			(m) => m.tipo_movimiento === 'recepcion_devolucion' && m.documento_id === created._id,
+		);
+		expect(reingresos.map((m) => [m.ubicacion_destino, m.cantidad])).toEqual([
+			[A2, 3],
+			[A1, 1],
+		]);
+		const qty = (id: string) => store.data['inventory-stock-quant'].find((q) => q.ubicacion === id)?.cantidad;
+		expect(qty(A1)).toBe(1);
+		expect(qty(A2)).toBe(5);
+		expect(await existencia(store, P1)).toBe(6);
 	});
 
 	test('solo se devuelve una venta viva', async () => {

@@ -18,13 +18,23 @@ import type { ImperiumStore } from './store.ts';
  * ubicación, sale del almacén general (`inventory-internal-location-warehouse`).
  * Si el producto no tiene fila ahí, se crea y puede quedar negativa.
  */
+type ExitTouch = QuantLot & { cantidad: number; ubicacion: string; ubicacion_codigo: string };
+
+function tag_ubicacion(
+	portions: Array<QuantLot & { cantidad: number }>,
+	ubicacion: string,
+	ubicacion_codigo: string,
+): ExitTouch[] {
+	return portions.map((portion) => ({ ...portion, ubicacion, ubicacion_codigo }));
+}
+
 export async function consume_exit_quants(
 	store: ImperiumStore,
 	product: ImperiumDoc,
 	cantidad: number,
 	scope: WarehouseScope | null = null,
-): Promise<Array<QuantLot & { cantidad: number }>> {
-	const touched: Array<QuantLot & { cantidad: number }> = [];
+): Promise<ExitTouch[]> {
+	const touched: ExitTouch[] = [];
 	const producto = String(product._id ?? '');
 	const requerido = round_quantity(cantidad);
 	if (!producto || requerido <= 0 || !store.has('inventory-stock-quant')) return touched;
@@ -38,24 +48,34 @@ export async function consume_exit_quants(
 	});
 	for (const renglon of route.renglones) {
 		touched.push(
-			...(await apply_quant_delta(store, {
-				...base,
-				ubicacion: renglon.ubicacion,
-				ubicacion_codigo: renglon.ubicacion_codigo,
-				delta: -renglon.tomar,
-			})),
+			...tag_ubicacion(
+				await apply_quant_delta(store, {
+					...base,
+					ubicacion: renglon.ubicacion,
+					ubicacion_codigo: renglon.ubicacion_codigo,
+					delta: -renglon.tomar,
+				}),
+				renglon.ubicacion,
+				renglon.ubicacion_codigo,
+			),
 		);
 	}
 	if (route.faltante <= 0) return touched;
 	const warehouse = scope?.almacen ?? (await find_warehouse_location(store));
 	if (!warehouse?._id) return touched;
+	const ubicacion = String(warehouse._id);
+	const ubicacion_codigo = String(warehouse.codigo ?? warehouse.name ?? '');
 	touched.push(
-		...(await apply_quant_delta(store, {
-			...base,
-			ubicacion: String(warehouse._id),
-			ubicacion_codigo: String(warehouse.codigo ?? warehouse.name ?? ''),
-			delta: -route.faltante,
-		})),
+		...tag_ubicacion(
+			await apply_quant_delta(store, {
+				...base,
+				ubicacion,
+				ubicacion_codigo,
+				delta: -route.faltante,
+			}),
+			ubicacion,
+			ubicacion_codigo,
+		),
 	);
 	return touched;
 }
@@ -175,7 +195,23 @@ async function exit_product(
 		: Math.max(previa - qty, 0);
 	await store.update('products', pid, { existencia: next });
 	const touched = await consume_exit_quants(store, product, previa - next, scope);
-	await insert_pos_sale_movement(store, ticket, product, qty, previa, next, exit_lot_trace(touched), scope);
+	await insert_pos_sale_movement(store, ticket, product, qty, previa, next, touched, scope);
+}
+
+function group_exit_touches(touched: ExitTouch[]) {
+	const order: string[] = [];
+	const by = new Map<string, { ubicacion: string; ubicacion_codigo: string; cantidad: number; lots: ExitTouch[] }>();
+	for (const touch of touched) {
+		let group = by.get(touch.ubicacion);
+		if (!group) {
+			group = { ubicacion: touch.ubicacion, ubicacion_codigo: touch.ubicacion_codigo, cantidad: 0, lots: [] };
+			by.set(touch.ubicacion, group);
+			order.push(touch.ubicacion);
+		}
+		group.cantidad = round_quantity(group.cantidad + Math.abs(Number(touch.cantidad) || 0));
+		group.lots.push(touch);
+	}
+	return order.map((id) => by.get(id)!);
 }
 
 async function insert_pos_sale_movement(
@@ -185,12 +221,62 @@ async function insert_pos_sale_movement(
 	cantidad: number,
 	stock_total_previo: number,
 	stock_total_resultante: number,
-	lot_trace: ImperiumDoc = {},
+	touched: ExitTouch[],
 	scope: WarehouseScope | null = null,
 ): Promise<void> {
 	if (!store.has('inventory-movement')) return;
-	const { lotes_detalle, ...lot_fields } = lot_trace;
-	const warehouse = scope?.almacen ?? (await find_warehouse_location(store));
+	const groups = group_exit_touches(touched);
+	const taken = round_quantity(groups.reduce((sum, group) => sum + group.cantidad, 0));
+	const sold = round_quantity(cantidad);
+	const last = groups.at(-1);
+	if (last && sold > taken) last.cantidad = round_quantity(last.cantidad + sold - taken);
+	if (!groups.length) {
+		const warehouse = scope?.almacen ?? (await find_warehouse_location(store));
+		await write_pos_sale_movement(store, ticket, product, {
+			cantidad,
+			stock_total_previo,
+			stock_total_resultante,
+			ubicacion_id: warehouse?._id ? String(warehouse._id) : '',
+			ubicacion_nombre: String(warehouse?.name ?? ''),
+			lot_trace: {},
+		});
+		return;
+	}
+	let previo = round_quantity(stock_total_previo);
+	for (const [i, group] of groups.entries()) {
+		const resultante =
+			i === groups.length - 1
+				? round_quantity(stock_total_resultante)
+				: round_quantity(previo - group.cantidad);
+		const loc = store.has('inventory-internal-location')
+			? await store.find_id('inventory-internal-location', group.ubicacion)
+			: null;
+		await write_pos_sale_movement(store, ticket, product, {
+			cantidad: group.cantidad,
+			stock_total_previo: previo,
+			stock_total_resultante: resultante,
+			ubicacion_id: group.ubicacion,
+			ubicacion_nombre: String(loc?.name ?? group.ubicacion_codigo),
+			lot_trace: exit_lot_trace(group.lots),
+		});
+		previo = resultante;
+	}
+}
+
+async function write_pos_sale_movement(
+	store: ImperiumStore,
+	ticket: ImperiumDoc,
+	product: ImperiumDoc,
+	parte: {
+		cantidad: number;
+		stock_total_previo: number;
+		stock_total_resultante: number;
+		ubicacion_id: string;
+		ubicacion_nombre: string;
+		lot_trace: ImperiumDoc;
+	},
+): Promise<void> {
+	const { lotes_detalle, ...lot_fields } = parte.lot_trace;
 	const producto = String(product._id ?? '');
 	const apartado = round_quantity(Number(product.existenciaApartada ?? 0));
 	await store.insert('inventory-movement', {
@@ -200,9 +286,9 @@ async function insert_pos_sale_movement(
 		producto_nombre: product.name,
 		producto_codigo: product.codigo,
 		tipo_movimiento: 'salida_entrega',
-		ubicacion_origen: warehouse?._id,
-		ubicacion_origen_id: warehouse?._id,
-		ubicacion_origen_nombre: warehouse?.name,
+		ubicacion_origen: parte.ubicacion_id || undefined,
+		ubicacion_origen_id: parte.ubicacion_id || undefined,
+		ubicacion_origen_nombre: parte.ubicacion_nombre,
 		documento_tipo: 'pos-ticket',
 		documento_id: String(ticket._id ?? ''),
 		documento_modelo: 'PosTickets',
@@ -212,9 +298,9 @@ async function insert_pos_sale_movement(
 			? `Salida por venta en punto de venta. Lotes: ${String(lotes_detalle)}`
 			: 'Salida por venta en punto de venta',
 		...lot_fields,
-		cantidad: round_quantity(cantidad),
-		stock_total_previo: round_quantity(stock_total_previo),
-		stock_total_resultante: round_quantity(stock_total_resultante),
+		cantidad: round_quantity(parte.cantidad),
+		stock_total_previo: round_quantity(parte.stock_total_previo),
+		stock_total_resultante: round_quantity(parte.stock_total_resultante),
 		stock_apartado_previo: apartado,
 		stock_apartado_resultante: apartado,
 		fecha_movimiento: new Date().toISOString(),

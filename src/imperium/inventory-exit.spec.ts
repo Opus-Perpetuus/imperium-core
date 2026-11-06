@@ -218,7 +218,7 @@ describe('salidas de inventario por ubicación', () => {
 			documento_tipo: 'pos-ticket',
 			documento_id: 'ticket-1',
 			documento_nombre: 'SES-15-3',
-			ubicacion_origen: ALMACEN,
+			ubicacion_origen: ANAQUEL_A,
 			cantidad: 3,
 			stock_total_previo: 10,
 			stock_total_resultante: 7,
