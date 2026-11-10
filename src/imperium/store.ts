@@ -34,7 +34,7 @@ import { products_inventory_cost } from './products-flow.ts';
 import { vehicle_by_status } from './vehicle-flow.ts';
 import { delivery_package_by_status } from './delivery-package-flow.ts';
 import { pedidos_sales_stats } from './pedidos-flow.ts';
-import { pedido_order_sql } from './pedidos-list-order.ts';
+import { pedido_fecha_order_sql, pedido_order_sql, pedido_search_predicates } from './pedidos-list-order.ts';
 import {
 	purchase_order_stats,
 	with_purchase_order_supplier_name,
@@ -5978,7 +5978,9 @@ export class ImperiumStore {
 			opts.q &&
 			!opts.sql_search_only &&
 			SearchEngine.is_enabled() &&
-			resource !== 'font-awesome-icon-catalog'
+			resource !== 'font-awesome-icon-catalog' &&
+			resource !== 'pedidos' &&
+			resource !== 'pedidos-surtir'
 		) {
 			const ids = await SearchEngine.search_ids(loc.collection, opts.q);
 			if (ids !== null && ids.length) {
@@ -6048,6 +6050,22 @@ export class ImperiumStore {
 				params.push(like);
 				return `${qident(c)} ILIKE $${params.length}`;
 			});
+			if (resource === 'pedidos' || resource === 'pedidos-surtir') {
+				params.push(like);
+				const contacto_columns = ['contacto', 'contacto_id'].filter((column) => cols.has(column));
+				const contacto_table =
+					contacto_columns.length &&
+					this.has('contacto') &&
+					this.is_resource_installed('contacto')
+						? this.qt('contacto')
+						: null;
+				parts.push(
+					...pedido_search_predicates(`$${params.length}`, {
+						contacto_table,
+						contacto_columns,
+					}),
+				);
+			}
 			if (parts.length) clauses.push(`(${parts.join(' OR ')})`);
 		}
 		if (opts.after_created?.at && opts.after_created.id && cols.has('created_at')) {
@@ -6111,8 +6129,18 @@ export class ImperiumStore {
 			const dir = (m?.[2] ?? 'asc').toLowerCase() === 'desc' ? 'DESC' : 'ASC';
 			if (campo && cols.has(campo === 'ref' ? 'ref' : campo)) {
 				const col = campo === '_ref' ? 'ref' : campo;
-				if (resource === 'pedidos' && (col === 'folio' || col === 'folio_interno')) {
+				if (
+					(resource === 'pedidos' || resource === 'pedidos-surtir') &&
+					(col === 'folio' || col === 'folio_interno')
+				) {
 					order = pedido_order_sql(qident(col), dir, col);
+				} else if (
+					(resource === 'pedidos' || resource === 'pedidos-surtir') &&
+					col === 'fecha' &&
+					cols.has('created_at')
+				) {
+					order = pedido_fecha_order_sql(qident(col), qident('created_at'), dir);
+					order += `, ${qident('id')} ${dir}`;
 				} else {
 					order = ` ORDER BY ${qident(col)} ${dir} NULLS LAST`;
 				}

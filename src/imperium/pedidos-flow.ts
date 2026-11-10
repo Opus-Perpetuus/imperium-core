@@ -126,6 +126,8 @@ export async function prepare_pedido_create(
 		context: out,
 	});
 	out.name = `PEDIDO-${out.folio}`;
+	if (!text(out.fecha)) out.fecha = new Date().toISOString();
+	out.search_field = await pedido_search_field(store, out);
 	assign_capture_gps(out, 'order', resolve_capture_gps(out, 'order', 'toma del pedido'));
 	return out;
 }
@@ -172,7 +174,25 @@ export async function prepare_pedido_update(
 	if (String(out.order_gps_status ?? '').trim()) {
 		assign_capture_gps(out, 'order', resolve_capture_gps(out, 'order', 'toma del pedido'));
 	}
+	if (!text(out.fecha) && text(previous?.fecha)) out.fecha = previous?.fecha;
+	out.search_field = await pedido_search_field(store, { ...(previous ?? {}), ...out });
 	return out;
+}
+
+async function pedido_search_field(store: ImperiumStore, doc: ImperiumDoc): Promise<string> {
+	const contacto_id = ref_id(doc.contacto_id) || ref_id(doc.contacto);
+	let nombre = '';
+	if (contacto_id && store.has('contacto')) {
+		const contacto = await store.find_id('contacto', contacto_id);
+		nombre = text(contacto?.name);
+	}
+	if (!nombre && doc.contacto && typeof doc.contacto === 'object') {
+		nombre = text(as_object(doc.contacto).name);
+	}
+	const lineas = as_array(doc.articulos)
+		.map((raw) => text(as_object(raw).observaciones))
+		.filter(Boolean);
+	return [nombre, text(doc.observaciones), ...lineas].filter(Boolean).join('\n');
 }
 
 async function location_by_ref(store: ImperiumStore, ref: string) {
