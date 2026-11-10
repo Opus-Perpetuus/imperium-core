@@ -275,6 +275,7 @@ import {
 	type FaltanteExistencia,
 } from './pedidos-flow.ts';
 import {
+	pedido_warehouse_id,
 	scope_stock_snapshot,
 	user_warehouse_id,
 	warehouse_scope,
@@ -3830,7 +3831,14 @@ async function picking_route(ctx: Ctx) {
 	if (!(cantidad > 0)) {
 		throw new Error('Debes indicar una cantidad mayor a cero');
 	}
-	const almacen = String(ctx.url.searchParams.get('almacen') ?? ctx.body.almacen ?? '').trim();
+	let almacen = String(ctx.url.searchParams.get('almacen') ?? ctx.body.almacen ?? '').trim();
+	const pedido_id = String(ctx.url.searchParams.get('pedido') ?? ctx.body.pedido ?? '').trim();
+	if (pedido_id) {
+		if (!is_record_id(pedido_id)) throw new Error('Debes indicar un pedido válido');
+		const pedido = await ctx.store.find_id('pedidos', pedido_id);
+		if (!pedido || pedido.is_active === false) throw new Error('No se encontró el pedido');
+		almacen = await pedido_warehouse_id(ctx.store, pedido);
+	}
 	const scope = almacen ? await warehouse_scope(ctx.store, almacen) : null;
 	if (almacen && !scope) throw new Error('No se encontró el almacén indicado');
 	const ruta = await compute_picking_route(ctx.store, producto, cantidad, {

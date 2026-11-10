@@ -16,6 +16,9 @@ export type PickingSourceQuant = {
 	ubicacion: string;
 	ubicacion_codigo: string;
 	cantidad_disponible: number;
+	lote?: string;
+	lote_codigo?: string;
+	fecha_caducidad?: string;
 };
 
 export type PickingRenglon = {
@@ -23,6 +26,10 @@ export type PickingRenglon = {
 	ubicacion_codigo: string;
 	disponible: number;
 	tomar: number;
+	/** Vacío si la fila de existencia no tiene lote. */
+	lote: string;
+	lote_codigo: string;
+	fecha_caducidad: string;
 };
 
 export type PickingRoute = {
@@ -51,6 +58,9 @@ export function build_picking_renglones(
 			ubicacion_codigo: quant.ubicacion_codigo,
 			disponible,
 			tomar,
+			lote: quant.lote ?? '',
+			lote_codigo: quant.lote_codigo ?? '',
+			fecha_caducidad: quant.fecha_caducidad ?? '',
 		});
 		restante = round_quantity(restante - tomar);
 	}
@@ -82,6 +92,26 @@ export function weighted_moving_average(values: number[]): number {
 	return weight_total > 0 ? round_quantity(weighted_sum / weight_total) : 0;
 }
 
+/**
+ * Misma ubicación: primero la fila sin lote, luego caducidad y código de lote.
+ * Es el orden de `apply_quant_delta` al descontar.
+ */
+function compare_picking_sources(
+	a: PickingSourceQuant & { secuencia: number },
+	b: PickingSourceQuant & { secuencia: number },
+): number {
+	if (a.secuencia !== b.secuencia) return a.secuencia - b.secuencia;
+	const by_code = String(a.ubicacion_codigo).localeCompare(String(b.ubicacion_codigo), 'es');
+	if (by_code !== 0) return by_code;
+	if (a.ubicacion !== b.ubicacion) return String(a.ubicacion).localeCompare(String(b.ubicacion));
+	const a_lot = a.lote ? 1 : 0;
+	const b_lot = b.lote ? 1 : 0;
+	if (a_lot !== b_lot) return a_lot - b_lot;
+	const by_exp = (a.fecha_caducidad || '9999').localeCompare(b.fecha_caducidad || '9999');
+	if (by_exp !== 0) return by_exp;
+	return String(a.lote_codigo ?? '').localeCompare(String(b.lote_codigo ?? ''));
+}
+
 /** `ubicaciones` limita la ruta a esas ubicaciones (el alcance de un almacén). */
 export async function compute_picking_route(
 	store: ImperiumStore,
@@ -109,6 +139,9 @@ export async function compute_picking_route(
 					ubicacion: loc_id,
 					ubicacion_codigo: String(row.ubicacion_codigo ?? ''),
 					cantidad_disponible: disponible,
+					lote: String(row.lote ?? ''),
+					lote_codigo: String(row.lote_codigo ?? ''),
+					fecha_caducidad: String(row.fecha_caducidad ?? ''),
 					secuencia: 0,
 				});
 			}
@@ -137,10 +170,7 @@ export async function compute_picking_route(
 			}
 		}
 	}
-	sources.sort((a, b) => {
-		if (a.secuencia !== b.secuencia) return a.secuencia - b.secuencia;
-		return String(a.ubicacion_codigo).localeCompare(String(b.ubicacion_codigo), 'es');
-	});
+	sources.sort((a, b) => compare_picking_sources(a, b));
 	const { renglones, faltante } = build_picking_renglones(sources, requerido);
 	return {
 		producto,
