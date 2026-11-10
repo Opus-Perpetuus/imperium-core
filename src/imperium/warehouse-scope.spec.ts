@@ -403,7 +403,9 @@ describe('POS: sale del almacén de la sucursal', () => {
 		expect(ruta?.cantidad_apartada).toBe(2);
 		expect(ruta?.cantidad).toBe(3);
 		const scope = await warehouse_scope(store, ALM_RUTA);
-		expect(await scope_stock_snapshot(store, scope!)).toEqual([{ producto: PRODUCTO, cantidad: 1 }]);
+		expect(await scope_stock_snapshot(store, scope!)).toEqual([
+			{ producto: PRODUCTO, cantidad: 1, apartada: 2, disponible: 1 },
+		]);
 		await expect(prepare_layaway_rules(store, {
 			ticket_type: 'APARTADO',
 			pos_session: SESION_NORTE,
@@ -663,8 +665,21 @@ describe('existencia offline del almacén del vendedor', () => {
 		expect(await res.json()).toEqual({
 			almacen: { _id: ALM_RUTA, name: 'Camioneta ruta 1', codigo: 'RUT' },
 			permitir_negativos: false,
-			existencias: [{ producto: PRODUCTO, cantidad: 7 }],
+			existencias: [{ producto: PRODUCTO, cantidad: 7, apartada: 0, disponible: 7 }],
 		});
+	});
+
+	test('el disponible del almacén no baja de cero y la apartada es la de ahí', async () => {
+		const fila = quant(ALM_RUTA, 1);
+		fila.cantidad_apartada = 4;
+		fila.cantidad_disponible = -3;
+		const store = store_con([fila, quant(GENERAL, 5)]);
+		const res = await read_offline_stock({ store, actor: { _id: VENDEDOR } } as never);
+		const body = await res.json();
+		expect(body.almacen._id).toBe(ALM_RUTA);
+		expect(body.existencias).toEqual([
+			{ producto: PRODUCTO, cantidad: -3, apartada: 4, disponible: 0 },
+		]);
 	});
 
 	test('sin almacén asignado no restringe (existencias null)', async () => {
@@ -676,6 +691,8 @@ describe('existencia offline del almacén del vendedor', () => {
 	test('el almacén general incluye productos sin filas por ubicación', async () => {
 		const store = store_con([], { existencia: 9 });
 		const scope = await warehouse_scope(store, GENERAL);
-		expect(await scope_stock_snapshot(store, scope!)).toEqual([{ producto: PRODUCTO, cantidad: 9 }]);
+		expect(await scope_stock_snapshot(store, scope!)).toEqual([
+			{ producto: PRODUCTO, cantidad: 9, apartada: 0, disponible: 9 },
+		]);
 	});
 });

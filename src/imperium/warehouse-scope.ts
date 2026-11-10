@@ -143,6 +143,11 @@ function quant_libre(row: ImperiumDoc): number {
 	return Number(row.cantidad ?? 0) - Number(row.cantidad_apartada ?? 0);
 }
 
+function quant_apartada(row: ImperiumDoc): number {
+	const n = Number(row.cantidad_apartada ?? 0);
+	return Number.isFinite(n) ? Math.max(n, 0) : 0;
+}
+
 /**
  * Existencia del producto dentro del almacén. `libre` descuenta lo apartado.
  * Un producto sin ninguna fila por ubicación tiene toda su existencia en el
@@ -170,16 +175,34 @@ export async function scope_stock(
 	return round_quantity(total);
 }
 
+export type WarehouseStockSnapshotRow = {
+	producto: string;
+	/** Libre en el almacén. Puede ser negativo. */
+	cantidad: number;
+	/** Reservado en el almacén. */
+	apartada: number;
+	/** Libre del almacén, nunca negativo. */
+	disponible: number;
+};
+
 /**
- * Existencia libre por producto en el almacén, para el modo offline. Solo
- * trae productos con existencia en el almacén; el resto tiene 0.
+ * Existencia del almacén para el modo offline. `cantidad` es lo libre,
+ * `apartada` lo reservado ahí y `disponible` lo libre sin bajar de cero.
+ * Sin fila en ese almacén, el producto tiene 0.
  */
 export async function scope_stock_snapshot(
 	store: ImperiumStore,
 	scope: WarehouseScope,
-): Promise<Array<{ producto: string; cantidad: number }>> {
-	const by_product = new Map<string, number>();
+): Promise<WarehouseStockSnapshotRow[]> {
+	const by_product = new Map<string, { libre: number; apartada: number }>();
 	const con_filas = new Set<string>();
+	const sumar = (producto: string, libre: number, apartada: number) => {
+		const prev = by_product.get(producto) ?? { libre: 0, apartada: 0 };
+		by_product.set(producto, {
+			libre: prev.libre + libre,
+			apartada: prev.apartada + apartada,
+		});
+	};
 	if (store.has('inventory-stock-quant')) {
 		for await (const page of store.scan('inventory-stock-quant', { include_inactive: true })) {
 			for (const row of page) {
@@ -187,7 +210,7 @@ export async function scope_stock_snapshot(
 				if (!producto) continue;
 				con_filas.add(producto);
 				if (!scope.ids.has(ref_id(row.ubicacion))) continue;
-				by_product.set(producto, (by_product.get(producto) ?? 0) + quant_libre(row));
+				sumar(producto, quant_libre(row), quant_apartada(row));
 			}
 		}
 	}
@@ -196,15 +219,17 @@ export async function scope_stock_snapshot(
 			for (const product of page) {
 				const id = String(product._id ?? '');
 				if (!id || con_filas.has(id)) continue;
-				const libre =
-					Number(product.existencia ?? 0) - Math.max(Number(product.existenciaApartada ?? 0), 0);
-				if (libre) by_product.set(id, libre);
+				const apartada = Math.max(Number(product.existenciaApartada ?? 0), 0);
+				const libre = Number(product.existencia ?? 0) - apartada;
+				if (libre || apartada) sumar(id, libre, apartada);
 			}
 		}
 	}
-	return [...by_product.entries()].map(([producto, cantidad]) => ({
+	return [...by_product.entries()].map(([producto, acc]) => ({
 		producto,
-		cantidad: round_quantity(cantidad),
+		cantidad: round_quantity(acc.libre),
+		apartada: round_quantity(acc.apartada),
+		disponible: round_quantity(Math.max(acc.libre, 0)),
 	}));
 }
 

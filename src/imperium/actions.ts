@@ -4640,8 +4640,9 @@ const SKU_OFFLINE_OMIT = new Set([
  * producción, almacenes, lotes ni proveedores.
  */
 /**
- * Existencia libre del almacén del vendedor para vender offline. Sin almacén
- * asignado `existencias` es null y el modo offline usa la existencia global.
+ * Existencia del almacén del vendedor para vender offline: libre, apartada
+ * y disponible de ese almacén. Sin almacén asignado `existencias` es null
+ * y el modo offline usa la existencia global.
  */
 export async function read_offline_stock(ctx: Ctx) {
 	const permitir_negativos = await allow_negative_stock(ctx.store);
