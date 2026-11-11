@@ -1001,3 +1001,163 @@ describe('apartado al pasar a Por surtir', () => {
 	});
 });
 
+describe('confirmar el pedido', () => {
+	const vendedor = { _id: VENDEDOR, almacen: ALM_RUTA } as ImperiumDoc;
+	const OTRO = '507f1f77bcf86cd799439062';
+
+	function store_apartado_por_otro() {
+		const store = store_con([quant(ALM_RUTA, 1), quant(GENERAL, 50)]);
+		store.data.products[0].existenciaApartada = 1;
+		store.data.pedidos = [
+			{ _id: OTRO, estado: 'por_surtir', almacen: ALM_RUTA, articulos: [{ product: PRODUCTO, cantidad: 1 }] },
+		];
+		store.data['inventory-movement'] = [
+			{
+				_id: 'mov-otro',
+				tipo_movimiento: 'apartado_logistica',
+				documento_tipo: 'pedido',
+				documento_id: OTRO,
+				producto: PRODUCTO,
+				cantidad: 1,
+			},
+		];
+		return store;
+	}
+
+	test('el alta confirmada sin existencia disponible en su almacén se rechaza sin consumir folio', async () => {
+		const store = store_apartado_por_otro();
+		let folios = 0;
+		store.next_auto_increment = async () => ++folios;
+		await expect(
+			prepare_pedido_create(
+				store,
+				{ estado: 'confirmado', articulos: [{ product: PRODUCTO, cantidad: 99, precio: 10 }] },
+				vendedor,
+			),
+		).rejects.toThrow(
+			'No se puede confirmar el pedido: no hay existencia disponible en el almacén para Codo (pide 99, hay 0).',
+		);
+		expect(folios).toBe(0);
+		expect(store.data.pedidos).toHaveLength(1);
+		expect(store.data['inventory-movement']).toHaveLength(1);
+		expect((await store.find_id('products', PRODUCTO))?.existenciaApartada).toBe(1);
+	});
+
+	test('el alta confirmada con precio 0 se rechaza', async () => {
+		const store = store_con([quant(ALM_RUTA, 5)]);
+		await expect(
+			prepare_pedido_create(
+				store,
+				{ estado: 'confirmado', articulos: [{ product: PRODUCTO, cantidad: 1, precio: 0 }] },
+				vendedor,
+			),
+		).rejects.toThrow('No se puede confirmar el pedido: el precio debe ser mayor a 0 en Codo.');
+	});
+
+	test('con existencia y precio el alta confirmada pasa', async () => {
+		const store = store_con([quant(ALM_RUTA, 2), quant(GENERAL, 50)]);
+		const out = await prepare_pedido_create(
+			store,
+			{ estado: 'confirmado', articulos: [{ product: PRODUCTO, cantidad: 2, precio: 10 }] },
+			vendedor,
+		);
+		expect(out).toMatchObject({ estado: 'confirmado', almacen: ALM_RUTA, total: 20 });
+	});
+
+	test('el alta en borrador no exige existencia ni precio', async () => {
+		const store = store_apartado_por_otro();
+		const out = await prepare_pedido_create(
+			store,
+			{ estado: 'borrador', articulos: [{ product: PRODUCTO, cantidad: 99, precio: 0 }] },
+			vendedor,
+		);
+		expect(out.estado).toBe('borrador');
+	});
+
+	test('pasar de borrador a confirmado valida precio y existencia', async () => {
+		const previo = {
+			_id: PEDIDO,
+			estado: 'borrador',
+			almacen: ALM_RUTA,
+			usuario: VENDEDOR,
+			articulos: [{ product: PRODUCTO, cantidad: 99, precio: 0 }],
+		};
+		const sin_existencia = store_apartado_por_otro();
+		await expect(
+			prepare_pedido_update(sin_existencia, { estado: 'confirmado' }, vendedor, previo),
+		).rejects.toThrow('el precio debe ser mayor a 0 en Codo');
+		await expect(
+			prepare_pedido_update(
+				sin_existencia,
+				{ estado: 'confirmado', articulos: [{ product: PRODUCTO, cantidad: 99, precio: 10 }] },
+				vendedor,
+				previo,
+			),
+		).rejects.toThrow('Codo (pide 99, hay 0)');
+		const con_existencia = store_con([quant(ALM_RUTA, 3)]);
+		const out = await prepare_pedido_update(
+			con_existencia,
+			{ estado: 'confirmado', articulos: [{ product: PRODUCTO, cantidad: 2, precio: 10 }] },
+			vendedor,
+			previo,
+		);
+		expect(out.estado).toBe('confirmado');
+	});
+
+	test('editar un pedido ya confirmado no vuelve a validar la confirmación', async () => {
+		const store = store_apartado_por_otro();
+		const previo = {
+			_id: PEDIDO,
+			estado: 'confirmado',
+			almacen: ALM_RUTA,
+			articulos: [{ product: PRODUCTO, cantidad: 99, precio: 0 }],
+		};
+		const out = await prepare_pedido_update(store, { estado: 'confirmado', observaciones: 'x' }, ADMIN, previo);
+		expect(out.estado).toBe('confirmado');
+	});
+
+	test('con existencia negativa permitida confirma sin existencia, pero no sin precio', async () => {
+		const store = store_con([quant(ALM_RUTA, 0)], { negativos: true });
+		const out = await prepare_pedido_create(
+			store,
+			{ estado: 'confirmado', articulos: [{ product: PRODUCTO, cantidad: 99, precio: 10 }] },
+			vendedor,
+		);
+		expect(out.estado).toBe('confirmado');
+		await expect(
+			prepare_pedido_create(
+				store,
+				{ estado: 'confirmado', articulos: [{ product: PRODUCTO, cantidad: 1, precio: 0 }] },
+				vendedor,
+			),
+		).rejects.toThrow('el precio debe ser mayor a 0');
+	});
+
+	test('sync offline: sin precio ni existencia no se pierde, queda en borrador con aviso', async () => {
+		const store = store_con([quant(ALM_RUTA, 1), quant(GENERAL, 50)]);
+		const res = await pedidos_sync_offline({
+			store,
+			actor: vendedor,
+			body: {
+				pedidos: [
+					{
+						offline_uuid: 'u-sp',
+						folio: 'F-sp',
+						estado: 'confirmado',
+						articulos: [{ product: PRODUCTO, cantidad: 3, precio: 0 }],
+					},
+				],
+			},
+		} as never);
+		const out = (await res.json()) as {
+			resultados: Array<{ status: string; estado?: string; aviso?: string }>;
+		};
+		expect(out.resultados[0]).toMatchObject({ status: 'creado', estado: 'borrador' });
+		expect(out.resultados[0].aviso).toBe(
+			'El pedido F-sp quedó pendiente (borrador) por falta de existencia: Codo (pide 3, hay 1). ' +
+				'El pedido F-sp quedó pendiente (borrador) porque no tiene precio: Codo.',
+		);
+		expect(store.data.pedidos.map((p) => p.estado)).toEqual(['borrador']);
+	});
+});
+

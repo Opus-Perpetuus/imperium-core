@@ -268,7 +268,9 @@ import {
 import {
 	acumular_comprometido,
 	allow_negative_stock,
+	articulos_sin_precio,
 	aviso_faltantes,
+	aviso_sin_precio,
 	emit_pedidos_updated,
 	faltantes_de_existencia,
 	prepare_pedido_create,
@@ -4537,8 +4539,8 @@ export async function pedidos_sync_offline(ctx: Ctx) {
 			let estado = PEDIDO_ESTADOS.has(String(pedido.estado))
 				? String(pedido.estado)
 				: 'confirmado';
-			// Sin existencia suficiente no se confirma: queda en borrador
-			// (pendiente) y se avisa al capturista.
+			// Sin existencia suficiente o sin precio no se confirma: queda en
+			// borrador (pendiente) y se avisa al capturista.
 			const faltantes =
 				estado === 'confirmado' && !negativos
 					? await faltantes_de_existencia(ctx.store, pedido.articulos, {
@@ -4546,8 +4548,16 @@ export async function pedidos_sync_offline(ctx: Ctx) {
 							comprometido,
 						})
 					: [];
-			const aviso = faltantes.length ? aviso_faltantes(folio_cliente, faltantes) : undefined;
-			if (faltantes.length) estado = 'borrador';
+			const sin_precio =
+				estado === 'confirmado' ? await articulos_sin_precio(ctx.store, pedido.articulos) : [];
+			const aviso =
+				[
+					faltantes.length ? aviso_faltantes(folio_cliente, faltantes) : '',
+					sin_precio.length ? aviso_sin_precio(folio_cliente, sin_precio) : '',
+				]
+					.filter(Boolean)
+					.join(' ') || undefined;
+			if (aviso) estado = 'borrador';
 			const prepared = await prepare_pedido_create(
 				ctx.store,
 				{

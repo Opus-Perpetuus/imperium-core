@@ -27,6 +27,7 @@ import type { ImperiumStore } from './store.ts';
 
 const WAREHOUSE_REF = 'inventory-internal-location-warehouse';
 const CUSTOMER_REF = 'inventory-internal-location-customer';
+const ESTADOS_ANTES_DE_CONFIRMAR = new Set(['', 'borrador']);
 
 export function emit_pedidos_updated() {
 	broadcast_event('update', { action: 'pedidos_updated', data: [] });
@@ -125,6 +126,7 @@ export async function prepare_pedido_create(
 		const almacen = await user_warehouse_id(store, actor);
 		if (almacen) out.almacen = almacen;
 	}
+	if (text(out.estado) === 'confirmado') await assert_pedido_confirmable(store, out);
 	await sync_pedido_status_reservation(store, out, { dry_run: true });
 	out.folio = build_folio(actor);
 	out.folio_interno = await store.next_auto_increment('Pedidos', 'folio_interno', {
@@ -159,20 +161,23 @@ export async function prepare_pedido_update(
 		out.estado != null ? String(out.estado) : undefined,
 	);
 	if (previous) {
+		const pedido = {
+			...previous,
+			...out,
+			_id: previous._id,
+			articulos: out.articulos ?? previous.articulos,
+			almacen: out.almacen ?? previous.almacen,
+			usuario: out.usuario ?? previous.usuario,
+		};
+		if (
+			text(out.estado) === 'confirmado' &&
+			ESTADOS_ANTES_DE_CONFIRMAR.has(text(previous.estado))
+		) {
+			await assert_pedido_confirmable(store, pedido);
+		}
 		// Validar el apartado antes de guardar: si no alcanza, el pedido no
 		// cambia de etapa (antes quedaba en Por surtir sin apartar nada).
-		await sync_pedido_status_reservation(
-			store,
-			{
-				...previous,
-				...out,
-				_id: previous._id,
-				articulos: out.articulos ?? previous.articulos,
-				almacen: out.almacen ?? previous.almacen,
-				usuario: out.usuario ?? previous.usuario,
-			},
-			{ dry_run: true },
-		);
+		await sync_pedido_status_reservation(store, pedido, { dry_run: true });
 	}
 	if (
 		previous &&
@@ -731,12 +736,49 @@ export async function faltantes_de_existencia(
 	return faltantes;
 }
 
+function detalle_faltantes(faltantes: FaltanteExistencia[]): string {
+	return faltantes.map((f) => `${f.nombre} (pide ${f.requerido}, hay ${f.disponible})`).join(', ');
+}
+
 export function aviso_faltantes(folio: string, faltantes: FaltanteExistencia[]): string {
-	const detalle = faltantes
-		.map((f) => `${f.nombre} (pide ${f.requerido}, hay ${f.disponible})`)
-		.join(', ');
 	const nombre = folio ? `El pedido ${folio}` : 'El pedido';
-	return `${nombre} quedó pendiente (borrador) por falta de existencia: ${detalle}.`;
+	return `${nombre} quedó pendiente (borrador) por falta de existencia: ${detalle_faltantes(faltantes)}.`;
+}
+
+export function aviso_sin_precio(folio: string, productos: string[]): string {
+	const nombre = folio ? `El pedido ${folio}` : 'El pedido';
+	return `${nombre} quedó pendiente (borrador) porque no tiene precio: ${productos.join(', ')}.`;
+}
+
+export async function articulos_sin_precio(
+	store: ImperiumStore,
+	articulos_raw: unknown,
+): Promise<string[]> {
+	const nombres: string[] = [];
+	for (const articulo of as_array(articulos_raw).map(as_object)) {
+		const product_id = ref_id(articulo.product);
+		if (!product_id || Number(articulo.precio) > 0) continue;
+		const product = store.has('products') ? await store.find_id('products', product_id) : null;
+		nombres.push(String(product?.name ?? product_id));
+	}
+	return nombres;
+}
+
+async function assert_pedido_confirmable(store: ImperiumStore, pedido: ImperiumDoc): Promise<void> {
+	const sin_precio = await articulos_sin_precio(store, pedido.articulos);
+	if (sin_precio.length) {
+		throw new Error(
+			`No se puede confirmar el pedido: el precio debe ser mayor a 0 en ${sin_precio.join(', ')}.`,
+		);
+	}
+	if (await allow_negative_stock(store)) return;
+	const faltantes = await faltantes_de_existencia(store, pedido.articulos, {
+		almacen: await pedido_warehouse_id(store, pedido),
+	});
+	if (!faltantes.length) return;
+	throw new Error(
+		`No se puede confirmar el pedido: no hay existencia disponible en el almacén para ${detalle_faltantes(faltantes)}.`,
+	);
 }
 
 /** Bloquea el paso a `surtido` si la salida dejaría existencia negativa. */

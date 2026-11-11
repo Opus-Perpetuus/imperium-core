@@ -117,6 +117,16 @@ describe('sync offline de pedidos con existencia', () => {
 		expect(store.data.pedidos[0].estado).toBe('borrador');
 	});
 
+	test('sin precio queda en borrador (pendiente) con aviso en vez de fallar', async () => {
+		const store = memory_store([{ _id: PRODUCTO, name: 'Codo', existencia: 10 }]);
+		const out = await sync(store, [{ product: PRODUCTO, cantidad: 1, precio: 0 }]);
+		expect(out.resultados[0]).toMatchObject({ status: 'creado', estado: 'borrador' });
+		expect(out.resultados[0].aviso).toBe(
+			'El pedido F-1 quedó pendiente (borrador) porque no tiene precio: Codo.',
+		);
+		expect(store.data.pedidos[0].estado).toBe('borrador');
+	});
+
 	test('cuenta lo apartado y suma renglones del mismo producto', async () => {
 		const store = memory_store([
 			{ _id: PRODUCTO, name: 'Codo', existencia: 10, existenciaApartada: 4 },
