@@ -314,7 +314,11 @@ import {
 	revalidate_supplier_invoice,
 } from './supplier-invoice-flow.ts';
 import { cancel_supplier_payment } from './supplier-payment-flow.ts';
-import { register_package_delivery_exit } from './inventory-logistics-flow.ts';
+import {
+	apartado_logistica_por_almacen,
+	register_package_delivery_exit,
+	sync_pedido_status_reservation,
+} from './inventory-logistics-flow.ts';
 import {
 	append_return_pickup_gps_line,
 	apply_quant_delta,
@@ -333,6 +337,7 @@ import {
 	ensure_pending_reception_from_purchase_order,
 	in_transit_for_product,
 	list_pending_for_product,
+	register_full_warehouse_transfer,
 	register_internal_transfer,
 	reservar_reception,
 } from './inventory-reception-flow.ts';
@@ -3444,6 +3449,19 @@ async function register_manual(ctx: Ctx) {
 }
 
 async function register_transfer(ctx: Ctx) {
+	const desde_almacen = ctx.body.desde_almacen === true || ctx.body.desde_almacen === 'true';
+	const producto = String(ctx.body.producto ?? ctx.body.product_id ?? '').trim();
+	if (desde_almacen && !producto) {
+		const { productos } = await register_full_warehouse_transfer(ctx.store, {
+			ubicacion_origen: String(ctx.body.ubicacion_origen ?? ctx.body.origen ?? ''),
+			ubicacion_destino: String(ctx.body.ubicacion_destino ?? ctx.body.destino ?? ''),
+		});
+		return {
+			data: null,
+			total_elementos: productos,
+			message: `Traslado registrado correctamente (${productos} producto${productos === 1 ? '' : 's'})`,
+		};
+	}
 	await register_internal_transfer(ctx.store, {
 		producto: String(ctx.body.producto ?? ctx.body.product_id ?? ''),
 		ubicacion_origen: String(ctx.body.ubicacion_origen ?? ctx.body.origen ?? ''),
@@ -4655,7 +4673,11 @@ export async function read_offline_stock(ctx: Ctx) {
 			codigo: scope.almacen.codigo ?? '',
 		},
 		permitir_negativos,
-		existencias: await scope_stock_snapshot(ctx.store, scope),
+		existencias: await scope_stock_snapshot(
+			ctx.store,
+			scope,
+			await apartado_logistica_por_almacen(ctx.store, String(scope.almacen._id)),
+		),
 	});
 }
 
@@ -4710,6 +4732,7 @@ async function reclamar_surtir(ctx: Ctx) {
 		if (assigned && assigned !== employee_id) {
 			throw new Error('Este pedido ya lo está surtiendo otro empleado.');
 		}
+		await sync_pedido_status_reservation(ctx.store, pedido);
 		if (!assigned) {
 			const updated = await ctx.store.update('pedidos', id, {
 				assigned_employee: employee_id,
@@ -4734,6 +4757,7 @@ async function reclamar_surtir(ctx: Ctx) {
 			);
 		}
 	}
+	await sync_pedido_status_reservation(ctx.store, { ...pedido, estado: 'surtiendo' });
 	const updated = await ctx.store.update('pedidos', id, {
 		estado: 'surtiendo',
 		assigned_employee: employee_id,
@@ -4795,6 +4819,7 @@ async function asignar_empleado(ctx: Ctx) {
 		if (assigned && assigned !== employee_id) {
 			throw new Error('Este pedido ya lo está surtiendo otro empleado.');
 		}
+		await sync_pedido_status_reservation(ctx.store, pedido);
 		if (!assigned) {
 			const updated = await ctx.store.update('pedidos', id, {
 				assigned_employee: employee_id,
@@ -4815,6 +4840,7 @@ async function asignar_empleado(ctx: Ctx) {
 		throw new Error('Este pedido ya está asignado a otro empleado.');
 	}
 	await assert_state_transition_allowed(ctx.store, ctx.actor, estado, 'surtiendo');
+	await sync_pedido_status_reservation(ctx.store, { ...pedido, estado: 'surtiendo' });
 	const updated = await ctx.store.update('pedidos', id, {
 		estado: 'surtiendo',
 		assigned_employee: employee_id,

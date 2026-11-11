@@ -8,8 +8,12 @@ import {
 	assert_pedido_create_estado,
 	assert_state_transition_allowed,
 } from './group-access.ts';
+import { product_has_quants } from './delivery-return-flow.ts';
 import { consume_exit_quants } from './inventory-exit.ts';
-import { sync_pedido_status_reservation } from './inventory-logistics-flow.ts';
+import {
+	apartado_logistica_por_almacen,
+	sync_pedido_status_reservation,
+} from './inventory-logistics-flow.ts';
 import { pedido_warehouse_id, scope_stock, user_warehouse_id, warehouse_scope } from './warehouse-scope.ts';
 import {
 	ALLOW_NEGATIVE_STOCK_REF,
@@ -121,6 +125,7 @@ export async function prepare_pedido_create(
 		const almacen = await user_warehouse_id(store, actor);
 		if (almacen) out.almacen = almacen;
 	}
+	await sync_pedido_status_reservation(store, out, { dry_run: true });
 	out.folio = build_folio(actor);
 	out.folio_interno = await store.next_auto_increment('Pedidos', 'folio_interno', {
 		resource: 'pedidos',
@@ -153,6 +158,22 @@ export async function prepare_pedido_update(
 		previous?.estado != null ? String(previous.estado) : undefined,
 		out.estado != null ? String(out.estado) : undefined,
 	);
+	if (previous) {
+		// Validar el apartado antes de guardar: si no alcanza, el pedido no
+		// cambia de etapa (antes quedaba en Por surtir sin apartar nada).
+		await sync_pedido_status_reservation(
+			store,
+			{
+				...previous,
+				...out,
+				_id: previous._id,
+				articulos: out.articulos ?? previous.articulos,
+				almacen: out.almacen ?? previous.almacen,
+				usuario: out.usuario ?? previous.usuario,
+			},
+			{ dry_run: true },
+		);
+	}
 	if (
 		previous &&
 		String(previous.estado ?? '') !== 'surtido' &&
@@ -680,12 +701,18 @@ export async function faltantes_de_existencia(
 	const faltantes: FaltanteExistencia[] = [];
 	const scope = grouped.size ? await warehouse_scope(store, opts.almacen) : null;
 	const scope_id = scope ? String(scope.almacen._id) : '';
+	const apartado_pedidos =
+		scope && !surtido ? await apartado_logistica_por_almacen(store, scope_id) : null;
 	for (const [product_id, requerido] of grouped) {
 		const product = await store.find_id('products', product_id);
+		const apartado_aqui =
+			apartado_pedidos && (await product_has_quants(store, product_id))
+				? apartado_pedidos.get(product_id) ?? 0
+				: 0;
 		const disponible = !product
 			? 0
 			: scope
-				? await scope_stock(store, product, scope, { libre: !surtido })
+				? round_qty((await scope_stock(store, product, scope, { libre: !surtido })) - apartado_aqui)
 				: round_qty(
 					Number(product.existencia ?? 0) -
 						(surtido ? 0 : Math.max(Number(product.existenciaApartada ?? 0), 0)),

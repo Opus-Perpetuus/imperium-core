@@ -4,7 +4,10 @@ import type { ImperiumStore } from './store.ts';
 import { pedidos_sync_offline, read_offline_stock } from './actions.ts';
 import { assert_pos_ticket_stock, register_pos_ticket_exit } from './inventory-exit.ts';
 import { register_package_delivery_exit } from './inventory-logistics-flow.ts';
-import { register_internal_transfer } from './inventory-reception-flow.ts';
+import {
+	register_full_warehouse_transfer,
+	register_internal_transfer,
+} from './inventory-reception-flow.ts';
 import { ALLOW_NEGATIVE_STOCK_REF } from './negative-stock.ts';
 import {
 	after_pedido_mutate,
@@ -285,6 +288,45 @@ describe('traslados entre almacenes', () => {
 		});
 		expect(cantidades(store)).toMatchObject({ 'CEN-A1': 0, 'CEN-A2': 0, RUT: 7, GEN: 50 });
 		expect(store.data['inventory-movement'].reduce((s, m) => s + Number(m.cantidad), 0)).toBe(7);
+	});
+
+	test('desde_almacen sin producto mueve todos los productos del almacén', async () => {
+		const OTRO_PRODUCTO = '507f1f77bcf86cd799439014';
+		const store = store_con([quant(ALM_CENTRO_A1, 2), quant(ALM_CENTRO_A2, 5), quant(GENERAL, 50)]);
+		store.data.products.push({ _id: OTRO_PRODUCTO, name: 'Tee', codigo: 'TEE-1', existencia: 3 });
+		store.data['inventory-stock-quant'].push({
+			_id: 'q-tee',
+			producto: OTRO_PRODUCTO,
+			ubicacion: ALM_CENTRO_A2,
+			ubicacion_codigo: 'CEN-A2',
+			cantidad: 3,
+			cantidad_apartada: 0,
+			cantidad_disponible: 3,
+		});
+		const { productos } = await register_full_warehouse_transfer(store, {
+			ubicacion_origen: ALM_CENTRO,
+			ubicacion_destino: ALM_RUTA,
+		});
+		expect(productos).toBe(2);
+		const en = (producto: string, ubicacion: string) =>
+			store.data['inventory-stock-quant']
+				.filter((q) => q.producto === producto && q.ubicacion === ubicacion)
+				.reduce((sum, q) => sum + Number(q.cantidad), 0);
+		expect(en(PRODUCTO, ALM_RUTA)).toBe(7);
+		expect(en(OTRO_PRODUCTO, ALM_RUTA)).toBe(3);
+		expect(en(PRODUCTO, GENERAL)).toBe(50);
+		expect(en(PRODUCTO, ALM_CENTRO_A1) + en(PRODUCTO, ALM_CENTRO_A2)).toBe(0);
+	});
+
+	test('desde_almacen sin producto y sin existencia avisa y no mueve nada', async () => {
+		const store = store_con([quant(ALM_CENTRO_A1, 0), quant(GENERAL, 50)]);
+		await expect(
+			register_full_warehouse_transfer(store, {
+				ubicacion_origen: ALM_CENTRO,
+				ubicacion_destino: ALM_RUTA,
+			}),
+		).rejects.toThrow('No hay existencia disponible en Almacén Centro');
+		expect(store.data['inventory-movement']).toHaveLength(0);
 	});
 });
 
@@ -799,6 +841,85 @@ describe('apartado al pasar a Por surtir', () => {
 			after_pedido_mutate(store, 'update', pedido, { ...pedido, estado: 'confirmado' }),
 		).rejects.toThrow(/No hay inventario suficiente/);
 		expect((await store.find_id('products', PRODUCTO))?.existenciaApartada).toBeUndefined();
+	});
+
+	test('sin existencia el cambio a Por surtir se rechaza antes de guardar', async () => {
+		const store = store_con([quant(ALM_RUTA, 1)]);
+		const previo = {
+			_id: PEDIDO,
+			estado: 'confirmado',
+			almacen: ALM_RUTA,
+			articulos: [{ product: PRODUCTO, cantidad: 3 }],
+		};
+		store.data.pedidos = [{ ...previo }];
+		await expect(
+			prepare_pedido_update(store, { estado: 'por_surtir' }, ADMIN, previo),
+		).rejects.toThrow(/No hay inventario suficiente/);
+		expect((await store.find_id('pedidos', PEDIDO))?.estado).toBe('confirmado');
+		expect(store.data['inventory-movement']).toHaveLength(0);
+	});
+
+	test('lo que ya apartó otro pedido del almacén no se vuelve a apartar', async () => {
+		const store = store_con([quant(ALM_RUTA, 1)]);
+		store.data.products[0].existenciaApartada = 1;
+		const OTRO = '507f1f77bcf86cd799439062';
+		store.data.pedidos = [
+			{ _id: OTRO, estado: 'por_surtir', almacen: ALM_RUTA, articulos: [{ product: PRODUCTO, cantidad: 1 }] },
+		];
+		store.data['inventory-movement'] = [
+			{
+				_id: 'mov-otro',
+				tipo_movimiento: 'apartado_logistica',
+				documento_tipo: 'pedido',
+				documento_id: OTRO,
+				producto: PRODUCTO,
+				cantidad: 1,
+			},
+		];
+		const previo = {
+			_id: PEDIDO,
+			estado: 'confirmado',
+			almacen: ALM_RUTA,
+			articulos: [{ product: PRODUCTO, cantidad: 1 }],
+		};
+		await expect(
+			prepare_pedido_update(store, { estado: 'por_surtir' }, ADMIN, previo),
+		).rejects.toThrow(/No hay inventario suficiente/);
+	});
+
+	test('regresar a Confirmado no exige existencia', async () => {
+		const store = store_con([quant(ALM_RUTA, 0)]);
+		const previo = {
+			_id: PEDIDO,
+			estado: 'surtiendo',
+			almacen: ALM_RUTA,
+			articulos: [{ product: PRODUCTO, cantidad: 3 }],
+		};
+		const out = await prepare_pedido_update(store, { estado: 'confirmado' }, ADMIN, previo);
+		expect(out.estado).toBe('confirmado');
+	});
+
+	test('la existencia offline descuenta lo apartado por pedidos del almacén', async () => {
+		const store = store_con([quant(ALM_RUTA, 5), quant(GENERAL, 20)]);
+		store.data.products[0].existenciaApartada = 2;
+		store.data.pedidos = [
+			{ _id: PEDIDO, estado: 'por_surtir', almacen: ALM_RUTA, articulos: [{ product: PRODUCTO, cantidad: 2 }] },
+		];
+		store.data['inventory-movement'] = [
+			{
+				_id: 'mov-apart',
+				tipo_movimiento: 'apartado_logistica',
+				documento_tipo: 'pedido',
+				documento_id: PEDIDO,
+				producto: PRODUCTO,
+				cantidad: 2,
+			},
+		];
+		const res = await read_offline_stock({ store, actor: { _id: VENDEDOR } } as never);
+		const body = await res.json();
+		expect(body.existencias).toEqual([
+			{ producto: PRODUCTO, cantidad: 3, apartada: 2, disponible: 3 },
+		]);
 	});
 });
 

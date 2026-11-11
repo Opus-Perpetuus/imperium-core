@@ -193,6 +193,7 @@ export type WarehouseStockSnapshotRow = {
 export async function scope_stock_snapshot(
 	store: ImperiumStore,
 	scope: WarehouseScope,
+	apartado_pedidos?: Map<string, number>,
 ): Promise<WarehouseStockSnapshotRow[]> {
 	const by_product = new Map<string, { libre: number; apartada: number }>();
 	const con_filas = new Set<string>();
@@ -213,6 +214,11 @@ export async function scope_stock_snapshot(
 				sumar(producto, quant_libre(row), quant_apartada(row));
 			}
 		}
+	}
+	// Lo apartado por pedidos no vive en las filas por ubicación; sin filas ya
+	// viene descontado en `existenciaApartada`.
+	for (const [producto, qty] of apartado_pedidos ?? []) {
+		if (con_filas.has(producto) && qty > 0) sumar(producto, -qty, qty);
 	}
 	if (is_general_warehouse(scope.almacen) && store.has('products')) {
 		for await (const page of store.scan('products', {})) {

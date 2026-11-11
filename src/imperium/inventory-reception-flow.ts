@@ -542,6 +542,53 @@ export async function register_internal_transfer(
 	await recompute_product_existencia(store, producto_id);
 }
 
+/**
+ * «Desde almacén completo» sin producto: traslada todo lo disponible de cada
+ * producto del origen (y sus sububicaciones) al destino.
+ */
+export async function register_full_warehouse_transfer(
+	store: ImperiumStore,
+	params: { ubicacion_origen: string; ubicacion_destino: string },
+): Promise<{ productos: number }> {
+	const origen = await store.find_id('inventory-internal-location', params.ubicacion_origen);
+	const destino = await store.find_id('inventory-internal-location', params.ubicacion_destino);
+	if (!origen || !destino) throw new Error('La ubicación de origen o destino no existe');
+	if (String(origen._id) === String(destino._id)) {
+		throw new Error('El origen y el destino no pueden ser la misma ubicación');
+	}
+	const scope = await warehouse_scope(store, origen._id);
+	const productos = new Set<string>();
+	if (scope && store.has('inventory-stock-quant')) {
+		for await (const page of store.scan('inventory-stock-quant', { include_inactive: true })) {
+			for (const row of page) {
+				const ubicacion = text(row.ubicacion);
+				if (!scope.ids.has(ubicacion) || ubicacion === String(destino._id)) continue;
+				const libre =
+					row.cantidad_disponible != null
+						? Number(row.cantidad_disponible)
+						: Number(row.cantidad ?? 0) - Number(row.cantidad_apartada ?? 0);
+				const producto = text(row.producto);
+				if (producto && libre > 0) productos.add(producto);
+			}
+		}
+	}
+	let movidos = 0;
+	for (const producto of productos) {
+		await register_internal_transfer(store, {
+			producto,
+			ubicacion_origen: String(origen._id),
+			ubicacion_destino: String(destino._id),
+			cantidad: 0,
+			desde_almacen: true,
+		});
+		movidos += 1;
+	}
+	if (!movidos) {
+		throw new Error(`No hay existencia disponible en ${text(origen.name || origen.codigo)}`);
+	}
+	return { productos: movidos };
+}
+
 export async function acomodar_reception(
 	store: ImperiumStore,
 	reception_id: string,

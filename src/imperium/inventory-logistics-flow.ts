@@ -325,10 +325,12 @@ export async function sync_order_logistics_reservation(
 export async function sync_pedido_status_reservation(
 	store: ImperiumStore,
 	pedido: ImperiumDoc,
-	opts?: { deleted?: boolean },
+	opts?: { deleted?: boolean; dry_run?: boolean },
 ): Promise<void> {
 	const pedido_id = text(pedido._id);
-	if (!pedido_id || !is_id(pedido_id) || !store.has('products')) return;
+	const dry_run = opts?.dry_run === true;
+	if (!store.has('products')) return;
+	if (!dry_run && (!pedido_id || !is_id(pedido_id))) return;
 
 	const estado = opts?.deleted ? '' : text(pedido.estado);
 	const should_hold = estado === 'por_surtir' || estado === 'surtiendo';
@@ -343,7 +345,9 @@ export async function sync_pedido_status_reservation(
 		}
 	}
 
-	const current = await get_order_reserved_quantities(store, pedido_id);
+	const current = is_id(pedido_id)
+		? await get_order_reserved_quantities(store, pedido_id)
+		: new Map<string, number>();
 	const affected = [...new Set([...desired.keys(), ...current.keys()])];
 	if (!affected.length) return;
 
@@ -392,6 +396,7 @@ export async function sync_pedido_status_reservation(
 				`El apartado de ${product.name} quedaría negativo al sincronizar el pedido`,
 			);
 		}
+		if (dry_run) continue;
 		await store.update('products', product_id, {
 			existenciaApartada: stock_apartado_resultante,
 		});
@@ -559,7 +564,8 @@ async function disponible_para_apartar(
 	return Math.min(global_libre, round_qty(libre - ya));
 }
 
-async function apartado_logistica_por_almacen(
+/** Neto apartado por pedidos de ese almacén, por producto. */
+export async function apartado_logistica_por_almacen(
 	store: ImperiumStore,
 	almacen_id: string,
 ): Promise<Map<string, number>> {
