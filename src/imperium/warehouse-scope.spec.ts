@@ -328,6 +328,84 @@ describe('traslados entre almacenes', () => {
 		).rejects.toThrow('No hay existencia disponible en Almacén Centro');
 		expect(store.data['inventory-movement']).toHaveLength(0);
 	});
+
+	function con_apartado_de_pedido(store: ReturnType<typeof store_con>, cantidad: number) {
+		store.data.products[0].existenciaApartada = cantidad;
+		store.data.pedidos = [
+			{ _id: PEDIDO, estado: 'por_surtir', almacen: ALM_CENTRO, articulos: [{ product: PRODUCTO, cantidad }] },
+		];
+		store.data['inventory-movement'] = [
+			{
+				_id: 'mov-apart',
+				tipo_movimiento: 'apartado_logistica',
+				documento_tipo: 'pedido',
+				documento_id: PEDIDO,
+				producto: PRODUCTO,
+				cantidad,
+			},
+		];
+	}
+	const traslados = (store: ReturnType<typeof store_con>) =>
+		store.data['inventory-movement'].filter((m) => m.tipo_movimiento === 'transferencia_interna');
+
+	test('a otro almacén no saca lo apartado por pedidos del origen', async () => {
+		const store = store_con([quant(ALM_CENTRO_A1, 2), quant(ALM_CENTRO_A2, 5)]);
+		con_apartado_de_pedido(store, 4);
+		await expect(
+			register_internal_transfer(store, {
+				producto: PRODUCTO,
+				ubicacion_origen: ALM_CENTRO,
+				ubicacion_destino: ALM_RUTA,
+				cantidad: 4,
+			}),
+		).rejects.toThrow('Solo hay 3 libre de Codo en Almacén Centro; lo demás está apartado por pedidos');
+		expect(traslados(store)).toHaveLength(0);
+		await register_internal_transfer(store, {
+			producto: PRODUCTO,
+			ubicacion_origen: ALM_CENTRO,
+			ubicacion_destino: ALM_RUTA,
+			cantidad: 3,
+		});
+		expect(cantidades(store)).toMatchObject({ RUT: 3 });
+	});
+
+	test('desde_almacen sin cantidad deja en el origen lo apartado por pedidos', async () => {
+		const store = store_con([quant(ALM_CENTRO_A1, 2), quant(ALM_CENTRO_A2, 5)]);
+		con_apartado_de_pedido(store, 4);
+		await register_internal_transfer(store, {
+			producto: PRODUCTO,
+			ubicacion_origen: ALM_CENTRO,
+			ubicacion_destino: ALM_RUTA,
+			cantidad: 0,
+			desde_almacen: true,
+		});
+		expect(cantidades(store)).toMatchObject({ RUT: 3 });
+		expect(cantidades(store)['CEN-A1'] + cantidades(store)['CEN-A2']).toBe(4);
+	});
+
+	test('almacén completo salta lo apartado y avisa si todo está apartado', async () => {
+		const store = store_con([quant(ALM_CENTRO_A1, 2)]);
+		con_apartado_de_pedido(store, 2);
+		await expect(
+			register_full_warehouse_transfer(store, {
+				ubicacion_origen: ALM_CENTRO,
+				ubicacion_destino: ALM_RUTA,
+			}),
+		).rejects.toThrow('Lo disponible en Almacén Centro está apartado por pedidos');
+		expect(traslados(store)).toHaveLength(0);
+	});
+
+	test('dentro del mismo almacén lo apartado se puede reacomodar', async () => {
+		const store = store_con([quant(ALM_CENTRO_A1, 3)]);
+		con_apartado_de_pedido(store, 3);
+		await register_internal_transfer(store, {
+			producto: PRODUCTO,
+			ubicacion_origen: ALM_CENTRO_A1,
+			ubicacion_destino: ALM_CENTRO_A2,
+			cantidad: 3,
+		});
+		expect(cantidades(store)).toMatchObject({ 'CEN-A1': 0, 'CEN-A2': 3 });
+	});
 });
 
 describe('POS: sale del almacén de la sucursal', () => {

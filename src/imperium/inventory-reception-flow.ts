@@ -11,7 +11,8 @@ import {
 import { resolve_reception_location, supplier_display_name } from './purchase-order-flow.ts';
 import { is_record_id } from './record-id.ts';
 import { compute_picking_route } from './inventory-picking.ts';
-import { owning_warehouse, warehouse_scope } from './warehouse-scope.ts';
+import { owning_warehouse, scope_stock, warehouse_scope } from './warehouse-scope.ts';
+import { apartado_logistica_por_almacen } from './inventory-logistics-flow.ts';
 import type { ImperiumStore } from './store.ts';
 
 function text(value: unknown): string {
@@ -394,8 +395,10 @@ export async function register_internal_transfer(
 		cantidad?: number;
 		lote?: string;
 		desde_almacen?: boolean;
+		/** Sin nada libre que mover devuelve 0 en vez de fallar. */
+		omitir_sin_libre?: boolean;
 	},
-): Promise<void> {
+): Promise<number> {
 	let cantidad = round_qty(Number(params.cantidad ?? 0));
 	const auto_todo = params.desde_almacen === true && !(cantidad > 0);
 	if (!(cantidad > 0) && !auto_todo) throw new Error('La cantidad a trasladar debe ser mayor a cero');
@@ -423,6 +426,7 @@ export async function register_internal_transfer(
 			desde_sububicaciones,
 		);
 		if (!(cantidad > 0)) {
+			if (params.omitir_sin_libre) return 0;
 			throw new Error(
 				`No hay existencia disponible en ${text(origen.name || origen.codigo)}`,
 			);
@@ -436,6 +440,11 @@ export async function register_internal_transfer(
 	}
 	const product = await store.find_id('products', producto_id);
 	if (!product) throw new Error('No se encontró el producto indicado');
+	const almacen_origen = await owning_warehouse(store, origen._id);
+	const almacen_destino = await owning_warehouse(store, destino._id);
+	const entre_almacenes =
+		Boolean(almacen_origen && almacen_destino) &&
+		String(almacen_origen?._id) !== String(almacen_destino?._id);
 	const existencia_previa = round_qty(Number(product.existencia ?? 0));
 	if (!(await product_has_quants(store, producto_id))) {
 		// Sin filas por ubicación toda la existencia está en el almacén general.
@@ -444,6 +453,18 @@ export async function register_internal_transfer(
 			delta: 0,
 			existencia_previa,
 		});
+	}
+	if (entre_almacenes && almacen_origen) {
+		const movible = await libre_sin_apartado_de_pedidos(store, product, almacen_origen);
+		if (movible !== null && cantidad > movible) {
+			if (auto_todo) cantidad = movible;
+			if (!(cantidad > 0) && params.omitir_sin_libre) return 0;
+			if (!(cantidad > 0) || !auto_todo) {
+				throw new Error(
+					`Solo hay ${Math.max(movible, 0)} libre de ${text(product.name)} en ${text(almacen_origen.name || almacen_origen.codigo)}; lo demás está apartado por pedidos`,
+				);
+			}
+		}
 	}
 	const fuentes: Array<{ ubicacion: ImperiumDoc; cantidad: number }> = [];
 	if (desde_sububicaciones && scope) {
@@ -475,11 +496,6 @@ export async function register_internal_transfer(
 		}
 		fuentes.push({ ubicacion: origen, cantidad });
 	}
-	const almacen_origen = await owning_warehouse(store, origen._id);
-	const almacen_destino = await owning_warehouse(store, destino._id);
-	const entre_almacenes =
-		Boolean(almacen_origen && almacen_destino) &&
-		String(almacen_origen?._id) !== String(almacen_destino?._id);
 	const base = {
 		producto: producto_id,
 		producto_nombre: text(product.name),
@@ -540,6 +556,26 @@ export async function register_internal_transfer(
 		}
 	}
 	await recompute_product_existencia(store, producto_id);
+	return cantidad;
+}
+
+/**
+ * Lo que puede salir del almacén sin tocar lo apartado por sus pedidos; `null`
+ * si el producto no lleva existencia por ubicación o no hay apartado ahí.
+ */
+async function libre_sin_apartado_de_pedidos(
+	store: ImperiumStore,
+	product: ImperiumDoc,
+	almacen: ImperiumDoc,
+): Promise<number | null> {
+	const producto_id = String(product._id);
+	if (!(await product_has_quants(store, producto_id))) return null;
+	const apartado =
+		(await apartado_logistica_por_almacen(store, String(almacen._id))).get(producto_id) ?? 0;
+	if (!(apartado > 0)) return null;
+	const scope = await warehouse_scope(store, almacen._id);
+	if (!scope) return null;
+	return round_qty((await scope_stock(store, product, scope, { libre: true })) - apartado);
 }
 
 /**
@@ -574,17 +610,22 @@ export async function register_full_warehouse_transfer(
 	}
 	let movidos = 0;
 	for (const producto of productos) {
-		await register_internal_transfer(store, {
+		const movido = await register_internal_transfer(store, {
 			producto,
 			ubicacion_origen: String(origen._id),
 			ubicacion_destino: String(destino._id),
 			cantidad: 0,
 			desde_almacen: true,
+			omitir_sin_libre: true,
 		});
-		movidos += 1;
+		if (movido > 0) movidos += 1;
 	}
 	if (!movidos) {
-		throw new Error(`No hay existencia disponible en ${text(origen.name || origen.codigo)}`);
+		throw new Error(
+			productos.size
+				? `Lo disponible en ${text(origen.name || origen.codigo)} está apartado por pedidos`
+				: `No hay existencia disponible en ${text(origen.name || origen.codigo)}`,
+		);
 	}
 	return { productos: movidos };
 }
