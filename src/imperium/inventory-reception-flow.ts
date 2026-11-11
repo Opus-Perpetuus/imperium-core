@@ -365,19 +365,40 @@ async function quant_disponible(
  * que no guarda producto en sí mismo (o `desde_almacen`), toma de sus
  * sububicaciones en orden de surtido: un movimiento por ubicación y lote.
  */
+async function transferencia_disponible(
+	store: ImperiumStore,
+	producto_id: string,
+	origen: ImperiumDoc,
+	destino: ImperiumDoc,
+	lote: string | undefined,
+	scope: Awaited<ReturnType<typeof warehouse_scope>> | null,
+	desde_sububicaciones: boolean,
+): Promise<number> {
+	if (desde_sububicaciones && scope) {
+		let total = 0;
+		for (const id of scope.ids) {
+			if (id === String(destino._id)) continue;
+			total = round_qty(total + (await quant_disponible(store, producto_id, id, lote)));
+		}
+		return total;
+	}
+	return quant_disponible(store, producto_id, String(origen._id), lote);
+}
+
 export async function register_internal_transfer(
 	store: ImperiumStore,
 	params: {
 		producto: string;
 		ubicacion_origen: string;
 		ubicacion_destino: string;
-		cantidad: number;
+		cantidad?: number;
 		lote?: string;
 		desde_almacen?: boolean;
 	},
 ): Promise<void> {
-	const cantidad = round_qty(params.cantidad);
-	if (!(cantidad > 0)) throw new Error('La cantidad a trasladar debe ser mayor a cero');
+	let cantidad = round_qty(Number(params.cantidad ?? 0));
+	const auto_todo = params.desde_almacen === true && !(cantidad > 0);
+	if (!(cantidad > 0) && !auto_todo) throw new Error('La cantidad a trasladar debe ser mayor a cero');
 	const producto_id = text(params.producto);
 	if (!producto_id || !is_record_id(producto_id)) {
 		throw new Error('Debes indicar un producto válido');
@@ -391,6 +412,22 @@ export async function register_internal_transfer(
 			? await warehouse_scope(store, origen._id)
 			: null;
 	const desde_sububicaciones = Boolean(scope && scope.ids.size > 1);
+	if (auto_todo) {
+		cantidad = await transferencia_disponible(
+			store,
+			producto_id,
+			origen,
+			destino,
+			lote,
+			scope,
+			desde_sububicaciones,
+		);
+		if (!(cantidad > 0)) {
+			throw new Error(
+				`No hay existencia disponible en ${text(origen.name || origen.codigo)}`,
+			);
+		}
+	}
 	if ((!desde_sububicaciones && !allows_storage(origen)) || !allows_storage(destino)) {
 		throw new Error('Origen y destino deben ser ubicaciones que permiten almacenaje');
 	}

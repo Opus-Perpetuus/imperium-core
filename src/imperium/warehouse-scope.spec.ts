@@ -7,6 +7,7 @@ import { register_package_delivery_exit } from './inventory-logistics-flow.ts';
 import { register_internal_transfer } from './inventory-reception-flow.ts';
 import { ALLOW_NEGATIVE_STOCK_REF } from './negative-stock.ts';
 import {
+	after_pedido_mutate,
 	assert_surtido_sin_negativos,
 	prepare_pedido_create,
 	prepare_pedido_update,
@@ -271,6 +272,19 @@ describe('traslados entre almacenes', () => {
 				cantidad: 2,
 			}),
 		).rejects.toThrow('No hay existencia disponible suficiente en Almacén Centro (disponible 1)');
+	});
+
+	test('desde_almacen sin cantidad mueve todo el stock del almacén', async () => {
+		const store = store_con([quant(ALM_CENTRO_A1, 2), quant(ALM_CENTRO_A2, 5), quant(GENERAL, 50)]);
+		await register_internal_transfer(store, {
+			producto: PRODUCTO,
+			ubicacion_origen: ALM_CENTRO,
+			ubicacion_destino: ALM_RUTA,
+			cantidad: 0,
+			desde_almacen: true,
+		});
+		expect(cantidades(store)).toMatchObject({ 'CEN-A1': 0, 'CEN-A2': 0, RUT: 7, GEN: 50 });
+		expect(store.data['inventory-movement'].reduce((s, m) => s + Number(m.cantidad), 0)).toBe(7);
 	});
 });
 
@@ -696,3 +710,95 @@ describe('existencia offline del almacén del vendedor', () => {
 		]);
 	});
 });
+
+describe('apartado al pasar a Por surtir', () => {
+	test('confirma a Por surtir aparta las líneas del pedido', async () => {
+		const store = store_con([quant(ALM_RUTA, 5), quant(GENERAL, 20)]);
+		const pedido = {
+			_id: PEDIDO,
+			estado: 'por_surtir',
+			almacen: ALM_RUTA,
+			folio: 'F-A',
+			articulos: [{ product: PRODUCTO, cantidad: 3 }],
+		};
+		store.data.pedidos = [{ ...pedido }];
+		await after_pedido_mutate(store, 'update', pedido, { ...pedido, estado: 'confirmado' });
+		expect((await store.find_id('products', PRODUCTO))?.existenciaApartada).toBe(3);
+		expect((await store.find_id('products', PRODUCTO))?.existencia).toBe(25);
+		const holds = store.data['inventory-movement'].filter((row) => row.tipo_movimiento === 'apartado_logistica');
+		expect(holds).toHaveLength(1);
+		expect(holds[0]).toMatchObject({
+			cantidad: 3,
+			documento_id: PEDIDO,
+			description: 'Apartado automático al pasar a Por surtir',
+		});
+	});
+
+	test('al cancelar se libera el apartado', async () => {
+		const store = store_con([quant(ALM_RUTA, 5)]);
+		store.data.products[0].existenciaApartada = 3;
+		const previo = {
+			_id: PEDIDO,
+			estado: 'por_surtir',
+			almacen: ALM_RUTA,
+			articulos: [{ product: PRODUCTO, cantidad: 3 }],
+		};
+		store.data['inventory-movement'] = [
+			{
+				_id: 'mov-apart',
+				tipo_movimiento: 'apartado_logistica',
+				documento_tipo: 'pedido',
+				documento_id: PEDIDO,
+				producto: PRODUCTO,
+				cantidad: 3,
+			},
+		];
+		await after_pedido_mutate(store, 'update', { ...previo, estado: 'cancelado' }, previo);
+		expect((await store.find_id('products', PRODUCTO))?.existenciaApartada).toBe(0);
+		expect(
+			store.data['inventory-movement'].some((row) => row.tipo_movimiento === 'liberacion_logistica'),
+		).toBe(true);
+	});
+
+	test('pasar a surtido libera el apartado y luego descuenta la existencia', async () => {
+		const store = store_con([quant(ALM_RUTA, 5)]);
+		store.data.products[0].existenciaApartada = 3;
+		const previo = {
+			_id: PEDIDO,
+			estado: 'por_surtir',
+			almacen: ALM_RUTA,
+			folio: 'F-A',
+			articulos: [{ product: PRODUCTO, cantidad: 3 }],
+			usuario: VENDEDOR,
+		};
+		store.data['inventory-movement'] = [
+			{
+				_id: 'mov-apart',
+				tipo_movimiento: 'apartado_logistica',
+				documento_tipo: 'pedido',
+				documento_id: PEDIDO,
+				producto: PRODUCTO,
+				cantidad: 3,
+			},
+		];
+		await after_pedido_mutate(store, 'update', { ...previo, estado: 'surtido' }, previo);
+		expect((await store.find_id('products', PRODUCTO))?.existenciaApartada).toBe(0);
+		expect((await store.find_id('products', PRODUCTO))?.existencia).toBe(2);
+		expect(cantidades(store)).toEqual({ RUT: 2 });
+	});
+
+	test('sin existencia suficiente no deja pasar a Por surtir', async () => {
+		const store = store_con([quant(ALM_RUTA, 1)]);
+		const pedido = {
+			_id: PEDIDO,
+			estado: 'por_surtir',
+			almacen: ALM_RUTA,
+			articulos: [{ product: PRODUCTO, cantidad: 3 }],
+		};
+		await expect(
+			after_pedido_mutate(store, 'update', pedido, { ...pedido, estado: 'confirmado' }),
+		).rejects.toThrow(/No hay inventario suficiente/);
+		expect((await store.find_id('products', PRODUCTO))?.existenciaApartada).toBeUndefined();
+	});
+});
+

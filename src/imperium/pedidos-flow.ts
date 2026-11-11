@@ -9,6 +9,7 @@ import {
 	assert_state_transition_allowed,
 } from './group-access.ts';
 import { consume_exit_quants } from './inventory-exit.ts';
+import { sync_pedido_status_reservation } from './inventory-logistics-flow.ts';
 import { pedido_warehouse_id, scope_stock, user_warehouse_id, warehouse_scope } from './warehouse-scope.ts';
 import {
 	ALLOW_NEGATIVE_STOCK_REF,
@@ -285,6 +286,20 @@ export async function after_pedido_mutate(
 	current: ImperiumDoc | null,
 	previous?: ImperiumDoc | null,
 ): Promise<void> {
+	const pedido = kind === 'delete' ? previous : current;
+	if (pedido) {
+		const con_lineas = {
+			...pedido,
+			articulos: pedido.articulos ?? previous?.articulos,
+			almacen: pedido.almacen ?? previous?.almacen,
+			usuario: pedido.usuario ?? previous?.usuario,
+		};
+		// Liberar el apartado antes de la salida: si sigue apartado, no hay
+		// disponible para descontar al pasar a surtido.
+		await sync_pedido_status_reservation(store, con_lineas, {
+			deleted: kind === 'delete',
+		});
+	}
 	if (
 		kind === 'update' &&
 		current &&

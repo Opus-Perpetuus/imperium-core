@@ -322,6 +322,110 @@ export async function sync_order_logistics_reservation(
 	}
 }
 
+export async function sync_pedido_status_reservation(
+	store: ImperiumStore,
+	pedido: ImperiumDoc,
+	opts?: { deleted?: boolean },
+): Promise<void> {
+	const pedido_id = text(pedido._id);
+	if (!pedido_id || !is_id(pedido_id) || !store.has('products')) return;
+
+	const estado = opts?.deleted ? '' : text(pedido.estado);
+	const should_hold = estado === 'por_surtir' || estado === 'surtiendo';
+	const desired = new Map<string, number>();
+	if (should_hold) {
+		for (const raw of as_array(pedido.articulos)) {
+			const articulo = as_object(raw);
+			const product_id = ref_id(articulo.product) || text(articulo.product);
+			const quantity = round_qty(Number(articulo.cantidad ?? 0));
+			if (!product_id || !is_id(product_id) || quantity <= 0) continue;
+			desired.set(product_id, round_qty((desired.get(product_id) ?? 0) + quantity));
+		}
+	}
+
+	const current = await get_order_reserved_quantities(store, pedido_id);
+	const affected = [...new Set([...desired.keys(), ...current.keys()])];
+	if (!affected.length) return;
+
+	const scope = await warehouse_scope(store, await pedido_warehouse_id(store, pedido));
+	const apartado_en_scope = scope
+		? await apartado_logistica_por_almacen(store, String(scope.almacen._id))
+		: null;
+	const warehouse = await location_by_ref(store, WAREHOUSE_REF);
+	const logistics = await location_by_ref(store, LOGISTICS_REF);
+	const folio_referencia = text(pedido.folio_interno ?? pedido.folio);
+	const permitir_negativos = await allow_negative_stock(store);
+
+	for (const product_id of affected) {
+		const product = await store.find_id('products', product_id);
+		if (!product || product.is_active === false) {
+			if (should_hold) {
+				throw new Error('Uno de los productos del pedido ya no existe o está inactivo');
+			}
+			continue;
+		}
+		const desired_quantity = desired.get(product_id) ?? 0;
+		const current_quantity = current.get(product_id) ?? 0;
+		const difference = round_qty(desired_quantity - current_quantity);
+		if (difference === 0) continue;
+
+		const stock_total_previo = round_qty(Number(product.existencia ?? 0));
+		const stock_apartado_previo = round_qty(Number(product.existenciaApartada ?? 0));
+		if (difference > 0) {
+			const available = await disponible_para_apartar(
+				store,
+				product,
+				scope,
+				apartado_en_scope,
+				stock_total_previo,
+				stock_apartado_previo,
+			);
+			if (difference > available && !permitir_negativos) {
+				throw new Error(
+					`No hay inventario suficiente para apartar ${difference} de ${product.name}`,
+				);
+			}
+		}
+		const stock_apartado_resultante = round_qty(stock_apartado_previo + difference);
+		if (stock_apartado_resultante < 0) {
+			throw new Error(
+				`El apartado de ${product.name} quedaría negativo al sincronizar el pedido`,
+			);
+		}
+		await store.update('products', product_id, {
+			existenciaApartada: stock_apartado_resultante,
+		});
+		await insert_movement(store, {
+			producto: product_id,
+			producto_id: product_id,
+			producto_nombre: product.name,
+			producto_codigo: product.codigo,
+			tipo_movimiento: difference > 0 ? RESERVATION : RELEASE,
+			ubicacion_origen: warehouse?._id,
+			ubicacion_origen_id: warehouse?._id,
+			ubicacion_origen_nombre: warehouse?.name,
+			ubicacion_destino: logistics?._id,
+			ubicacion_destino_id: logistics?._id,
+			ubicacion_destino_nombre: logistics?.name,
+			documento_tipo: 'pedido',
+			documento_id: pedido_id,
+			documento_modelo: 'Pedidos',
+			documento_nombre: text(pedido.name),
+			documento_referencia: folio_referencia,
+			description:
+				difference > 0
+					? 'Apartado automático al pasar a Por surtir'
+					: 'Liberación automática al salir de Por surtir',
+			cantidad: Math.abs(difference),
+			stock_total_previo,
+			stock_total_resultante: stock_total_previo,
+			stock_apartado_previo,
+			stock_apartado_resultante,
+			fecha_movimiento: new Date().toISOString(),
+		});
+	}
+}
+
 export async function register_package_delivery_exit(
 	store: ImperiumStore,
 	package_record: ImperiumDoc,
