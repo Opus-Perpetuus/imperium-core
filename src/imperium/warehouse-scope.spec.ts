@@ -358,7 +358,7 @@ describe('traslados entre almacenes', () => {
 				ubicacion_destino: ALM_RUTA,
 				cantidad: 4,
 			}),
-		).rejects.toThrow('Solo hay 3 libre de Codo en Almacén Centro; lo demás está apartado por pedidos');
+		).rejects.toThrow('No se puede trasladar 4 de Codo: en Almacén Centro hay 3 libre y 4 apartado por pedidos');
 		expect(traslados(store)).toHaveLength(0);
 		await register_internal_transfer(store, {
 			producto: PRODUCTO,
@@ -383,6 +383,24 @@ describe('traslados entre almacenes', () => {
 		expect(cantidades(store)['CEN-A1'] + cantidades(store)['CEN-A2']).toBe(4);
 	});
 
+	test('desde_almacen con producto todo apartado dice cuánto hay libre y apartado', async () => {
+		const store = store_con([quant(ALM_CENTRO_A1, 2)]);
+		con_apartado_de_pedido(store, 2);
+		await expect(
+			register_internal_transfer(store, {
+				producto: PRODUCTO,
+				ubicacion_origen: ALM_CENTRO,
+				ubicacion_destino: ALM_RUTA,
+				cantidad: 0,
+				desde_almacen: true,
+			}),
+		).rejects.toMatchObject({
+			code: 'traslado_apartado',
+			message: 'No se puede trasladar Codo: en Almacén Centro hay 0 libre y 2 apartado por pedidos',
+		});
+		expect(traslados(store)).toHaveLength(0);
+	});
+
 	test('almacén completo salta lo apartado y avisa si todo está apartado', async () => {
 		const store = store_con([quant(ALM_CENTRO_A1, 2)]);
 		con_apartado_de_pedido(store, 2);
@@ -391,7 +409,10 @@ describe('traslados entre almacenes', () => {
 				ubicacion_origen: ALM_CENTRO,
 				ubicacion_destino: ALM_RUTA,
 			}),
-		).rejects.toThrow('Lo disponible en Almacén Centro está apartado por pedidos');
+		).rejects.toMatchObject({
+			code: 'traslado_apartado',
+			message: 'Lo disponible en Almacén Centro está apartado por pedidos: Codo (0 libre, 2 apartado)',
+		});
 		expect(traslados(store)).toHaveLength(0);
 	});
 
@@ -998,6 +1019,68 @@ describe('apartado al pasar a Por surtir', () => {
 		expect(body.existencias).toEqual([
 			{ producto: PRODUCTO, cantidad: 3, apartada: 2, disponible: 3 },
 		]);
+	});
+});
+
+
+describe('#217: producto con lote y línea sin lote al pasar a Por surtir', () => {
+	const OTRO = '507f1f77bcf86cd799439063';
+	const con_lote = (ubicacion: string, cantidad: number, lote: string) => ({
+		...quant(ubicacion, cantidad),
+		_id: `q-${ubicacion}-${lote}`,
+		lote_codigo: lote,
+		fecha_caducidad: '2026-12-31',
+	});
+	const previo = {
+		_id: PEDIDO,
+		folio_interno: 27014,
+		estado: 'confirmado',
+		almacen: ALM_RUTA,
+		articulos: [{ product: PRODUCTO, cantidad: 1 }],
+	};
+	function escenario(otro_pedido_aparta: boolean) {
+		// Como en pruebas: 1 pieza en el almacén del pedido y 2 en otro almacén hermano.
+		const store = store_con([con_lote(ALM_RUTA, 1, 'PRUEBA-A'), con_lote(ALM_CENTRO_A1, 2, 'PRUEBA-A')]);
+		Object.assign(store.data.products[0], { maneja_lote: true, tiene_caducidad: true });
+		store.data.pedidos = [{ ...previo }];
+		if (otro_pedido_aparta) {
+			store.data.products[0].existenciaApartada = 1;
+			store.data.pedidos.push({
+				_id: OTRO,
+				folio_interno: 27011,
+				estado: 'por_surtir',
+				almacen: ALM_RUTA,
+				articulos: [{ product: PRODUCTO, cantidad: 1 }],
+			});
+			store.data['inventory-movement'] = [
+				{
+					_id: 'mov-27011',
+					tipo_movimiento: 'apartado_logistica',
+					documento_tipo: 'pedido',
+					documento_id: OTRO,
+					producto: PRODUCTO,
+					cantidad: 1,
+				},
+			];
+		}
+		return store;
+	}
+
+	test('la línea sin lote sí cuenta la existencia por lote del almacén', async () => {
+		const store = escenario(false);
+		const out = await prepare_pedido_update(store, { estado: 'por_surtir' }, ADMIN, previo);
+		expect(out.estado).toBe('por_surtir');
+	});
+
+	test('si otro pedido ya apartó la pieza, el error dice cuánto hay y qué pedido la tiene', async () => {
+		const store = escenario(true);
+		await expect(
+			prepare_pedido_update(store, { estado: 'por_surtir' }, ADMIN, previo),
+		).rejects.toThrow(
+			'No hay inventario suficiente para apartar 1 de Codo: en Camioneta ruta 1 hay 1 y 1 ya está apartada por el pedido 27011.',
+		);
+		expect((await store.find_id('pedidos', PEDIDO))?.estado).toBe('confirmado');
+		expect(store.data['inventory-movement']).toHaveLength(1);
 	});
 });
 

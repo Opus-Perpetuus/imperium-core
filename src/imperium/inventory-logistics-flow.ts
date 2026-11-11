@@ -386,7 +386,8 @@ export async function sync_pedido_status_reservation(
 			);
 			if (difference > available && !permitir_negativos) {
 				throw new Error(
-					`No hay inventario suficiente para apartar ${difference} de ${product.name}`,
+					`No hay inventario suficiente para apartar ${difference} de ${product.name}` +
+						(await detalle_faltante(store, product, scope, pedido_id)),
 				);
 			}
 		}
@@ -562,6 +563,64 @@ async function disponible_para_apartar(
 	const libre = await scope_stock(store, product, scope, { libre: true });
 	const ya = apartado_en_scope?.get(product_id) ?? 0;
 	return Math.min(global_libre, round_qty(libre - ya));
+}
+
+/**
+ * Explica por qué no alcanza en el almacén del pedido: cuánto hay, cuánto ya
+ * apartaron otros pedidos (con folio) y que las demás ubicaciones no cuentan.
+ * La existencia por lote no lleva lo apartado por pedidos, así que la pantalla
+ * de existencias puede mostrar como libre lo que otro pedido ya tiene.
+ */
+async function detalle_faltante(
+	store: ImperiumStore,
+	product: ImperiumDoc,
+	scope: WarehouseScope | null,
+	pedido_id: string,
+): Promise<string> {
+	if (!scope) return '';
+	const product_id = String(product._id ?? '');
+	if (!(await product_has_quants(store, product_id))) return '';
+	const almacen_id = String(scope.almacen._id);
+	const nombre = text(scope.almacen.name) || 'el almacén del pedido';
+	const libre = await scope_stock(store, product, scope, { libre: true });
+	const folios: string[] = [];
+	let apartado = 0;
+	const nets = new Map<string, number>();
+	if (store.has('inventory-movement') && store.has('pedidos')) {
+		for await (const page of store.scan('inventory-movement', {
+			where: {
+				documento_tipo: 'pedido',
+				tipo_movimiento: { in: [RESERVATION, RELEASE] },
+			},
+			include_inactive: true,
+		})) {
+			for (const row of page) {
+				const tipo = text(row.tipo_movimiento);
+				if (tipo !== RESERVATION && tipo !== RELEASE) continue;
+				if ((ref_id(row.producto) || text(row.producto_id)) !== product_id) continue;
+				const doc_id = text(row.documento_id);
+				if (!doc_id || doc_id === pedido_id) continue;
+				const signed = tipo === RESERVATION ? Number(row.cantidad ?? 0) : -Number(row.cantidad ?? 0);
+				nets.set(doc_id, round_qty((nets.get(doc_id) ?? 0) + signed));
+			}
+		}
+		for (const [doc_id, qty] of nets) {
+			if (!(qty > 0)) continue;
+			const doc = await store.find_id('pedidos', doc_id);
+			if (ref_id(doc?.almacen) !== almacen_id) continue;
+			apartado = round_qty(apartado + qty);
+			folios.push(text(doc?.folio_interno ?? doc?.folio) || doc_id);
+		}
+	}
+	const partes = [`en ${nombre} hay ${round_qty(libre)}`];
+	if (apartado > 0) {
+		partes.push(
+			`${apartado} ya ${apartado === 1 ? 'está apartada' : 'están apartadas'} por ${
+				folios.length === 1 ? 'el pedido' : 'los pedidos'
+			} ${folios.join(', ')}`,
+		);
+	}
+	return `: ${partes.join(' y ')}. Solo cuenta la existencia de ese almacén y sus sububicaciones.`;
 }
 
 /** Neto apartado por pedidos de ese almacén, por producto. */
