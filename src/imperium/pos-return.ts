@@ -8,7 +8,9 @@
  *   importe sale de los precios de la venta y el subtotal queda negativo
  *   (la caja esperada baja lo reembolsado).
  * - Reingreso: solo lo que la venta realmente restó (sus movimientos
- *   `salida_entrega`) menos lo ya reingresado. `restock_mode: 'none'` no
+ *   `salida_entrega`) menos lo ya reingresado, a la misma ubicación. Si la
+ *   salida registró lote, la pieza vuelve a ese lote y a su caducidad; si
+ *   salió de varios, cada pieza vuelve al suyo. `restock_mode: 'none'` no
  *   reingresa nada; sin modo explícito, un ajuste manual positivo del producto
  *   posterior a la venta se toma como reingreso ya hecho y ese producto se omite.
  * - Kits: se reingresan sus componentes (la venta sacó componentes, no el kit).
@@ -291,17 +293,21 @@ export async function register_pos_return_entry(
 		const next = round_quantity(previa + amount);
 		await store.update('products', producto, { existencia: next });
 		const slots = sale_slots(mine);
+		await hydrate_slot_lots(store, producto, slots);
 		for (const prior of prior_of_product) {
 			const back = round_quantity(Math.max(delta_of(prior), 0));
 			const dest = move_location_id(prior, 'ubicacion_destino');
-			const unmatched = consume_slots(slots, back, dest);
-			if (unmatched > 0) consume_slots(slots, unmatched);
+			const lote = ref_id(prior.lote);
+			const codigo = text(prior.lote_codigo);
+			const unmatched = consume_slots(slots, back, dest, lote, codigo);
+			if (unmatched > 0) consume_slots(slots, unmatched, '', lote, codigo);
 		}
 		const plan = plan_restock(slots, amount, general);
 		const apartado = round_quantity(Number(product.existenciaApartada ?? 0));
 		let running = round_quantity(previa);
 		for (const [i, parte] of plan.entries()) {
 			const resultante = i === plan.length - 1 ? next : round_quantity(running + parte.cantidad);
+			const lot = lot_patch(parte.lote, parte.lote_codigo, parte.fecha_caducidad);
 			if (parte.ubicacion) {
 				const loc = store.has('inventory-internal-location')
 					? await store.find_id('inventory-internal-location', parte.ubicacion)
@@ -313,6 +319,7 @@ export async function register_pos_return_entry(
 					ubicacion: parte.ubicacion,
 					ubicacion_codigo: text(loc?.codigo ?? loc?.name) || parte.codigo,
 					delta: parte.cantidad,
+					...lot,
 				});
 			}
 			await store.insert('inventory-movement', {
@@ -325,6 +332,7 @@ export async function register_pos_return_entry(
 				ubicacion_destino: parte.ubicacion || undefined,
 				ubicacion_destino_id: parte.ubicacion || undefined,
 				ubicacion_destino_nombre: parte.nombre,
+				...lot,
 				documento_tipo: 'pos-ticket',
 				documento_id: return_id,
 				documento_modelo: 'PosTickets',
@@ -345,7 +353,57 @@ export async function register_pos_return_entry(
 	return results;
 }
 
-type RestockSlot = { ubicacion: string; left: number; codigo: string; nombre: string };
+type LotSlice = { lote: string; lote_codigo: string; fecha_caducidad: string; left: number };
+
+type RestockSlot = { ubicacion: string; left: number; codigo: string; nombre: string; lots: LotSlice[] };
+
+type RestockPart = {
+	ubicacion: string;
+	cantidad: number;
+	codigo: string;
+	nombre: string;
+	lote: string;
+	lote_codigo: string;
+	fecha_caducidad: string;
+};
+
+function lot_patch(lote: string, lote_codigo: string, fecha_caducidad: string): ImperiumDoc {
+	const fecha = fecha_caducidad.slice(0, 10);
+	if (!lote) return {};
+	return {
+		lote,
+		...(lote_codigo ? { lote_codigo } : {}),
+		...(fecha ? { fecha_caducidad: fecha } : {}),
+	};
+}
+
+const LOTE_PARTE = /([^,()]+?)\s*\(\s*(\d+(?:\.\d+)?)\s*\)/g;
+
+function lot_slices(move: ImperiumDoc, taken: number): LotSlice[] {
+	const lote = ref_id(move.lote);
+	const fecha = text(move.fecha_caducidad).slice(0, 10);
+	if (lote) return [{ lote, lote_codigo: text(move.lote_codigo), fecha_caducidad: fecha, left: taken }];
+	const source = text(move.description);
+	const mark = source.toLowerCase().lastIndexOf('lotes:');
+	const parts: LotSlice[] = [];
+	if (mark >= 0) {
+		LOTE_PARTE.lastIndex = 0;
+		for (const match of source.slice(mark + 'lotes:'.length).matchAll(LOTE_PARTE)) {
+			const qty = round_quantity(Number(match[2]));
+			const code = match[1].trim();
+			if (!code || qty <= 0) continue;
+			parts.push({ lote: '', lote_codigo: code, fecha_caducidad: '', left: qty });
+		}
+	}
+	const sum = round_quantity(parts.reduce((total, part) => total + part.left, 0));
+	if (parts.length && sum <= taken + 0.0001) {
+		if (taken - sum > 0.0001) {
+			parts.push({ lote: '', lote_codigo: '', fecha_caducidad: '', left: round_quantity(taken - sum) });
+		}
+		return parts;
+	}
+	return [{ lote: '', lote_codigo: '', fecha_caducidad: '', left: taken }];
+}
 
 function move_location_id(move: ImperiumDoc, field: 'ubicacion_origen' | 'ubicacion_destino'): string {
 	return ref_id(move[`${field}_id`]) || ref_id(move[field]);
@@ -361,31 +419,90 @@ function sale_slots(moves: ImperiumDoc[]): RestockSlot[] {
 			left: taken,
 			codigo: text(move.ubicacion_origen_nombre),
 			nombre: text(move.ubicacion_origen_nombre),
+			lots: lot_slices(move, taken),
 		});
 	}
 	return slots;
 }
 
-function consume_slots(slots: RestockSlot[], qty: number, ubicacion = ''): number {
+async function hydrate_slot_lots(store: ImperiumStore, producto: string, slots: RestockSlot[]): Promise<void> {
+	const pending = slots.some((slot) =>
+		slot.lots.some((slice) => slice.lote_codigo && (!slice.lote || !slice.fecha_caducidad)),
+	);
+	if (!pending || !store.has('inventory-stock-quant')) return;
+	const { rows } = await store.find_many('inventory-stock-quant', { where: { producto }, take: 500 });
+	for (const slot of slots) {
+		for (const slice of slot.lots) {
+			if ((slice.lote && slice.fecha_caducidad) || !slice.lote_codigo) continue;
+			const want = slice.lote_codigo.toUpperCase();
+			const row = rows.find((candidate) => {
+				const here = ref_id(candidate.ubicacion_id) || ref_id(candidate.ubicacion);
+				if (slot.ubicacion && here && here !== slot.ubicacion) return false;
+				return text(candidate.lote_codigo).toUpperCase() === want && !!text(candidate.lote);
+			});
+			if (!row) continue;
+			if (!slice.lote) slice.lote = text(row.lote);
+			if (!slice.fecha_caducidad) slice.fecha_caducidad = text(row.fecha_caducidad).slice(0, 10);
+		}
+	}
+}
+
+function lot_hit(slice: LotSlice, lote: string, codigo: string): boolean {
+	if (lote && slice.lote === lote) return true;
+	return !!codigo && slice.lote_codigo.toUpperCase() === codigo.toUpperCase();
+}
+
+function take_lots(lots: LotSlice[], qty: number, lote = '', codigo = ''): Array<LotSlice & { cantidad: number }> {
+	let rest = round_quantity(qty);
+	const ranked = [...lots].reverse();
+	if (lote || codigo) {
+		ranked.sort((a, b) => Number(lot_hit(b, lote, codigo)) - Number(lot_hit(a, lote, codigo)));
+	}
+	const out: Array<LotSlice & { cantidad: number }> = [];
+	for (const slice of ranked) {
+		if (rest <= 0) break;
+		const use = round_quantity(Math.min(slice.left, rest));
+		if (use <= 0) continue;
+		slice.left = round_quantity(slice.left - use);
+		rest = round_quantity(rest - use);
+		out.push({ ...slice, cantidad: use });
+	}
+	return out;
+}
+
+function consume_slots(slots: RestockSlot[], qty: number, ubicacion = '', lote = '', codigo = ''): number {
 	let rest = round_quantity(qty);
 	for (const slot of [...slots].reverse()) {
 		if (rest <= 0) break;
 		if (ubicacion && slot.ubicacion !== ubicacion) continue;
 		const use = round_quantity(Math.min(slot.left, rest));
+		if (use <= 0) continue;
+		take_lots(slot.lots, use, lote, codigo);
 		slot.left = round_quantity(slot.left - use);
 		rest = round_quantity(rest - use);
 	}
 	return rest;
 }
 
-function plan_restock(slots: RestockSlot[], amount: number, general: ImperiumDoc | null) {
-	const plan: Array<{ ubicacion: string; cantidad: number; codigo: string; nombre: string }> = [];
+function plan_restock(slots: RestockSlot[], amount: number, general: ImperiumDoc | null): RestockPart[] {
+	const plan: RestockPart[] = [];
 	let rest = round_quantity(amount);
 	for (const slot of [...slots].reverse()) {
 		if (rest <= 0) break;
 		const use = round_quantity(Math.min(slot.left, rest));
 		if (use <= 0) continue;
-		plan.push({ ubicacion: slot.ubicacion, cantidad: use, codigo: slot.codigo, nombre: slot.nombre });
+		for (const part of take_lots(slot.lots, use)) {
+			plan.push({
+				ubicacion: slot.ubicacion,
+				cantidad: part.cantidad,
+				codigo: slot.codigo,
+				nombre: slot.nombre,
+				lote: part.lote,
+				lote_codigo: part.lote_codigo,
+				fecha_caducidad: part.fecha_caducidad,
+			});
+		}
+		slot.left = round_quantity(slot.left - use);
 		rest = round_quantity(rest - use);
 	}
 	if (rest > 0) {
@@ -394,6 +511,9 @@ function plan_restock(slots: RestockSlot[], amount: number, general: ImperiumDoc
 			cantidad: rest,
 			codigo: text(general?.codigo ?? general?.name),
 			nombre: text(general?.name),
+			lote: '',
+			lote_codigo: '',
+			fecha_caducidad: '',
 		});
 	}
 	return plan;
@@ -494,6 +614,7 @@ export async function revert_pos_return_entry(store: ImperiumStore, ticket: Impe
 			if (want <= 0) continue;
 			const resultante = round_quantity(running - want);
 			const warehouse = (await movement_location(store, entry, 'ubicacion_destino')) ?? general;
+			const lot = lot_patch(ref_id(entry.lote), text(entry.lote_codigo), text(entry.fecha_caducidad));
 			if (warehouse?._id) {
 				await apply_quant_delta(store, {
 					producto,
@@ -502,6 +623,7 @@ export async function revert_pos_return_entry(store: ImperiumStore, ticket: Impe
 					ubicacion: String(warehouse._id),
 					ubicacion_codigo: text(warehouse.codigo ?? warehouse.name),
 					delta: -want,
+					...lot,
 				});
 			}
 			await store.insert('inventory-movement', {
@@ -514,6 +636,7 @@ export async function revert_pos_return_entry(store: ImperiumStore, ticket: Impe
 				ubicacion_origen: warehouse?._id,
 				ubicacion_origen_id: warehouse?._id,
 				ubicacion_origen_nombre: warehouse?.name,
+				...lot,
 				documento_tipo: 'pos-ticket',
 				documento_id: return_id,
 				documento_modelo: 'PosTickets',
