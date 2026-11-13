@@ -8,6 +8,7 @@ import { as_object, caught_http_error, ok, type ImperiumDoc } from './envelope.t
 import { read_imperium_body } from './body.ts';
 import { build_access, current_user } from './auth.ts';
 import type { ImperiumStore } from './store.ts';
+import { handle_cli_device } from './cli-device-code.ts';
 
 export const CLI_MODEL_ID = 'ImperiumCli';
 export const CLI_TOKEN_RESOURCE = 'cli-user-token';
@@ -205,7 +206,7 @@ async function revoke_matching(
 	return selected;
 }
 
-async function issue_token(
+export async function issue_token(
 	store: ImperiumStore,
 	user: ImperiumDoc,
 	body: Record<string, unknown>,
@@ -265,6 +266,11 @@ export async function handle_cli_token(
 	const path = url.pathname.replace(/^\/api/, '') || '/';
 	const rest = path.replace(/^\/cli/, '') || '/';
 	const method = req.method.toUpperCase();
+
+	// Código de dispositivo (RFC 8628): pedir y canjear el código es público;
+	// aprobarlo exige la sesión de la GUI.
+	const device = await handle_cli_device(store, sql, req, url, rest);
+	if (device) return device;
 
 	const actor = await current_user(sql, req);
 	if (!actor) {

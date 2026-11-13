@@ -5,7 +5,7 @@ import sys
 from typing import Any
 
 from .. import config
-from ..exits import CliError, SIN_SESION, USO
+from ..exits import CliError, SIN_SESION, USO, VALIDACION
 from ..httpc import request_json
 
 
@@ -64,3 +64,54 @@ def slug_tid(slug: str) -> str:
     if value.startswith("subject-"):
         return value
     return f"subject-{value}"
+
+
+def rows_of(body: Any) -> list[dict[str, Any]]:
+    rows = body.get("data") if isinstance(body, dict) else body
+    if isinstance(rows, dict):
+        return [rows]
+    return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+
+
+def kv_pairs(items: list[str] | None, what: str = "--campo") -> dict[str, str]:
+    out: dict[str, str] = {}
+    for item in items or []:
+        key, sep, value = item.partition("=")
+        if not sep or not key.strip():
+            raise CliError(f"{what} espera clave=valor (recibí «{item}»).", VALIDACION)
+        out[key.strip()] = value
+    return out
+
+
+def query(params: dict[str, Any]) -> str:
+    from urllib.parse import urlencode
+
+    clean = {k: v for k, v in params.items() if v not in (None, "", False)}
+    return ("?" + urlencode(clean)) if clean else ""
+
+
+def table_text(rows: list[dict[str, Any]], columns: list[str] | None = None, empty: str = "Sin registros.") -> str:
+    if not rows:
+        return empty
+    cols = columns or [k for k in rows[0].keys() if not str(k).startswith("__")][:6]
+    lines = ["\t".join(cols)]
+    for row in rows:
+        lines.append("\t".join(_cell(row.get(c)) for c in cols))
+    return "\n".join(lines)
+
+
+def _cell(value: Any) -> str:
+    if isinstance(value, dict):
+        return str(value.get("name") or value.get("codigo") or value.get("_id") or "")
+    if value is None:
+        return ""
+    return str(value)
+
+
+def dry_or_confirm(args, plan: dict[str, Any], text: str, question: str) -> bool:
+    """True si hay que ejecutar. Con --dry-run emite el plan y devuelve False."""
+    if getattr(args, "dry_run", False):
+        emit({"dry_run": True, **plan}, as_json=args.json, text=f"[dry-run] {text}")
+        return False
+    confirm(args, question)
+    return True

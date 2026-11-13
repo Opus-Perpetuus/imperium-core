@@ -9,15 +9,22 @@ description = "CLI y TUI de Imperium: la misma cuenta y los mismos permisos que 
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "UNLICENSED" }
+keywords = ["imperium", "cli", "tui", "pos", "mcp"]
+classifiers = ["Environment :: Console", "Programming Language :: Python :: 3", "Operating System :: OS Independent"]
 authors = [{ name = "Códice Progressio" }]
 dependencies = [
   "flexablelib[all]>=3.5.1,<4",
 ]
 [project.optional-dependencies]
 test = ["pytest>=8"]
+keyring = ["keyring>=24"]
 
 [project.scripts]
 imperium = "imperium_cli.main:main"
+imp = "imperium_cli.main:main"
+
+[project.urls]
+Repositorio = "https://github.com/codice-progressio/imperium-SIC-ayuntamiento-zapotlanejo"
 
 [tool.setuptools.packages.find]
 where = ["src"]

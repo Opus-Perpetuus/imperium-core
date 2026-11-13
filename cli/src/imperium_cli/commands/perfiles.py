@@ -10,7 +10,7 @@ def listar(args) -> int:
     activo = config.profile_name(data, None)
     perfiles = data.get("perfiles") or {}
     payload = {"activo": activo, "perfiles": {
-        name: {k: v for k, v in row.items() if k != "token"} if isinstance(row, dict) else row
+        name: {k: v for k, v in row.items() if k not in ("token", "token_ref")} if isinstance(row, dict) else row
         for name, row in perfiles.items()
     }}
     lines = []
@@ -56,3 +56,24 @@ def instancia(args) -> int:
     safe = {k: v for k, v in profile.items() if k != "token"}
     safe["perfil"] = name
     return emit(safe, as_json=args.json, text=f"{name}  {profile.get('url')}  {((profile.get('user') or {}).get('email') or '')}")
+
+
+def eliminar(args) -> int:
+    return borrar(args)
+
+
+def probar(args) -> int:
+    from ..httpc import request_json
+    from .estado import _health
+
+    _data, name, profile = require_profile(args)
+    out: dict = {"perfil": name, "url": profile["url"], "token": "llavero" if profile.get("token_ref") else ("archivo" if profile.get("token") else "sin token")}
+    out["nucleo"] = (_health(profile["url"]) or {}).get("version")
+    if profile.get("token"):
+        try:
+            request_json(profile["url"], "GET", "/api/auth/", token=profile["token"])
+            out["sesion"] = "válida"
+        except CliError as err:
+            out["sesion"] = f"inválida: {err.message}"
+    text = f"{name}  {profile['url']}  núcleo {out['nucleo'] or '?'}  sesión {out.get('sesion', 'sin token')}  token en {out['token']}"
+    return emit(out, as_json=args.json, text=text)

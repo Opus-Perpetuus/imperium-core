@@ -1,4 +1,8 @@
-"""Perfiles locales: URL, token, usuario y dispositivo. Fichero en modo 0600."""
+"""Perfiles locales: URL, token, usuario y dispositivo. Fichero en modo 0600.
+
+Si `keyring` está instalado (y `IMPERIUM_KEYRING` no es 0) el token va al
+llavero del sistema y el fichero solo guarda `token_ref`.
+"""
 
 from __future__ import annotations
 
@@ -22,6 +26,63 @@ def config_path(override: str | None = None) -> Path:
     return base / "imperium" / "config.json"
 
 
+KEYRING_SERVICE = "imperium-cli"
+
+
+def _keyring():
+    if os.environ.get("IMPERIUM_KEYRING", "").strip() in ("0", "no", "false"):
+        return None
+    try:
+        import keyring  # type: ignore[import-not-found]
+    except Exception:
+        return None
+    return keyring
+
+
+def _ref(name: str, url: str | None) -> str:
+    return f"{name}@{(url or '').rstrip('/')}"
+
+
+def _resolve_tokens(data: dict[str, Any]) -> dict[str, Any]:
+    kr = _keyring()
+    for row in (data.get("perfiles") or {}).values():
+        if isinstance(row, dict) and row.get("token_ref") and not row.get("token") and kr is not None:
+            try:
+                row["token"] = kr.get_password(KEYRING_SERVICE, row["token_ref"])
+            except Exception:
+                row["token"] = None
+    return data
+
+
+def _stash_tokens(data: dict[str, Any]) -> dict[str, Any]:
+    kr = _keyring()
+    out = json.loads(json.dumps(data))
+    for name, row in (out.get("perfiles") or {}).items():
+        if not isinstance(row, dict) or kr is None:
+            continue
+        if not row.get("token"):
+            if row.get("token_ref"):
+                forget_token(row)
+                row.pop("token_ref", None)
+            continue
+        ref = row.get("token_ref") or _ref(name, row.get("url"))
+        try:
+            kr.set_password(KEYRING_SERVICE, ref, row["token"])
+        except Exception:
+            continue
+        row["token_ref"], row["token"] = ref, None
+    return out
+
+
+def forget_token(row: dict[str, Any] | None) -> None:
+    kr = _keyring()
+    if kr is not None and isinstance(row, dict) and row.get("token_ref"):
+        try:
+            kr.delete_password(KEYRING_SERVICE, row["token_ref"])
+        except Exception:
+            pass
+
+
 def load(path: Path | None = None) -> dict[str, Any]:
     target = path or config_path()
     if not target.is_file():
@@ -31,7 +92,7 @@ def load(path: Path | None = None) -> dict[str, Any]:
         return {"perfil_activo": "default", "perfiles": {}}
     data.setdefault("perfil_activo", "default")
     data.setdefault("perfiles", {})
-    return data
+    return _resolve_tokens(data)
 
 
 def save(data: dict[str, Any], path: Path | None = None) -> Path:
@@ -39,7 +100,7 @@ def save(data: dict[str, Any], path: Path | None = None) -> Path:
     target.parent.mkdir(parents=True, exist_ok=True)
     os.chmod(target.parent, DIR_MODE)
     tmp = target.with_suffix(target.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.write_text(json.dumps(_stash_tokens(data), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     os.chmod(tmp, CONFIG_MODE)
     tmp.replace(target)
     os.chmod(target, CONFIG_MODE)
@@ -72,7 +133,7 @@ def upsert_profile(data: dict[str, Any], name: str, profile: dict[str, Any], *, 
 
 def delete_profile(data: dict[str, Any], name: str) -> dict[str, Any]:
     perfiles = data.setdefault("perfiles", {})
-    perfiles.pop(name, None)
+    forget_token(perfiles.pop(name, None))
     if data.get("perfil_activo") == name:
         data["perfil_activo"] = next(iter(perfiles), "default")
     return data

@@ -762,6 +762,19 @@ async function load_session(
 	return id ? stored_session(sql, id) : null;
 }
 
+/**
+ * Usuario de la cookie de la GUI, sin enlaces públicos ni tokens `icli_`.
+ * Aprobar un código de dispositivo exige una sesión real del navegador.
+ */
+export async function gui_session_user(
+	sql: Bun.SQL,
+	req: Request,
+): Promise<ImperiumDoc | null> {
+	if (share_binding_of(req)) return null;
+	const id = read_sid(req);
+	return id ? ((await stored_session(sql, id))?.user ?? null) : null;
+}
+
 /** El socket solo trae el id de sesión de su handshake, no la petición HTTP. */
 export async function user_for_session_id(
 	sql: Bun.SQL,
