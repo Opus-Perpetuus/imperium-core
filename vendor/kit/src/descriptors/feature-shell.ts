@@ -252,6 +252,11 @@ export type FeatureShellHeaderActionDescriptor = {
   confirm?: string;
   invoke?: FeatureShellActionInvoke;
   refresh?: "record" | "list";
+  /**
+   * `data-manual-anchor` del botón (manual interactivo y `yarn flow`), p. ej.
+   * `tienda-pedido-reembolsar`. Minúsculas, dígitos, `-` y `_`.
+   */
+  anchor?: string;
 };
 
 export type FeatureShellColumnDescriptor = {
