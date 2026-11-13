@@ -332,7 +332,13 @@ describe('traslados entre almacenes', () => {
 	function con_apartado_de_pedido(store: ReturnType<typeof store_con>, cantidad: number) {
 		store.data.products[0].existenciaApartada = cantidad;
 		store.data.pedidos = [
-			{ _id: PEDIDO, estado: 'por_surtir', almacen: ALM_CENTRO, articulos: [{ product: PRODUCTO, cantidad }] },
+			{
+				_id: PEDIDO,
+				folio_interno: 'PED-100',
+				estado: 'por_surtir',
+				almacen: ALM_CENTRO,
+				articulos: [{ product: PRODUCTO, cantidad }],
+			},
 		];
 		store.data['inventory-movement'] = [
 			{
@@ -358,7 +364,7 @@ describe('traslados entre almacenes', () => {
 				ubicacion_destino: ALM_RUTA,
 				cantidad: 4,
 			}),
-		).rejects.toThrow('No se puede trasladar 4 de Codo: en Almacén Centro hay 3 libre y 4 apartado por pedidos');
+		).rejects.toThrow('No se puede trasladar 4 de Codo: en Almacén Centro hay 3 libre y 4 apartado por el pedido PED-100 (4)');
 		expect(traslados(store)).toHaveLength(0);
 		await register_internal_transfer(store, {
 			producto: PRODUCTO,
@@ -396,7 +402,7 @@ describe('traslados entre almacenes', () => {
 			}),
 		).rejects.toMatchObject({
 			code: 'traslado_apartado',
-			message: 'No se puede trasladar Codo: en Almacén Centro hay 0 libre y 2 apartado por pedidos',
+			message: 'No se puede trasladar Codo: en Almacén Centro hay 0 libre y 2 apartado por el pedido PED-100 (2)',
 		});
 		expect(traslados(store)).toHaveLength(0);
 	});
@@ -411,7 +417,79 @@ describe('traslados entre almacenes', () => {
 			}),
 		).rejects.toMatchObject({
 			code: 'traslado_apartado',
-			message: 'Lo disponible en Almacén Centro está apartado por pedidos: Codo (0 libre, 2 apartado)',
+			message: 'Lo disponible en Almacén Centro está apartado por pedidos. Codo: 0 libre y 2 apartado por el pedido PED-100 (2)',
+		});
+		expect(traslados(store)).toHaveLength(0);
+	});
+
+	function con_apartados(
+		store: ReturnType<typeof store_con>,
+		pedidos: Array<{ folio: string; almacen: string; apartado: number; liberado?: number; estado?: string }>,
+	) {
+		pedidos.forEach((p, i) => {
+			const _id = `pedido-${i + 1}`;
+			store.data.pedidos.push({ _id, folio_interno: p.folio, estado: p.estado ?? 'por_surtir', almacen: p.almacen });
+			const mov = (tipo_movimiento: string, cantidad: number) =>
+				store.data['inventory-movement'].push({
+					_id: `${_id}-${tipo_movimiento}`,
+					tipo_movimiento,
+					documento_tipo: 'pedido',
+					documento_id: _id,
+					producto: PRODUCTO,
+					cantidad,
+				});
+			mov('apartado_logistica', p.apartado);
+			if (p.liberado) mov('liberacion_logistica', p.liberado);
+		});
+	}
+
+	test('el rechazo nombra cada pedido del almacén que aparta y su neto', async () => {
+		const store = store_con([quant(ALM_CENTRO_A1, 3), quant(ALM_CENTRO_A2, 4), quant(ALM_RUTA, 5)]);
+		con_apartados(store, [
+			{ folio: 'PED-1', almacen: ALM_CENTRO, apartado: 3 },
+			{ folio: 'PED-2', almacen: ALM_CENTRO, apartado: 4, liberado: 2 },
+			{ folio: 'PED-3', almacen: ALM_CENTRO, apartado: 1, liberado: 1 },
+			{ folio: 'PED-4', almacen: ALM_RUTA, apartado: 5 },
+			{ folio: 'PED-5', almacen: ALM_CENTRO, apartado: 1, estado: 'cancelado' },
+		]);
+		await expect(
+			register_internal_transfer(store, {
+				producto: PRODUCTO,
+				ubicacion_origen: ALM_CENTRO,
+				ubicacion_destino: ALM_RUTA,
+				cantidad: 2,
+			}),
+		).rejects.toMatchObject({
+			code: 'traslado_apartado',
+			message:
+				'No se puede trasladar 2 de Codo: en Almacén Centro hay 1 libre y 6 apartado por los pedidos PED-1 (3), PED-2 (2), PED-5 (1)',
+		});
+		expect(traslados(store)).toHaveLength(0);
+		await register_internal_transfer(store, {
+			producto: PRODUCTO,
+			ubicacion_origen: ALM_CENTRO,
+			ubicacion_destino: ALM_RUTA,
+			cantidad: 1,
+		});
+		expect(cantidades(store)).toMatchObject({ RUT: 6 });
+	});
+
+	test('almacén completo nombra los pedidos del origen, no los de otros almacenes', async () => {
+		const store = store_con([quant(ALM_CENTRO_A1, 2), quant(ALM_RUTA, 3)]);
+		con_apartados(store, [
+			{ folio: 'PED-1', almacen: ALM_CENTRO, apartado: 1 },
+			{ folio: 'PED-2', almacen: ALM_CENTRO, apartado: 2, liberado: 1 },
+			{ folio: 'PED-4', almacen: ALM_RUTA, apartado: 3 },
+		]);
+		await expect(
+			register_full_warehouse_transfer(store, {
+				ubicacion_origen: ALM_CENTRO,
+				ubicacion_destino: ALM_RUTA,
+			}),
+		).rejects.toMatchObject({
+			code: 'traslado_apartado',
+			message:
+				'Lo disponible en Almacén Centro está apartado por pedidos. Codo: 0 libre y 2 apartado por los pedidos PED-1 (1), PED-2 (1)',
 		});
 		expect(traslados(store)).toHaveLength(0);
 	});

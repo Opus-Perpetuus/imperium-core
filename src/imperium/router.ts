@@ -14,6 +14,7 @@ import {
 	assert_http_access,
 	current_user,
 	ensure_session_table,
+	bind_cli_user_lookup,
 	handle_auth,
 	is_auth_login_post,
 	is_password_define_post,
@@ -37,6 +38,7 @@ import {
 } from './app-registry.ts';
 import { start_registry_cold_sync } from './app-registry-boot.ts';
 import { handle_mcp_agent, seed_mcp_access } from './mcp-agent.ts';
+import { handle_cli_token, seed_cli_access, authenticate_cli_user, is_cli_token_resource } from './cli-token.ts';
 import { ChatError, media_token_actor } from './chat-access.ts';
 import { serve_media } from './media.ts';
 import { guest_media_reader } from './meetings-flow.ts';
@@ -140,6 +142,7 @@ export function create_imperium_layer(sql: Bun.SQL) {
 			const started = Date.now();
 			// El logger no escribe hasta tener el store enlazado.
 			bind_debug_store(store);
+			bind_cli_user_lookup((req) => authenticate_cli_user(store, req));
 			debug_info('imperium-core: preparando el arranque…');
 			await ensure_session_table(sql);
 			// Antes de ensure_defaults: la siembra de RH mira qué está instalado.
@@ -153,6 +156,13 @@ export function create_imperium_layer(sql: Bun.SQL) {
 			}
 			try {
 				await seed_mcp_access(store);
+			} catch (err) {
+				debug_error(
+					err instanceof Error ? err.message : String(err),
+				);
+			}
+			try {
+				await seed_cli_access(store);
 			} catch (err) {
 				debug_error(
 					err instanceof Error ? err.message : String(err),
@@ -362,6 +372,23 @@ async function dispatch(
 				auth_url.pathname = path;
 				return add_cors(req, await handle_auth(store, sql, req, auth_url));
 			}
+			if (path === '/cli' || path.startsWith('/cli/')) {
+				const cli_url = new URL(req.url);
+				cli_url.pathname = path;
+				try {
+					return add_cors(req, await handle_cli_token(store, sql, req, cli_url));
+				} catch (err) {
+					const mapped = caught_http_error(err);
+					debug_error(err instanceof Error ? err.message : String(err));
+					return add_cors(
+						req,
+						Response.json(
+							{ ok: false, error: mapped.code ?? 'error', message: mapped.message },
+							{ status: mapped.status },
+						),
+					);
+				}
+			}
 			if (path === '/mcp-agent' || path.startsWith('/mcp-agent/')) {
 				const mcp_url = new URL(req.url);
 				mcp_url.pathname = path;
@@ -402,6 +429,15 @@ async function dispatch(
 			}
 			const hit = split_resource(path, store);
 			if (!hit) return null;
+			if (is_cli_token_resource(hit.resource)) {
+				return add_cors(
+					req,
+					Response.json(
+						{ error: 'not_found', message: 'Ruta no encontrada' },
+						{ status: 404 },
+					),
+				);
+			}
 			try {
 				const actor = await current_user(sql, req);
 				return await run_with_history_context(
@@ -910,6 +946,7 @@ function looks_imperium(path: string, store: ImperiumStore): boolean {
 	if (p === '/auth' || p.startsWith('/auth/')) return true;
 	if (p === '/media' || p.startsWith('/media/')) return true;
 	if (p === '/mcp-agent' || p.startsWith('/mcp-agent/')) return true;
+	if (p === '/cli' || p.startsWith('/cli/')) return true;
 	if (p === '/subjects' || p.startsWith('/subjects/')) return true;
 	if (is_app_registry_path(p)) return true;
 	if (p === '/compartir' || p.startsWith('/compartir/')) return true;
@@ -1001,7 +1038,7 @@ export function add_cors(req: Request, res: Response | null): Response | null {
 	headers.set(
 		'access-control-allow-headers',
 		req.headers.get('access-control-request-headers') ??
-			'content-type,authorization,x-user-pin-token',
+			'content-type,authorization,x-user-pin-token,x-imperium-client',
 	);
 	headers.set('access-control-allow-methods', 'GET,POST,PUT,PATCH,DELETE,HEAD,OPTIONS');
 	return new Response(res.body, { status: res.status, headers });

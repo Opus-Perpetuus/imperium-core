@@ -583,35 +583,11 @@ async function detalle_faltante(
 	const almacen_id = String(scope.almacen._id);
 	const nombre = text(scope.almacen.name) || 'el almacén del pedido';
 	const libre = await scope_stock(store, product, scope, { libre: true });
-	const folios: string[] = [];
-	let apartado = 0;
-	const nets = new Map<string, number>();
-	if (store.has('inventory-movement') && store.has('pedidos')) {
-		for await (const page of store.scan('inventory-movement', {
-			where: {
-				documento_tipo: 'pedido',
-				tipo_movimiento: { in: [RESERVATION, RELEASE] },
-			},
-			include_inactive: true,
-		})) {
-			for (const row of page) {
-				const tipo = text(row.tipo_movimiento);
-				if (tipo !== RESERVATION && tipo !== RELEASE) continue;
-				if ((ref_id(row.producto) || text(row.producto_id)) !== product_id) continue;
-				const doc_id = text(row.documento_id);
-				if (!doc_id || doc_id === pedido_id) continue;
-				const signed = tipo === RESERVATION ? Number(row.cantidad ?? 0) : -Number(row.cantidad ?? 0);
-				nets.set(doc_id, round_qty((nets.get(doc_id) ?? 0) + signed));
-			}
-		}
-		for (const [doc_id, qty] of nets) {
-			if (!(qty > 0)) continue;
-			const doc = await store.find_id('pedidos', doc_id);
-			if (ref_id(doc?.almacen) !== almacen_id) continue;
-			apartado = round_qty(apartado + qty);
-			folios.push(text(doc?.folio_interno ?? doc?.folio) || doc_id);
-		}
-	}
+	const otros = ((await apartados_de_pedidos_por_almacen(store, almacen_id)).get(product_id) ?? []).filter(
+		(a) => a.pedido !== pedido_id,
+	);
+	const folios = otros.map((a) => a.folio);
+	const apartado = round_qty(otros.reduce((s, a) => s + a.cantidad, 0));
 	const partes = [`en ${nombre} hay ${round_qty(libre)}`];
 	if (apartado > 0) {
 		partes.push(
@@ -623,12 +599,17 @@ async function detalle_faltante(
 	return `: ${partes.join(' y ')}. Solo cuenta la existencia de ese almacén y sus sububicaciones.`;
 }
 
-/** Neto apartado por pedidos de ese almacén, por producto. */
-export async function apartado_logistica_por_almacen(
+export type ApartadoDePedido = { pedido: string; folio: string; cantidad: number };
+
+/**
+ * Neto apartado (apartados menos liberaciones del kardex) de cada pedido de ese
+ * almacén, por producto. El estado del pedido no cuenta: solo libera su movimiento.
+ */
+export async function apartados_de_pedidos_por_almacen(
 	store: ImperiumStore,
 	almacen_id: string,
-): Promise<Map<string, number>> {
-	const out = new Map<string, number>();
+): Promise<Map<string, ApartadoDePedido[]>> {
+	const out = new Map<string, ApartadoDePedido[]>();
 	if (!almacen_id || !store.has('inventory-movement') || !store.has('pedidos')) return out;
 	const nets = new Map<string, Map<string, number>>();
 	for await (const page of store.scan('inventory-movement', {
@@ -654,10 +635,25 @@ export async function apartado_logistica_por_almacen(
 	for (const [pedido_id, by_product] of nets) {
 		const doc = await store.find_id('pedidos', pedido_id);
 		if (ref_id(doc?.almacen) !== almacen_id) continue;
-		for (const [product_id, qty] of by_product) {
-			if (!(qty > 0)) continue;
-			out.set(product_id, round_qty((out.get(product_id) ?? 0) + qty));
+		const folio = text(doc?.folio_interno ?? doc?.folio) || pedido_id;
+		for (const [product_id, cantidad] of by_product) {
+			if (!(cantidad > 0)) continue;
+			const lista = out.get(product_id) ?? [];
+			lista.push({ pedido: pedido_id, folio, cantidad });
+			out.set(product_id, lista);
 		}
+	}
+	return out;
+}
+
+/** Neto apartado por pedidos de ese almacén, por producto. */
+export async function apartado_logistica_por_almacen(
+	store: ImperiumStore,
+	almacen_id: string,
+): Promise<Map<string, number>> {
+	const out = new Map<string, number>();
+	for (const [product_id, lista] of await apartados_de_pedidos_por_almacen(store, almacen_id)) {
+		out.set(product_id, round_qty(lista.reduce((s, a) => s + a.cantidad, 0)));
 	}
 	return out;
 }

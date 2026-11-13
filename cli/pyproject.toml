@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "imperium-cli"
+version = "13.122.12"
+description = "CLI y TUI de Imperium: la misma cuenta y los mismos permisos que la GUI."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "UNLICENSED" }
+authors = [{ name = "Códice Progressio" }]
+dependencies = [
+  "flexablelib[all]>=3.5.1,<4",
+]
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[project.scripts]
+imperium = "imperium_cli.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

@@ -351,7 +351,8 @@ export async function handle_auth(
 	}
 
 	const session = await load_session(sql, req);
-	if (!session) {
+	const actor = session?.user ?? (cli_user_lookup ? await cli_user_lookup(req) : null);
+	if (!actor) {
 		return Response.json(
 			{ error: 'No estás autenticado', message: 'No estás autenticado' },
 			{ status: 401 },
@@ -359,14 +360,26 @@ export async function handle_auth(
 	}
 
 	if (method === 'GET' && (rest === '/' || rest === '')) {
-		return Response.json(session.user);
+		return Response.json(actor);
 	}
 	if (method === 'GET' && rest.startsWith('/menus')) {
-		const access_rights = await build_access(store, session.user);
+		const access_rights = await build_access(store, actor);
 		const menus = await build_menus(store, sql, access_rights);
 		return Response.json({ menus, access_rights });
 	}
-	return Response.json(session.user);
+	return Response.json(actor);
+}
+
+/**
+ * Busca primero la cookie de la GUI; si no hay sesión, un Bearer `icli_…`
+ * (la CLI). El usuario es el mismo de la GUI, con el mismo `build_access`.
+ * Los tokens MCP (`isic_`) no autentican aquí: siguen en `/api/mcp-agent/v1`.
+ */
+type CliUserLookup = (req: Request) => Promise<ImperiumDoc | null>;
+let cli_user_lookup: CliUserLookup | null = null;
+
+export function bind_cli_user_lookup(fn: CliUserLookup | null): void {
+	cli_user_lookup = fn;
 }
 
 export async function current_user(
@@ -374,7 +387,8 @@ export async function current_user(
 	req: Request,
 ): Promise<ImperiumDoc | null> {
 	const s = await load_session(sql, req);
-	return s?.user ?? null;
+	if (s?.user) return s.user;
+	return cli_user_lookup ? cli_user_lookup(req) : null;
 }
 
 const DEFINE_PASSWORD_INVALID =
@@ -831,6 +845,7 @@ export async function build_access(store: ImperiumStore, user: ImperiumDoc) {
 					.filter((model) => store.is_model_installed(model)),
 				'Auth',
 				'McpAgent',
+				'ImperiumCli',
 			]),
 		];
 		return {

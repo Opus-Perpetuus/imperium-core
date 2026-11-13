@@ -209,6 +209,7 @@ const UNIQUE_FIELDS: Record<string, string[]> = {
 	violation: ['code'],
 	'module-management-reference': ['reference'],
 	'mcp-user-token': ['token_hash'],
+	'cli-user-token': ['token_hash'],
 	'epson-ticket-template': ['template_key'],
 	'chat-conversations': ['conversation_key', 'join_code'],
 	'chat-meetings': ['code'],
@@ -3364,6 +3365,7 @@ export class ImperiumStore {
 				'module-management-reference',
 				'font-awesome-icon-catalog',
 				'mcp-user-token',
+				'cli-user-token',
 				'proyectos-time-log',
 				'user-print-template',
 				'time-sheets',
@@ -3401,6 +3403,8 @@ export class ImperiumStore {
 			if (time_sheets) time_sheets.collection = '__time_sheets';
 			const tokens = this.locs.get('mcp-user-token');
 			if (tokens) tokens.collection = 'mcp_user_tokens';
+			const cli_tokens = this.locs.get('cli-user-token');
+			if (cli_tokens) cli_tokens.collection = 'cli_user_tokens';
 			for (const [alias, resource] of Object.entries(RESOURCE_ALIASES)) {
 				const loc = this.locs.get(resource);
 				if (loc && !this.locs.has(alias)) this.locs.set(alias, loc);
@@ -5639,6 +5643,7 @@ export class ImperiumStore {
 			'module-management-reference',
 			'font-awesome-icon-catalog',
 			'mcp-user-token',
+			'cli-user-token',
 			'proyectos-time-log',
 			'user-print-template',
 			'time-sheets',

@@ -12,7 +12,7 @@ import { resolve_reception_location, supplier_display_name } from './purchase-or
 import { is_record_id } from './record-id.ts';
 import { compute_picking_route } from './inventory-picking.ts';
 import { owning_warehouse, scope_stock, warehouse_scope } from './warehouse-scope.ts';
-import { apartado_logistica_por_almacen } from './inventory-logistics-flow.ts';
+import { apartados_de_pedidos_por_almacen, type ApartadoDePedido } from './inventory-logistics-flow.ts';
 import type { ImperiumStore } from './store.ts';
 
 function text(value: unknown): string {
@@ -462,7 +462,7 @@ export async function register_internal_transfer(
 			if (!(cantidad > 0) || !auto_todo) {
 				const pide = auto_todo ? '' : `${round_qty(Number(params.cantidad))} de `;
 				throw traslado_apartado_error(
-					`No se puede trasladar ${pide}${text(product.name)}: en ${text(almacen_origen.name || almacen_origen.codigo)} hay ${disponible.libre} libre y ${disponible.apartado} apartado por pedidos`,
+					`No se puede trasladar ${pide}${text(product.name)}: en ${text(almacen_origen.name || almacen_origen.codigo)} hay ${disponible.libre} libre y ${disponible.apartado} apartado por ${pedidos_que_apartan(disponible.pedidos)}`,
 				);
 			}
 		}
@@ -565,6 +565,11 @@ function traslado_apartado_error(message: string): Error {
 	return Object.assign(new Error(message), { code: 'traslado_apartado' });
 }
 
+function pedidos_que_apartan(pedidos: ApartadoDePedido[]): string {
+	const lista = pedidos.map((p) => `${p.folio} (${p.cantidad})`).join(', ');
+	return `${pedidos.length === 1 ? 'el pedido' : 'los pedidos'} ${lista}`;
+}
+
 /**
  * Lo que puede salir del almacén sin tocar lo apartado por sus pedidos (`libre`,
  * nunca negativo) y ese apartado; `null` si el producto no lleva existencia por
@@ -574,16 +579,16 @@ async function libre_sin_apartado_de_pedidos(
 	store: ImperiumStore,
 	product: ImperiumDoc,
 	almacen: ImperiumDoc,
-): Promise<{ libre: number; apartado: number } | null> {
+): Promise<{ libre: number; apartado: number; pedidos: ApartadoDePedido[] } | null> {
 	const producto_id = String(product._id);
 	if (!(await product_has_quants(store, producto_id))) return null;
-	const apartado =
-		(await apartado_logistica_por_almacen(store, String(almacen._id))).get(producto_id) ?? 0;
+	const pedidos = (await apartados_de_pedidos_por_almacen(store, String(almacen._id))).get(producto_id) ?? [];
+	const apartado = round_qty(pedidos.reduce((s, p) => s + p.cantidad, 0));
 	if (!(apartado > 0)) return null;
 	const scope = await warehouse_scope(store, almacen._id);
 	if (!scope) return null;
 	const libre = round_qty((await scope_stock(store, product, scope, { libre: true })) - apartado);
-	return { libre: Math.max(libre, 0), apartado: round_qty(apartado) };
+	return { libre: Math.max(libre, 0), apartado, pedidos };
 }
 
 /**
@@ -639,11 +644,13 @@ export async function register_full_warehouse_transfer(
 				? await libre_sin_apartado_de_pedidos(store, product, almacen)
 				: null;
 			if (product && disponible) {
-				detalle.push(`${text(product.name)} (${disponible.libre} libre, ${disponible.apartado} apartado)`);
+				detalle.push(
+					`${text(product.name)}: ${disponible.libre} libre y ${disponible.apartado} apartado por ${pedidos_que_apartan(disponible.pedidos)}`,
+				);
 			}
 		}
 		throw traslado_apartado_error(
-			`Lo disponible en ${donde} está apartado por pedidos${detalle.length ? `: ${detalle.join(', ')}` : ''}`,
+			`Lo disponible en ${donde} está apartado por pedidos${detalle.length ? `. ${detalle.join('; ')}` : ''}`,
 		);
 	}
 	return { productos: movidos };
