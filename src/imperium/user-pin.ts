@@ -523,7 +523,18 @@ export async function prepare_user_pin_write(
 	const pin_type = normalize_user_pin_type(incoming.pin_type ?? existing?.pin_type);
 	const pin_length = clamp_user_pin_length(incoming.pin_length ?? existing?.pin_length);
 	const is_global = as_bool(incoming.is_global ?? existing?.is_global, false);
-	const protected_routes = resolve_protected_routes(incoming, document_model);
+	// Un guardado parcial (lote, PATCH sin rutas) conserva las rutas del PIN; la caja usa las del POS.
+	const sends_routes =
+		Array.isArray(incoming.protected_routes) || text(incoming.protected_routes_text) !== '';
+	const fallback_routes = as_array(existing?.protected_routes).length
+		? existing?.protected_routes
+		: document_model === POS_PIN_DOCUMENT_MODEL
+			? POS_PROTECTED_ROUTES
+			: [];
+	const protected_routes = resolve_protected_routes(
+		sends_routes ? incoming : { protected_routes: fallback_routes },
+		document_model,
+	);
 	const assigned_users = await resolve_assigned_users(
 		store,
 		incoming,

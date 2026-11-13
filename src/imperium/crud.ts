@@ -253,6 +253,16 @@ async function label_ref_field_values(
 	return apply_related_labels(options, names);
 }
 
+export async function prepare_user_pin_batch_update(
+	store: ImperiumStore,
+	id: string,
+	doc: ImperiumDoc,
+): Promise<ImperiumDoc> {
+	const previous = await store.find_id('user-pin', id);
+	if (!previous) throw new Error('No se encontro el PIN a actualizar');
+	return (await prepare_user_pin_write(store, doc, previous)).persisted;
+}
+
 /** Alcance de toda ruta del CRUD: las reglas de registro del actor y, para cualquiera, sin las filas del chat. */
 export async function record_rule_scope(
 	store: ImperiumStore,
@@ -598,12 +608,21 @@ export async function handle_crud(
 						await before_create(
 							store,
 							resource,
-							await prepare_user_write(resource, doc, true),
+							resource === 'user-pin'
+								? (await prepare_user_pin_write(store, doc, null)).persisted
+								: await prepare_user_write(resource, doc, true),
 							actor,
 						),
 					),
+				// El lote de PIN debe hashear igual que el PATCH: nunca guardar plain_pin.
 				persist_update: async (id, doc) =>
-					store.update(resource, id, await prepare_user_write(resource, doc, false)),
+					store.update(
+						resource,
+						id,
+						resource === 'user-pin'
+							? await prepare_user_pin_batch_update(store, id, doc)
+							: await prepare_user_write(resource, doc, false),
+					),
 			}),
 		);
 	}

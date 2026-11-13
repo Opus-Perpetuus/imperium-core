@@ -49,6 +49,10 @@ const IGNORE_KEYS = new Set([
 	'reset_password_token_hash',
 	'reset_password_expires',
 	'reset_password_kind',
+	// Secretos de PIN: el historial nunca muestra el PIN ni su hash.
+	'plain_pin',
+	'pin_hash',
+	'regenerate_pin',
 ]);
 
 const LABELS: Record<string, string> = {
