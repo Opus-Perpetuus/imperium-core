@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "imperium-cli"
-version = "13.125.2"
+version = "13.125.3"
 description = "CLI y TUI de Imperium: la misma cuenta y los mismos permisos que la GUI."
 readme = "README.md"
 requires-python = ">=3.11"
