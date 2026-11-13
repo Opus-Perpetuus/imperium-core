@@ -23,3 +23,29 @@ def test_imperium_config_override(tmp_path, monkeypatch):
     config.save({"perfil_activo": "a", "perfiles": {"a": {"url": "http://z"}}})
     assert custom.is_file()
     assert config.load()["perfiles"]["a"]["url"] == "http://z"
+
+
+def test_save_skips_chmod_on_foreign_dir(config_home, monkeypatch):
+    """Volumen de Docker creado por root: chmod da EPERM pero sí se puede escribir."""
+    real_chmod = os.chmod
+
+    def chmod(path, mode, *a, **kw):
+        if os.path.isdir(path):
+            raise PermissionError(1, "Operation not permitted", str(path))
+        return real_chmod(path, mode, *a, **kw)
+
+    monkeypatch.setattr(config.os, "chmod", chmod)
+    path = config.save({"perfil_activo": "a", "perfiles": {"a": {"url": "http://z"}}})
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert config.load()["perfiles"]["a"]["url"] == "http://z"
+
+
+def test_save_clear_error_when_dir_not_writable(config_home, monkeypatch):
+    import pytest
+
+    folder = config_home / "imperium"
+    folder.mkdir(parents=True)
+    monkeypatch.setattr(config.os, "access", lambda *a, **kw: False)
+    with pytest.raises(config.ConfigNotWritable) as err:
+        config.save({"perfiles": {}})
+    assert "No puedo escribir" in str(err.value) and err.value.code == 5

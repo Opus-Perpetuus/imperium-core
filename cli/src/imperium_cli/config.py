@@ -11,6 +11,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from .exits import PERMISO, CliError
+
 CONFIG_MODE = 0o600
 DIR_MODE = 0o700
 
@@ -95,15 +97,45 @@ def load(path: Path | None = None) -> dict[str, Any]:
     return _resolve_tokens(data)
 
 
+class ConfigNotWritable(CliError):
+    """El directorio de configuración no es escribible por este usuario."""
+
+    def __init__(self, message: str):
+        super().__init__(message, PERMISO)
+
+
+def _chmod_if_owned(target: Path, mode: int) -> None:
+    # Solo el dueño (o root) puede cambiar el modo; en volúmenes de Docker
+    # creados por root el chmod da EPERM aunque se pueda escribir.
+    try:
+        if hasattr(os, "geteuid") and os.geteuid() not in (0, target.stat().st_uid):
+            return
+        os.chmod(target, mode)
+    except OSError:
+        pass
+
+
 def save(data: dict[str, Any], path: Path | None = None) -> Path:
     target = path or config_path()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    os.chmod(target.parent, DIR_MODE)
+    folder = target.parent
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise ConfigNotWritable(f"No puedo crear {folder}: {exc.strerror}") from exc
+    _chmod_if_owned(folder, DIR_MODE)
+    if not os.access(folder, os.W_OK | os.X_OK):
+        raise ConfigNotWritable(
+            f"No puedo escribir en {folder} (dueño uid {folder.stat().st_uid}, yo uid {os.geteuid()}). "
+            f"Corrige el permiso (p. ej. chown {os.geteuid()} {folder}) o usa IMPERIUM_CONFIG=<ruta>."
+        )
     tmp = target.with_suffix(target.suffix + ".tmp")
-    tmp.write_text(json.dumps(_stash_tokens(data), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    os.chmod(tmp, CONFIG_MODE)
+    payload = json.dumps(_stash_tokens(data), ensure_ascii=False, indent=2) + "\n"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, CONFIG_MODE)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(payload)
+    _chmod_if_owned(tmp, CONFIG_MODE)
     tmp.replace(target)
-    os.chmod(target, CONFIG_MODE)
+    _chmod_if_owned(target, CONFIG_MODE)
     return target
 
 
