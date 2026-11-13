@@ -54,6 +54,13 @@ export async function consume_exit_quants(
 					ubicacion: renglon.ubicacion,
 					ubicacion_codigo: renglon.ubicacion_codigo,
 					delta: -renglon.tomar,
+					...(renglon.lote
+						? {
+								lote: renglon.lote,
+								lote_codigo: renglon.lote_codigo,
+								fecha_caducidad: renglon.fecha_caducidad,
+							}
+						: {}),
 				}),
 				renglon.ubicacion,
 				renglon.ubicacion_codigo,
@@ -78,25 +85,6 @@ export async function consume_exit_quants(
 		),
 	);
 	return touched;
-}
-
-/** Rastro de lotes de una salida (los lotes salen por caducidad, FEFO): campos del movimiento. */
-export function exit_lot_trace(touched: Array<QuantLot & { cantidad: number }>): ImperiumDoc {
-	const by_lot = new Map<string, QuantLot & { cantidad: number }>();
-	for (const t of touched) {
-		if (!t.lote) continue;
-		const prev = by_lot.get(t.lote);
-		by_lot.set(t.lote, { ...t, cantidad: round_quantity((prev?.cantidad ?? 0) + Math.abs(Number(t.cantidad) || 0)) });
-	}
-	const lots = [...by_lot.values()];
-	if (!lots.length) return {};
-	if (lots.length === 1) {
-		return { lote: lots[0].lote, lote_codigo: lots[0].lote_codigo, fecha_caducidad: lots[0].fecha_caducidad };
-	}
-	return {
-		lote_codigo: lots.map((l) => l.lote_codigo || l.lote).join(', '),
-		lotes_detalle: lots.map((l) => `${l.lote_codigo || l.lote} (${l.cantidad})`).join(', '),
-	};
 }
 
 /** Cantidad que sale por producto en una venta POS (kits → componentes). */
@@ -198,21 +186,12 @@ async function exit_product(
 	await insert_pos_sale_movement(store, ticket, product, qty, previa, next, touched, scope);
 }
 
-function group_exit_touches(touched: ExitTouch[]) {
-	const order: string[] = [];
-	const by = new Map<string, { ubicacion: string; ubicacion_codigo: string; cantidad: number; lots: ExitTouch[] }>();
-	for (const touch of touched) {
-		let group = by.get(touch.ubicacion);
-		if (!group) {
-			group = { ubicacion: touch.ubicacion, ubicacion_codigo: touch.ubicacion_codigo, cantidad: 0, lots: [] };
-			by.set(touch.ubicacion, group);
-			order.push(touch.ubicacion);
-		}
-		group.cantidad = round_quantity(group.cantidad + Math.abs(Number(touch.cantidad) || 0));
-		group.lots.push(touch);
-	}
-	return order.map((id) => by.get(id)!);
-}
+type SalePortion = {
+	cantidad: number;
+	ubicacion_id: string;
+	ubicacion_codigo: string;
+	lot_trace: ImperiumDoc;
+};
 
 async function insert_pos_sale_movement(
 	store: ImperiumStore,
@@ -225,12 +204,40 @@ async function insert_pos_sale_movement(
 	scope: WarehouseScope | null = null,
 ): Promise<void> {
 	if (!store.has('inventory-movement')) return;
-	const groups = group_exit_touches(touched);
-	const taken = round_quantity(groups.reduce((sum, group) => sum + group.cantidad, 0));
+	const portions: SalePortion[] = [];
+	for (const touch of touched) {
+		const tomada = round_quantity(Math.abs(Number(touch.cantidad) || 0));
+		if (tomada <= 0) continue;
+		const lot_trace: ImperiumDoc = {};
+		if (touch.lote) {
+			lot_trace.lote = touch.lote;
+			if (touch.lote_codigo) lot_trace.lote_codigo = touch.lote_codigo;
+			if (touch.fecha_caducidad) lot_trace.fecha_caducidad = touch.fecha_caducidad;
+		}
+		portions.push({
+			cantidad: tomada,
+			ubicacion_id: touch.ubicacion,
+			ubicacion_codigo: touch.ubicacion_codigo,
+			lot_trace,
+		});
+	}
+	const taken = round_quantity(portions.reduce((sum, portion) => sum + portion.cantidad, 0));
 	const sold = round_quantity(cantidad);
-	const last = groups.at(-1);
-	if (last && sold > taken) last.cantidad = round_quantity(last.cantidad + sold - taken);
-	if (!groups.length) {
+	if (sold > taken) {
+		const extra = round_quantity(sold - taken);
+		const last = portions.at(-1);
+		if (last && !last.lot_trace.lote) last.cantidad = round_quantity(last.cantidad + extra);
+		else {
+			const warehouse = scope?.almacen ?? (await find_warehouse_location(store));
+			portions.push({
+				cantidad: extra,
+				ubicacion_id: last?.ubicacion_id || (warehouse?._id ? String(warehouse._id) : ''),
+				ubicacion_codigo: last?.ubicacion_codigo || String(warehouse?.codigo ?? warehouse?.name ?? ''),
+				lot_trace: {},
+			});
+		}
+	}
+	if (!portions.length) {
 		const warehouse = scope?.almacen ?? (await find_warehouse_location(store));
 		await write_pos_sale_movement(store, ticket, product, {
 			cantidad,
@@ -243,21 +250,21 @@ async function insert_pos_sale_movement(
 		return;
 	}
 	let previo = round_quantity(stock_total_previo);
-	for (const [i, group] of groups.entries()) {
+	for (const [i, portion] of portions.entries()) {
 		const resultante =
-			i === groups.length - 1
+			i === portions.length - 1
 				? round_quantity(stock_total_resultante)
-				: round_quantity(previo - group.cantidad);
+				: round_quantity(previo - portion.cantidad);
 		const loc = store.has('inventory-internal-location')
-			? await store.find_id('inventory-internal-location', group.ubicacion)
+			? await store.find_id('inventory-internal-location', portion.ubicacion_id)
 			: null;
 		await write_pos_sale_movement(store, ticket, product, {
-			cantidad: group.cantidad,
+			cantidad: portion.cantidad,
 			stock_total_previo: previo,
 			stock_total_resultante: resultante,
-			ubicacion_id: group.ubicacion,
-			ubicacion_nombre: String(loc?.name ?? group.ubicacion_codigo),
-			lot_trace: exit_lot_trace(group.lots),
+			ubicacion_id: portion.ubicacion_id,
+			ubicacion_nombre: String(loc?.name ?? portion.ubicacion_codigo),
+			lot_trace: portion.lot_trace,
 		});
 		previo = resultante;
 	}
@@ -276,7 +283,6 @@ async function write_pos_sale_movement(
 		lot_trace: ImperiumDoc;
 	},
 ): Promise<void> {
-	const { lotes_detalle, ...lot_fields } = parte.lot_trace;
 	const producto = String(product._id ?? '');
 	const apartado = round_quantity(Number(product.existenciaApartada ?? 0));
 	await store.insert('inventory-movement', {
@@ -294,10 +300,8 @@ async function write_pos_sale_movement(
 		documento_modelo: 'PosTickets',
 		documento_nombre: String(ticket.name ?? ticket.ticket_sequence ?? ''),
 		documento_referencia: String(ticket.ticket_sequence ?? ''),
-		description: lotes_detalle
-			? `Salida por venta en punto de venta. Lotes: ${String(lotes_detalle)}`
-			: 'Salida por venta en punto de venta',
-		...lot_fields,
+		description: 'Salida por venta en punto de venta',
+		...parte.lot_trace,
 		cantidad: round_quantity(parte.cantidad),
 		stock_total_previo: round_quantity(parte.stock_total_previo),
 		stock_total_resultante: round_quantity(parte.stock_total_resultante),
