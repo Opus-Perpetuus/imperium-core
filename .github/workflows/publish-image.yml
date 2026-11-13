@@ -30,12 +30,18 @@ jobs:
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
-            # Ya se publico esta version: un push de chore no vuelve a pisar la
-            # imagen que ya esta en GHCR.
+            # Ya se publico esta version del núcleo: un push de chore no vuelve
+            # a pisar la imagen que ya esta en GHCR. La CLI sí se publica si
+            # falta su etiqueta (p. ej. la primera vez en 13.122.10).
             echo "nueva=false" >> "$GITHUB_OUTPUT"
-            echo "v$VERSION ya publicada; no se republica." >> "$GITHUB_STEP_SUMMARY"
+            echo "v$VERSION ya publicada; no se republica el núcleo." >> "$GITHUB_STEP_SUMMARY"
           else
             echo "nueva=true" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -f cli/Dockerfile ]; then
+            echo "hay_cli=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "hay_cli=false" >> "$GITHUB_OUTPUT"
           fi
       - name: Tag de la version publicada
         if: steps.version.outputs.nueva == 'true'
@@ -45,21 +51,33 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "v$VERSION" -m "v$VERSION"
           git push origin "v$VERSION"
-      # amd64 + arm64 en el mismo tag (manifest list): el servidor ARM64
-      # (Moto G85) jala la misma etiqueta. Regla: docs/VERSIONADO.md § Arquitecturas.
-      - uses: docker/setup-qemu-action@v3
-        if: steps.version.outputs.nueva == 'true'
-        with:
-          platforms: arm64
-      - uses: docker/setup-buildx-action@v3
-        if: steps.version.outputs.nueva == 'true'
       - uses: docker/login-action@v3
-        if: steps.version.outputs.nueva == 'true'
+        if: steps.version.outputs.nueva == 'true' || steps.version.outputs.hay_cli == 'true'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and push
+      - name: Falta la imagen de la CLI?
+        id: cli
+        if: steps.version.outputs.hay_cli == 'true'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if docker manifest inspect "ghcr.io/opus-perpetuus/imperium-cli:$VERSION" >/dev/null 2>&1; then
+            echo "nueva=false" >> "$GITHUB_OUTPUT"
+            echo "ghcr.io/opus-perpetuus/imperium-cli:$VERSION ya existe; no se republica la CLI." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "nueva=true" >> "$GITHUB_OUTPUT"
+            echo "Se publicará ghcr.io/opus-perpetuus/imperium-cli:$VERSION." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      # amd64 + arm64 en el mismo tag (manifest list): el servidor ARM64
+      # (Moto G85) jala la misma etiqueta. Regla: docs/VERSIONADO.md § Arquitecturas.
+      - uses: docker/setup-qemu-action@v3
+        if: steps.version.outputs.nueva == 'true' || steps.cli.outputs.nueva == 'true'
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@v3
+        if: steps.version.outputs.nueva == 'true' || steps.cli.outputs.nueva == 'true'
+      - name: Build and push núcleo
         if: steps.version.outputs.nueva == 'true'
         run: |
           VERSION="${{ steps.version.outputs.version }}"
@@ -73,3 +91,18 @@ jobs:
             -t ghcr.io/opus-perpetuus/imperium-core:latest \
             --push \
             .
+      - name: Build and push CLI
+        if: steps.version.outputs.hay_cli == 'true' && steps.cli.outputs.nueva == 'true'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --build-arg VERSION="$VERSION" \
+            --label org.opencontainers.image.source=https://github.com/Opus-Perpetuus/imperium-core \
+            --annotation org.opencontainers.image.source=https://github.com/Opus-Perpetuus/imperium-core \
+            --annotation index:org.opencontainers.image.source=https://github.com/Opus-Perpetuus/imperium-core \
+            --annotation manifest:org.opencontainers.image.source=https://github.com/Opus-Perpetuus/imperium-core \
+            -t ghcr.io/opus-perpetuus/imperium-cli:"$VERSION" \
+            -t ghcr.io/opus-perpetuus/imperium-cli:latest \
+            --push \
+            ./cli
