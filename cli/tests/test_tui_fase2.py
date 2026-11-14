@@ -50,7 +50,7 @@ def test_abrir_recurso_y_detalle():
     tui.open_path("/products")
     assert tui.current["resource"] == "products"
     tui.detail_selected()
-    assert tui.shell.pages["Detalle"] is tui.detail
+    assert tui.shell.pages["Detalle"].content is tui.detail  # dentro de su FocusScroll
 
 
 def test_term_dumb_lineal(monkeypatch):

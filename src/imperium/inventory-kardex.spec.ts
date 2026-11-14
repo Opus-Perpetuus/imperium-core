@@ -78,6 +78,26 @@ describe('kárdex de producto', () => {
 		expect(movement_delta({ tipo_movimiento: 'salida_entrega', cantidad: 4 })).toBe(-4);
 	});
 
+	test('el traslado muestra origen y destino con su existencia antes y después (#216)', () => {
+		const k = build_kardex(product, [
+			mov('2026-10-01', 'recepcion_compra', 0, 500),
+			{
+				...mov('2026-10-02', 'transferencia_interna', 500, 500),
+				ubicacion_origen_nombre: 'PRUEBAALBA/ALMACEN',
+				ubicacion_destino_nombre: 'PRUEBAALBA/ESTANTE2',
+				stock_ubicacion_origen_previo: 500,
+				stock_ubicacion_origen_resultante: 490,
+				stock_ubicacion_destino_previo: 0,
+				stock_ubicacion_destino_resultante: 10,
+			},
+		]);
+		const traslado = k.movimientos[1]!;
+		expect(traslado.ubicacion).toBe('PRUEBAALBA/ALMACEN (500 → 490) → PRUEBAALBA/ESTANTE2 (0 → 10)');
+		expect(traslado.existencia).toBe(500);
+		expect(traslado.entrada).toBe(0);
+		expect(traslado.salida).toBe(0);
+	});
+
 	test('fechas inválidas o invertidas se rechazan', () => {
 		expect(() => kardex_bounds({ desde: 'ayer' })).toThrow('Fecha inválida');
 		expect(() => kardex_bounds({ desde: '2026-10-05', hasta: '2026-10-01' })).toThrow('posterior');

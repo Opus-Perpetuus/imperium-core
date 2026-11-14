@@ -5,6 +5,7 @@
 import { as_array, as_object, type ImperiumDoc } from './envelope.ts';
 import {
 	apply_quant_delta,
+	quant_total_for_pair,
 	product_has_quants,
 	recompute_product_existencia,
 } from './delivery-return-flow.ts';
@@ -504,8 +505,10 @@ export async function register_internal_transfer(
 	};
 	const stock_total = round_qty(Number(product.existencia ?? existencia_previa));
 	const stock_apartado = round_qty(Number(product.existenciaApartada ?? 0));
+	let destino_saldo = await quant_total_for_pair(store, producto_id, String(destino._id), text(destino.codigo));
 	for (const fuente of fuentes) {
 		const desde = fuente.ubicacion;
+		let origen_saldo = await quant_total_for_pair(store, producto_id, String(desde._id), text(desde.codigo));
 		const portions = await apply_quant_delta(store, {
 			...base,
 			ubicacion: String(desde._id),
@@ -513,10 +516,19 @@ export async function register_internal_transfer(
 			delta: -fuente.cantidad,
 			lote,
 		});
-		const description = entre_almacenes
+		const encabezado = entre_almacenes
 			? `Traslado entre almacenes ${text(almacen_origen?.name || almacen_origen?.codigo)} → ${text(almacen_destino?.name || almacen_destino?.codigo)} (${text(desde.codigo)} → ${text(destino.codigo)})`
 			: `Traslado interno ${text(desde.codigo)} → ${text(destino.codigo)}`;
 		for (const portion of portions) {
+			const por_ubicacion = {
+				stock_ubicacion_origen_previo: origen_saldo,
+				stock_ubicacion_origen_resultante: round_qty(origen_saldo - portion.cantidad),
+				stock_ubicacion_destino_previo: destino_saldo,
+				stock_ubicacion_destino_resultante: round_qty(destino_saldo + portion.cantidad),
+			};
+			origen_saldo = por_ubicacion.stock_ubicacion_origen_resultante;
+			destino_saldo = por_ubicacion.stock_ubicacion_destino_resultante;
+			const description = `${encabezado}. ${text(desde.codigo)}: ${por_ubicacion.stock_ubicacion_origen_previo} → ${por_ubicacion.stock_ubicacion_origen_resultante}; ${text(destino.codigo)}: ${por_ubicacion.stock_ubicacion_destino_previo} → ${por_ubicacion.stock_ubicacion_destino_resultante}`;
 			const lote_fields = portion.lote
 				? {
 						lote: portion.lote,
@@ -551,6 +563,7 @@ export async function register_internal_transfer(
 				stock_apartado_previo: stock_apartado,
 				stock_apartado_resultante: stock_apartado,
 				stock_disponible_resultante: round_qty(stock_total - stock_apartado),
+				...por_ubicacion,
 				fecha_movimiento: new Date().toISOString(),
 				...lote_fields,
 			});

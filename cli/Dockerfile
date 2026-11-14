@@ -9,7 +9,7 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src ./src
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir "flexablelib[all]>=3.5.1,<4" . \
+    && pip install --no-cache-dir "flexablelib[all]>=3.7.0,<4" . \
     && adduser -D -u 1000 -h /home/imperium imperium \
     && install -d -m 700 -o imperium -g imperium /home/imperium/.config /home/imperium/.config/imperium
 ENV HOME=/home/imperium

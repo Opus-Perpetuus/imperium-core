@@ -89,6 +89,25 @@ describe('list_search_columns', () => {
 		expect(cols).toEqual(['name', 'description', 'search_field', 'codigo']);
 	});
 
+	test('movimientos de inventario buscan por código y nombre del producto (#216)', () => {
+		const cols = list_search_columns(
+			'inventory-movement',
+			new Set([
+				'name',
+				'description',
+				'search_field',
+				'producto_codigo',
+				'producto_nombre',
+				'lote_codigo',
+				'documento_referencia',
+				'tipo_movimiento',
+			]),
+		);
+		expect(cols).toContain('producto_codigo');
+		expect(cols).toContain('producto_nombre');
+		expect(cols).not.toContain('tipo_movimiento');
+	});
+
 	test('pedidos busca por folio y folio interno', () => {
 		const cols = list_search_columns(
 			'pedidos',

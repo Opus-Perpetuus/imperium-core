@@ -24,7 +24,30 @@ imperium masivo --continuar <id>
 ```
 
 `masivo borrar` hace un respaldo del núcleo y espera a que termine antes de borrar.
-TUI: Ctrl+K paleta, Esc volver, `/` o `f` filtrar, `a` alta, F1 ayuda, F2 editar, F4 detalle, F9 masivo.
+### TUI (`imperium` sin argumentos)
+
+- **Menú por apps**: la barra lateral solo enseña las apps. Enter abre la app y su árbol de submenús, plegable a cualquier profundidad (→/Enter abre una carpeta, ← la cierra, `*` abre todo, Enter en una hoja abre la pantalla).
+- **Pantallas de las apps**: las páginas `nox.*` del núcleo (`/api/m/subject-<app>/pages/<id>`) se dibujan con flexablelib, p. ej. «Ver tabla» de Herramientas: migas, buscador, resúmenes, tabla con fotos y paginador. Los botones con `href` navegan y los de `action` (`api://…`) escriben con confirmación. Si un componente no tiene equivalente en la terminal (`nox.login`, `nox.excel-import`, `nox.sidebar`), sale un aviso en su lugar.
+- **Scroll en toda pantalla**: lo que no cabe hacia abajo se alcanza siempre. Tab lleva al siguiente campo y la vista baja sola; PgUp/PgDn, Ctrl+↑/↓, Ctrl+Inicio/Fin y la rueda la recorren; una barra a la derecha marca dónde vas. Una página sin campos (una ficha, un texto largo) toma el foco y se recorre con las flechas. Las listas (y «Ver tabla») son un `VStack` de flexablelib: la tabla llena el alto que sobra y el paginador nunca se sale. La barra lateral se recorta con muchas apps («▲/▼ n más») y PgUp/PgDn saltan en ella. Requiere flexablelib 3.7.0 o más nuevo.
+- **Formularios en rejilla**: los campos se acomodan con la rejilla de `Form` de flexablelib (`min_column_width`, `FormCell`): 1 columna en terminal angosta, 2 en mediana, 3 en ancha. Respetan `column_span` (1, 2 o `full`) y `min_width` del núcleo; los campos anchos (textarea, JSON, Markdown, coordenadas, subtabla…) ocupan todo el renglón, como en el web.
+- **Listas**: todas usan el formato view-list (buscador + tabla + paginador + estado) con paginación y búsqueda en el servidor.
+- **Formularios**: cada campo usa su entrada de flexablelib (dinero, fecha, rango, hora, menú, radio, casillas, autocompletar con `ref`, JSON, Markdown, código, máscara de teléfono/RFC/CURP/CP, color, coordenadas, ícono, archivo/imagen, escáner que conserva el último código, firma a mano (se guarda como PNG), cronómetro, subtabla…). Los valores se juntan también dentro de pestañas, acordeones y subtablas.
+- **Imágenes**: las fotos de productos, herramientas y evidencias se ven en la terminal (kitty, iTerm2, sixel; si no, bloques Unicode, braille o ASCII; y si nada de eso funciona, el texto alternativo). Se bajan con el token del perfil solo si son del mismo núcleo, y el token nunca sigue a una redirección (`read_source(headers=)` de flexablelib). El catálogo baja sus fotos al dibujarse (`image_headers`). `IMPERIUM_IMAGEN=half|sixel|kitty|iterm|ascii|link|none` fuerza el método.
+
+| Tecla | Acción |
+|---|---|
+| F1 | Ayuda con todos los atajos |
+| Ctrl+K | Paleta de comandos (todas las pantallas del menú) |
+| Esc / Retroceso / Alt+← | Volver (historial) |
+| `m` | Ir a las apps de la barra lateral · `h` Inicio |
+| `/` o `f` | Buscar (en el servidor) |
+| `n` / `p` | Página siguiente / anterior |
+| `i` | Imágenes del registro o de la pantalla (←/→ cambian, `f` ajusta, Enter abre) |
+| Enter | Abrir registro · F4 detalle · F2 editar · `a` alta |
+| PgUp / PgDn · Ctrl+↑/↓ · Ctrl+Inicio/Fin | Desplazar la pantalla |
+| `r` / F5 | Recargar · F6 caja · F9 masivo · `q` salir |
+
+Mientras escribes en un campo, las letras no disparan atajos.
 
 ## Fase 3: caja, perfiles remotos, MCP y SSH
 

@@ -13,6 +13,7 @@ const EXTRA_SEARCH: Record<string, readonly string[]> = {
 	'delivery-return': ['pedido_folio', 'contacto_nombre'],
 	products: ['codigo'],
 	'inventory-internal-location': ['codigo'],
+	'inventory-movement': ['producto_codigo', 'producto_nombre', 'lote_codigo', 'documento_referencia'],
 	pedidos: ['folio', 'folio_interno'],
 };
 

@@ -223,7 +223,7 @@ describe('traslados entre almacenes', () => {
 			ubicacion_destino: ALM_CENTRO_A2,
 			cantidad: 1,
 		});
-		expect(store.data['inventory-movement'][0].description).toBe('Traslado interno CEN-A1 → CEN-A2');
+		expect(store.data['inventory-movement'][0].description).toBe('Traslado interno CEN-A1 → CEN-A2. CEN-A1: 3 → 2; CEN-A2: 0 → 1');
 	});
 
 	test('desde_almacen toma las sububicaciones aunque el origen permita almacenaje', async () => {

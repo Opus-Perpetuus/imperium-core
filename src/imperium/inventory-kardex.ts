@@ -97,6 +97,21 @@ export function movement_delta(row: ImperiumDoc): number {
 	return 0;
 }
 
+/** Un traslado dice de dónde a dónde y cuánto había antes y después en cada lado (#216). */
+function kardex_location(row: ImperiumDoc): string {
+	const origen = text(row.ubicacion_origen_nombre);
+	const destino = text(row.ubicacion_destino_nombre);
+	if (text(row.tipo_movimiento) !== 'transferencia_interna' || !origen || !destino) {
+		return destino || origen;
+	}
+	const lado = (nombre: string, previo: unknown, resultante: unknown) => {
+		const antes = finite(previo);
+		const despues = finite(resultante);
+		return antes != null && despues != null ? `${nombre} (${qty(antes)} → ${qty(despues)})` : nombre;
+	};
+	return `${lado(origen, row.stock_ubicacion_origen_previo, row.stock_ubicacion_origen_resultante)} → ${lado(destino, row.stock_ubicacion_destino_previo, row.stock_ubicacion_destino_resultante)}`;
+}
+
 export function build_kardex(
 	product: ImperiumDoc,
 	movements: ImperiumDoc[],
@@ -134,7 +149,7 @@ export function build_kardex(
 			tipo_movimiento: text(row.tipo_movimiento),
 			documento_tipo: text(row.documento_tipo),
 			documento: text(row.documento_referencia) || text(row.documento_nombre),
-			ubicacion: text(row.ubicacion_destino_nombre) || text(row.ubicacion_origen_nombre),
+			ubicacion: kardex_location(row),
 			entrada: qty(entrada),
 			salida: qty(salida),
 			existencia: saldo,
