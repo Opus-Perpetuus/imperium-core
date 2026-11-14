@@ -13,6 +13,7 @@ import {
 	seed_cli_access,
 } from './cli-token.ts';
 import type { ImperiumDoc } from './envelope.ts';
+import { principal_type_of } from './subject-identity.ts';
 import type { ImperiumStore } from './store.ts';
 
 type Row = ImperiumDoc & { _id: string };
@@ -280,6 +281,42 @@ describe('tokens de la CLI', () => {
 			new Request('http://core/api/meta', { headers: { authorization: `Bearer ${CLI_TOKEN_PREFIX}revocado` } }),
 		);
 		expect(revoked).toBeNull();
+	});
+
+	test('un usuario legado sin type entra por icli_ como interno (las apps no le niegan sus páginas)', async () => {
+		const plaintext = `${CLI_TOKEN_PREFIX}legado`;
+		const { type: _t, ...legacy } = ADMIN;
+		const store = memory_store({
+			user: [legacy as Row],
+			[CLI_TOKEN_RESOURCE]: [
+				{ _id: 't-leg', user_id: ADMIN._id, token_hash: hash_cli_token(plaintext), is_active: true },
+			],
+		});
+		bind(store);
+		const actor = await current_user(
+			empty_sql,
+			new Request('http://core/api/m/subject-configuracion/pages/configuracion.user', {
+				headers: { authorization: `Bearer ${plaintext}` },
+			}),
+		);
+		expect(actor?._id).toBe(ADMIN._id);
+		expect(principal_type_of(actor)).toBe('internal');
+	});
+
+	test('un externo explícito sigue externo por icli_', async () => {
+		const plaintext = `${CLI_TOKEN_PREFIX}externo`;
+		const store = memory_store({
+			user: [{ ...ADMIN, type: 'external' }],
+			[CLI_TOKEN_RESOURCE]: [
+				{ _id: 't-ext', user_id: ADMIN._id, token_hash: hash_cli_token(plaintext), is_active: true },
+			],
+		});
+		bind(store);
+		const actor = await current_user(
+			empty_sql,
+			new Request('http://core/api/meta', { headers: { authorization: `Bearer ${plaintext}` } }),
+		);
+		expect(principal_type_of(actor)).toBe('external');
 	});
 
 	test('cerrar o revocar un token no apaga los demás ni el MCP', async () => {

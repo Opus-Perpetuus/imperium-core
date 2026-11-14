@@ -388,7 +388,10 @@ export async function current_user(
 ): Promise<ImperiumDoc | null> {
 	const s = await load_session(sql, req);
 	if (s?.user) return s.user;
-	return cli_user_lookup ? cli_user_lookup(req) : null;
+	// El token CLI nace del mismo login de la GUI: un usuario legado sin `type`
+	// es del personal igual que en su sesión, o las apps lo verían externo.
+	const cli_user = cli_user_lookup ? await cli_user_lookup(req) : null;
+	return cli_user ? with_session_principal_type(cli_user) : null;
 }
 
 const DEFINE_PASSWORD_INVALID =
