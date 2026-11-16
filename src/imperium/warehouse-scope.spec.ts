@@ -586,6 +586,47 @@ describe('POS: sale del almacén de la sucursal', () => {
 		expect((await store.find_id('products', PRODUCTO))?.existenciaApartada).toBe(0);
 	});
 
+	test('el traslado rechazado nombra el apartado POS que aparta la existencia (#217)', async () => {
+		const store = store_con([quant(ALM_CENTRO_A1, 2), quant(ALM_CENTRO_A2, 5), quant(GENERAL, 50)]);
+		const prepared = await prepare_layaway_rules(store, {
+			ticket_type: 'APARTADO',
+			ticket_sequence: 'CAJA-7',
+			pos_session: SESION_CENTRO,
+			created_by: CAJERO,
+			client_id: 'cli-1',
+			subtotal: 10,
+			items: [{ item_id: PRODUCTO, item_name: 'Codo', quantity: 4 }],
+			payments: [{ method: 'efectivo', amount: 1 }],
+		});
+		const layaway = await store.insert('pos-tickets', { ...prepared, _id: 'ap-7' });
+		await register_layaway_effects(store, layaway);
+		await expect(
+			register_internal_transfer(store, {
+				producto: PRODUCTO,
+				ubicacion_origen: ALM_CENTRO,
+				ubicacion_destino: ALM_RUTA,
+				cantidad: 5,
+			}),
+		).rejects.toThrow('No hay existencia disponible suficiente en Almacén Centro (disponible 3). Lo apartan: apartado POS CAJA-7 (4)');
+		await expect(
+			register_internal_transfer(store, {
+				producto: PRODUCTO,
+				ubicacion_origen: ALM_CENTRO_A1,
+				ubicacion_destino: ALM_RUTA,
+				cantidad: 1,
+			}),
+		).rejects.toThrow('(disponible 0). Lo apartan: apartado POS CAJA-7 (2)');
+		await cancel_layaway(store, 'ap-7');
+		await expect(
+			register_internal_transfer(store, {
+				producto: PRODUCTO,
+				ubicacion_origen: ALM_CENTRO,
+				ubicacion_destino: ALM_RUTA,
+				cantidad: 8,
+			}),
+		).rejects.toThrow(/\(disponible 7\)$/);
+	});
+
 	test('liquidar el apartado saca la mercancía del mismo almacén', async () => {
 		const store = store_con([quant(ALM_CENTRO_A1, 2), quant(ALM_CENTRO_A2, 5), quant(GENERAL, 50)]);
 		const prepared = await prepare_layaway_rules(store, {

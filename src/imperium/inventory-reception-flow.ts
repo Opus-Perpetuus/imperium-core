@@ -13,7 +13,11 @@ import { resolve_reception_location, supplier_display_name } from './purchase-or
 import { is_record_id } from './record-id.ts';
 import { compute_picking_route } from './inventory-picking.ts';
 import { owning_warehouse, scope_stock, warehouse_scope } from './warehouse-scope.ts';
-import { apartados_de_pedidos_por_almacen, type ApartadoDePedido } from './inventory-logistics-flow.ts';
+import {
+	apartados_de_pedidos_por_almacen,
+	apartados_pos_en_ubicaciones,
+	type ApartadoDePedido,
+} from './inventory-logistics-flow.ts';
 import type { ImperiumStore } from './store.ts';
 
 function text(value: unknown): string {
@@ -473,7 +477,7 @@ export async function register_internal_transfer(
 		const ruta = await compute_picking_route(store, producto_id, cantidad, { ubicaciones: scope.ids });
 		if (ruta.faltante > 0) {
 			throw new Error(
-				`No hay existencia disponible suficiente en ${text(origen.name || origen.codigo)} (disponible ${round_qty(cantidad - ruta.faltante)})`,
+				`No hay existencia disponible suficiente en ${text(origen.name || origen.codigo)} (disponible ${round_qty(cantidad - ruta.faltante)})${await quienes_apartan(store, producto_id, scope.ids, almacen_origen)}`,
 			);
 		}
 		const por_ubicacion = new Map<string, number>();
@@ -493,7 +497,7 @@ export async function register_internal_transfer(
 		const disponible = await quant_disponible(store, producto_id, String(origen._id), lote);
 		if (cantidad > disponible) {
 			throw new Error(
-				`No hay existencia disponible suficiente en ${text(origen.codigo)} (disponible ${disponible})`,
+				`No hay existencia disponible suficiente en ${text(origen.codigo)} (disponible ${disponible})${await quienes_apartan(store, producto_id, new Set([String(origen._id)]), almacen_origen)}`,
 			);
 		}
 		fuentes.push({ ubicacion: origen, cantidad });
@@ -583,6 +587,22 @@ function pedidos_que_apartan(pedidos: ApartadoDePedido[]): string {
 	return `${pedidos.length === 1 ? 'el pedido' : 'los pedidos'} ${lista}`;
 }
 
+/** «. Lo apartan: …» con los pedidos del almacén y los apartados POS de esas ubicaciones; vacío si nadie aparta. */
+async function quienes_apartan(
+	store: ImperiumStore,
+	producto_id: string,
+	ubicaciones: Set<string>,
+	almacen: ImperiumDoc | null | undefined,
+): Promise<string> {
+	const pedidos = almacen
+		? ((await apartados_de_pedidos_por_almacen(store, String(almacen._id))).get(producto_id) ?? [])
+		: [];
+	const pos = (await apartados_pos_en_ubicaciones(store, ubicaciones)).get(producto_id) ?? [];
+	const todos = [...pedidos.map((p) => ({ ...p, folio: `pedido ${p.folio}` })), ...pos];
+	if (!todos.length) return '';
+	return `. Lo apartan: ${todos.map((p) => `${p.folio} (${p.cantidad})`).join(', ')}`;
+}
+
 /**
  * Lo que puede salir del almacén sin tocar lo apartado por sus pedidos (`libre`,
  * nunca negativo) y ese apartado; `null` si el producto no lleva existencia por
@@ -651,6 +671,7 @@ export async function register_full_warehouse_transfer(
 		if (!productos.size) throw new Error(`No hay existencia disponible en ${donde}`);
 		const almacen = await owning_warehouse(store, origen._id);
 		const detalle: string[] = [];
+		const detalle_pos: string[] = [];
 		for (const producto of productos) {
 			const product = await store.find_id('products', producto);
 			const disponible = product && almacen
@@ -660,10 +681,15 @@ export async function register_full_warehouse_transfer(
 				detalle.push(
 					`${text(product.name)}: ${disponible.libre} libre y ${disponible.apartado} apartado por ${pedidos_que_apartan(disponible.pedidos)}`,
 				);
+			} else if (product) {
+				const quienes = await quienes_apartan(store, producto, scope?.ids ?? new Set([String(origen._id)]), null);
+				if (quienes) detalle_pos.push(`${text(product.name)}${quienes}`);
 			}
 		}
+		const por = detalle.length || !detalle_pos.length ? ' por pedidos' : '';
+		const todo = [...detalle, ...detalle_pos];
 		throw traslado_apartado_error(
-			`Lo disponible en ${donde} está apartado por pedidos${detalle.length ? `. ${detalle.join('; ')}` : ''}`,
+			`Lo disponible en ${donde} está apartado${por}${todo.length ? `. ${todo.join('; ')}` : ''}`,
 		);
 	}
 	return { productos: movidos };

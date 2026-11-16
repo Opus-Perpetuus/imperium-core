@@ -18,6 +18,7 @@ from .tui_fixtures import MENUS, HerrBackend
 SIZES = [(60, 16), (100, 24), (160, 40)]
 ANSI = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
 TO_PRODUCTS = ["enter", "right", "down", "enter"]  # Almacén › Inventario › Productos
+PRODUCTOS = lambda tui: tui.open_meta(tui.metas[0])  # noqa: E731
 
 
 @pytest.fixture(autouse=True)
@@ -176,16 +177,17 @@ def test_tab_por_todo_el_formulario_siempre_a_la_vista(size):
 
 @pytest.mark.parametrize("size", [(60, 16), (100, 24)])
 def test_pgdn_pgup_y_ctrl_fin(size):
-    tui, _ = run(TO_PRODUCTS + ["a"], size)
+    # en 60 columnas la barra lateral se esconde: se abre Productos directo (antes «a» caía en metas[0])
+    tui, _ = run(["a"], size, setup=PRODUCTOS)
     frame = frame_of(tui)
     assert frame.total > frame.view_height  # el formulario no cabe: hay que desplazarse
-    tui, lines = run(TO_PRODUCTS + ["a", "pagedown"], size)
+    tui, lines = run(["a", "pagedown"], size, setup=PRODUCTOS)
     assert frame_of(tui).offset > 0
-    tui, lines = run(TO_PRODUCTS + ["a", "ctrl+end"], size)
+    tui, lines = run(["a", "ctrl+end"], size, setup=PRODUCTOS)
     assert frame_of(tui).offset == frame_of(tui).max_offset and any("Guardar" in line for line in lines)
-    tui, lines = run(TO_PRODUCTS + ["a", "ctrl+end", "ctrl+home"], size)
+    tui, lines = run(["a", "ctrl+end", "ctrl+home"], size, setup=PRODUCTOS)
     assert frame_of(tui).offset == 0
-    tui, _ = run(TO_PRODUCTS + ["a", "pagedown", "pageup"], size)
+    tui, _ = run(["a", "pagedown", "pageup"], size, setup=PRODUCTOS)
     assert frame_of(tui).offset == 0
 
 

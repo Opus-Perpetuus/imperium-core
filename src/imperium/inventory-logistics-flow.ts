@@ -646,6 +646,46 @@ export async function apartados_de_pedidos_por_almacen(
 	return out;
 }
 
+/** Neto apartado por apartados POS en esas ubicaciones, por producto. */
+export async function apartados_pos_en_ubicaciones(
+	store: ImperiumStore,
+	ubicaciones: Set<string>,
+): Promise<Map<string, ApartadoDePedido[]>> {
+	const out = new Map<string, ApartadoDePedido[]>();
+	if (!ubicaciones.size || !store.has('inventory-movement')) return out;
+	const nets = new Map<string, { folio: string; by_product: Map<string, number> }>();
+	for await (const page of store.scan('inventory-movement', {
+		where: { documento_tipo: 'pos-ticket', tipo_movimiento: { in: [RESERVATION, RELEASE] } },
+		include_inactive: true,
+	})) {
+		for (const row of page) {
+			const tipo = text(row.tipo_movimiento);
+			if (tipo !== RESERVATION && tipo !== RELEASE) continue;
+			if (text(row.documento_tipo) !== 'pos-ticket') continue;
+			if (!ubicaciones.has(ref_id(row.ubicacion_origen) || text(row.ubicacion_origen_id))) continue;
+			const doc_id = text(row.documento_id);
+			const product_id = ref_id(row.producto) || text(row.producto_id);
+			if (!doc_id || !product_id) continue;
+			const entry = nets.get(doc_id) ?? {
+				folio: text(row.documento_referencia ?? row.documento_nombre) || doc_id,
+				by_product: new Map<string, number>(),
+			};
+			const signed = tipo === RESERVATION ? Number(row.cantidad ?? 0) : -Number(row.cantidad ?? 0);
+			entry.by_product.set(product_id, round_qty((entry.by_product.get(product_id) ?? 0) + signed));
+			nets.set(doc_id, entry);
+		}
+	}
+	for (const [doc_id, { folio, by_product }] of nets) {
+		for (const [product_id, cantidad] of by_product) {
+			if (!(cantidad > 0)) continue;
+			const lista = out.get(product_id) ?? [];
+			lista.push({ pedido: doc_id, folio: `apartado POS ${folio}`, cantidad });
+			out.set(product_id, lista);
+		}
+	}
+	return out;
+}
+
 /** Neto apartado por pedidos de ese almacén, por producto. */
 export async function apartado_logistica_por_almacen(
 	store: ImperiumStore,

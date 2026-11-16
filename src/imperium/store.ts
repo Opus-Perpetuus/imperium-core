@@ -5258,6 +5258,14 @@ export class ImperiumStore {
 			}
 		}
 		await this.seed_default_employee();
+		try {
+			const { seed_interactive_manuals } = await import('./interactive-manual-seed.ts');
+			await seed_interactive_manuals(this);
+		} catch (err) {
+			console.warn(
+				`[manuales] Siembra de guías incompleta, sigue en el próximo arranque: ${err instanceof Error ? err.message : String(err)}`,
+			);
+		}
 		if (this.has('configuration')) {
 			try {
 				const { apply_missing_configuration_seeds } = await import(

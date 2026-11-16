@@ -76,7 +76,8 @@ SHORTCUTS = {
     "r": "Recargar",
     "f5": "Recargar",
     "a": "Alta",
-    "f2": "Editar el registro elegido",
+    "f2": "Alta en la vista actual",
+    "e": "Editar el registro elegido",
     "f4": "Detalle",
     "i": "Imágenes del registro",
     "f6": "Caja",
@@ -572,7 +573,7 @@ class ImperiumTui:
         self.detail = detail(row, labels or {}, fetch_image=self.backend.fetch_bytes, title="Detalle")
         self.shell.pages["Detalle"] = self._frame(self.detail)
         trail = (self.view.trail if self.view else ["Inicio"]) + [cell(row.get("name") or row.get("nombre") or row.get("codigo") or row.get("_id") or "Detalle")]
-        self._present(View("Detalle", "Detalle", self.detail, trail, images=media.row_images(row)))
+        self._present(View("Detalle", "Detalle", self.detail, trail, images=media.row_images(row), meta=self.view.meta if self.view else None))
 
     def detail_selected(self) -> None:
         lists = self.view.lists if self.view and self.view.lists else ([self.list_view] if self.list_view else [])
@@ -583,8 +584,12 @@ class ImperiumTui:
             row = rows[0] if rows and isinstance(rows[0], dict) else None
         self.open_row(row or {}, labels) if row else self._present(View("Detalle", "Detalle", detail(None), ["Inicio", "Detalle"]))
 
+    def _view_meta(self) -> dict[str, Any] | None:
+        """Recurso de la vista activa. Sin respaldo a `self.current` (era `metas[0]`: permisos)."""
+        return self.view.meta if self.view and self.view.meta else None
+
     def edit_selected(self) -> None:
-        meta = self.view.meta if self.view and self.view.meta else None
+        meta = self._view_meta()
         row = self.view.lists[0].selected() if meta and self.view and self.view.lists else None
         if meta is None:
             return self.show_form()
@@ -595,7 +600,9 @@ class ImperiumTui:
     def show_form(self) -> None:
         if self.restringido:
             return self.notify("Sesión restringida: sin altas.", "warning")
-        meta = self.view.meta if self.view and self.view.meta else self.current
+        meta = self._view_meta()
+        if meta is None or not (meta.get("fields") and (meta.get("permissions") or {}).get("create", True)):
+            return self.notify("Esta vista no permite crear desde la terminal.", "warning")
         self.form = self._form_for(meta)
         self.shell.pages["Formulario"] = self._frame(self.form)
         self._present(View("Formulario", "Formulario", self.form, (self.view.trail if self.view else []) + ["Alta"]))
@@ -714,7 +721,8 @@ class ImperiumTui:
             "r": (self._letter(self.reload), SHORTCUTS["r"]),
             "f5": (self.reload, SHORTCUTS["f5"]),
             "a": (self._letter(self.show_form), SHORTCUTS["a"]),
-            "f2": (self.edit_selected, SHORTCUTS["f2"]),
+            "f2": (self.show_form, SHORTCUTS["f2"]),
+            "e": (self._letter(self.edit_selected), SHORTCUTS["e"]),
             "f4": (self.detail_selected, SHORTCUTS["f4"]),
             "i": (self._letter(self.show_images), SHORTCUTS["i"]),
             "f6": (self.open_caja, SHORTCUTS["f6"]),

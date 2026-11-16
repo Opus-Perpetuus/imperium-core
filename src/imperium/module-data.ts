@@ -836,8 +836,9 @@ export async function run_default_seed_steps(steps: DefaultSeedStep[]) {
 
 /**
  * "Sembrar opciones por defecto" de Módulos: crea lo que falte sin pisar nada.
- * En v13 eso son los parámetros de configuración y los menús y permisos de las
- * apps instaladas —los mismos sembradores idempotentes del arranque—, no los
+ * En v13 eso son los parámetros de configuración, los menús y permisos de las
+ * apps instaladas y las guías del manual interactivo —los mismos sembradores
+ * idempotentes del arranque—, no los
  * `module.data` del árbol Express. Lo único que sí pisa es el superadministrador
  * (correo, contraseña e imagen), y por eso solo lo corre él.
  */
@@ -853,6 +854,7 @@ export async function seed_default_data(ctx: ModuleCtx) {
 	const { ensure_installed_subject_menus } = await import('./subject-menu-seed.ts');
 	const { disabled_subject_slugs } = await import('./subjects-admin.ts');
 	const { seed_superadmin } = await import('./superadmin-seed.ts');
+	const { seed_interactive_manuals } = await import('./interactive-manual-seed.ts');
 	return run_default_seed_steps([
 		{
 			module: 'Superadministrador',
@@ -874,6 +876,10 @@ export async function seed_default_data(ctx: ModuleCtx) {
 				);
 				return created.menus.length + created.rights.length;
 			},
+		},
+		{
+			module: 'Manuales interactivos',
+			run: () => seed_interactive_manuals(ctx.store),
 		},
 	]);
 }

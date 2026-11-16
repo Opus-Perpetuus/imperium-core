@@ -43,7 +43,7 @@ imperium masivo --continuar <id>
 | `/` o `f` | Buscar (en el servidor) |
 | `n` / `p` | Página siguiente / anterior |
 | `i` | Imágenes del registro o de la pantalla (←/→ cambian, `f` ajusta, Enter abre) |
-| Enter | Abrir registro · F4 detalle · F2 editar · `a` alta |
+| Enter | Abrir registro · F4 detalle · `e` editar · F2 o `a` alta en la vista actual |
 | PgUp / PgDn · Ctrl+↑/↓ · Ctrl+Inicio/Fin | Desplazar la pantalla |
 | `r` / F5 | Recargar · F6 caja · F9 masivo · `q` salir |
 
