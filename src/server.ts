@@ -28,6 +28,7 @@ import { start_image_autoscan } from './imperium/subject-image-autoscan.ts';
 import { subject_files } from './imperium/subject-files.ts';
 import { start_support_sync } from './imperium/support-bridge.ts';
 import { seed_new_install } from './imperium/module-data.ts';
+import { fetch_subject_schemas } from './imperium/install-schemas.ts';
 import { superadmin_exists } from './imperium/superadmin-seed.ts';
 import {
 	bind_socket_identity_resolver,
@@ -40,10 +41,7 @@ import {
 	is_noisy_path,
 	print_console_log,
 } from './imperium/debug-request-log.ts';
-import {
-	apply_subject_schema_bundle,
-	schema_bundle_mismatch,
-} from './imperium/subject-schema.ts';
+import { apply_subject_schema_bundle } from './imperium/subject-schema.ts';
 import { ColumnListCache } from './imperium/column-list-cache.ts';
 import {
 	is_column_name,
@@ -966,41 +964,26 @@ const server = Bun.serve({
 						{ status: 404 },
 					);
 				}
+				const fetched = await fetch_subject_schemas(
+					targets.map((s) => s.technical_id),
+					subject_url,
+				);
 				const results = [];
-				for (const s of targets) {
-					const base = subject_url(s.technical_id);
+				for (const f of fetched) {
+					if (!f.ok) {
+						results.push(f);
+						continue;
+					}
 					try {
-						const res = await fetch(`${base}/schema`);
-						if (!res.ok) {
-							results.push({
-								id: s.technical_id,
-								ok: false,
-								status: res.status,
-							});
-							continue;
-						}
-						const bundle = (await res.json()) as KirletSchemaBundle;
-						const mismatch = schema_bundle_mismatch(
-							bundle,
-							s.technical_id,
-						);
-						if (mismatch) {
-							results.push({
-								id: s.technical_id,
-								ok: false,
-								error: mismatch,
-							});
-							continue;
-						}
-						await apply_bundle(bundle);
+						await apply_bundle(f.bundle);
 						results.push({
-							id: s.technical_id,
+							id: f.id,
 							ok: true,
-							schema: pg_schema_name(s.technical_id),
+							schema: pg_schema_name(f.id),
 						});
 					} catch (err) {
 						results.push({
-							id: s.technical_id,
+							id: f.id,
 							ok: false,
 							error: String(err),
 						});
