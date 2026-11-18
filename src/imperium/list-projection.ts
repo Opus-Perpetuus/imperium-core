@@ -543,6 +543,7 @@ const LIST_PROJECTIONS: Record<string, ListProjection> = {
 			'colonia',
 			'ciudad',
 			'estado',
+			'ruta',
 		],
 		boolean: ['esProveedor'],
 	},

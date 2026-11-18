@@ -3,6 +3,7 @@
  * (`folio`, `folio_interno`, totales, transiciones, salida de inventario).
  */
 import { assign_capture_gps, resolve_capture_gps } from './delivery-gps.ts';
+import { routes_by_contact, ruta_names } from './contacto-rutas.ts';
 import { as_array, as_object, type ImperiumDoc } from './envelope.ts';
 import {
 	assert_pedido_create_estado,
@@ -419,45 +420,11 @@ export async function enrich_pedidos_list(
 	rows: ImperiumDoc[],
 ): Promise<ImperiumDoc[]> {
 	const decorated = rows.map((row) => decorate_pedido(row, 'list'));
-	if (!decorated.length || !store.has('contacto')) {
-		return decorated.map((row) => ({ ...row, ruta: text(row.ruta) }));
-	}
-	const contact_ids = [
-		...new Set(decorated.map((row) => ref_id(row.contacto_id)).filter(Boolean)),
-	];
-	if (!contact_ids.length) {
-		return decorated.map((row) => ({ ...row, ruta: text(row.ruta) }));
-	}
-	const contacts = await store.find_many('contacto', {
-		ids: contact_ids,
-		take: contact_ids.length,
-		include_inactive: true,
-		populate: false,
-	});
-	const route_ids = new Set<string>();
-	const routes_by_contact = new Map<string, string[]>();
-	for (const contact of contacts.rows) {
-		const rutas = as_array(contact.rutas).map(ref_id).filter(Boolean);
-		routes_by_contact.set(String(contact._id), rutas);
-		for (const id of rutas) route_ids.add(id);
-	}
-	const names = new Map<string, string>();
-	if (route_ids.size && store.has('delivery-route') && store.is_resource_installed('delivery-route')) {
-		const routes = await store.find_many('delivery-route', {
-			ids: [...route_ids],
-			take: route_ids.size,
-			include_inactive: true,
-			populate: false,
-		});
-		for (const route of routes.rows) names.set(String(route._id), text(route.name));
-	}
-	return decorated.map((row) => {
-		const ids = routes_by_contact.get(ref_id(row.contacto_id)) ?? [];
-		return {
-			...row,
-			ruta: ids.map((id) => names.get(id)).filter(Boolean).join(', '),
-		};
-	});
+	const by_contact = decorated.length ? await routes_by_contact(store) : new Map();
+	return decorated.map((row) => ({
+		...row,
+		ruta: ruta_names(by_contact.get(ref_id(row.contacto_id))),
+	}));
 }
 
 function created_ms(doc: ImperiumDoc): number {

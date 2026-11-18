@@ -50,6 +50,7 @@ import {
 	prepare_delivery_route_write,
 } from './delivery-route-flow.ts';
 import { list_instance_type, project_list_docs } from './list-projection.ts';
+import { decorate_contacto_rutas, strip_contacto_rutas } from './contacto-rutas.ts';
 import {
 	access_right_group_for_form,
 	link_access_right_to_group,
@@ -826,6 +827,7 @@ export async function handle_crud(
 		if (resource === 'pedidos') {
 			incoming = await prepare_pedido_create(store, incoming, actor);
 		}
+		if (resource === 'contacto') incoming = strip_contacto_rutas(incoming);
 		if (resource === 'delivery-package') {
 			const raw_flag = incoming.confirmar_inventario_inconsistente;
 			confirmar_inventario_inconsistente = raw_flag === true || raw_flag === 'true';
@@ -1127,6 +1129,7 @@ export async function handle_crud(
 		if (resource === 'pedidos') {
 			b = await prepare_pedido_update(store, b, actor, previous);
 		}
+		if (resource === 'contacto') b = strip_contacto_rutas(b);
 		if (resource === 'delivery-package') {
 			b = await prepare_delivery_package_update(store, b, previous);
 		}
@@ -1338,6 +1341,7 @@ export async function handle_crud(
 		if (resource === 'pedidos') {
 			patched = await prepare_pedido_update(store, patched, actor, previous);
 		}
+		if (resource === 'contacto') patched = strip_contacto_rutas(patched);
 		if (resource === 'delivery-package') {
 			patched = await prepare_delivery_package_update(store, patched, previous);
 		}
@@ -1632,6 +1636,12 @@ async function finalize_rows(
 	const project = mode === 'list';
 	if (is_pedido_resource(resource) && mode !== 'detail') {
 		const flat = store.flatten_list_docs(resource, await enrich_pedidos_list(store, rows));
+		return project ? project_list_docs(resource, flat) : flat;
+	}
+	if (resource === 'contacto') {
+		const decorated = await decorate_contacto_rutas(store, rows);
+		if (mode === 'detail') return populate_shared_tags(store, decorated);
+		const flat = store.flatten_list_docs(resource, decorated);
 		return project ? project_list_docs(resource, flat) : flat;
 	}
 	if (is_delivery_route_resource(resource)) {
