@@ -264,7 +264,19 @@ export async function box_turns_summary_for_box(
 	return box_turns_summary(store, box);
 }
 
+/** Las fotos salen en orden: una lectura anterior no pisa el tablero. */
+let rooms_notice: Promise<void> = Promise.resolve();
+
 export async function notify_ticketing_rooms(store: ImperiumStore) {
+	const run = rooms_notice.then(() => publish_ticketing_rooms(store));
+	rooms_notice = run.then(
+		() => undefined,
+		() => undefined,
+	);
+	await run;
+}
+
+async function publish_ticketing_rooms(store: ImperiumStore) {
 	if (!store.has('ticketing-system-turn')) return;
 	const pending = await sort_pending(store, await pending_turns(store));
 	emit_to_room(ROOM, 'update', { action: 'turn_stack_next', data: pending });
@@ -389,18 +401,26 @@ export async function take_next_turn(
 		);
 	}
 	const ordered = await sort_pending(store, matching);
-	const next = ordered[0];
-	const updated = await store.update('ticketing-system-turn', String(next._id), {
-		status: 'en_atencion',
-		estado: 'en_atencion',
-		assigned_box: box_id,
-		fecha_inicio: new Date().toISOString(),
-		time_box: [new Date().toISOString()],
-	});
-	if (!updated) throw new Error('No se encontró el siguiente turno');
-	await notify_ticketing_rooms(store);
-	const [populated] = await populate_turns(store, [updated]);
-	return { turn: populated ?? updated, waiting: waiting.length };
+	for (const next of ordered) {
+		const stamp = new Date().toISOString();
+		const updated = await store.update(
+			'ticketing-system-turn',
+			String(next._id),
+			{
+				status: 'en_atencion',
+				estado: 'en_atencion',
+				assigned_box: box_id,
+				fecha_inicio: stamp,
+				time_box: [stamp],
+			},
+			{ only_if_status: 'pendiente' },
+		);
+		if (!updated) continue;
+		await notify_ticketing_rooms(store);
+		const [populated] = await populate_turns(store, [updated]);
+		return { turn: populated ?? updated, waiting: waiting.length };
+	}
+	return { turn: null, waiting: 0 };
 }
 
 export async function notify_turn(store: ImperiumStore, raw_id: unknown): Promise<ImperiumDoc> {

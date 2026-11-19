@@ -1561,6 +1561,11 @@ function due_state(state: string | null): string {
 	return state === null ? 'state IS NULL' : `state = '${state}'`;
 }
 
+/** El UPDATE no pisa la fila si otro ya le cambió el estatus. */
+export function status_guard_clause(status_param: string): string {
+	return `status = ${status_param} AND is_active IS DISTINCT FROM false`;
+}
+
 /**
  * Reclamar lo vencido: pasa al estado reclamado con `FOR UPDATE SKIP LOCKED`, así dos pasadas nunca
  * toman lo mismo. `$1` hora, `$2` límite.
@@ -6529,6 +6534,7 @@ export class ImperiumStore {
 		resource: string,
 		id: string,
 		patch: ImperiumDoc,
+		guard?: { only_if_status: string },
 	): Promise<ImperiumDoc | null> {
 		const existing = await this.find_id(resource, id);
 		if (!existing) return null;
@@ -6552,9 +6558,14 @@ export class ImperiumStore {
 		const keys = Object.keys(row).filter((k) => cols.has(k) && k !== 'id');
 		const values = keys.map((k) => cell(row[k], jsons.has(k), bools.has(k)));
 		values.push(id);
+		let where = `id = $${values.length}`;
+		if (guard?.only_if_status != null) {
+			values.push(guard.only_if_status);
+			where += ` AND ${status_guard_clause(`$${values.length}`)}`;
+		}
 		const set = keys.map((k, i) => `${qident(k)} = ${json_placeholder(i + 1, jsons.has(k))}`).join(', ');
 		const updated = await this.sql.unsafe(
-			`UPDATE ${this.qt(resource)} SET ${set} WHERE id = $${keys.length + 1} RETURNING *`,
+			`UPDATE ${this.qt(resource)} SET ${set} WHERE ${where} RETURNING *`,
 			values,
 		);
 		const saved = this.flatten((updated[0] as Record<string, unknown>) ?? null, resource);

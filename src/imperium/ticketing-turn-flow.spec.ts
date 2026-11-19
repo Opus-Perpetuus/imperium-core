@@ -3,7 +3,7 @@ import { remember_socket_ip } from './auth-rate-limit.ts';
 import { handle_action } from './actions.ts';
 import type { ImperiumDoc } from './envelope.ts';
 import { handle_socket_io } from './socket-stub.ts';
-import { ImperiumStore, load_catalog_path } from './store.ts';
+import { ImperiumStore, load_catalog_path, status_guard_clause } from './store.ts';
 
 const ROOM = 'ticketing_system_turns';
 const POLLING = 'http://imperium.test/api/socket.io/?EIO=4&transport=polling';
@@ -29,11 +29,21 @@ function memory_store(seed: Record<string, Row[]>): ImperiumStore {
 	};
 	store.find_id = async (resource: string, id: string) =>
 		(data[resource] ?? []).find((row) => String(row._id) === String(id)) ?? null;
-	store.update = async (resource: string, id: string, patch: Row) => {
+	store.update = async (
+		resource: string,
+		id: string,
+		patch: Row,
+		guard?: { only_if_status?: string },
+	) => {
 		const rows = data[resource] ?? [];
 		const index = rows.findIndex((row) => String(row._id) === String(id));
 		if (index < 0) return null;
-		rows[index] = { ...rows[index], ...patch };
+		const current = rows[index]!;
+		if (guard?.only_if_status != null) {
+			if (String(current.status ?? '') !== guard.only_if_status) return null;
+			if (current.is_active === false) return null;
+		}
+		rows[index] = { ...current, ...patch };
 		return rows[index]!;
 	};
 	store.find_many = async (resource: string, opts: { ids?: string[] } = {}) => {
@@ -108,19 +118,21 @@ async function poll(sid: string): Promise<string> {
 	return res!.text();
 }
 
-function notify_payloads(body: string): Row[] {
-	const out: Row[] = [];
+function socket_updates(body: string, action: string): Row[][] {
+	const out: Row[][] = [];
 	for (const packet of body.split('\x1e')) {
 		if (!packet.startsWith('42')) continue;
 		const [event, data] = JSON.parse(packet.slice(2)) as [
 			string,
 			{ action?: string; data?: Row[] },
 		];
-		if (event === 'update' && data?.action === 'notify_turn') {
-			out.push(...(data.data ?? []));
-		}
+		if (event === 'update' && data?.action === action) out.push(data.data ?? []);
 	}
 	return out;
+}
+
+function notify_payloads(body: string): Row[] {
+	return socket_updates(body, 'notify_turn').flat();
 }
 
 async function call(store: ImperiumStore, action: string, json: Record<string, unknown>) {
@@ -140,8 +152,98 @@ async function call(store: ImperiumStore, action: string, json: Record<string, u
 		{},
 		null,
 	);
-	return (await res.json()) as { data: Row[] };
+	return (await res.json()) as { data: Row[]; message?: string; total_elementos?: number };
 }
+
+function box_row(id: string, name: string): Row {
+	return {
+		_id: id,
+		name,
+		is_active: true,
+		allowed_services: ['svc-1'],
+		allowed_customer_types: ['type-1'],
+	};
+}
+
+function pending_turn(id: string, createdAt: string): Row {
+	return {
+		_id: id,
+		name: id.toUpperCase(),
+		status: 'pendiente',
+		estado: 'pendiente',
+		services: ['svc-1'],
+		customer_type: 'type-1',
+		priority_level: 1,
+		createdAt,
+		is_active: true,
+	};
+}
+
+function assigned_box_id(turn: Row): string {
+	const box = turn.assigned_box;
+	if (box && typeof box === 'object') return String((box as Row)._id ?? '');
+	return String(box ?? '');
+}
+
+describe('tomar el siguiente turno es de una sola caja', () => {
+	test('seis cajas a la vez no reciben el mismo turno', async () => {
+		const boxes = Array.from({ length: 6 }, (_, i) => box_row(`box-${i + 1}`, `Caja ${i + 1}`));
+		const turns = Array.from({ length: 6 }, (_, i) =>
+			pending_turn(`turn-${i + 1}`, `2026-01-01T00:00:0${i}.000Z`),
+		);
+		const seed = desk();
+		seed['ticketing-system-box-config'] = boxes;
+		seed['ticketing-system-turn'] = turns;
+		const store = memory_store(seed);
+		const results = await Promise.all(
+			boxes.map((box) => call(store, 'take_next_turn', { box_config_id: box._id })),
+		);
+		const taken = results.flatMap((res) => res.data);
+		expect(taken).toHaveLength(6);
+		expect(new Set(taken.map((row) => String(row._id))).size).toBe(6);
+		expect(new Set(taken.map(assigned_box_id)).size).toBe(6);
+	});
+
+	test('la última foto del tablero trae las dos cajas', async () => {
+		const boxes = [1, 2].map((i) => box_row(`box-${i}`, `Caja ${i}`));
+		const turns = [1, 2].map((i) => pending_turn(`turn-${i}`, `2026-01-01T00:00:0${i}.000Z`));
+		const seed = desk();
+		seed['ticketing-system-box-config'] = boxes;
+		seed['ticketing-system-turn'] = turns;
+		const store = memory_store(seed);
+		const sid = await board();
+		await Promise.all(boxes.map((box) => call(store, 'take_next_turn', { box_config_id: box._id })));
+		const snapshots = socket_updates(await poll(sid), 'turn_stack_attending');
+		const last = snapshots.at(-1) ?? [];
+		expect(last.map((row) => String(row._id)).sort()).toEqual(['turn-1', 'turn-2']);
+		expect(new Set(last.map(assigned_box_id)).size).toBe(2);
+	});
+
+	test('con un solo turno pendiente, una caja lo toma y las otras reciben reintento', async () => {
+		const boxes = [1, 2, 3].map((i) => box_row(`box-${i}`, `Caja ${i}`));
+		const seed = desk();
+		seed['ticketing-system-box-config'] = boxes;
+		seed['ticketing-system-turn'] = [pending_turn('turn-only', '2026-01-01T00:00:00.000Z')];
+		const store = memory_store(seed);
+		const results = await Promise.all(
+			boxes.map((box) => call(store, 'take_next_turn', { box_config_id: box._id })),
+		);
+		const winners = results.filter((res) => res.data.length === 1);
+		const retries = results.filter((res) => res.data.length === 0);
+		expect(winners).toHaveLength(1);
+		expect(String(winners[0]?.data[0]?._id)).toBe('turn-only');
+		expect(retries).toHaveLength(2);
+		for (const res of retries) expect(res.message).toBe('Sin turnos a la espera');
+	});
+
+	test('el UPDATE de Postgres solo escribe si el turno sigue pendiente y activo', () => {
+		expect(status_guard_clause('$9')).toBe(
+			'status = $9 AND is_active IS DISTINCT FROM false',
+		);
+		expect(String(ImperiumStore.prototype.update)).toContain('status_guard_clause');
+		expect(String(ImperiumStore.prototype.update)).toContain('only_if_status');
+	});
+});
 
 describe('tomar el siguiente turno con fila vacía', () => {
 	test('responde 200 sin turno cuando no hay pendientes', async () => {
