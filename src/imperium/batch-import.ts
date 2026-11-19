@@ -7,6 +7,15 @@ import type { ImperiumStore } from './store.ts';
 
 const AUTOMATIC_MATCH = new Set(['_id', 'name', 'description']);
 
+/**
+ * Llave natural que también se busca en automático. En productos el código es
+ * lo que identifica la fila: sin esto la vista previa marcaba «Crear» el 1262
+ * hasta elegir «Campo adicional = codigo» y quien no lo elegía duplicaba (#294).
+ */
+const AUTOMATIC_NATURAL_KEYS: Record<string, readonly string[]> = {
+	products: ['codigo'],
+};
+
 export async function run_batch_import(params: {
 	store: ImperiumStore;
 	resource: string;
@@ -152,6 +161,7 @@ async function prepare_batch_row(
 	row_warnings: string[],
 ): Promise<ImperiumDoc> {
 	const processed: ImperiumDoc = { ...raw };
+	normalize_code_fields(processed);
 	if (processed.is_active !== undefined) {
 		const parsed = parse_excel_boolean(processed.is_active);
 		if (parsed === null) {
@@ -271,6 +281,9 @@ async function resolve_existing(
 	add('_id', processed._id);
 	add('name', processed.name);
 	add('description', processed.description);
+	for (const field of AUTOMATIC_NATURAL_KEYS[resource] ?? []) {
+		if (store.column_names(resource).has(field)) add(field, processed[field]);
+	}
 	if (requested_match_field) add(requested_match_field, processed[requested_match_field]);
 	if (!strategies.length) return { record_id: null, warnings: [], error: null };
 
@@ -334,6 +347,36 @@ async function find_exact_batch_match(
 	}
 	const id = rows[0]?._id ? String(rows[0]._id) : null;
 	return { record_id: id, error: null };
+}
+
+/**
+ * Campos de código (`codigo`, `codigo_*`, `*_codigo`): Excel guarda los códigos
+ * numéricos como número y, al exportar o copiar con formato, llegan como
+ * «1,262» o «1262.0». Sin normalizar, la fila no coincide con el «1262»
+ * existente y se crea un producto duplicado (#294). Se quitan solo separadores
+ * de miles y decimales en cero de códigos puramente numéricos; «AH0119» o
+ * «1/2» no se tocan.
+ */
+export function is_code_field(field: string) {
+	return /^codigo(_|$)|_codigo$/i.test(field);
+}
+
+export function normalize_code_value(value: unknown): unknown {
+	if (typeof value === 'number') {
+		if (!Number.isFinite(value)) return value;
+		return Number.isInteger(value) ? String(value) : String(value).trim();
+	}
+	if (typeof value !== 'string') return value;
+	const trimmed = value.trim();
+	if (/^\d{1,3}(,\d{3})+(\.0+)?$/.test(trimmed)) return trimmed.replace(/,/g, '').replace(/\.0+$/, '');
+	if (/^\d+\.0+$/.test(trimmed)) return trimmed.replace(/\.0+$/, '');
+	return trimmed;
+}
+
+function normalize_code_fields(doc: ImperiumDoc) {
+	for (const key of Object.keys(doc)) {
+		if (is_code_field(key)) doc[key] = normalize_code_value(doc[key]);
+	}
 }
 
 function parse_excel_boolean(value: unknown): boolean | null | undefined {

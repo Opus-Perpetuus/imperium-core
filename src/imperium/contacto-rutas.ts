@@ -59,3 +59,18 @@ export function strip_contacto_rutas(doc: ImperiumDoc): ImperiumDoc {
 	const { rutas: _rutas, ruta: _ruta, ...rest } = doc;
 	return rest;
 }
+
+/**
+ * Pedidos con `ruta` (nombres de las rutas de entrega de su cliente), como los
+ * ve la lista y el detalle (#275). La ruta no se guarda en el pedido: la hoja
+ * impresa (`{{ruta}}`) salía en blanco porque el reporte leía el pedido crudo
+ * (#292).
+ */
+export async function pedidos_con_ruta(store: ImperiumStore, rows: ImperiumDoc[]): Promise<ImperiumDoc[]> {
+	if (!rows.length) return rows;
+	const by_contact = await routes_by_contact(store);
+	return rows.map((row) => {
+		const contact_id = ref_id(row.contacto_id) || ref_id(row.contacto);
+		return { ...row, ruta: ruta_names(by_contact.get(contact_id)) };
+	});
+}

@@ -5,6 +5,8 @@ import { ImperiumStore, load_catalog_path } from './store.ts';
  * PROFESA, Ventas → Contactos: «ABICAY» daba 0 aunque «ABICAY JAERO CARRILLO»
  * es la primera fila. Meilisearch devolvía ids de un índice viejo que ya no
  * existen en la tabla y el listado se quedaba con esos ids en vez del ILIKE.
+ * Desde #291 contacto ya no pregunta a Meili (busca por palabras en SQL); el
+ * respaldo se prueba con products, que sí usa el motor.
  */
 describe('búsqueda de listado con índice de Meilisearch viejo', () => {
 	const queries: string[] = [];
@@ -50,7 +52,7 @@ describe('búsqueda de listado con índice de Meilisearch viejo', () => {
 	test('si ningún id del motor existe en la tabla, busca con ILIKE', async () => {
 		hits = ['contacto-borrado-1', 'contacto-borrado-2'];
 		queries.length = 0;
-		const found = await store.find_many('contacto', { q: 'ABICAY', take: 25, populate: false });
+		const found = await store.find_many('products', { q: 'ABICAY', take: 25, populate: false });
 		expect(found.total).toBe(1);
 		expect(found.rows.map((row) => row.name)).toEqual(['ABICAY JAERO CARRILLO']);
 		expect(queries.some((q) => q.includes('ILIKE'))).toBe(true);
@@ -59,14 +61,23 @@ describe('búsqueda de listado con índice de Meilisearch viejo', () => {
 	test('si los ids del motor existen, no corre el ILIKE', async () => {
 		hits = ['contacto-vivo'];
 		queries.length = 0;
-		const found = await store.find_many('contacto', { q: 'ABICAY', take: 25, populate: false });
+		const found = await store.find_many('products', { q: 'ABICAY', take: 25, populate: false });
 		expect(found.total).toBe(1);
 		expect(queries.some((q) => q.includes('ILIKE'))).toBe(false);
 	});
 
 	test('si el motor no da hits, busca con ILIKE (parcial «ABI»)', async () => {
 		hits = [];
-		const found = await store.find_many('contacto', { q: 'ABI', take: 25, populate: false });
+		const found = await store.find_many('products', { q: 'ABI', take: 25, populate: false });
 		expect(found.rows.map((row) => row.name)).toEqual(['ABICAY JAERO CARRILLO']);
+	});
+
+	test('contacto no usa el motor: busca por palabras en SQL aunque Meili dé hits (#291)', async () => {
+		hits = ['contacto-vivo'];
+		queries.length = 0;
+		await store.find_many('contacto', { q: 'jaero abicay', take: 25, populate: false });
+		const select = queries.find((q) => q.startsWith('SELECT') && q.includes('translate(lower('));
+		expect(select).toBeDefined();
+		expect(queries.some((q) => q.includes('id IN ('))).toBe(false);
 	});
 });

@@ -170,6 +170,7 @@ import { assign_document_increments } from './custom-pattern-render.ts';
 import { prepare_increment_create } from './increment-normalize.ts';
 import { prepare_api_key_create, prepare_api_key_update } from './api-keys-flow.ts';
 import { build_access } from './auth.ts';
+import { and_match, con_vendedor_asignado, contacto_vendedor_match } from './contacto-vendedor-scope.ts';
 import { is_chat_private_resource, is_chat_row, without_chat_rows } from './chat-access.ts';
 import { can_manage_user_groups, is_seed_admin } from './group-access.ts';
 import {
@@ -287,12 +288,15 @@ async function actor_record_rule_scope(
 	if (resource === 'menu-management' && can_manage_user_groups(access)) {
 		return { match: null, applicable_rules: [] };
 	}
-	return record_rule_scope_from_access(
+	const scope = record_rule_scope_from_access(
 		access,
 		actor,
 		record_rule_lookup_keys(resource),
 		operation_flag(method),
 	);
+	// #291: el vendedor solo ve sus clientes, además de sus reglas de registro.
+	const vendedor = contacto_vendedor_match(resource, access, actor);
+	return vendedor ? { ...scope, match: and_match(scope.match, vendedor) } : scope;
 }
 
 async function assert_no_incoming_references(
@@ -834,7 +838,12 @@ export async function handle_crud(
 		if (resource === 'pedidos') {
 			incoming = await prepare_pedido_create(store, incoming, actor);
 		}
-		if (resource === 'contacto') incoming = strip_contacto_rutas(incoming);
+		if (resource === 'contacto') {
+			incoming = strip_contacto_rutas(incoming);
+			if (actor && !is_seed_admin(actor)) {
+				incoming = con_vendedor_asignado(incoming, await build_access(store, actor), actor);
+			}
+		}
 		if (resource === 'delivery-package') {
 			const raw_flag = incoming.confirmar_inventario_inconsistente;
 			confirmar_inventario_inconsistente = raw_flag === true || raw_flag === 'true';

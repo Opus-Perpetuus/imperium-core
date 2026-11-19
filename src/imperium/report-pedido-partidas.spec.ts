@@ -31,11 +31,12 @@ const PEDIDO = {
   ],
 };
 
+/** Celdas `<td>` con la clase (el encabezado «No.» también la lleva desde #293). */
 function celdas(html: string, clase: string): string[] {
   return [
     ...html.matchAll(
       new RegExp(
-        `class="(?:[^"]*\\s)?${clase}(?:\\s[^"]*)?"[^>]*>([^<]*)<`,
+        `<td[^>]*\\sclass="(?:[^"]*\\s)?${clase}(?:\\s[^"]*)?"[^>]*>([^<]*)<`,
         "g",
       ),
     ),

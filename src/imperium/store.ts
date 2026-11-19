@@ -61,7 +61,7 @@ import {
 	advance_increment_sequence,
 	type PatternContext,
 } from './custom-pattern-render.ts';
-import { list_search_columns } from './list-search.ts';
+import { list_search_columns, uses_word_search, word_search_sql } from './list-search.ts';
 import {
 	apply_schema_setters,
 	assert_required_fields,
@@ -6021,7 +6021,10 @@ export class ImperiumStore {
 			SearchEngine.is_enabled() &&
 			resource !== 'font-awesome-icon-catalog' &&
 			resource !== 'pedidos' &&
-			resource !== 'pedidos-surtir'
+			resource !== 'pedidos-surtir' &&
+			// #291: en contactos Meili (con tolerancia a errores) devolvía otros
+			// clientes que sí existen y el listado se quedaba con ellos.
+			!uses_word_search(resource)
 		) {
 			const ids = await SearchEngine.search_ids(loc.collection, opts.q);
 			if (ids !== null && ids.length) {
@@ -6088,7 +6091,18 @@ export class ImperiumStore {
 			const extra = mongo_match_to_sql(opts.mongo_match, cols, params);
 			if (extra) clauses.push(extra);
 		}
-		if (opts.q) {
+		if (opts.q && uses_word_search(resource)) {
+			const words = word_search_sql(
+				list_search_columns(resource, cols),
+				String(opts.q),
+				(value) => {
+					params.push(value);
+					return `$${params.length}`;
+				},
+				qident,
+			);
+			if (words) clauses.push(words);
+		} else if (opts.q) {
 			const like = `%${opts.q}%`;
 			const search_cols = list_search_columns(resource, cols);
 			const parts = search_cols.map((c) => {

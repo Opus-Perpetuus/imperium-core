@@ -623,6 +623,107 @@
     ]
   },
   {
+    "_ref": "interactive-manual-flow-inventario-flotante-lista-scroll",
+    "name": "El selector de productos scrollea solo la lista",
+    "description": "En una lista de precios nueva, el selector de productos (datalist con paginador compacto) deja fijos el ≡ y el pie al hacer scroll; solo se mueve la lista interior.",
+    "icon": "fa-boxes-stacked",
+    "module_model_id": "InventoryMovement",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "flotante-lista-scroll-paso-1",
+        "title": "Verifica view-list-agregar-fila",
+        "body": "El formulario de lista de precios muestra la tabla embebida de productos.",
+        "route": "/internal/lista-de-precios/new",
+        "anchor_attr": "view-list-agregar-fila",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "flotante-lista-scroll-paso-2",
+        "title": "Haz clic en Agregar producto",
+        "body": "Haz clic en Agregar producto.",
+        "route": "/internal/lista-de-precios/new",
+        "anchor_attr": "view-list-agregar-fila",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "flotante-lista-scroll-paso-3",
+        "title": "Haz clic en Producto",
+        "body": "Se abre el datalist paginado del selector de productos.",
+        "route": "/internal/lista-de-precios/new",
+        "anchor_attr": "field-product",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "flotante-lista-scroll-paso-4",
+        "title": "Escribe en paginador-tamano",
+        "body": "16 filas no caben en el max_height 480 del datalist; el cuerpo debe scrollear.",
+        "route": "/internal/lista-de-precios/new",
+        "anchor_attr": "paginador-tamano",
+        "action_hint": "input",
+        "placement": "auto",
+        "expected_value": "16"
+      },
+      {
+        "order": 5,
+        "step_id": "flotante-lista-scroll-paso-5",
+        "title": "Recuerda la posición de flotante-asa",
+        "body": "Recuerda la posición de flotante-asa.",
+        "route": "/internal/lista-de-precios/new",
+        "anchor_attr": "flotante-asa",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 6,
+        "step_id": "flotante-lista-scroll-paso-6",
+        "title": "Recuerda la posición de flotante-pie",
+        "body": "Recuerda la posición de flotante-pie.",
+        "route": "/internal/lista-de-precios/new",
+        "anchor_attr": "flotante-pie",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 7,
+        "step_id": "flotante-lista-scroll-paso-7",
+        "title": "Haz scroll con la rueda en flotante-cuerpo",
+        "body": "Solo el cuerpo de la lista se desplaza; el ≡ y el paginador no se mueven.",
+        "route": "/internal/lista-de-precios/new",
+        "anchor_attr": "flotante-cuerpo",
+        "action_hint": "input",
+        "placement": "auto"
+      },
+      {
+        "order": 8,
+        "step_id": "flotante-lista-scroll-paso-8",
+        "title": "Verifica pantalla",
+        "body": "Verifica pantalla.",
+        "route": "/internal/lista-de-precios/new",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 9,
+        "step_id": "flotante-lista-scroll-paso-9",
+        "title": "Verifica flotante-pie",
+        "body": "Verifica flotante-pie.",
+        "route": "/internal/lista-de-precios/new",
+        "anchor_attr": "flotante-pie",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
     "_ref": "interactive-manual-flow-inventario-movimiento-manual",
     "name": "Entrada y salida manual de existencia",
     "description": "Almacén suma una pieza encontrada y luego la saca como merma, sin pasar por compras ni pedidos; las dos quedan en el kárdex del producto.",
@@ -2049,6 +2150,381 @@
     ]
   },
   {
+    "_ref": "interactive-manual-flow-ventas-clientes-por-vendedor",
+    "name": "El vendedor solo ve sus clientes y los halla por nombre (#291)",
+    "description": "En Ventas en ruta el vendedor sincroniza y busca cliente por palabras del nombre, en otro orden y sin acentos; sale su cliente asignado y no sale el de otro vendedor.",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "clientes-por-vendedor-paso-1",
+        "title": "Haz clic en Abrir opciones de usuario",
+        "body": "Haz clic en Abrir opciones de usuario.",
+        "route": "/offline/pedidos/mis-pedidos",
+        "anchor_attr": "cuenta-opciones",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "clientes-por-vendedor-paso-2",
+        "title": "Haz clic en Sincronizar datos",
+        "body": "Baja al teléfono solo los clientes asignados al vendedor; el núcleo filtra la lista",
+        "route": "/offline/pedidos/mis-pedidos",
+        "anchor_attr": "offline-sincronizar",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "clientes-por-vendedor-paso-3",
+        "title": "Haz clic en Nuevo pedido",
+        "body": "Haz clic en Nuevo pedido.",
+        "route": "/offline/pedidos/mis-pedidos",
+        "anchor_attr": "offline-pedido-nuevo",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "clientes-por-vendedor-paso-4",
+        "title": "Escribe en Buscar cliente",
+        "body": "El cliente de otro vendedor no sale aunque se escriba su nombre",
+        "route": "/crear",
+        "anchor_attr": "offline-cliente",
+        "action_hint": "input",
+        "placement": "auto",
+        "expected_value": "ajeno cliente"
+      },
+      {
+        "order": 5,
+        "step_id": "clientes-por-vendedor-paso-5",
+        "title": "Escribe en Buscar cliente",
+        "body": "Se busca por palabras del nombre, en otro orden y sin acento («Crédito»)",
+        "route": "/crear",
+        "anchor_attr": "offline-cliente",
+        "action_hint": "input",
+        "placement": "auto",
+        "expected_value": "credito cliente"
+      },
+      {
+        "order": 6,
+        "step_id": "clientes-por-vendedor-paso-6",
+        "title": "Haz clic en ruta",
+        "body": "Sale su cliente asignado y se elige",
+        "route": "/crear",
+        "action_hint": "click",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-detalle-paginador-breadcrumb",
+    "name": "Cambiar de documento con el paginador del detalle",
+    "description": "Ventas abre un pedido y se mueve con el paginador del detalle (siguiente y anterior). El breadcrumb, la posición del paginador y los datos del detalle siempre son del documento actual (#280).",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "detalle-paginador-breadcrumb-paso-1",
+        "title": "Verifica pantalla",
+        "body": "La lista trae los dos pedidos de prueba, uno junto al otro",
+        "route": "/internal/pedidos",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "detalle-paginador-breadcrumb-paso-2",
+        "title": "Haz clic en view-list-row",
+        "body": "Se abre el primer pedido y el paginador del detalle muestra su posición en la lista",
+        "route": "/internal/pedidos",
+        "anchor_attr": "view-list-row",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "detalle-paginador-breadcrumb-paso-3",
+        "title": "Verifica breadcrumb-actual",
+        "body": "El breadcrumb termina en el primer pedido",
+        "route": "/internal/pedidos",
+        "anchor_attr": "breadcrumb-actual",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "detalle-paginador-breadcrumb-paso-4",
+        "title": "Haz clic en Registro siguiente",
+        "body": "«Siguiente» abre el segundo pedido",
+        "route": "/internal/pedidos",
+        "anchor_attr": "record-pager-siguiente",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 5,
+        "step_id": "detalle-paginador-breadcrumb-paso-5",
+        "title": "Verifica breadcrumb-actual",
+        "body": "El breadcrumb cambia al segundo pedido",
+        "route": "/internal/pedidos",
+        "anchor_attr": "breadcrumb-actual",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 6,
+        "step_id": "detalle-paginador-breadcrumb-paso-6",
+        "title": "Verifica pedidos-detalle-folio-interno",
+        "body": "El detalle también es del segundo pedido",
+        "route": "/internal/pedidos",
+        "anchor_attr": "pedidos-detalle-folio-interno",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 7,
+        "step_id": "detalle-paginador-breadcrumb-paso-7",
+        "title": "Haz clic en Registro anterior",
+        "body": "«Anterior» vuelve al primer pedido",
+        "route": "/internal/pedidos",
+        "anchor_attr": "record-pager-anterior",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 8,
+        "step_id": "detalle-paginador-breadcrumb-paso-8",
+        "title": "Verifica breadcrumb-actual",
+        "body": "El breadcrumb vuelve al primer pedido",
+        "route": "/internal/pedidos",
+        "anchor_attr": "breadcrumb-actual",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 9,
+        "step_id": "detalle-paginador-breadcrumb-paso-9",
+        "title": "Verifica pedidos-detalle-folio-interno",
+        "body": "El detalle vuelve a ser del primer pedido",
+        "route": "/internal/pedidos",
+        "anchor_attr": "pedidos-detalle-folio-interno",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-flotante-filtro-columna",
+    "name": "La × del flotante queda en la esquina y el filtro llena el alto",
+    "description": "En Pedidos, el menú de la columna Descripción muestra la × dentro de la esquina del flotante (sin tapar el disparador del filtro ni montarse sobre la barra de scroll). En el filtro de Estado, con chips como Por surtir, la lista ocupa el alto disponible y «Limpiar filtro» queda fijo abajo.",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "flotante-filtro-columna-paso-1",
+        "title": "Verifica view-list-row",
+        "body": "La lista de pedidos carga con al menos un pedido.",
+        "route": "/internal/pedidos",
+        "anchor_attr": "view-list-row",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "flotante-filtro-columna-paso-2",
+        "title": "Haz clic en Descripción",
+        "body": "Se abre el flotante de filtro de la columna Descripción.",
+        "route": "/internal/pedidos",
+        "anchor_attr": "view-list-column-description",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "flotante-filtro-columna-paso-3",
+        "title": "Verifica flotante-cerrar",
+        "body": "La × queda dentro del rect del flotante y no se encima con el ícono o disparador de filtro de Descripción.",
+        "route": "/internal/pedidos",
+        "anchor_attr": "flotante-cerrar",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "flotante-filtro-columna-paso-4",
+        "title": "Haz clic en Cerrar modal",
+        "body": "Al cerrar, la × desaparece con el flotante y no se queda sola (I+D 498).",
+        "route": "/internal/pedidos",
+        "anchor_attr": "flotante-cerrar",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 5,
+        "step_id": "flotante-filtro-columna-paso-5",
+        "title": "Haz clic en Estado",
+        "body": "El filtro de Estado muestra chips (Por surtir, Surtido, Surtiendo) y el pie «Limpiar filtro».",
+        "route": "/internal/pedidos",
+        "anchor_attr": "view-list-column-estado",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 6,
+        "step_id": "flotante-filtro-columna-paso-6",
+        "title": "Verifica view-list-filtro-limpiar",
+        "body": "«Limpiar filtro» queda fijo al pie del flotante; la lista de valores ocupa el alto disponible entre el buscador y ese botón.",
+        "route": "/internal/pedidos",
+        "anchor_attr": "view-list-filtro-limpiar",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-flotante-filtro-estado-vibra",
+    "name": "El filtro de Estado no vibra al dejar el mouse en el fondo",
+    "description": "En Pedidos, se abre el filtro de la columna Estado, se hace scroll con la rueda hasta abajo del todo y se deja el mouse quieto en la frontera entre la lista y el footer. El scrollTop y el alto de la lista no deben cambiar.",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "flotante-filtro-estado-vibra-paso-1",
+        "title": "Verifica view-list-row",
+        "body": "La lista de pedidos carga con al menos un pedido.",
+        "route": "/internal/pedidos",
+        "anchor_attr": "view-list-row",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "flotante-filtro-estado-vibra-paso-2",
+        "title": "Haz clic en Estado",
+        "body": "Se abre el flotante de filtro de la columna Estado con valores como Borrador, Cancelado, Confirmado.",
+        "route": "/internal/pedidos",
+        "anchor_attr": "view-list-column-estado",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "flotante-filtro-estado-vibra-paso-3",
+        "title": "Verifica flotante-cerrar",
+        "body": "La × queda dentro de la esquina del flotante.",
+        "route": "/internal/pedidos",
+        "anchor_attr": "flotante-cerrar",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "flotante-filtro-estado-vibra-paso-4",
+        "title": "Haz scroll con la rueda en view-list-filtro-lista",
+        "body": "Scroll con la rueda hasta abajo del todo de la lista de valores.",
+        "route": "/internal/pedidos",
+        "anchor_attr": "view-list-filtro-lista",
+        "action_hint": "input",
+        "placement": "auto"
+      },
+      {
+        "order": 5,
+        "step_id": "flotante-filtro-estado-vibra-paso-5",
+        "title": "Deja el mouse quieto en view-list-filtro-lista",
+        "body": "Mouse quieto en la frontera entre la lista y el footer; se muestrean scrollTop y alto cada 50 ms durante 2 s y no deben cambiar.",
+        "route": "/internal/pedidos",
+        "anchor_attr": "view-list-filtro-lista",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 6,
+        "step_id": "flotante-filtro-estado-vibra-paso-6",
+        "title": "Verifica view-list-filtro-pie",
+        "body": "El footer queda fijo abajo del flotante; la lista ocupa el alto disponible.",
+        "route": "/internal/pedidos",
+        "anchor_attr": "view-list-filtro-pie",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 7,
+        "step_id": "flotante-filtro-estado-vibra-paso-7",
+        "title": "Haz clic en Cerrar modal",
+        "body": "Al cerrar, la × desaparece con el flotante y no se queda sola (I+D 498).",
+        "route": "/internal/pedidos",
+        "anchor_attr": "flotante-cerrar",
+        "action_hint": "click",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-header-accion-archivar",
+    "name": "Archivar se ve como las otras opciones del menú de acciones",
+    "description": "En el detalle de un pedido, la opción Archivar del menú Acciones usa el mismo componente y las mismas clases que Editar. Coinciden el tamaño de letra, el peso, el padding y el fondo del icono (I+D 501).",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "header-accion-archivar-paso-1",
+        "title": "Verifica view-list-row",
+        "body": "La lista de pedidos carga con al menos un pedido.",
+        "route": "/internal/pedidos",
+        "anchor_attr": "view-list-row",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "header-accion-archivar-paso-2",
+        "title": "Haz clic en view-list-row",
+        "body": "Se abre el detalle del pedido.",
+        "route": "/internal/pedidos",
+        "anchor_attr": "view-list-row",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "header-accion-archivar-paso-3",
+        "title": "Haz clic en Acciones",
+        "body": "El menú Acciones muestra Editar y Archivar.",
+        "route": "/internal/pedidos",
+        "anchor_attr": "header-actions-menu",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "header-accion-archivar-paso-4",
+        "title": "Verifica header-accion-archivar",
+        "body": "Archivar coincide con Editar en font-size, font-weight, padding y el fondo del icono.",
+        "route": "/internal/pedidos",
+        "anchor_attr": "header-accion-archivar",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
     "_ref": "interactive-manual-flow-ventas-imprimir-pedido-detalle-almacen",
     "name": "Imprimir un pedido desde su detalle con usuario de Almacén (#259)",
     "description": "En el detalle de un pedido, el usuario de Almacén (leer Pedidos y Reports) abre Acciones → Imprimir y ve los 2 formatos de pedido para descargar, ver o mandar directo a la impresora.",
@@ -2187,6 +2663,43 @@
     ]
   },
   {
+    "_ref": "interactive-manual-flow-ventas-imprimir-pedido-ruta-partidas",
+    "name": "La hoja del pedido imprime la Ruta y la tabla de partidas (#292,",
+    "description": "Ventas abre un pedido de un cliente con ruta de entrega, entra a Acciones → Imprimir y abre la vista previa de «Pedido | Formato de impresión». La hoja trae «Ruta: QA-IA Ruta Centro», la tabla con la partida (QAIA-IMP, 2 piezas) y el estilo de #293 (No. angosto y gris, Cant. en negrita con fondo).",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "imprimir-pedido-ruta-partidas-paso-1",
+        "title": "Haz clic en Acciones",
+        "body": "El menú Acciones del detalle trae Imprimir.",
+        "anchor_attr": "header-actions-menu",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "imprimir-pedido-ruta-partidas-paso-2",
+        "title": "Haz clic en Imprimir",
+        "body": "El catálogo ofrece los formatos oficiales del pedido.",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "imprimir-pedido-ruta-partidas-paso-3",
+        "title": "Haz clic en Vista previa",
+        "body": "El núcleo arma el PDF del pedido: agrega la ruta del cliente (delivery-route.contacts) e imprime la tabla de partidas (articulos). En la captura se lee «Ruta: QA-IA Ruta Centro», la fila 1 con QAIA-IMP y cantidad 2 (No. angosto y gris, Cant. en negrita con fondo).",
+        "anchor_attr": "report-item",
+        "action_hint": "click",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
     "_ref": "interactive-manual-flow-ventas-imprimir-pedido-vista-previa-varios",
     "name": "Vista previa de varios pedidos seleccionados (#281)",
     "description": "Ventas marca dos pedidos en la lista, entra a Acciones → Imprimir y abre «Vista previa». El visor anuncia los 2 registros y el documento tiene 2 hojas (no solo la primera).",
@@ -2264,8 +2777,9 @@
         "order": 8,
         "step_id": "imprimir-pedido-vista-previa-varios-paso-8",
         "title": "Haz clic en Vista previa",
-        "body": "La vista previa anuncia los dos pedidos marcados, no solo el primero.",
+        "body": "«Vista previa» del formato Pedido (no la del primer formato del catálogo, que es la Ficha de Ventas). Anuncia los dos pedidos marcados, no solo el primero.",
         "route": "/internal/pedidos",
+        "anchor_attr": "report-item",
         "action_hint": "click",
         "placement": "auto"
       },
@@ -2343,6 +2857,94 @@
         "body": "El formato del seed (reports-pedido-tablero-0) trae name en la cabecera (#263).",
         "route": "/internal/pedidos",
         "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-imprimir-surtido-ruta-partidas",
+    "name": "La hoja de surtido imprime la Ruta y la tabla de partidas (#292,",
+    "description": "Ventas abre un pedido de un cliente con ruta de entrega, entra a Acciones → Imprimir y abre la vista previa de «Pedido | Hoja de surtido». La hoja trae «Ruta: QA-IA Ruta Centro», la tabla con la partida (QAIA-IMP, 2 piezas) y el estilo de #293 (No. angosto y gris, «Cant. por surtir» en negrita con fondo).",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "imprimir-surtido-ruta-partidas-paso-1",
+        "title": "Haz clic en Acciones",
+        "body": "El menú Acciones del detalle trae Imprimir.",
+        "anchor_attr": "header-actions-menu",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "imprimir-surtido-ruta-partidas-paso-2",
+        "title": "Haz clic en Imprimir",
+        "body": "El catálogo ofrece los formatos oficiales del pedido.",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "imprimir-surtido-ruta-partidas-paso-3",
+        "title": "Haz clic en Vista previa",
+        "body": "El núcleo arma el PDF del pedido: agrega la ruta del cliente (delivery-route.contacts) e imprime la tabla de partidas (articulos). En la captura se lee «Ruta: QA-IA Ruta Centro», la fila 1 con QAIA-IMP y cantidad 2 (No. angosto y gris, «Cant. por surtir» en negrita con fondo).",
+        "anchor_attr": "report-item",
+        "action_hint": "click",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-lista-fecha-formato",
+    "name": "Las columnas de fecha permiten elegir formato y mostrar u ocultar la hora",
+    "description": "En Pedidos, el menú de la columna Fecha ofrece formatos (largo, corto, numérico, ISO) y un botón para mostrar u ocultar la hora. Al elegir numérico y mostrar la hora, la lista refleja ambas cosas (I+D 500).",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "lista-fecha-formato-paso-1",
+        "title": "Verifica view-list-row",
+        "body": "La lista de pedidos carga con al menos un pedido y una columna Fecha.",
+        "route": "/internal/pedidos",
+        "anchor_attr": "view-list-row",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "lista-fecha-formato-paso-2",
+        "title": "Haz clic en Fecha",
+        "body": "El menú de la columna Fecha muestra los formatos y la opción de mostrar u ocultar la hora.",
+        "route": "/internal/pedidos",
+        "anchor_attr": "view-list-column-fecha",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "lista-fecha-formato-paso-3",
+        "title": "Haz clic en Numérico",
+        "body": "Al elegir el formato numérico, las celdas muestran el día en dd/MM/aaaa.",
+        "route": "/internal/pedidos",
+        "anchor_attr": "view-list-fecha-formato-numerico",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "lista-fecha-formato-paso-4",
+        "title": "Haz clic en Mostrar hora",
+        "body": "«Mostrar hora» deja visible la hora junto a la fecha.",
+        "route": "/internal/pedidos",
+        "anchor_attr": "view-list-fecha-hora",
+        "action_hint": "click",
         "placement": "auto"
       }
     ]
@@ -2466,6 +3068,46 @@
         "route": "/internal/pedidos",
         "anchor_attr": "view-list-filter-option",
         "action_hint": "click",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-pedidos-folio-interno-detalle",
+    "name": "Ver el folio interno en el detalle del pedido",
+    "description": "Ventas abre un pedido desde la lista de Pedidos (fuera del tablero) y el detalle muestra su folio interno, el mismo que sale en la impresión (#279).",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "pedidos-folio-interno-detalle-paso-1",
+        "title": "Verifica pantalla",
+        "body": "La lista trae el pedido de prueba",
+        "route": "/internal/pedidos",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "pedidos-folio-interno-detalle-paso-2",
+        "title": "Haz clic en view-list-row",
+        "body": "Al abrir el pedido (fuera del tablero), el detalle trae el campo Folio interno",
+        "route": "/internal/pedidos",
+        "anchor_attr": "view-list-row",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "pedidos-folio-interno-detalle-paso-3",
+        "title": "Verifica pedidos-detalle-folio-interno",
+        "body": "El campo «Folio interno» muestra el folio interno del pedido",
+        "route": "/internal/pedidos",
+        "anchor_attr": "pedidos-detalle-folio-interno",
+        "action_hint": "observe",
         "placement": "auto"
       }
     ]

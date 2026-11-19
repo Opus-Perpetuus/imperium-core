@@ -1,3 +1,4 @@
+import pedido_report_seeds from "./pedido-report-seeds.json";
 /**
  * Acciones de module-management: mocks, seeds e índices de búsqueda.
  * Mismos mensajes que `module-management.service.ts`.
@@ -6,6 +7,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { as_array, ok, type ImperiumDoc } from './envelope.ts';
 import type { ImperiumStore } from './store.ts';
+import { upsert_override_seed } from './seed-override.ts';
 
 const MOCK_DEFAULT_COUNT = 200;
 const MOCK_MAX_COUNT = 5000;
@@ -301,7 +303,7 @@ function collect_seed_strings(file: string, seen = new Set<string>()) {
 	return strings;
 }
 
-function eval_seed_object(expr: string, strings: Map<string, string>) {
+function eval_seed_object(expr: string, strings: Map<string, unknown>) {
 	let text = expr.trim().replace(/,\s*$/, '');
 	text = text.replace(
 		/([A-Za-z0-9_]+)Model\.modelName(?:\s+as\s+string)?/g,
@@ -321,9 +323,13 @@ function eval_seed_object(expr: string, strings: Map<string, string>) {
 	return new Function(...keys, `"use strict"; return (${text});`)(...values);
 }
 
-export function parse_module_data_file(file: string): SeedRecord[] {
+export function parse_module_data_file(
+	file: string,
+	extra_bindings?: Map<string, unknown>,
+): SeedRecord[] {
 	const src = strip_ts_comments(readFileSync(file, 'utf8'));
-	const strings = collect_seed_strings(file);
+	const strings: Map<string, unknown> = collect_seed_strings(file);
+	for (const [key, value] of extra_bindings ?? []) if (!strings.has(key)) strings.set(key, value);
 	const records: SeedRecord[] = [];
 	let model = '';
 	let override = false;
@@ -518,6 +524,18 @@ async function apply_pending_refs(store: ImperiumStore, pending: PendingRef[]) {
 	}
 }
 
+/** Core images do not ship backend/src. Keep these canonical reports deployable. */
+export function module_seed_records(module_record: ImperiumDoc): SeedRecord[] {
+	const file = resolve_module_data_file(module_record);
+	const records = file ? parse_module_data_file(file) : [];
+	if (String(module_record.model_id ?? '') !== 'Reports') return records;
+	const canonical_refs = new Set(pedido_report_seeds.map((seed) => seed.doc._ref));
+	return [
+		...records.filter((record) => !canonical_refs.has(String(record.doc._ref))),
+		...pedido_report_seeds,
+	];
+}
+
 async function install_seeds_for_record(
 	store: ImperiumStore,
 	module_record: ImperiumDoc,
@@ -525,9 +543,8 @@ async function install_seeds_for_record(
 	pending: PendingRef[],
 ) {
 	const file = resolve_module_data_file(module_record);
-	if (!file) return;
-	const auto_install = readFileSync(file, 'utf8').includes('.auto_install()');
-	const records = parse_module_data_file(file);
+	const auto_install = file ? readFileSync(file, 'utf8').includes('.auto_install()') : false;
+	const records = module_seed_records(module_record);
 	for (const record of records) {
 		const resource = store.resource_for_model(record.model);
 		if (!resource || !store.has(resource)) continue;
@@ -544,8 +561,12 @@ async function install_seeds_for_record(
 		const ref = String(doc._ref ?? '');
 		if (!ref) continue;
 		await upsert_module_reference(store, ref, record.model);
-		const allow_overwrite = Boolean(options.force || record.override || auto_install);
-		await upsert_by_ref(store, resource, doc, allow_overwrite);
+		// override ya no es ciego: solo reemplaza registros que el cliente no tocó.
+		if (record.override) {
+			await upsert_override_seed(store, resource, record.model, doc, { force: options.force });
+		} else {
+			await upsert_by_ref(store, resource, doc, Boolean(options.force || auto_install));
+		}
 		if (Object.keys(refs).length) {
 			pending.push({ resource, ref, fields: refs });
 		}

@@ -22,6 +22,8 @@ import {
 	type TemplateScope,
 } from './report-template-engine.ts';
 import type { ImperiumStore } from './store.ts';
+import { pedidos_con_ruta } from './contacto-rutas.ts';
+import { is_pedido_resource } from './pedidos-fecha.ts';
 
 const STATIC_PLACEHOLDERS = new Set([
 	'fecha_actual',
@@ -492,6 +494,40 @@ export async function interpolate_report_records(
 	return current_html.replace(token, next_html);
 }
 
+/**
+ * Campos de una referencia: los de la tabla destino, como los ofrece el
+ * diseñador (`report_related_candidates`). Con solo name/description, guardar
+ * el formato oficial del pedido fallaba en {{contacto.codigo}}, rfc, calle…
+ * y la siembra los quitaba hasta dejar los bloques #if sin cerrar (#292).
+ */
+function reference_fields(store: ImperiumStore, reference_model: string): Array<{ field_name: string }> {
+	const out = [{ field_name: 'name' }, { field_name: 'description' }, { field_name: 'is_active' }];
+	let target: string | null = null;
+	try {
+		target = store.resource_for_model(reference_model) ?? null;
+	} catch {
+		target = null;
+	}
+	if (!target || !store.has(target)) return out;
+	const seen = new Set(out.map((f) => f.field_name));
+	for (const col of store.loc(target).columns) {
+		if (!col.name || col.name.startsWith('_') || seen.has(col.name)) continue;
+		seen.add(col.name);
+		out.push({ field_name: col.name });
+	}
+	return out;
+}
+
+/**
+ * Campos del pedido que no son columna ni salen en toda fila: `observaciones`
+ * vive en el payload solo si se capturó y `ruta` se agrega al leer (#275/#292).
+ * Sin pedidos con observaciones, el formato oficial no se podía guardar.
+ */
+const REPORT_PAYLOAD_FIELDS: Record<string, readonly string[]> = {
+	pedidos: ['observaciones', 'ruta'],
+	'pedidos-surtir': ['observaciones', 'ruta'],
+};
+
 function fields_from_store(store: ImperiumStore, resource: string): ReportFieldLike[] {
 	const refs = store.field_refs(resource);
 	const seen = new Set<string>();
@@ -501,7 +537,7 @@ function fields_from_store(store: ImperiumStore, resource: string): ReportFieldL
 		seen.add(field.field_name);
 		fields.push(field);
 	};
-	for (const name of ['name', 'description', 'is_active']) {
+	for (const name of ['name', 'description', 'is_active', ...(REPORT_PAYLOAD_FIELDS[resource] ?? [])]) {
 		push({ field_name: name });
 	}
 	for (const col of store.loc(resource).columns) {
@@ -510,18 +546,15 @@ function fields_from_store(store: ImperiumStore, resource: string): ReportFieldL
 			field_name: col.name,
 			is_reference: Boolean(reference_model),
 			is_array: col.pg === 'json' && !reference_model,
-			related_fields: reference_model
-				? [{ field_name: 'name' }, { field_name: 'description' }]
-				: [],
+			related_fields: reference_model ? reference_fields(store, reference_model) : [],
 		});
 	}
 	for (const [field_name, reference_model] of Object.entries(refs)) {
 		push({
 			field_name,
 			is_reference: true,
-			related_fields: [{ field_name: 'name' }, { field_name: 'description' }],
+			related_fields: reference_fields(store, reference_model),
 		});
-		void reference_model;
 	}
 	return fields;
 }
@@ -594,6 +627,11 @@ export function report_validation_ok(
 	);
 }
 
+/** Campos que el registro solo tiene al leerse (no guardados), para que el reporte los vea. */
+async function report_rows(store: ImperiumStore, resource: string, rows: ImperiumDoc[]): Promise<ImperiumDoc[]> {
+	return is_pedido_resource(resource) ? pedidos_con_ruta(store, rows) : rows;
+}
+
 export async function* iter_report_record_pages(
 	store: ImperiumStore,
 	resource: string,
@@ -602,7 +640,7 @@ export async function* iter_report_record_pages(
 	const mongo_match = without_chat_rows(resource, null);
 	if (body.apply_to_all === true) {
 		for await (const page of store.scan(resource, { page_size: 200, mongo_match })) {
-			if (page.length) yield page;
+			if (page.length) yield await report_rows(store, resource, page);
 		}
 		return;
 	}
@@ -620,7 +658,7 @@ export async function* iter_report_record_pages(
 			mongo_match,
 		});
 		/* Sin poblar, {{departamento.name}} salía vacío en la ficha de prueba. */
-		if (rows.length) yield await store.populate_docs(resource, rows, { full: true });
+		if (rows.length) yield await report_rows(store, resource, await store.populate_docs(resource, rows, { full: true }));
 		return;
 	}
 	for (let i = 0; i < ids.length; i += 200) {
@@ -630,7 +668,7 @@ export async function* iter_report_record_pages(
 			if (doc && !is_chat_row(resource, doc)) chunk.push(doc);
 		}
 		if (!chunk.length) continue;
-		yield await store.populate_docs(resource, chunk, { full: true });
+		yield await report_rows(store, resource, await store.populate_docs(resource, chunk, { full: true }));
 	}
 }
 
