@@ -66,6 +66,7 @@ import {
 import { is_base_subject_slug } from './subject-runtime.ts';
 import { disconnect_sockets_for_auth_sid } from './socket-stub.ts';
 import { is_chat_private_resource } from './chat-access.ts';
+import { FEATURE_MAP_TEST_COLUMN_DDL } from './feature-map-test.ts';
 
 const COOKIE = 'connect.sid';
 const SECRET = process.env.SESSION_SECRET ?? 'imperium-modular-dev-session';
@@ -107,7 +108,8 @@ export function ensure_session_table(sql: Bun.SQL): Promise<void> {
     CREATE TABLE IF NOT EXISTS public.imperium_sessions (
       id TEXT PRIMARY KEY,
       payload JSONB NOT NULL,
-      expires_at TIMESTAMPTZ NOT NULL
+      expires_at TIMESTAMPTZ NOT NULL,
+      ${FEATURE_MAP_TEST_COLUMN_DDL}
     )
   `);
 		await ensure_auth_rate_limit_table(sql);
@@ -1336,9 +1338,17 @@ function flag_http_method(flag: RecordRuleOperationFlag): string {
 	return 'GET';
 }
 
-function permissions_for_resource(
-	access: Awaited<ReturnType<typeof build_access>>,
+/**
+ * Permisos del modelo de un recurso. El `model_id` de un permiso puede no ser
+ * el PascalCase del recurso (`postgres-table-tracker` ↔ `PostGressTableTracker`,
+ * con doble s): además de las claves derivadas se acepta cualquier modelo que el
+ * catálogo (`resource_for_model`) resuelva a este recurso. Sin eso el
+ * Administrador recibía 403 en «Indexar búsqueda» aunque tuviera el permiso (#264).
+ */
+export function permissions_for_resource(
+	access: Pick<Awaited<ReturnType<typeof build_access>>, 'permissions_by_model'>,
 	resource: string,
+	store?: Pick<ImperiumStore, 'resource_for_model'>,
 ): { perms?: Record<string, boolean>; model: string } {
 	const keys = record_rule_lookup_keys(resource);
 	for (const key of keys) {
@@ -1346,11 +1356,15 @@ function permissions_for_resource(
 		if (hit) return { perms: hit, model: key };
 	}
 	const collapsed = resource.replace(/-/g, '').toLowerCase();
-	for (const [model, perms] of Object.entries(
-		access.permissions_by_model ?? {},
-	)) {
+	const entries = Object.entries(access.permissions_by_model ?? {});
+	for (const [model, perms] of entries) {
 		if (model.replace(/[^A-Za-z0-9]/g, '').toLowerCase() === collapsed) {
 			return { perms, model };
+		}
+	}
+	if (typeof store?.resource_for_model === 'function') {
+		for (const [model, perms] of entries) {
+			if (store.resource_for_model(model) === resource) return { perms, model };
 		}
 	}
 	return { model: keys[1] ?? resource };
@@ -1383,7 +1397,7 @@ function target_model_read(
 		);
 	}
 	if (access.has_full_access) return canonical;
-	const { perms, model } = permissions_for_resource(access, canonical);
+	const { perms, model } = permissions_for_resource(access, canonical, store);
 	if (perms?.allow_read) return model;
 	throw new HttpAccessDeniedError(
 		build_model_denied_message('GET', model, access.user_group_names ?? []),
@@ -1466,7 +1480,7 @@ export async function assert_http_access(
 		: opts.extra && opts.action
 			? extra_flag(method, opts.action)
 			: crud_flag(method, opts.rest);
-	const { perms, model } = permissions_for_resource(access, canonical);
+	const { perms, model } = permissions_for_resource(access, canonical, store);
 	if (perms?.[flag]) return;
 	throw new HttpAccessDeniedError(
 		build_model_denied_message(

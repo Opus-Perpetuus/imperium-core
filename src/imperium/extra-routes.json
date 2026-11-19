@@ -1910,6 +1910,12 @@
   {
     "resource": "postgres-table-tracker",
     "method": "get",
+    "path": "/reindex/estado",
+    "action": "get_reindex_status"
+  },
+  {
+    "resource": "postgres-table-tracker",
+    "method": "get",
     "path": "/global/:model_tracker_id/field-values/:field_path",
     "action": "read_field_values_globally"
   },

@@ -7,6 +7,7 @@
  * - por **IP**: protección NAT / multi-cuenta; no se resetea con el email
  */
 import { take_token } from './rate-bucket.ts';
+import { FEATURE_MAP_TEST_COLUMN_DDL } from './feature-map-test.ts';
 
 const LOGIN_BLOCKED =
 	'Demasiados intentos de inicio de sesión. Intenta más tarde o contacta a un administrador.';
@@ -107,7 +108,8 @@ export async function ensure_auth_rate_limit_table(sql: Bun.SQL): Promise<void> 
     CREATE TABLE IF NOT EXISTS public.imperium_auth_rate_limits (
       key TEXT PRIMARY KEY,
       hits INTEGER NOT NULL DEFAULT 0,
-      reset_at TIMESTAMPTZ NOT NULL
+      reset_at TIMESTAMPTZ NOT NULL,
+      ${FEATURE_MAP_TEST_COLUMN_DDL}
     )
   `);
 }

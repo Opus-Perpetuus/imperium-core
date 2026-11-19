@@ -231,6 +231,13 @@ export type FeatureShellFieldDescriptor = {
   coordinates_geocode_proxy_url?: string;
   /** `input-password`: barra de complejidad. */
   show_password_strength?: boolean;
+  /** `input-text`/`input-password`: `autocomplete` explícito del input nativo. */
+  autocomplete?: string;
+  /**
+   * Correo (`type: "email"`) y `input-password`: `manual` (default) no deja que
+   * el navegador llene el campo solo, solo sugiere; `browser` es el nativo.
+   */
+  autofill?: "manual" | "browser";
   /** `input-object`: solo inspector, sin editor. */
   object_read_only?: boolean;
   /** `input-object`: claves internas de solo lectura. */
@@ -314,6 +321,7 @@ const FIELD_COMPONENTS: ReadonlySet<string> = new Set(
 /** Opciones con valor de catálogo: fuera de él el input caería a su default sin avisar. */
 const FIELD_ENUM_OPTIONS: Record<string, readonly string[]> = {
   type: ["text", "email", "search", "url", "tel"],
+  autofill: ["manual", "browser"],
   choice_appearance: ["switch", "radio", "segmented"],
   markdown_initial_mode: ["visual", "write", "split", "preview"],
   code_editor_completion_kind: ["dsl", "zpl"],

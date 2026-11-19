@@ -11,6 +11,39 @@ function text(value: unknown): string {
 	return String(value ?? '').trim();
 }
 
+/** Máximo de letras del prefijo del turno (AP0001 → «AP»). Odoo #232. */
+export const TURN_PREFIX_MAX_LETTERS = 3;
+/** Dígitos del consecutivo; se conservan los 3 de siempre (A001). */
+export const TURN_NUMBER_DIGITS = 3;
+
+/**
+ * Prefijo del turno a partir de la «letra» del servicio o tipo de cliente:
+ * mayúsculas, solo letras (incluye Ñ), de 1 a TURN_PREFIX_MAX_LETTERS. Lo
+ * que no tenga letras usa `fallback` ('M' como siempre).
+ */
+export function turn_code_prefix(value: unknown, fallback = 'M'): string {
+	const letters = text(value)
+		.normalize('NFD')
+		.replace(/N\u0303/g, 'Ñ')
+		.replace(/n\u0303/g, 'ñ')
+		.replace(/[\u0300-\u036f]/g, '')
+		.toUpperCase()
+		.replace(/[^A-ZÑ]/g, '');
+	return letters.slice(0, TURN_PREFIX_MAX_LETTERS) || fallback;
+}
+
+/** Código visible del turno: prefijo + consecutivo con ceros (AP001, G014). */
+export function format_turn_code(prefix: string, consecutive: number): string {
+	return `${prefix}${String(consecutive).padStart(TURN_NUMBER_DIGITS, '0')}`;
+}
+
+/** Número del consecutivo si `name` es exactamente `prefix` + dígitos. */
+export function turn_code_number(name: unknown, prefix: string): number | null {
+	const match = /^([A-ZÑ]+)(\d+)$/.exec(text(name).toUpperCase());
+	if (!match || match[1] !== prefix.toUpperCase()) return null;
+	return Number(match[2]);
+}
+
 function ref_id(value: unknown): string {
 	if (value == null) return '';
 	if (typeof value === 'object') return String((value as { _id?: unknown })._id ?? '').trim();
@@ -93,27 +126,26 @@ async function max_priority_of_turn(store: ImperiumStore, turn: ImperiumDoc): Pr
 }
 
 async function next_consecutive(store: ImperiumStore, letter: string): Promise<number> {
+	const prefix = letter.toUpperCase();
 	if (!store.has('ticketing-system-consecutive')) {
-		const prefix = letter.toUpperCase();
 		let max = -1;
 		for await (const page of store.scan('ticketing-system-turn', {
 			include_inactive: true,
 		})) {
 			for (const row of page) {
-				const name = text(row.name).toUpperCase();
-				if (!name.startsWith(prefix)) continue;
-				const n = Number(name.slice(prefix.length));
-				if (Number.isFinite(n)) max = Math.max(max, n);
+				// Prefijo exacto: «A» no cuenta los AP001 ni «AP» los A001.
+				const n = turn_code_number(row.name, prefix);
+				if (n != null) max = Math.max(max, n);
 			}
 		}
 		return max + 1;
 	}
 	const existing =
-		(await store.find_where('ticketing-system-consecutive', { name: letter })) ??
-		(await store.find_where('ticketing-system-consecutive', { name: letter.toUpperCase() }));
+		(await store.find_where('ticketing-system-consecutive', { name: prefix })) ??
+		(await store.find_where('ticketing-system-consecutive', { name: prefix.toLowerCase() }));
 	if (!existing) {
 		await store.insert('ticketing-system-consecutive', {
-			name: letter,
+			name: prefix,
 			consecutive: 1,
 			is_active: true,
 		});
@@ -274,18 +306,18 @@ export async function prepare_ticketing_turn_create(
 		throw new Error('No se encontraron todos los servicios seleccionados');
 	}
 	let highest = await priority_number(store, customer.priority_level);
-	let letter = text(customer.letter) || 'M';
+	let letter = turn_code_prefix(customer.letter);
 	for (const service of services) {
 		const service_priority = await priority_number(store, service.priority_level);
 		if (service_priority > highest) {
 			highest = service_priority;
-			letter = text(service.letter) || letter;
+			letter = turn_code_prefix(service.letter, letter);
 		}
 	}
 	const consecutive = await next_consecutive(store, letter);
 	out.customer_type = customer_id;
 	out.services = service_ids;
-	out.name = `${letter}${String(consecutive).padStart(3, '0')}`;
+	out.name = format_turn_code(letter, consecutive);
 	out.priority_level = highest;
 	out.status = 'pendiente';
 	out.estado = 'pendiente';

@@ -1,5 +1,6 @@
 //   #region HTTP KIRLET DATA CLIENT (NOX-mediated)
 
+import { feature_map_test_headers } from "./feature-map-test.ts";
 import {
   KirletDataClient,
   type DomainRow,
@@ -87,6 +88,7 @@ export class HttpKirletDataClient extends KirletDataClient {
             "content-type": "application/json",
             "x-nox-kirlet-gateway-secret": this.gatewaySecret,
             "x-nox-kirlet-id": this.technicalId,
+            ...feature_map_test_headers(),
           },
           body: JSON.stringify(body),
           signal: controller?.signal,

@@ -32,6 +32,7 @@ import {
 	is_pedido_resource,
 	prepare_pedido_create,
 	prepare_pedido_update,
+	resolve_pedidos_usuario_filter,
 } from './pedidos-flow.ts';
 import {
 	after_delivery_package_mutate,
@@ -544,10 +545,13 @@ export async function handle_crud(
 	if (method === 'GET' && segs[0] === 'export.csv' && segs.length === 1) {
 		const { q, include_inactive, where, ids } = query_list(url);
 		const scope = await record_rule_scope(store, actor, resource, method);
+		const list_where = is_pedido_resource(resource)
+			? await resolve_pedidos_usuario_filter(store, where)
+			: where;
 		return stream_export_csv(store, resource, {
 			q,
 			include_inactive,
-			where,
+			where: list_where,
 			ids,
 			mongo_match: scope.match,
 		});
@@ -586,7 +590,9 @@ export async function handle_crud(
 		if (resource === 'delivery-return') {
 			throw new Error('Las devoluciones no soportan operaciones batch');
 		}
+		const dry_run = ['1', 'true'].includes(String(url.searchParams.get('dry_run') ?? '').trim());
 		if (is_location_resource(resource)) {
+			if (dry_run) throw new Error('La simulación no aplica al árbol de ubicaciones');
 			const raw = await body();
 			const payload = Array.isArray(raw)
 				? { lineas: raw }
@@ -603,6 +609,7 @@ export async function handle_crud(
 				resource,
 				rows: items,
 				match_field: match || null,
+				dry_run,
 				persist_create: async (doc) =>
 					store.insert(
 						resource,
@@ -1532,6 +1539,9 @@ async function read_list_docs(
 	}
 	if (resource === 'reports') {
 		q.where = apply_report_list_where(store, q.where);
+	}
+	if (is_pedido_resource(resource)) {
+		q.where = await resolve_pedidos_usuario_filter(store, q.where);
 	}
 	const where = strip_root_parent_where(q.where);
 	const scope = await record_rule_scope(store, actor, resource, 'GET');

@@ -15,6 +15,7 @@ import {
 	is_base_subject_slug,
 	normalize_subject_slug,
 } from './subject-runtime.ts';
+import { FEATURE_MAP_TEST_COLUMN_DDL } from './feature-map-test.ts';
 
 /** `image-source`: la dejó el autoescaneo que enciende Odoo; autoriza como Odoo. */
 export type CatalogSource = 'odoo' | 'manual' | 'registry' | 'image-source';
@@ -57,7 +58,8 @@ async function create_catalog_table(sql: Bun.SQL): Promise<void> {
       repo TEXT,
       source TEXT NOT NULL DEFAULT 'manual',
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      ${FEATURE_MAP_TEST_COLUMN_DDL}
     )
   `);
 }

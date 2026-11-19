@@ -712,7 +712,7 @@ describe('pedidos del vendedor: salen de su almacén', () => {
 		expect(otro.almacen).toBe(GENERAL);
 	});
 
-	test('sync offline: si su almacén no alcanza queda en borrador aunque haya en otros', async () => {
+	test('sync offline: si su almacén no alcanza avisa aunque haya en otros', async () => {
 		const store = store_con([quant(ALM_RUTA, 2), quant(GENERAL, 50)]);
 		const sync = async (cantidad: number, uuid: string) => {
 			const res = await pedidos_sync_offline({
@@ -732,7 +732,7 @@ describe('pedidos del vendedor: salen de su almacén', () => {
 			return (await res.json()) as { resultados: Array<{ estado?: string; aviso?: string }> };
 		};
 		const corto = await sync(3, 'u-1');
-		expect(corto.resultados[0].estado).toBe('borrador');
+		expect(corto.resultados[0].estado).toBe('confirmado');
 		expect(corto.resultados[0].aviso).toContain('Codo (pide 3, hay 2)');
 		const alcanza = await sync(2, 'u-2');
 		expect(alcanza.resultados[0].estado).toBe('confirmado');
@@ -762,7 +762,7 @@ describe('pedidos del vendedor: salen de su almacén', () => {
 			},
 		} as never);
 		const out = (await res.json()) as { resultados: Array<{ estado?: string; aviso?: string }> };
-		expect(out.resultados.map((r) => r.estado)).toEqual(['confirmado', 'borrador']);
+		expect(out.resultados.map((r) => r.estado)).toEqual(['confirmado', 'confirmado']);
 		expect(out.resultados[1].aviso).toContain('Codo (pide 3, hay 2)');
 		expect(out.resultados[1].aviso).not.toContain('50');
 	});
@@ -1335,7 +1335,7 @@ describe('confirmar el pedido', () => {
 		).rejects.toThrow('el precio debe ser mayor a 0');
 	});
 
-	test('sync offline: sin precio ni existencia no se pierde, queda en borrador con aviso', async () => {
+	test('sync offline: sin precio ni existencia no se pierde, llega confirmado con aviso', async () => {
 		const store = store_con([quant(ALM_RUTA, 1), quant(GENERAL, 50)]);
 		const res = await pedidos_sync_offline({
 			store,
@@ -1354,12 +1354,12 @@ describe('confirmar el pedido', () => {
 		const out = (await res.json()) as {
 			resultados: Array<{ status: string; estado?: string; aviso?: string }>;
 		};
-		expect(out.resultados[0]).toMatchObject({ status: 'creado', estado: 'borrador' });
+		expect(out.resultados[0]).toMatchObject({ status: 'creado', estado: 'confirmado' });
 		expect(out.resultados[0].aviso).toBe(
-			'El pedido F-sp quedó pendiente (borrador) por falta de existencia: Codo (pide 3, hay 1). ' +
-				'El pedido F-sp quedó pendiente (borrador) porque no tiene precio: Codo.',
+			'El pedido F-sp se confirmó sin existencia suficiente: Codo (pide 3, hay 1). ' +
+				'El pedido F-sp se confirmó sin precio en: Codo.',
 		);
-		expect(store.data.pedidos.map((p) => p.estado)).toEqual(['borrador']);
+		expect(store.data.pedidos.map((p) => p.estado)).toEqual(['confirmado']);
 	});
 });
 

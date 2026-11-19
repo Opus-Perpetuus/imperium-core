@@ -47,6 +47,7 @@ import {
 import { is_base_subject_slug, read_subject_image_manifest } from './subject-runtime.ts';
 import { apply_scanned_subjects, registered_from } from './subjects-admin.ts';
 import { management_mode, type ManagementMode } from './management-mode.ts';
+import { FEATURE_MAP_TEST_COLUMN_DDL } from './feature-map-test.ts';
 
 export const AUTOSCAN_SETTING_KEY = 'image_sources_autoscan';
 
@@ -106,7 +107,8 @@ export async function ensure_settings_table(sql: Bun.SQL): Promise<void> {
     CREATE TABLE IF NOT EXISTS public.subject_catalog_settings (
       key TEXT PRIMARY KEY,
       value JSONB NOT NULL DEFAULT '{}'::jsonb,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      ${FEATURE_MAP_TEST_COLUMN_DDL}
     )
   `);
 }

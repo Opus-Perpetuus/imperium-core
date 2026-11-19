@@ -1,6 +1,6 @@
 import { without_chat_rows } from './chat-access.ts';
 import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { reshape_subject_menus } from './auth.ts';
 import { postgres_table_tracker_field_values } from './postgres-table-tracker-field-values.ts';
 import {
@@ -65,6 +65,14 @@ function memory_tracker_store(rows: ImperiumDoc[]) {
 		},
 	};
 }
+
+
+// El front vive al lado del núcleo en el monorepo, no en la imagen del núcleo:
+// dentro del contenedor (`/app`) no hay `frontend/` y estas pruebas de fuente
+// del front se saltan; en el host corren (QA 2026-11-18).
+const FRONTEND = new URL('../../../../frontend/', import.meta.url);
+const HAY_FRONTEND = existsSync(new URL('src/app', FRONTEND));
+const front_src = (rel: string) => readFileSync(new URL(rel, FRONTEND), 'utf8');
 
 describe('PostGressTableTracker catalog derivation', () => {
 	test('CitizenReport schema fields include increment path, collection keys, and refs', () => {
@@ -186,12 +194,18 @@ describe('PostGressTableTracker catalog derivation', () => {
 		}
 		expect(col_names).not.toContain('display_leyend');
 		expect(col_names).not.toContain('field_name');
-		const form_src = readFileSync(
-			new URL(
-				'../../../../frontend/src/app/components/configuration/postgres-table-tracker/postgres-table-tracker-form/postgres-table-tracker-form.component.ts',
-				import.meta.url,
-			),
+		const field_values_src = readFileSync(
+			new URL('./postgres-table-tracker-field-values.ts', import.meta.url),
 			'utf8',
+		);
+		expect(field_values_src).not.toContain('take: 20000');
+		expect(field_values_src).toContain('value_counts');
+	});
+
+
+	test.skipIf(!HAY_FRONTEND)('tracker form describes SQL columns, not mongoose flags (fuente del front)', () => {
+		const form_src = front_src(
+			'src/app/components/configuration/postgres-table-tracker/postgres-table-tracker-form/postgres-table-tracker-form.component.ts',
 		);
 		expect(form_src).not.toContain("control_name: '__versionKey'");
 		expect(form_src).not.toContain("control_name: '__bufferCommands'");
@@ -199,12 +213,6 @@ describe('PostGressTableTracker catalog derivation', () => {
 		expect(form_src).not.toContain("control_name: '__capped'");
 		expect(form_src).toContain("control_name: '__schema_fields'");
 		expect(form_src).toContain('Tabla SQL');
-		const field_values_src = readFileSync(
-			new URL('./postgres-table-tracker-field-values.ts', import.meta.url),
-			'utf8',
-		);
-		expect(field_values_src).not.toContain('take: 20000');
-		expect(field_values_src).toContain('value_counts');
 	});
 
 	test('tracker model id keeps the required PostGressTableTracker spelling', () => {
@@ -731,14 +739,8 @@ describe('v13 surface no longer serves model-tracker', () => {
 		expect(catalog).not.toContain('"resource": "model-tracker"');
 	});
 
-	test('view-list create and edit field-values call PostGressTableTrackerService', () => {
-		const src = readFileSync(
-			new URL(
-				'../../../../frontend/src/app/components/ux/views/view-list/view-list.component.ts',
-				import.meta.url,
-			),
-			'utf8',
-		);
+	test.skipIf(!HAY_FRONTEND)('view-list create and edit field-values call PostGressTableTrackerService', () => {
+		const src = front_src('src/app/components/ux/views/view-list/view-list.component.ts');
 		expect(src).toContain('PostGressTableTrackerService');
 		expect(src).toContain('this.postgres_table_tracker_service');
 		expect(src).toContain(
@@ -749,5 +751,139 @@ describe('v13 surface no longer serves model-tracker', () => {
 		);
 		expect(src).not.toContain('this.model_tracker_service');
 		expect(src).not.toContain('ModelTrackerService');
+	});
+});
+
+describe('PostGressTableTracker: acceso del grupo Administrador (#264)', () => {
+	function access_store() {
+		const data: Record<string, ImperiumDoc[]> = {
+			'access-rights': [],
+			'user-group': [
+				{ _id: 'g-admin', _ref: 'user-group-0', name: 'Administrador', user_ids: ['u-ia-admin'], access_rights_ids: [] },
+			],
+		};
+		let seq = 0;
+		const matches = (row: ImperiumDoc, where: Record<string, unknown>) =>
+			Object.entries(where).every(([k, v]) => row[k] === v);
+		return {
+			data,
+			has: (r: string) => Object.hasOwn(data, r),
+			async find_id(r: string, id: string) {
+				return (data[r] ?? []).find((row) => String(row._id) === id) ?? null;
+			},
+			async find_where(r: string, where: Record<string, unknown>) {
+				return (data[r] ?? []).find((row) => matches(row, where)) ?? null;
+			},
+			async insert(r: string, doc: ImperiumDoc) {
+				const row = { ...doc, _id: `ar-${++seq}` };
+				data[r]!.push(row);
+				return row;
+			},
+			async update(r: string, id: string, patch: ImperiumDoc) {
+				const row = (data[r] ?? []).find((x) => String(x._id) === id);
+				if (row) Object.assign(row, patch);
+				return row ?? null;
+			},
+			async *scan(r: string) {
+				yield (data[r] ?? []).filter((row) => row.is_active !== false);
+			},
+			is_model_installed: () => true,
+			available_mongoose_models: () => [],
+		};
+	}
+
+	test('el Administrador puede leer el rastreador y reindexar; idempotente', async () => {
+		const { ensure_postgres_table_tracker_access, TRACKER_ADMIN_ACCESS_REF } = await import(
+			'./postgres-table-tracker.ts'
+		);
+		const { build_access } = await import('./auth.ts');
+		const store = access_store();
+		await ensure_postgres_table_tracker_access(store as never);
+		await ensure_postgres_table_tracker_access(store as never);
+		const admin_rights = store.data['access-rights']!.filter((r) => r._ref === TRACKER_ADMIN_ACCESS_REF);
+		expect(admin_rights).toHaveLength(1);
+		expect(store.data['user-group']![0]!.access_rights_ids).toEqual([admin_rights[0]!._id]);
+		const access = await build_access(store as never, { _id: 'u-ia-admin', _ref: 'user-ia-admin' });
+		expect(access.permissions_by_model.PostGressTableTracker).toMatchObject({
+			allow_read: true,
+			allow_update: true,
+			allow_delete: false,
+		});
+	});
+
+	test('sin grupo Administrador solo deja el permiso general', async () => {
+		const { ensure_postgres_table_tracker_access } = await import('./postgres-table-tracker.ts');
+		const store = access_store();
+		store.data['user-group'] = [];
+		await ensure_postgres_table_tracker_access(store as never);
+		expect(store.data['access-rights']!.map((r) => r._ref)).toEqual(['postgres-table-tracker-access-rights-0']);
+	});
+});
+
+describe('PostGressTableTracker: el chequeo HTTP encuentra el permiso (#264, cuentas ia.*)', () => {
+	// Caso de las cuentas ia.*: ia.admin adopta el grupo «Administrador» (user-group-0),
+	// que ya tiene el permiso sembrado con model_id «PostGressTableTracker» (doble s).
+	// El recurso es «postgres-table-tracker»: sus claves derivadas eran
+	// «PostgresTableTracker» y «postgrestabletracker», que nunca dan con
+	// «PostGressTableTracker» → 403 «ninguno de tus grupos (Administrador) lo concede».
+	function ia_store(groups?: ImperiumDoc[]) {
+		const data: Record<string, ImperiumDoc[]> = {
+			'postgres-table-tracker': [],
+			'access-rights': [
+				{ _id: 'ar-gen', _ref: 'postgres-table-tracker-access-rights-0', model_id: 'PostGressTableTracker', allow_read: true },
+				{
+					_id: 'ar-admin',
+					_ref: 'postgres-table-tracker-access-rights-administrador',
+					model_id: 'PostGressTableTracker',
+					group_id: 'user-group-0',
+					allow_read: true,
+					allow_update: true,
+				},
+			],
+			'user-group': groups ?? [
+				{ _id: 'g-admin', _ref: 'user-group-0', name: 'Administrador', user_ids: ['u-ia-admin'], access_rights_ids: ['ar-admin'] },
+			],
+		};
+		return {
+			has: (r: string) => Object.hasOwn(data, r),
+			loc: (r: string) => ({ resource: r }),
+			async *scan(r: string) {
+				yield data[r] ?? [];
+			},
+			is_model_installed: () => true,
+			available_mongoose_models: () => [],
+			// Igual que ImperiumStore.resource_for_model: refs.json mapea el nombre con doble s.
+			resource_for_model: (model: string) =>
+				model === 'PostGressTableTracker' ? 'postgres-table-tracker' : null,
+		};
+	}
+	const ia_admin = { _id: 'u-ia-admin', _ref: 'user-ia-admin', email: 'ia.admin@qa.imperium.test' };
+
+	test('ia.admin (Administrador) puede leer la lista y reindexar', async () => {
+		const { assert_http_access } = await import('./auth.ts');
+		const store = ia_store();
+		await assert_http_access(store as never, ia_admin, 'postgres-table-tracker', 'GET');
+		await assert_http_access(store as never, ia_admin, 'postgres-table-tracker', 'POST', {
+			extra: true,
+			action: 'trigger_reindex',
+		});
+	});
+
+	test('el grupo por _id (no por _ref) también vale', async () => {
+		const { assert_http_access } = await import('./auth.ts');
+		const store = ia_store([
+			{ _id: 'g-otro-admin', _ref: 'grupo-admin-profesa', name: 'Administrador PROFESA', user_ids: ['u-ia-admin'], access_rights_ids: ['ar-admin'] },
+		]);
+		await assert_http_access(store as never, ia_admin, 'postgres-table-tracker', 'GET');
+	});
+
+	test('un grupo sin el permiso sigue recibiendo 403', async () => {
+		const { assert_http_access } = await import('./auth.ts');
+		const store = ia_store([
+			{ _id: 'g-ventas', _ref: 'g-ventas', name: 'Ventas', user_ids: ['u-ia-admin'], access_rights_ids: [] },
+		]);
+		await expect(assert_http_access(store as never, ia_admin, 'postgres-table-tracker', 'GET')).rejects.toThrow(
+			/ninguno de tus grupos \(Ventas\)/,
+		);
 	});
 });

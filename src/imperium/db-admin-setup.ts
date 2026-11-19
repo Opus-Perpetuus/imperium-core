@@ -10,6 +10,7 @@
  * a la transacción: no se escapa al resto de la conexión, que es compartida.
  */
 import { debug_error } from './debug-request-log.ts';
+import { FEATURE_MAP_TEST_COLUMN_DDL } from './feature-map-test.ts';
 
 /** Solo lectura: `pg_read_all_data` y nada más. */
 export const CONSOLE_ROLE_READ = 'imperium_console_lectura';
@@ -88,7 +89,8 @@ async function prepare_db_admin_objects(sql: Bun.SQL): Promise<DbAdminCapabiliti
 			row_count    INTEGER,
 			duration_ms  INTEGER,
 			succeeded    BOOLEAN NOT NULL,
-			error        TEXT
+			error        TEXT,
+			${FEATURE_MAP_TEST_COLUMN_DDL}
 		)
 	`);
 	await sql.unsafe(`
@@ -191,7 +193,8 @@ export async function read_instance_id(sql: Bun.SQL): Promise<string | null> {
 		await sql.unsafe(`
 			CREATE TABLE IF NOT EXISTS ${DB_ADMIN_SCHEMA}.instance (
 				id          TEXT PRIMARY KEY,
-				created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+				created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+				${FEATURE_MAP_TEST_COLUMN_DDL}
 			)
 		`);
 		await sql.unsafe(

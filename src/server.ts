@@ -10,6 +10,14 @@ import {
 	pg_schema_name,
 	type KirletSchemaBundle,
 } from '@opus-perpetuus/imperium-core-kit';
+import {
+	ensure_feature_map_test_columns,
+	FEATURE_MAP_TEST_COLUMN,
+	FEATURE_MAP_TEST_COLUMN_DDL,
+	feature_map_test_requested,
+	in_feature_map_test,
+	run_with_feature_map_test,
+} from './imperium/feature-map-test.ts';
 import { handle_service_plane, service_plane_match } from './service-plane.ts';
 import { add_cors, create_imperium_layer } from './imperium/router.ts';
 import { restore_gate } from './imperium/db-admin-restore-gate.ts';
@@ -206,7 +214,26 @@ function hash(s: string): number {
 
 async function apply_bundle(bundle: KirletSchemaBundle): Promise<void> {
 	await apply_subject_schema_bundle(sql, bundle);
+	// Las tablas nuevas de la app también llevan `feature_map_test` (aunque su kit sea viejo).
+	await ensure_feature_map_test_columns(sql).catch(() => 0);
 	forget_columns(pg_schema_name(bundle.technicalId));
+}
+
+const feature_map_test_tables = new Set<string>();
+
+/** La tabla de la app tiene `feature_map_test` antes de marcar una fila (una vez por proceso). */
+async function ensure_feature_map_test_column(schema: string, table: string): Promise<void> {
+	const key = `${schema}.${table}`;
+	if (feature_map_test_tables.has(key)) return;
+	try {
+		await sql.unsafe(
+			`ALTER TABLE ${qident(schema)}.${qident(table)} ADD COLUMN IF NOT EXISTS ${FEATURE_MAP_TEST_COLUMN_DDL}`,
+		);
+		forget_columns(schema);
+	} catch {
+		/* el INSERT dirá el error real */
+	}
+	feature_map_test_tables.add(key);
 }
 
 /**
@@ -309,7 +336,12 @@ async function data_plane(
 		return rows[0] ?? null;
 	}
 	if (op === 'insert') {
-		const row = (body.row ?? {}) as Record<string, unknown>;
+		const row = { ...((body.row ?? {}) as Record<string, unknown>) };
+		delete row[FEATURE_MAP_TEST_COLUMN];
+		if (in_feature_map_test()) {
+			await ensure_feature_map_test_column(schema, table);
+			row[FEATURE_MAP_TEST_COLUMN] = true;
+		}
 		const keys = Object.keys(row).filter(is_column_name);
 		const cols = keys.map(qident).join(', ');
 		const vals = keys.map((_, i) => `$${i + 1}`).join(', ');
@@ -668,7 +700,8 @@ const server = Bun.serve({
 		try {
 			req = await request_with_received_body(req);
 			remember_socket_ip(req, socket_ip);
-			res = await with_deadline((async (): Promise<Response> => {
+			// Corrida de feature map: lo que esta petición inserte queda `feature_map_test`.
+			res = await with_deadline(run_with_feature_map_test(feature_map_test_requested(req.headers), async (): Promise<Response> => {
 			if (
 				(req.method === 'GET' || req.method === 'HEAD') &&
 				(path === '/' || path === '/app' || path === '/app/')
@@ -1014,7 +1047,7 @@ const server = Bun.serve({
 			if (compat) return compat;
 
 			return Response.json({ error: 'not found' }, { status: 404 });
-			})(), http_deadline_ms());
+			}), http_deadline_ms());
 		} catch (err) {
 			const mapped = caught_http_error(err);
 			const raw = err instanceof Error ? err.message : String(err);

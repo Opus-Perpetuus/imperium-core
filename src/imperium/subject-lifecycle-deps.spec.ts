@@ -902,6 +902,22 @@ describe('auto-actualización con versiones descubiertas en el registro', () => 
 		await settled(db);
 	});
 
+	test('con «Actualizar apps automáticamente» apagado no se actualiza nada', async () => {
+		// Regla de producto: detectar sí (la pantalla la enseña pendiente),
+		// aplicar solo con la opción activa. Incluye el valor envuelto que
+		// guarda Postgres ('"false"', como en imperium-v13).
+		for (const enabled of [false, 'false', '"false"', 'no', undefined]) {
+			const config: Record<string, unknown> = { ...ON };
+			if (enabled === undefined) delete config['configuration-subject-auto-update-enabled'];
+			else config['configuration-subject-auto-update-enabled'] = enabled;
+			const db = db_with(found(30));
+			const pass = await run_subject_auto_update_pass(store_with(config), db.sql);
+			expect(pass.enabled).toBe(false);
+			expect(pass.updated).toEqual([]);
+			expect(db.rows.get('subject-pos')!.installed_image).toBe(IMAGE_OLD);
+		}
+	});
+
 	test('sin la espera cumplida, o con su interruptor apagado, va al pin', async () => {
 		for (const [config, hours] of [
 			[ON, 2],

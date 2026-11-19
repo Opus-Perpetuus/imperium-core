@@ -184,6 +184,28 @@ class SearchEngineService {
 
 export const SearchEngine = new SearchEngineService();
 
+/**
+ * Campos que no son texto de búsqueda (#268): el propio `search_field` (meterlo hacía que el
+ * texto creciera en cada reindexado y nunca coincidiera con el guardado) y las marcas técnicas
+ * (`updated_at` cambia en cada escritura, así que el texto siempre «cambiaba»).
+ */
+const SEARCH_TECHNICAL_KEYS = new Set([
+	'search_field',
+	'id',
+	'created_at',
+	'updated_at',
+	'createdAt',
+	'updatedAt',
+	'deleted_at',
+	'deletedAt',
+	'created_by',
+	'updated_by',
+	'createdBy',
+	'updatedBy',
+	'__v',
+]);
+
+/** El texto de búsqueda que sale de los datos del documento, sin su `search_field` ni campos técnicos. */
 export function search_text_from_doc(doc: ImperiumDoc) {
 	const seen = new Set<string>();
 	const parts: string[] = [];
@@ -200,13 +222,43 @@ export function search_text_from_doc(doc: ImperiumDoc) {
 	add(doc.name);
 	add(doc.description);
 	add(doc._ref);
-	add(doc.search_field);
 	for (const [key, value] of Object.entries(doc)) {
 		if (key.startsWith('_') || key === 'payload' || key === 'custom_data') continue;
+		if (SEARCH_TECHNICAL_KEYS.has(key)) continue;
 		if (typeof value === 'string' || typeof value === 'number') add(value);
 	}
-	for (const value of Object.values(as_object(doc.payload))) {
+	for (const [key, value] of Object.entries(as_object(doc.payload))) {
+		if (SEARCH_TECHNICAL_KEYS.has(key)) continue;
 		if (typeof value === 'string' || typeof value === 'number') add(value);
 	}
 	return parts.join(' ').replace(/\s+/g, ' ').trim();
+}
+
+function search_word(word: string) {
+	return word.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+}
+
+/**
+ * El `search_field` que debe quedar tras reindexar (#268): el guardado tal cual (lo escribe cada
+ * dominio: pedidos con el cliente, debug_log, catálogos geo…) más las palabras de los datos que
+ * le falten (sin distinguir mayúsculas ni acentos). Es idempotente: si ya trae todas, regresa el
+ * guardado sin cambios y el reindexado no reescribe la fila.
+ */
+export function search_field_for_reindex(doc: ImperiumDoc) {
+	const stored = typeof doc.search_field === 'string' ? doc.search_field.trim() : '';
+	const have = new Set(stored.split(/\s+/).filter(Boolean).map(search_word));
+	const missing: string[] = [];
+	for (const word of search_text_from_doc(doc).split(/\s+/).filter(Boolean)) {
+		const key = search_word(word);
+		if (have.has(key)) continue;
+		have.add(key);
+		missing.push(word);
+	}
+	if (!missing.length) return stored;
+	return [stored, missing.join(' ')].filter(Boolean).join(' ');
+}
+
+/** Lo que va a Meilisearch: el `search_field` del dominio más los datos, sin repetir palabras. */
+export function search_index_text(doc: ImperiumDoc) {
+	return search_field_for_reindex(doc);
 }

@@ -15,6 +15,7 @@ import {
 	type ShareScopeEntry,
 } from './share-binding.ts';
 import type { ImperiumStore } from './store.ts';
+import { FEATURE_MAP_TEST_COLUMN_DDL } from './feature-map-test.ts';
 
 const SHARE_HEADER = 'x-imperium-compartido';
 const SHARE_QUERY = 'compartido';
@@ -326,7 +327,8 @@ function ensure_share_tables(sql: Bun.SQL): Promise<void> {
 			published_at TIMESTAMPTZ,
 			revoked_at TIMESTAMPTZ,
 			last_access_at TIMESTAMPTZ,
-			access_count INTEGER NOT NULL DEFAULT 0
+			access_count INTEGER NOT NULL DEFAULT 0,
+			${FEATURE_MAP_TEST_COLUMN_DDL}
 		)`);
 		await sql.unsafe(
 			`CREATE INDEX IF NOT EXISTS imperium_shares_owner ON public.imperium_shares (owner_id, created_at DESC)`,
@@ -337,7 +339,8 @@ function ensure_share_tables(sql: Bun.SQL): Promise<void> {
 			label TEXT NOT NULL DEFAULT '',
 			created_by TEXT NOT NULL DEFAULT '',
 			created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-			PRIMARY KEY (kind, key)
+			PRIMARY KEY (kind, key),
+			${FEATURE_MAP_TEST_COLUMN_DDL}
 		)`);
 	})().catch((err) => {
 		tables_ready = null;

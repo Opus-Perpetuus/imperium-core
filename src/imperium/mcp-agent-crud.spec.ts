@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { record_document_history } from './history.ts';
-import { crud_write } from './mcp-agent.ts';
+import { apply_schema_validation, crud_write, public_schema_validation } from './mcp-agent.ts';
 
 type Call = { method: string; path: string; rest: string; body: unknown };
 
@@ -53,5 +53,46 @@ describe('escrituras del agente MCP', () => {
 		await expect(
 			crud_write({} as never, user, 'registro-emergencias', 'POST', '', {}, crud.handle),
 		).rejects.toMatchObject({ message: 'Falta el campo prioridad', status: 400 });
+	});
+});
+
+describe('describe_model del agente MCP usa el schema_validation real', () => {
+	const base = [
+		{ field: 'name', label: 'Name', type: 'string', required: false, is_array: false },
+		{ field: 'prioridad', label: 'Prioridad', type: 'string', required: false, is_array: false },
+		{ field: 'notas', label: 'Notas', type: 'string', required: false, is_array: false },
+	];
+	const schema = {
+		required: ['prioridad', 'tipo', 'password'],
+		properties: {
+			prioridad: { type: 'string', 'x-component': 'input-select', enum: ['alta', 'baja'] },
+			tipo: { type: 'string', title: 'Tipo de reporte' },
+			password: { type: 'string' },
+		},
+		metadata: { state_fields: { fields: [] } },
+	};
+
+	test('los requeridos son los del schema, con componente y enum', () => {
+		const fields = apply_schema_validation(base, schema);
+		const required = fields.filter((f) => f.required).map((f) => f.field);
+		expect(required).toEqual(['prioridad', 'tipo']);
+		expect(fields.find((f) => f.field === 'name')?.required).toBe(false);
+		expect(fields.find((f) => f.field === 'prioridad')).toMatchObject({
+			component: 'input-select',
+			enum: ['alta', 'baja'],
+		});
+		expect(fields.find((f) => f.field === 'tipo')?.label).toBe('Tipo de reporte');
+	});
+
+	test('sin schema conserva name como único requerido', () => {
+		const fields = apply_schema_validation(base, null);
+		expect(fields.filter((f) => f.required).map((f) => f.field)).toEqual(['name']);
+	});
+
+	test('el schema que ve el agente no expone campos sensibles', () => {
+		const pub = public_schema_validation(schema);
+		expect(pub?.required).toEqual(['prioridad', 'tipo']);
+		expect(Object.keys(pub?.properties ?? {})).not.toContain('password');
+		expect(pub?.state_fields).toEqual({ fields: [] });
 	});
 });

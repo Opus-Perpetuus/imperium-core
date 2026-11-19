@@ -5,6 +5,7 @@
  */
 import type { SubjectFiles } from "./imperium/subject-files.ts";
 import { once_per_client } from "./imperium/schema-once.ts";
+import { FEATURE_MAP_TEST_COLUMN_DDL } from './imperium/feature-map-test.ts';
 
 export function service_plane_match(path: string): {
   tid: string;
@@ -32,19 +33,22 @@ async function create_svc_tables(sql: Bun.SQL): Promise<void> {
       actor_label TEXT,
       payload JSONB,
       summary TEXT,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ${FEATURE_MAP_TEST_COLUMN_DDL}
     );
     CREATE TABLE IF NOT EXISTS public.subject_params (
       technical_id TEXT NOT NULL,
       key TEXT NOT NULL,
       value JSONB,
-      PRIMARY KEY (technical_id, key)
+      PRIMARY KEY (technical_id, key),
+      ${FEATURE_MAP_TEST_COLUMN_DDL}
     );
     CREATE TABLE IF NOT EXISTS public.subject_counters (
       technical_id TEXT NOT NULL,
       name TEXT NOT NULL,
       n INTEGER NOT NULL DEFAULT 0,
-      PRIMARY KEY (technical_id, name)
+      PRIMARY KEY (technical_id, name),
+      ${FEATURE_MAP_TEST_COLUMN_DDL}
     );
   `);
   await unwrap_double_encoded_jsonb(sql);

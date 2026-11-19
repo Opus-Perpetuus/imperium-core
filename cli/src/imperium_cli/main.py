@@ -4,7 +4,7 @@ import argparse
 import sys
 from collections.abc import Callable
 
-from .commands import apps, caja, estado, host, inventario, masivo, mcp, perfiles, recurso, respaldos, sesion, ssh_shell, usuarios, ventas
+from .commands import apps, caja, estado, feature_map_test, host, inventario, masivo, mcp, perfiles, recurso, respaldos, sesion, ssh_shell, usuarios, ventas
 from .exits import CliError, USO
 from .version import cli_version
 
@@ -74,6 +74,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_rd.add_argument("--salida")
     p_rd.add_argument("--dry-run", action="store_true")
     p_rd.set_defaults(handler=respaldos.descargar)
+
+    p_fmt = sub.add_parser("feature-map-test", parents=[shared], help="Datos de prueba de los feature maps (resumen y borrado en masa).")
+    fmt_sub = p_fmt.add_subparsers(dest="fmt_cmd", required=True)
+    p_fr = fmt_sub.add_parser("resumen", parents=[shared])
+    p_fr.set_defaults(handler=feature_map_test.resumen)
+    p_fp = fmt_sub.add_parser("purgar", parents=[shared])
+    p_fp.add_argument("--dry-run", action="store_true")
+    p_fp.add_argument("--si", "--yes", dest="yes", action="store_true")
+    p_fp.set_defaults(handler=feature_map_test.purgar)
 
     p_us = sub.add_parser("usuarios", parents=[shared], help="Usuarios y grupos (con el ACL de tu cuenta).")
     us_sub = p_us.add_subparsers(dest="us_cmd", required=True)

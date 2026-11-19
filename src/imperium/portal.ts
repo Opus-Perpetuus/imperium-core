@@ -13,6 +13,7 @@ import {
 } from '@opus-perpetuus/imperium-core-kit';
 import { fail } from './envelope.ts';
 import type { ImperiumDoc } from './envelope.ts';
+import { FEATURE_MAP_TEST_COLUMN_DDL } from './feature-map-test.ts';
 
 export type PortalPageRow = {
 	slug: string;
@@ -69,7 +70,8 @@ export function create_postgres_portal_store(sql: Bun.SQL): PortalPageStore {
         published_by TEXT,
         is_active BOOLEAN NOT NULL DEFAULT TRUE,
         created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        ${FEATURE_MAP_TEST_COLUMN_DDL}
       )
     `,
 			)

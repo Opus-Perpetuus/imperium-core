@@ -8,6 +8,7 @@ import {
 	normalize_custom_field_definitions,
 	type CustomFieldDefinition,
 } from './custom-fields.ts';
+import { link_access_right_to_group } from './access-right-group-link.ts';
 import { as_array, as_object, type ImperiumDoc } from './envelope.ts';
 import { model_id_for_resource } from './state-fields.ts';
 import type { ExtraCol, ImperiumStore, ModuleLoc } from './store.ts';
@@ -457,24 +458,53 @@ export async function sync_postgres_table_tracker(store: ImperiumStore): Promise
 	}
 }
 
+export const TRACKER_ADMIN_ACCESS_REF = 'postgres-table-tracker-access-rights-administrador';
+/** Grupo Administrador sembrado (mismo `_ref` que `ADMIN_USER_GROUP_REF`). */
+const ADMIN_USER_GROUP_REF = 'user-group-0';
+
+/**
+ * Permiso general de lectura del catálogo y, para el grupo Administrador, leer y
+ * reindexar (`trigger_reindex` pide `allow_update`). El permiso general sin grupo
+ * solo vale para usuarios sin grupos, así que el Administrador recibía 403 en
+ * «Indexar búsqueda» (#264). Idempotente por `_ref`; no pisa lo ya editado.
+ */
 export async function ensure_postgres_table_tracker_access(store: ImperiumStore) {
 	if (!store.has('access-rights')) return;
-	const existing =
+	const general =
 		(await store.find_where('access-rights', {
 			_ref: 'postgres-table-tracker-access-rights-0',
 		})) ??
 		(await store.find_where('access-rights', { model_id: TRACKER_MODEL_NAME }));
-	if (existing) return;
-	await store.insert('access-rights', {
-		_ref: 'postgres-table-tracker-access-rights-0',
-		name: 'PostGressTableTracker | Permisos generales',
-		description: 'Consulta el catálogo de tablas SQL registradas',
-		model_id: TRACKER_MODEL_NAME,
-		allow_read: true,
-		allow_create: false,
-		allow_update: false,
-		allow_delete: false,
-	});
+	if (!general) {
+		await store.insert('access-rights', {
+			_ref: 'postgres-table-tracker-access-rights-0',
+			name: 'PostGressTableTracker | Permisos generales',
+			description: 'Consulta el catálogo de tablas SQL registradas',
+			model_id: TRACKER_MODEL_NAME,
+			allow_read: true,
+			allow_create: false,
+			allow_update: false,
+			allow_delete: false,
+		});
+	}
+	if (!store.has('user-group')) return;
+	const admin = await store.find_where('user-group', { _ref: ADMIN_USER_GROUP_REF });
+	if (!admin) return;
+	const right =
+		(await store.find_where('access-rights', { _ref: TRACKER_ADMIN_ACCESS_REF })) ??
+		(await store.insert('access-rights', {
+			_ref: TRACKER_ADMIN_ACCESS_REF,
+			name: 'PostGressTableTracker | Administrador (leer/reindexar)',
+			description: 'Administrador: consultar el catálogo de tablas SQL e indexar la búsqueda.',
+			model_id: TRACKER_MODEL_NAME,
+			group_id: ADMIN_USER_GROUP_REF,
+			allow_read: true,
+			allow_create: false,
+			allow_update: true,
+			allow_delete: false,
+			is_active: true,
+		}));
+	await link_access_right_to_group(store, right);
 }
 
 export function schema_fields_of(tracker: ImperiumDoc | null | undefined): TrackerSchemaField[] {

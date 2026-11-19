@@ -2,8 +2,11 @@ import { describe, expect, test } from 'bun:test';
 import type { ImperiumDoc } from './envelope.ts';
 import type { ImperiumStore } from './store.ts';
 import { pedidos_sync_offline } from './actions.ts';
+import { list_search_columns } from './list-search.ts';
+import { search_index_text } from './search-engine.ts';
 import {
 	ALLOW_NEGATIVE_STOCK_REF,
+	PEDIDOS_OFFLINE_ESTADO_REF,
 	faltantes_de_existencia,
 	prepare_pedido_update,
 } from './pedidos-flow.ts';
@@ -12,10 +15,14 @@ const PRODUCTO = '507f1f77bcf86cd799439013';
 const PRODUCTO_2 = '507f1f77bcf86cd799439014';
 const ADMIN = { _id: 'admin', _ref: 'user-menu-management-0', name: 'admin' } as ImperiumDoc;
 
-function memory_store(products: ImperiumDoc[], permitir_negativos?: boolean) {
+function memory_store(products: ImperiumDoc[], permitir_negativos?: boolean, estado_offline?: unknown) {
 	const data: Record<string, ImperiumDoc[]> = { products, pedidos: [] };
+	if (permitir_negativos !== undefined || estado_offline !== undefined) data.configuration = [];
 	if (permitir_negativos !== undefined) {
-		data.configuration = [{ _id: 'c', _ref: ALLOW_NEGATIVE_STOCK_REF, value: permitir_negativos }];
+		data.configuration.push({ _id: 'c', _ref: ALLOW_NEGATIVE_STOCK_REF, value: permitir_negativos });
+	}
+	if (estado_offline !== undefined) {
+		data.configuration.push({ _id: 'e', _ref: PEDIDOS_OFFLINE_ESTADO_REF, value: estado_offline });
 	}
 	let seq = 0;
 	const matches = (row: ImperiumDoc, where: Record<string, unknown>) =>
@@ -65,7 +72,7 @@ describe('sync offline de pedidos con existencia', () => {
 		expect(store.data.pedidos[0].estado).toBe('confirmado');
 	});
 
-	test('en un mismo lote lo ya confirmado se resta del siguiente', async () => {
+	test('en un mismo lote lo ya confirmado se resta del siguiente para el aviso', async () => {
 		const store = memory_store([{ _id: PRODUCTO, name: 'Codo', existencia: 10 }]);
 		const res = await pedidos_sync_offline({
 			store,
@@ -96,12 +103,14 @@ describe('sync offline de pedidos con existencia', () => {
 		const out = (await res.json()) as {
 			resultados: Array<{ estado?: string; aviso?: string }>;
 		};
-		expect(out.resultados.map((r) => r.estado)).toEqual(['confirmado', 'borrador', 'confirmado']);
+		expect(out.resultados.map((r) => r.estado)).toEqual(['confirmado', 'confirmado', 'confirmado']);
+		expect(out.resultados[0].aviso).toBeUndefined();
 		expect(out.resultados[1].aviso).toContain('Codo (pide 6, hay 4)');
-		expect(store.data.pedidos.map((p) => p.estado)).toEqual(['confirmado', 'borrador', 'confirmado']);
+		expect(out.resultados[2].aviso).toContain('Codo (pide 4,');
+		expect(store.data.pedidos.map((p) => p.estado)).toEqual(['confirmado', 'confirmado', 'confirmado']);
 	});
 
-	test('sin existencia queda en borrador (pendiente) con aviso', async () => {
+	test('sin existencia llega confirmado con aviso', async () => {
 		const store = memory_store([
 			{ _id: PRODUCTO, name: 'Codo', existencia: 2 },
 			{ _id: PRODUCTO_2, name: 'Tubo', existencia: 50 },
@@ -110,21 +119,52 @@ describe('sync offline de pedidos con existencia', () => {
 			{ product: PRODUCTO, cantidad: 5, precio: 1 },
 			{ product: PRODUCTO_2, cantidad: 1, precio: 1 },
 		]);
-		expect(out.resultados[0]).toMatchObject({ status: 'creado', estado: 'borrador' });
-		expect(out.resultados[0].aviso).toContain('Codo (pide 5, hay 2)');
-		expect(out.resultados[0].aviso).not.toContain('Tubo');
+		expect(out.resultados[0]).toMatchObject({ status: 'creado', estado: 'confirmado' });
+		expect(out.resultados[0].aviso).toBe('El pedido F-1 se confirmó sin existencia suficiente: Codo (pide 5, hay 2).');
 		expect(out.avisos).toHaveLength(1);
+		expect(store.data.pedidos[0].estado).toBe('confirmado');
+	});
+
+	test('sin precio llega confirmado con aviso en vez de fallar', async () => {
+		const store = memory_store([{ _id: PRODUCTO, name: 'Codo', existencia: 10 }]);
+		const out = await sync(store, [{ product: PRODUCTO, cantidad: 1, precio: 0 }]);
+		expect(out.resultados[0]).toMatchObject({ status: 'creado', estado: 'confirmado' });
+		expect(out.resultados[0].aviso).toBe('El pedido F-1 se confirmó sin precio en: Codo.');
+		expect(store.data.pedidos[0].estado).toBe('confirmado');
+	});
+});
+
+describe('estado de los pedidos sincronizados (parámetro, Odoo #262)', () => {
+	test('con el parámetro en borrador llegan en borrador, sin revisar existencia', async () => {
+		const store = memory_store([{ _id: PRODUCTO, name: 'Codo', existencia: 0 }], undefined, 'borrador');
+		const out = await sync(store, [{ product: PRODUCTO, cantidad: 5, precio: 1 }]);
+		expect(out.resultados[0]).toMatchObject({ status: 'creado', estado: 'borrador' });
+		expect(out.resultados[0].aviso).toBeUndefined();
 		expect(store.data.pedidos[0].estado).toBe('borrador');
 	});
 
-	test('sin precio queda en borrador (pendiente) con aviso en vez de fallar', async () => {
+	test('el estado lo decide el servidor, no el que manda el teléfono', async () => {
+		const store = memory_store([{ _id: PRODUCTO, name: 'Codo', existencia: 10 }], undefined, 'borrador');
+		const res = await pedidos_sync_offline({
+			store,
+			actor: ADMIN,
+			body: { pedidos: [{ offline_uuid: 'u-9', folio: 'F-9', estado: 'surtido', articulos: [] }] },
+		} as never);
+		const out = (await res.json()) as { resultados: Array<{ estado?: string }> };
+		expect(out.resultados[0].estado).toBe('borrador');
+	});
+
+	test('el pedido sincronizado llega con fecha (Odoo #267)', async () => {
 		const store = memory_store([{ _id: PRODUCTO, name: 'Codo', existencia: 10 }]);
-		const out = await sync(store, [{ product: PRODUCTO, cantidad: 1, precio: 0 }]);
-		expect(out.resultados[0]).toMatchObject({ status: 'creado', estado: 'borrador' });
-		expect(out.resultados[0].aviso).toBe(
-			'El pedido F-1 quedó pendiente (borrador) porque no tiene precio: Codo.',
-		);
-		expect(store.data.pedidos[0].estado).toBe('borrador');
+		await sync(store, [{ product: PRODUCTO, cantidad: 1, precio: 1 }]);
+		const fecha = String(store.data.pedidos[0].fecha ?? '');
+		expect(Number.isNaN(new Date(fecha).getTime())).toBe(false);
+	});
+
+	test('un valor que no es un estado permitido usa confirmado', async () => {
+		const store = memory_store([{ _id: PRODUCTO, name: 'Codo', existencia: 10 }], undefined, 'surtido');
+		const out = await sync(store, [{ product: PRODUCTO, cantidad: 1, precio: 1 }]);
+		expect(out.resultados[0].estado).toBe('confirmado');
 	});
 
 	test('cuenta lo apartado y suma renglones del mismo producto', async () => {
@@ -155,10 +195,11 @@ describe('permitir existencia negativa (configurable)', () => {
 		expect(out.avisos).toBeUndefined();
 	});
 
-	test('con el interruptor en NO explícito, offline sin existencia queda en borrador', async () => {
+	test('con el interruptor en NO explícito, offline sin existencia llega confirmado con aviso', async () => {
 		const store = memory_store([{ _id: PRODUCTO, name: 'Codo', existencia: 0 }], false);
 		const out = await sync(store, [{ product: PRODUCTO, cantidad: 5, precio: 1 }]);
-		expect(out.resultados[0].estado).toBe('borrador');
+		expect(out.resultados[0].estado).toBe('confirmado');
+		expect(out.resultados[0].aviso).toContain('Codo (pide 5, hay 0)');
 	});
 
 	const previo = (articulos: ImperiumDoc[]) =>
@@ -194,5 +235,67 @@ describe('permitir existencia negativa (configurable)', () => {
 			previo(articulos),
 		);
 		expect(out.estado).toBe('surtido');
+	});
+});
+
+describe('sync offline de pedidos: contacto como referencia (#264)', () => {
+	const CONTACTO = '62dedd2044431c7c0c020039';
+	async function sync_contacto(contacto: unknown) {
+		const store = memory_store([{ _id: PRODUCTO, name: 'Codo', existencia: 10 }]);
+		await pedidos_sync_offline({
+			store,
+			actor: ADMIN,
+			body: {
+				pedidos: [
+					{
+						offline_uuid: 'u-1',
+						folio: 'F-1',
+						estado: 'confirmado',
+						contacto,
+						articulos: [{ product: PRODUCTO, cantidad: 1, precio: 1 }],
+					},
+				],
+			},
+		} as never);
+		return store.data.pedidos[0];
+	}
+
+	test('el contacto completo del celular se guarda como su id, no como JSON', async () => {
+		const pedido = await sync_contacto({ _id: CONTACTO, name: 'ALVAREZ GONZALEZ MARIA', rfc: 'XAXX010101000' });
+		expect(pedido.contacto).toBe(CONTACTO);
+	});
+
+	test('el contacto que ya llega como id se guarda igual', async () => {
+		const pedido = await sync_contacto(CONTACTO);
+		expect(pedido.contacto).toBe(CONTACTO);
+	});
+
+	test('el pedido sincronizado se encuentra buscando el nombre del contacto (SQL y Meilisearch)', async () => {
+		const store = memory_store([{ _id: PRODUCTO, name: 'Codo', existencia: 10 }]);
+		store.data.contacto = [{ _id: CONTACTO, name: 'ALVAREZ GONZALEZ MARIA', codigo: '1050094' }];
+		await pedidos_sync_offline({
+			store,
+			actor: ADMIN,
+			body: {
+				pedidos: [
+					{
+						offline_uuid: 'u-1',
+						folio: 'F-1',
+						estado: 'confirmado',
+						contacto: { _id: CONTACTO, name: 'ALVAREZ GONZALEZ MARIA' },
+						articulos: [{ product: PRODUCTO, cantidad: 1, precio: 1 }],
+					},
+				],
+			},
+		} as never);
+		const pedido = store.data.pedidos[0];
+		expect(pedido.contacto).toBe(CONTACTO);
+		// La lista de pedidos busca con ILIKE en search_field (pg_trgm)…
+		expect(list_search_columns('pedidos', new Set(['name', 'search_field', 'contacto']))).toContain(
+			'search_field',
+		);
+		expect(String(pedido.search_field)).toContain('ALVAREZ GONZALEZ MARIA');
+		// …y Meilisearch indexa search_index_text, que lleva el search_field.
+		expect(search_index_text(pedido)).toContain('ALVAREZ GONZALEZ MARIA');
 	});
 });

@@ -23,6 +23,7 @@ import {
 } from './negative-stock.ts';
 
 export { ALLOW_NEGATIVE_STOCK_REF, allow_negative_stock };
+import { read_config_value } from './subject-versions.ts';
 import { broadcast_event } from './socket-stub.ts';
 import type { ImperiumStore } from './store.ts';
 
@@ -114,6 +115,7 @@ export async function prepare_pedido_create(
 	store: ImperiumStore,
 	doc: ImperiumDoc,
 	actor: ImperiumDoc | null,
+	opciones: { validar_confirmacion?: boolean } = {},
 ): Promise<ImperiumDoc> {
 	const out: ImperiumDoc = { ...doc };
 	delete out._id;
@@ -127,13 +129,20 @@ export async function prepare_pedido_create(
 		const almacen = await user_warehouse_id(store, actor);
 		if (almacen) out.almacen = almacen;
 	}
-	if (text(out.estado) === 'confirmado') await assert_pedido_confirmable(store, out);
+	if (text(out.estado) === 'confirmado' && opciones.validar_confirmacion !== false) {
+		await assert_pedido_confirmable(store, out);
+	}
 	await sync_pedido_status_reservation(store, out, { dry_run: true });
-	out.folio = build_folio(actor);
+	const folio_base = build_folio(actor);
+	out.folio = folio_base;
 	out.folio_interno = await store.next_auto_increment('Pedidos', 'folio_interno', {
 		resource: 'pedidos',
 		context: out,
 	});
+	// Usuario y hora no bastan: dos altas del mismo usuario en el mismo segundo
+	// (lote offline, doble clic, semillas) compartían folio (Odoo #267). El
+	// folio interno sale de un contador atómico, así que el sufijo lo hace único.
+	out.folio = `${folio_base}-${out.folio_interno}`;
 	out.name = `PEDIDO-${out.folio}`;
 	if (!text(out.fecha)) out.fecha = new Date().toISOString();
 	out.search_field = await pedido_search_field(store, out);
@@ -152,6 +161,8 @@ export async function prepare_pedido_update(
 	delete out.createdAt;
 	delete out.updatedAt;
 	delete out.folio_interno;
+	// La ruta se deriva de delivery-route.contacts al leer (#275): no se guarda.
+	delete out.ruta;
 	normalize_articulos_product(out, previous?.articulos);
 	normalize_lista_de_precios_id(out);
 	await recompute_totals(store, out);
@@ -372,6 +383,10 @@ export function decorate_pedido(doc: ImperiumDoc, mode: 'list' | 'detail'): Impe
 		if (employee._id) {
 			out.assigned_employee = text(employee.name) || ref_id(employee);
 		}
+		const user_id = ref_id(out.usuario_id) || ref_id(out.usuario);
+		if (user_id && looks_like_record_id(user_id)) out.usuario_id = user_id;
+		const user = as_object(out.usuario);
+		if (user._id) out.usuario = text(user.name) || user_id;
 	}
 	return out;
 }
@@ -401,6 +416,16 @@ export async function hydrate_pedido_detail(
 			out.contacto = picked;
 		}
 	}
+	// #275: el detalle muestra vendedor y ruta por nombre, igual que la lista.
+	const by_contact = contact_id ? await routes_by_contact(store) : new Map();
+	out.ruta = ruta_names(by_contact.get(contact_id));
+	const uid = usuario_id_of(out);
+	if (uid) {
+		out.usuario_id = uid;
+		const name =
+			usuario_name_of(out) || ((await load_name_map(store, 'user', [uid])).get(uid) ?? '');
+		out.usuario = { _id: uid, name };
+	}
 	const lista_id = ref_id(out.listaDePreciosId);
 	if (lista_id && store.has('lista-de-precios')) {
 		const lista = await store.find_id('lista-de-precios', lista_id);
@@ -421,10 +446,91 @@ export async function enrich_pedidos_list(
 ): Promise<ImperiumDoc[]> {
 	const decorated = rows.map((row) => decorate_pedido(row, 'list'));
 	const by_contact = decorated.length ? await routes_by_contact(store) : new Map();
-	return decorated.map((row) => ({
-		...row,
-		ruta: ruta_names(by_contact.get(ref_id(row.contacto_id))),
-	}));
+	const missing_ids = decorated
+		.map((row) => ({ id: usuario_id_of(row), name: usuario_name_of(row) }))
+		.filter((row) => row.id && !row.name)
+		.map((row) => row.id);
+	const user_names = missing_ids.length
+		? await load_name_map(store, 'user', missing_ids)
+		: new Map();
+	return decorated.map((row) => {
+		const uid = usuario_id_of(row);
+		const name = usuario_name_of(row) || (uid ? (user_names.get(uid) ?? '') : '');
+		return {
+			...row,
+			ruta: ruta_names(by_contact.get(ref_id(row.contacto_id))),
+			usuario: name,
+			...(uid ? { usuario_id: uid } : {}),
+		};
+	});
+}
+
+function usuario_id_of(row: ImperiumDoc): string {
+	const from_id = ref_id(row.usuario_id);
+	if (from_id && looks_like_record_id(from_id)) return from_id;
+	const from_user = ref_id(row.usuario);
+	return looks_like_record_id(from_user) ? from_user : '';
+}
+
+function usuario_name_of(row: ImperiumDoc): string {
+	const user = as_object(row.usuario);
+	const from_object = text(user.name);
+	if (from_object) return from_object;
+	const raw = text(row.usuario);
+	return raw && !looks_like_record_id(raw) ? raw : '';
+}
+
+/** Id de documento (ObjectId de 24 hex o UUID). Un nombre de vendedor no aplica. */
+export function looks_like_record_id(value: string): boolean {
+	const text_value = String(value ?? '').trim();
+	return (
+		/^[a-f0-9]{24}$/i.test(text_value) ||
+		/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+			text_value,
+		)
+	);
+}
+
+const NO_MATCH_USUARIO = '__no_match__';
+
+/**
+ * El filtro de columna Vendedor manda el `name` del usuario (`?usuario=IA Vendedor`).
+ * En la tabla `usuario` es el id: se resuelve a `{ in: ids }` antes del WHERE.
+ */
+export async function resolve_pedidos_usuario_filter(
+	store: ImperiumStore,
+	where: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+	if (!where || (where.usuario == null && where.usuario_id == null)) return where;
+	const raw = where.usuario ?? where.usuario_id;
+	const values = Array.isArray((raw as { in?: unknown[] })?.in)
+		? (raw as { in: unknown[] }).in.map((item) => String(item ?? '').trim())
+		: [String(raw ?? '').trim()];
+	const ids: string[] = [];
+	const names: string[] = [];
+	for (const value of values.filter(Boolean)) {
+		if (looks_like_record_id(value)) ids.push(value);
+		else names.push(value);
+	}
+	if (names.length && store.has('user')) {
+		const found = await store.find_many('user', {
+			where: names.length === 1 ? { name: names[0] } : { name: { in: names } },
+			take: 200,
+			include_inactive: true,
+			populate: false,
+			skip_total: true,
+		});
+		const wanted = new Set(names);
+		for (const row of found.rows) {
+			const id = String(row._id ?? '').trim();
+			const name = text(row.name);
+			if (id && wanted.has(name)) ids.push(id);
+		}
+	}
+	const next = { ...where };
+	delete next.usuario_id;
+	next.usuario = ids.length ? { in: [...new Set(ids)] } : NO_MATCH_USUARIO;
+	return next;
 }
 
 function created_ms(doc: ImperiumDoc): number {
@@ -707,14 +813,26 @@ function detalle_faltantes(faltantes: FaltanteExistencia[]): string {
 	return faltantes.map((f) => `${f.nombre} (pide ${f.requerido}, hay ${f.disponible})`).join(', ');
 }
 
+export const PEDIDOS_OFFLINE_ESTADO_REF = 'configuration-pedidos-offline-sync-estado';
+export const PEDIDOS_OFFLINE_ESTADOS = ['confirmado', 'borrador'] as const;
+export type EstadoPedidoOffline = (typeof PEDIDOS_OFFLINE_ESTADOS)[number];
+
+/** Estado con el que llegan los pedidos sincronizados del offline (parámetro; por omisión confirmado). */
+export async function estado_pedidos_offline(store: ImperiumStore): Promise<EstadoPedidoOffline> {
+	const valor = text(await read_config_value(store, PEDIDOS_OFFLINE_ESTADO_REF)).toLowerCase();
+	return (PEDIDOS_OFFLINE_ESTADOS as readonly string[]).includes(valor)
+		? (valor as EstadoPedidoOffline)
+		: 'confirmado';
+}
+
 export function aviso_faltantes(folio: string, faltantes: FaltanteExistencia[]): string {
 	const nombre = folio ? `El pedido ${folio}` : 'El pedido';
-	return `${nombre} quedó pendiente (borrador) por falta de existencia: ${detalle_faltantes(faltantes)}.`;
+	return `${nombre} se confirmó sin existencia suficiente: ${detalle_faltantes(faltantes)}.`;
 }
 
 export function aviso_sin_precio(folio: string, productos: string[]): string {
 	const nombre = folio ? `El pedido ${folio}` : 'El pedido';
-	return `${nombre} quedó pendiente (borrador) porque no tiene precio: ${productos.join(', ')}.`;
+	return `${nombre} se confirmó sin precio en: ${productos.join(', ')}.`;
 }
 
 export async function articulos_sin_precio(

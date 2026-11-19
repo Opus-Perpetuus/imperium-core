@@ -26,6 +26,7 @@ import {
 	type CatalogImageScan,
 	type RegisteredSubject,
 } from './subject-image-sources.ts';
+import { FEATURE_MAP_TEST_COLUMN_DDL } from './feature-map-test.ts';
 
 export const APP_REGISTRY_ENABLED_REF = 'configuration-app-registry-enabled';
 export const REGISTRY_API_VERSION = 1;
@@ -65,7 +66,8 @@ export const APP_REGISTRY_SCHEMA_STATEMENTS = [
       ),
       CONSTRAINT app_registry_install_status_chk CHECK (
         install_status IS NULL OR install_status IN ('ok', 'failed', 'upgrading')
-      )
+      ),
+      ${FEATURE_MAP_TEST_COLUMN_DDL}
     )`,
 	`CREATE TABLE IF NOT EXISTS public.app_manifest_snapshot (
       slug TEXT PRIMARY KEY,
@@ -74,7 +76,8 @@ export const APP_REGISTRY_SCHEMA_STATEMENTS = [
       applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       image_digest TEXT,
       previous_manifest JSONB,
-      CONSTRAINT app_manifest_snapshot_slug_chk CHECK (slug ~ '^[a-z][a-z0-9-]*$')
+      CONSTRAINT app_manifest_snapshot_slug_chk CHECK (slug ~ '^[a-z][a-z0-9-]*$'),
+      ${FEATURE_MAP_TEST_COLUMN_DDL}
     )`,
 	`CREATE TABLE IF NOT EXISTS public.app_registry_audit (
       id BIGSERIAL PRIMARY KEY,
@@ -85,7 +88,8 @@ export const APP_REGISTRY_SCHEMA_STATEMENTS = [
       detail JSONB,
       CONSTRAINT app_registry_audit_action_chk CHECK (
         action IN ('install', 'sync', 'policy', 'reject')
-      )
+      ),
+      ${FEATURE_MAP_TEST_COLUMN_DDL}
     )`,
 	`CREATE INDEX IF NOT EXISTS app_registry_audit_slug_at_idx
       ON public.app_registry_audit (slug, at DESC)`,

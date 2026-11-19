@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { handle_action } from './actions.ts';
+import { is_running, reset_tasks } from './db-admin-tasks.ts';
 import { assert_target_model_read } from './auth.ts';
 import {
 	assert_attachment_access,
@@ -219,8 +220,11 @@ describe('recursos privados del chat', () => {
 		};
 		const url = new URL('http://core/api/postgres-table-tracker/reindex/Message');
 		const req = new Request(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+		reset_tasks();
 		const res = await handle_action(store as unknown as ImperiumStore, {} as Bun.SQL, req, url, TRACKER_RESOURCE, 'trigger_reindex', { model_name: 'Message' }, ADMIN);
-		expect(res.status).toBe(200);
+		// #268: el reindexado corre en segundo plano (202); se espera a que termine.
+		expect(res.status).toBe(202);
+		while (is_running('search-reindex')) await Bun.sleep(5);
 		expect(scanned).toEqual(['module-management']);
 	});
 });

@@ -1,3 +1,5 @@
+import { FEATURE_MAP_TEST_SET_LOCAL, feature_map_test_inserts, in_feature_map_test } from './feature-map-test.ts';
+
 const DEFAULT_QUERY_TIMEOUT_MS = 30_000;
 
 export function query_timeout_ms(override?: number): number {
@@ -243,23 +245,47 @@ export function open_core_sql(
 		}
 	}
 
+	/**
+	 * Corrida de feature map: un INSERT (o una transacción) va dentro de una
+	 * transacción con `imperium.feature_map_test = on`, así el DEFAULT de la
+	 * columna `feature_map_test` marca la fila sin importar quién inserte.
+	 * Fuera de una corrida no cambia nada.
+	 */
+	const marked = <T>(client: Bun.SQL, op: (tx: Bun.SQL) => Promise<T>): Promise<T> =>
+		client.begin(async (tx) => {
+			await tx.unsafe(FEATURE_MAP_TEST_SET_LOCAL);
+			return await op(tx);
+		}) as Promise<T>;
+
 	const call = (args: unknown[]) => {
 		const query = query_text(args[0]);
+		const mark = in_feature_map_test() && feature_map_test_inserts(query);
 		return run((client) => {
-			const fn = client as unknown as (...parts: unknown[]) => Promise<unknown>;
-			return fn.apply(client, args);
+			const exec = (target: Bun.SQL) => {
+				const fn = target as unknown as (...parts: unknown[]) => Promise<unknown>;
+				return fn.apply(target, args);
+			};
+			return mark ? marked(client, async (tx) => await exec(tx)) : exec(client);
 		}, query);
 	};
 
 	return new Proxy(inner, {
 		get(_target, prop) {
 			if (prop === 'unsafe') {
-				return (query: string, params?: unknown[]) =>
-					run((client) => client.unsafe(query, params), query_text(query));
+				return (query: string, params?: unknown[]) => {
+					const mark = in_feature_map_test() && feature_map_test_inserts(query);
+					return run(
+						(client) =>
+							mark ? marked(client, async (tx) => await tx.unsafe(query, params)) : client.unsafe(query, params),
+						query_text(query),
+					);
+				};
 			}
 			if (prop === 'begin') {
-				return (fn: (tx: Bun.SQL) => Promise<unknown>) =>
-					run((client) => client.begin(fn));
+				return (fn: (tx: Bun.SQL) => Promise<unknown>) => {
+					const mark = in_feature_map_test();
+					return run((client) => (mark ? marked(client, fn) : client.begin(fn)));
+				};
 			}
 			if (prop === 'close') {
 				return (options?: { timeout?: number }) => inner.close(options);

@@ -433,6 +433,17 @@ export async function interpolate_report_list(
 	);
 }
 
+/**
+ * Ficha sin delimitador con varios registros: la plantilla se repite una vez
+ * por registro, cada una en su propia hoja. Antes «Guardar como PDF» o la
+ * impresión directa con varios pedidos marcados sacaba solo el primero.
+ */
+export const REPORT_RECORD_PAGE_BREAK = '<div class="imperium-report-record-break" style="break-after:page;page-break-after:always"></div>';
+
+export function join_report_record_pieces(pieces: string[]): string {
+	return pieces.join(REPORT_RECORD_PAGE_BREAK);
+}
+
 function delimiter_token(template: string): string {
 	for (const token of ['{{report_item_delimiter}}', '{{reporte_delimitador}}']) {
 		if (template.includes(token)) return token;
@@ -453,7 +464,14 @@ export async function interpolate_report_records(
 	}
 	const token = delimiter_token(template);
 	if (!token) {
-		return interpolate_report_template(template, records[0] ?? {}, user_name, now, opts);
+		if (records.length <= 1) {
+			return interpolate_report_template(template, records[0] ?? {}, user_name, now, opts);
+		}
+		const pieces: string[] = [];
+		for (const record of records) {
+			pieces.push(await interpolate_report_template(template, record, user_name, now, opts));
+		}
+		return join_report_record_pieces(pieces);
 	}
 	if (!records.length) return template.replaceAll(token, '');
 	if (depth > 5000) {
@@ -650,6 +668,7 @@ export async function render_report_from_pages(
 	}
 	const token = delimiter_token(template);
 	let html = '';
+	const pieces: string[] = [];
 	let count = 0;
 	let first: Record<string, unknown> | null = null;
 	for await (const page of pages) {
@@ -660,8 +679,11 @@ export async function render_report_from_pages(
 		for (const record of hydrated) {
 			count += 1;
 			if (!first) first = record;
-			if (!token) continue;
 			const piece = await interpolate_report_template(template, record, user_name, now, opts);
+			if (!token) {
+				pieces.push(piece);
+				continue;
+			}
 			html = count === 1 ? piece : html.replace(token, piece);
 		}
 	}
@@ -669,11 +691,8 @@ export async function render_report_from_pages(
 		return { html: '', count: 0, first: null };
 	}
 	if (!token) {
-		return {
-			html: await interpolate_report_template(template, first, user_name, now, opts),
-			count,
-			first,
-		};
+		// Sin delimitador: la ficha se repite por registro, una hoja cada una.
+		return { html: join_report_record_pieces(pieces), count, first };
 	}
 	return { html: html.replaceAll(token, ''), count, first };
 }

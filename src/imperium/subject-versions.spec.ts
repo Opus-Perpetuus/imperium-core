@@ -6,8 +6,13 @@ import {
 	manifest_fits_catalog,
 	NEEDS_CATALOG,
 	NEEDS_CORE,
+	NEEDS_FRONT,
+	catalog_requires_check_wanted,
 	core_satisfies,
+	front_version,
 	required_core,
+	required_front,
+	unmet_requirement,
 	newest_same_major,
 	parse_version_holds,
 	soaked,
@@ -223,5 +228,67 @@ describe('núcleo mínimo que pide una versión', () => {
 				discovered: { image: img('0.3.0'), created_at: null, note: NEEDS_CORE },
 			}),
 		).toMatchObject({ image: img('0.2.0'), source: 'catalog' });
+	});
+});
+
+describe('núcleo y front mínimos (I+D #432)', () => {
+	const img = (tag: string) => `ghcr.io/opus-perpetuus/subject-tienda:${tag}`;
+	const app = { requires: { core: '13.83.0', front: '13.90.0' } };
+
+	test('lee requires.front del manifiesto', () => {
+		expect(required_front(app)).toBe('13.90.0');
+		expect(required_front({ requires: { front: '>=13.90.0' } })).toBe('13.90.0');
+		expect(required_front({ requires: { core: '13.83.0' } })).toBeNull();
+		expect(required_front({ requires: { front: 'latest' } })).toBeNull();
+	});
+
+	test('el front del servidor sale de IMPERIUM_FRONT_VERSION/TAG o es el del núcleo', () => {
+		expect(front_version({ IMPERIUM_FRONT_VERSION: '13.100.0' }, '13.126.5')).toBe('13.100.0');
+		expect(front_version({ IMPERIUM_FRONT_TAG: 'frontv13.121.5' }, '13.126.5')).toBe('13.121.5');
+		expect(front_version({ IMPERIUM_FRONT_TAG: 'front-latest' }, '13.126.5')).toBe('13.126.5');
+		expect(front_version({}, '13.126.5')).toBe('13.126.5');
+	});
+
+	test('cumple todo: no hay mínimo pendiente', () => {
+		expect(unmet_requirement(app, { core: '13.126.5', front: '13.126.5' })).toBeNull();
+		expect(unmet_requirement({ compat: { kit: '^13.0.0' } }, { core: '13.0.0', front: '13.0.0' })).toBeNull();
+	});
+
+	test('núcleo viejo: needs_core antes que el front', () => {
+		expect(unmet_requirement(app, { core: '13.82.9', front: '13.0.0' })).toMatchObject({
+			code: NEEDS_CORE,
+			need: '13.83.0',
+			have: '13.82.9',
+		});
+	});
+
+	test('front viejo con núcleo al día: needs_front', () => {
+		expect(unmet_requirement(app, { core: '13.126.5', front: '13.89.0' })).toMatchObject({
+			code: NEEDS_FRONT,
+			part: 'front',
+			need: '13.90.0',
+		});
+	});
+
+	test('una descubierta marcada needs_front no se aplica: sigue el pin', () => {
+		expect(
+			subject_update_target({
+				pin: img('0.2.0'),
+				discovered: { image: img('0.3.0'), created_at: null, note: NEEDS_FRONT },
+			}),
+		).toMatchObject({ image: img('0.2.0'), source: 'catalog' });
+	});
+
+	test('del catálogo (autoescaneo) a una más nueva se revisan los mínimos', () => {
+		const base = { pin: img('0.3.0'), target: img('0.3.0'), running: img('0.2.0'), rollback: false };
+		expect(catalog_requires_check_wanted({ ...base, source: 'catalog' })).toBe(true);
+		// La descubierta cayó al pin: también se revisa.
+		expect(catalog_requires_check_wanted({ ...base, source: 'registry' })).toBe(true);
+		// Misma imagen, regreso o sin nada corriendo: no.
+		expect(catalog_requires_check_wanted({ ...base, source: 'catalog', running: img('0.3.0') })).toBe(false);
+		expect(catalog_requires_check_wanted({ ...base, source: 'catalog', rollback: true })).toBe(false);
+		expect(catalog_requires_check_wanted({ ...base, source: 'catalog', running: null })).toBe(false);
+		// Descubierta o fijada distinta del pin: ya la revisa check_image_fits_catalog.
+		expect(catalog_requires_check_wanted({ ...base, source: 'registry', target: img('0.4.0') })).toBe(false);
 	});
 });

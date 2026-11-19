@@ -26,8 +26,9 @@ import { products_to_replenish } from './inventory-replenishment.ts';
 import { supplier_aging } from './supplier-aging.ts';
 import { expiring_stock } from './inventory-expiry.ts';
 import { stock_valuation } from './inventory-valuation.ts';
-import { is_unique_violation, type ImperiumStore } from './store.ts';
-import { SearchEngine, search_text_from_doc } from './search-engine.ts';
+import { get_task, is_running, list_tasks, start_task, type Task } from './db-admin-tasks.ts';
+import { is_undefined_table, is_unique_violation, type ImperiumStore } from './store.ts';
+import { SearchEngine, search_field_for_reindex, search_index_text } from './search-engine.ts';
 import { assert_pos_pin, verify_user_pin } from './user-pin.ts';
 import { CHOFER_SIN_EMPLEADO_MESSAGE } from './chofer-messages.ts';
 import { pac_provider, stamp_with_pac } from './pac.ts';
@@ -272,6 +273,7 @@ import {
 	aviso_faltantes,
 	aviso_sin_precio,
 	emit_pedidos_updated,
+	estado_pedidos_offline,
 	faltantes_de_existencia,
 	prepare_pedido_create,
 	type FaltanteExistencia,
@@ -282,7 +284,12 @@ import {
 	user_warehouse_id,
 	warehouse_scope,
 } from './warehouse-scope.ts';
-import { decidir_sync_offline } from './pedidos-sync-offline.ts';
+import {
+	decidir_sync_offline,
+	es_mismo_pedido_offline,
+	folio_offline_desambiguado,
+	huella_pedido_offline,
+} from './pedidos-sync-offline.ts';
 import {
 	compute_picking_route,
 	generate_replenishment_for_order,
@@ -1241,6 +1248,8 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return postgres_table_tracker_field_values(ctx);
 		case 'postgres-table-tracker:trigger_reindex':
 			return postgres_table_tracker_reindex(ctx);
+		case 'postgres-table-tracker:get_reindex_status':
+			return postgres_table_tracker_reindex_status(ctx);
 		default:
 			return generic_action(ctx);
 	}
@@ -4459,21 +4468,20 @@ async function payroll_export_payload(ctx: Ctx) {
 }
 
 
-const PEDIDO_ESTADOS = new Set([
-	'borrador',
-	'confirmado',
-	'por_surtir',
-	'surtiendo',
-	'surtido',
-	'enviado',
-	'cancelado',
-]);
-
 /**
  * Sync-back de pedidos capturados offline. Mismo contrato que
  * `POST /pedidos/offline/sincronizar` del backend original: `{ ok, total, resultados }`
- * con dedupe por `offline_uuid` y por el folio local (`folio_offline`).
+ * con dedupe por `offline_uuid`; un folio local repetido solo es duplicado si
+ * es el mismo vendedor con el mismo cliente y artículos (Odoo #272). Lo
+ * rechazado responde 422 con `message`, no 200.
  */
+/** Índice único de BD o el chequeo previo del store sobre las llaves offline. */
+function choca_llave_offline(error: unknown): boolean {
+	if (is_unique_violation(error)) return true;
+	const message = error instanceof Error ? error.message : String(error ?? '');
+	return /Ya existe un registro con el campo (offline_uuid|folio_offline)/.test(message);
+}
+
 export async function pedidos_sync_offline(ctx: Ctx) {
 	const incoming = as_array(ctx.body.pedidos);
 	const resultados: Array<{
@@ -4488,12 +4496,25 @@ export async function pedidos_sync_offline(ctx: Ctx) {
 		faltantes?: FaltanteExistencia[];
 	}> = [];
 	const avisos: string[] = [];
-	const folios_del_lote = new Set<string>();
+	// Folio local → pedido creado en este lote, para distinguir el reenvío del
+	// mismo pedido de otro pedido con el mismo folio (Odoo #272).
+	const folios_del_lote = new Map<string, ImperiumDoc>();
+	const usuario = ctx.actor?._id ? String(ctx.actor._id) : '';
 	const negativos = await allow_negative_stock(ctx.store);
+	const estado = await estado_pedidos_offline(ctx.store);
 	const almacen_vendedor = await user_warehouse_id(ctx.store, ctx.actor);
 	const scope_vendedor = await warehouse_scope(ctx.store, almacen_vendedor);
 	const scope_id = scope_vendedor ? String(scope_vendedor.almacen._id) : '';
 	const comprometido = new Map<string, number>();
+	const duplicado_de = (offline_uuid: string, motivo: 'uuid' | 'folio', fila: ImperiumDoc) =>
+		resultados.push({
+			offline_uuid,
+			_id: String(fila._id),
+			folio_interno: fila.folio_interno,
+			status: 'duplicado',
+			motivo,
+			...(fila.estado ? { estado: String(fila.estado) } : {}),
+		});
 	for (const raw of incoming) {
 		const pedido = as_object(raw);
 		const offline_uuid = String(pedido.offline_uuid ?? pedido._id ?? '').trim();
@@ -4506,41 +4527,30 @@ export async function pedidos_sync_offline(ctx: Ctx) {
 			continue;
 		}
 		const folio_cliente = String(pedido.folio ?? '').trim();
+		const huella = huella_pedido_offline({
+			contacto: ref_id(pedido.contacto) || pedido.contacto,
+			articulos: pedido.articulos,
+		});
+		const mismo = (fila: ImperiumDoc | null | undefined) =>
+			Boolean(fila) && es_mismo_pedido_offline(fila as ImperiumDoc, usuario, huella);
 		try {
 			const existing = await ctx.store.find_where('pedidos', { offline_uuid });
-			const por_folio = folio_cliente
-				? await ctx.store.find_where('pedidos', { folio_offline: folio_cliente })
-				: null;
+			const en_lote = folio_cliente ? folios_del_lote.get(folio_cliente) : undefined;
+			const por_folio =
+				en_lote ??
+				(folio_cliente ? await ctx.store.find_where('pedidos', { folio_offline: folio_cliente }) : null);
 			const decision = decidir_sync_offline({
 				ya_existe_uuid: Boolean(existing),
-				ya_existe_folio: Boolean(por_folio),
-				folio_visto_en_lote: folio_cliente ? folios_del_lote.has(folio_cliente) : false,
 				folio: folio_cliente,
+				offline_uuid,
+				coincidencia_folio: !por_folio ? 'ninguna' : mismo(por_folio) ? 'mismo_pedido' : 'otro_pedido',
 			});
 			if (decision.decision === 'duplicado') {
-				if (decision.motivo === 'uuid') {
-					resultados.push({
-						offline_uuid,
-						_id: existing?._id ? String(existing._id) : undefined,
-						folio_interno: existing?.folio_interno,
-						status: 'duplicado',
-						motivo: 'uuid',
-					});
-				} else {
-					resultados.push({
-						offline_uuid,
-						status: 'duplicado',
-						motivo: 'folio',
-					});
-				}
-				if (folio_cliente) folios_del_lote.add(folio_cliente);
+				// Con `_id` el teléfono lo marca sincronizado: el pedido ya está en
+				// el servidor y no queda retenido sin enviarse.
+				duplicado_de(offline_uuid, decision.motivo, (decision.motivo === 'uuid' ? existing : por_folio)!);
 				continue;
 			}
-			let estado = PEDIDO_ESTADOS.has(String(pedido.estado))
-				? String(pedido.estado)
-				: 'confirmado';
-			// Sin existencia suficiente o sin precio no se confirma: queda en
-			// borrador (pendiente) y se avisa al capturista.
 			const faltantes =
 				estado === 'confirmado' && !negativos
 					? await faltantes_de_existencia(ctx.store, pedido.articulos, {
@@ -4550,20 +4560,24 @@ export async function pedidos_sync_offline(ctx: Ctx) {
 					: [];
 			const sin_precio =
 				estado === 'confirmado' ? await articulos_sin_precio(ctx.store, pedido.articulos) : [];
+			const otro_folio =
+				decision.folio_offline && decision.folio_offline !== folio_cliente
+					? `El folio ${folio_cliente} ya lo tenía otro pedido (otro teléfono o navegador); este se guardó aparte.`
+					: '';
 			const aviso =
 				[
 					faltantes.length ? aviso_faltantes(folio_cliente, faltantes) : '',
 					sin_precio.length ? aviso_sin_precio(folio_cliente, sin_precio) : '',
+					otro_folio,
 				]
 					.filter(Boolean)
 					.join(' ') || undefined;
-			if (aviso) estado = 'borrador';
 			const prepared = await prepare_pedido_create(
 				ctx.store,
 				{
 					name: String(pedido.name ?? pedido.folio ?? `Pedido ${offline_uuid.slice(0, 8)}`),
 					articulos: Array.isArray(pedido.articulos) ? pedido.articulos : [],
-					contacto: pedido.contacto,
+					contacto: ref_id(pedido.contacto) || pedido.contacto,
 					observaciones: pedido.observaciones ?? '',
 					listaDePreciosId: pedido.listaDePreciosId,
 					folio: pedido.folio ?? '',
@@ -4575,37 +4589,52 @@ export async function pedidos_sync_offline(ctx: Ctx) {
 					order_gps_accuracy_m: pedido.order_gps_accuracy_m,
 				},
 				ctx.actor,
+				{ validar_confirmacion: false },
 			);
-			try {
-				const created = await ctx.store.insert('pedidos', {
+			const insertar = (folio_offline: string | undefined) =>
+				ctx.store.insert('pedidos', {
 					...prepared,
 					sincronizado: true,
 					offline_uuid,
-					folio_offline: folio_cliente || undefined,
+					folio_offline,
+					huella_offline: huella,
 					is_active: true,
 				});
-				if (folio_cliente) folios_del_lote.add(folio_cliente);
-				if (estado === 'confirmado' && !negativos) {
-					acumular_comprometido(comprometido, scope_id, pedido.articulos);
-				}
-				resultados.push({
-					offline_uuid,
-					_id: String(created._id),
-					folio_interno: created.folio_interno,
-					status: 'creado',
-					estado,
-					...(aviso ? { aviso, faltantes } : {}),
-				});
-				if (aviso) avisos.push(aviso);
+			let created: ImperiumDoc;
+			try {
+				created = await insertar(decision.folio_offline);
 			} catch (insert_error) {
-				if (!is_unique_violation(insert_error)) throw insert_error;
-				if (folio_cliente) folios_del_lote.add(folio_cliente);
-				resultados.push({
-					offline_uuid,
-					status: 'duplicado',
-					motivo: 'folio',
-				});
+				if (!choca_llave_offline(insert_error)) throw insert_error;
+				// Carrera con otra petición: el mismo uuid es reenvío; el mismo
+				// folio puede ser el mismo pedido u otro distinto.
+				const ya = await ctx.store.find_where('pedidos', { offline_uuid });
+				if (ya) {
+					duplicado_de(offline_uuid, 'uuid', ya);
+					continue;
+				}
+				const choca = folio_cliente
+					? await ctx.store.find_where('pedidos', { folio_offline: folio_cliente })
+					: null;
+				if (choca && mismo(choca)) {
+					duplicado_de(offline_uuid, 'folio', choca);
+					continue;
+				}
+				if (!folio_cliente) throw insert_error;
+				created = await insertar(folio_offline_desambiguado(folio_cliente, offline_uuid));
 			}
+			if (folio_cliente) folios_del_lote.set(folio_cliente, created);
+			if (estado === 'confirmado' && !negativos) {
+				acumular_comprometido(comprometido, scope_id, pedido.articulos);
+			}
+			resultados.push({
+				offline_uuid,
+				_id: String(created._id),
+				folio_interno: created.folio_interno,
+				status: 'creado',
+				estado,
+				...(aviso ? { aviso, ...(faltantes.length ? { faltantes } : {}) } : {}),
+			});
+			if (aviso) avisos.push(aviso);
 		} catch (item_error) {
 			resultados.push({
 				offline_uuid,
@@ -4620,12 +4649,25 @@ export async function pedidos_sync_offline(ctx: Ctx) {
 	if (resultados.some((item) => item.status === 'creado')) {
 		emit_pedidos_updated();
 	}
-	return Response.json({
-		ok: true,
-		total: resultados.length,
-		resultados,
-		...(avisos.length ? { avisos } : {}),
-	});
+	// Lo rechazado no se responde con 200: el teléfono lo deja pendiente y
+	// muestra el motivo (Odoo #272). Lo creado en el mismo lote sí queda.
+	const rechazados = resultados.filter((item) => item.status === 'error');
+	return Response.json(
+		{
+			ok: rechazados.length === 0,
+			total: resultados.length,
+			resultados,
+			...(avisos.length ? { avisos } : {}),
+			...(rechazados.length
+				? {
+						message: `No se pudo sincronizar ${rechazados.length === 1 ? 'un pedido' : `${rechazados.length} pedidos`}: ${rechazados
+							.map((item) => item.error)
+							.join('; ')}`,
+					}
+				: {}),
+		},
+		{ status: rechazados.length ? 422 : 200 },
+	);
 }
 
 /**
@@ -7307,9 +7349,116 @@ async function postgres_table_tracker_search_status() {
 	);
 }
 
+/**
+ * Por qué un modelo procesado no se reindexó (#268). Todo modelo procesado
+ * termina en `reindexados` o en `omitidos` con uno de estos motivos:
+ * - `sin_model_id`: el registro de module-management no trae model_id;
+ * - `sin_recurso`: el catálogo no tiene recurso (tabla) para ese modelo;
+ * - `chat_privado`: recurso del chat, que nunca entra al buscador;
+ * - `app_no_instalada`: la app dueña no está instalada;
+ * - `sin_tabla`: la tabla no existe en la BD (42P01).
+ */
+export type ReindexMotivo = 'sin_model_id' | 'sin_recurso' | 'chat_privado' | 'app_no_instalada' | 'sin_tabla';
+type ReindexOmitido = { model: string; motivo: ReindexMotivo };
+
+const REINDEX_MOTIVO_TEXTO: Record<ReindexMotivo, string> = {
+	sin_model_id: 'sin model_id',
+	sin_recurso: 'sin tabla en el catálogo',
+	chat_privado: 'privado del chat',
+	app_no_instalada: 'app no instalada',
+	sin_tabla: 'sin tabla en la BD',
+};
+
+/** Qué recurso reindexar para `model_id`, o por qué se omite (sin tocar la BD). */
+export function reindex_target(
+	store: Pick<ImperiumStore, 'resource_for_model' | 'has'> & Partial<Pick<ImperiumStore, 'is_model_installed'>>,
+	model_id: string,
+): { resource: string } | { motivo: ReindexMotivo } {
+	if (!model_id) return { motivo: 'sin_model_id' };
+	const resource = store.resource_for_model(model_id);
+	if (!resource || !store.has(resource)) return { motivo: 'sin_recurso' };
+	if (is_chat_private_resource(resource)) return { motivo: 'chat_privado' };
+	if (typeof store.is_model_installed === 'function' && !store.is_model_installed(model_id)) {
+		return { motivo: 'app_no_instalada' };
+	}
+	return { resource };
+}
+
+/** Lo que el modal consulta mientras corre el reindexado (y al terminar). */
+export type ReindexTrabajo = {
+	id: string;
+	estado: 'en_curso' | 'terminado' | 'fallido';
+	modelo: string | null;
+	forzado: boolean;
+	iniciado: string;
+	terminado: string | null;
+	total: number;
+	procesados: number;
+	actual: string | null;
+	reindexados: string[];
+	omitidos: ReindexOmitido[];
+	/** Filas cuyo `search_field` cambió (#268): una segunda corrida sin cambios deja 0. */
+	filas_actualizadas: number;
+	error: string | null;
+};
+
+const REINDEX_TASK_KIND = 'search-reindex';
+/** Progreso vivo por id de trabajo; el registro en memoria es db-admin-tasks. */
+const reindex_progress = new Map<string, Omit<ReindexTrabajo, 'estado' | 'terminado' | 'error'>>();
+
+function reindex_view(task: Task | null): ReindexTrabajo | null {
+	const progress = task ? reindex_progress.get(task.id) : undefined;
+	if (!task || !progress) return null;
+	return {
+		...progress,
+		reindexados: [...progress.reindexados],
+		omitidos: [...progress.omitidos],
+		estado: task.status === 'running' ? 'en_curso' : task.status === 'success' ? 'terminado' : 'fallido',
+		terminado: task.finished_at,
+		error: task.error,
+	};
+}
+
+function latest_reindex_task(): Task | null {
+	return list_tasks().find((task) => task.kind === REINDEX_TASK_KIND) ?? null;
+}
+
+function reindex_message(job: ReindexTrabajo): string {
+	const target = job.modelo ? `"${job.modelo}"` : 'todos los modelos';
+	const forced = job.forzado ? ' (forzado)' : '';
+	if (job.estado === 'en_curso') {
+		return `Reindexado de ${target} en curso${forced}: ${job.procesados} de ${job.total}.`;
+	}
+	if (job.estado === 'fallido') return `Reindexado de ${target} falló: ${job.error ?? 'error desconocido'}.`;
+	const por_motivo = new Map<ReindexMotivo, number>();
+	for (const o of job.omitidos) por_motivo.set(o.motivo, (por_motivo.get(o.motivo) ?? 0) + 1);
+	const saltados = job.omitidos.length
+		? `; ${job.omitidos.length} omitido(s): ${[...por_motivo].map(([m, n]) => `${n} ${REINDEX_MOTIVO_TEXTO[m]}`).join(', ')}`
+		: '';
+	const filas = `; ${job.filas_actualizadas} fila(s) actualizada(s)`;
+	return `Reindexado de ${target} terminado${forced}: ${job.reindexados.length} reindexado(s)${saltados}${filas}.`;
+}
+
+/**
+ * «Reindexar todo» (#268). Reindexar 200+ modelos no cabe en el plazo HTTP del
+ * núcleo (30 + 5 s): la ruta arranca el trabajo en segundo plano y contesta 202
+ * con su ficha; `GET /reindex/estado` da el progreso, lo reindexado, lo omitido
+ * y si terminó o falló. Solo corre uno a la vez (409 con el que ya corre).
+ * Cada modelo procesado termina en `reindexados` o en `omitidos` con su
+ * motivo (ver ReindexMotivo): reindexados + omitidos = procesados. Otros
+ * errores dejan el trabajo «fallido».
+ */
 async function postgres_table_tracker_reindex(ctx: Ctx) {
 	const only_model = String(ctx.params.model_name ?? '').trim();
 	const force = ctx.url.searchParams.get('force') === 'true';
+	if (is_running(REINDEX_TASK_KIND)) {
+		const current = reindex_view(latest_reindex_task());
+		return Response.json(
+			{ ...ok(current ? [current] : [], 'Ya hay un reindexado en curso; espera a que termine.'), error: 'reindex_en_curso' },
+			{ status: 409 },
+		);
+	}
+	const models: string[] = [];
 	for await (const modules of ctx.store.scan('module-management', {
 		include_inactive: true,
 	})) {
@@ -7322,40 +7471,117 @@ async function postgres_table_tracker_reindex(ctx: Ctx) {
 			) {
 				continue;
 			}
-			const resource = ctx.store.resource_for_model(model_id);
-			if (!resource || !ctx.store.has(resource) || is_chat_private_resource(resource)) continue;
-			const collection = ctx.store.loc(resource).collection;
-			const meili = await SearchEngine.ensure_available();
-			if (meili) await SearchEngine.clear_index(collection);
-			for await (const page of ctx.store.scan(resource, { include_inactive: true })) {
-				if (meili) {
-					const search_docs = page
-						.filter((doc) => doc.is_active !== false)
-						.map((doc) => ({
-							id: String(doc._id),
-							search_text: search_text_from_doc(doc),
-						}))
-						.filter((doc) => doc.search_text);
-					if (search_docs.length) await SearchEngine.index_documents(collection, search_docs);
-				}
-				if (!meili || force) {
-					for (const doc of page) {
-						const search = search_text_from_doc(doc);
-						if (search && (force || String(doc.search_field ?? '') !== search)) {
-							await ctx.store.update(resource, String(doc._id), { search_field: search });
-						}
-					}
-				}
-			}
+			models.push(model_id);
 		}
 	}
-	const forced = force ? ' (forzado)' : '';
-	return ok(
-		[],
-		only_model
-			? `Reindexado de "${only_model}" iniciado${forced}. El progreso se emite por sockets.`
-			: `Reindexado de todos los modelos iniciado${forced}. El progreso se emite por sockets.`,
-	);
+	// Dos POST simultáneos pudieron pasar el primer chequeo mientras se leía la lista.
+	if (is_running(REINDEX_TASK_KIND)) {
+		const current = reindex_view(latest_reindex_task());
+		return Response.json(
+			{ ...ok(current ? [current] : [], 'Ya hay un reindexado en curso; espera a que termine.'), error: 'reindex_en_curso' },
+			{ status: 409 },
+		);
+	}
+	const progress = {
+		id: '',
+		modelo: only_model || null,
+		forzado: force,
+		iniciado: new Date().toISOString(),
+		total: models.length,
+		procesados: 0,
+		actual: null as string | null,
+		reindexados: [] as string[],
+		omitidos: [] as ReindexOmitido[],
+		filas_actualizadas: 0,
+	};
+	const task = start_task(REINDEX_TASK_KIND, only_model ? `Reindexar ${only_model}` : 'Reindexar todo', async () => {
+		// Ceder primero: la ruta contesta antes de tocar la primera tabla.
+		await Promise.resolve();
+		for (const model_id of models) {
+			progress.actual = model_id;
+			const target = reindex_target(ctx.store, model_id);
+			if ('motivo' in target) {
+				progress.omitidos.push({ model: model_id || '(sin model_id)', motivo: target.motivo });
+			} else {
+				try {
+					progress.filas_actualizadas += await reindex_resource(ctx, target.resource, force);
+					progress.reindexados.push(model_id);
+				} catch (err) {
+					if (!is_undefined_table(err)) throw err;
+					progress.omitidos.push({ model: model_id, motivo: 'sin_tabla' });
+				}
+			}
+			progress.procesados += 1;
+			// Invariante: cada modelo procesado queda en una de las dos listas.
+			if (progress.reindexados.length + progress.omitidos.length !== progress.procesados) {
+				throw new Error(
+					`Reindexado inconsistente: ${progress.reindexados.length} reindexados + ${progress.omitidos.length} omitidos ≠ ${progress.procesados} procesados`,
+				);
+			}
+		}
+		progress.actual = null;
+		return null;
+	});
+	progress.id = task.id;
+	reindex_progress.set(task.id, progress);
+	for (const id of reindex_progress.keys()) {
+		if (!get_task(id)) reindex_progress.delete(id);
+	}
+	const job = reindex_view(task)!;
+	return Response.json(ok([job], reindex_message(job)), { status: 202 });
+}
+
+/** `GET /reindex/estado[?id=]`: el trabajo pedido o el último. */
+function postgres_table_tracker_reindex_status(ctx: Ctx) {
+	const id = String(ctx.url.searchParams.get('id') ?? '').trim();
+	const task = id ? get_task(id) : latest_reindex_task();
+	const job = task?.kind === REINDEX_TASK_KIND ? reindex_view(task) : null;
+	if (!job) {
+		if (id) {
+			const message = 'Ese reindexado ya no existe (¿se reinició el núcleo?).';
+			return Response.json(fail(message, 404).body, { status: 404 });
+		}
+		return ok([], 'No hay reindexados recientes.');
+	}
+	return ok([job], reindex_message(job));
+}
+
+/**
+ * Reindexa un recurso (#268). Idempotente: el `search_field` nuevo sale de
+ * `search_field_for_reindex` (no se alimenta de sí mismo) y solo se escriben las filas donde
+ * cambia, sin tocar `updated_at`. Regresa cuántas filas cambiaron.
+ */
+async function reindex_resource(ctx: Ctx, resource: string, force: boolean) {
+	const collection = ctx.store.loc(resource).collection;
+	const meili = await SearchEngine.ensure_available();
+	let cleared = false;
+	let changed = 0;
+	for await (const page of ctx.store.scan(resource, { include_inactive: true })) {
+		// Limpiar el índice solo cuando la tabla respondió: si falta, no se borra nada.
+		if (meili && !cleared) {
+			await SearchEngine.clear_index(collection);
+			cleared = true;
+		}
+		if (meili) {
+			// Meilisearch usa `id` como llave primaria: volver a mandar un documento lo reemplaza.
+			const search_docs = page
+				.filter((doc) => doc.is_active !== false)
+				.map((doc) => ({
+					id: String(doc._id),
+					search_text: search_index_text(doc),
+				}))
+				.filter((doc) => doc.search_text);
+			if (search_docs.length) await SearchEngine.index_documents(collection, search_docs);
+		}
+		if (!meili || force) {
+			const rows = page
+				.map((doc) => ({ id: String(doc._id), search_field: search_field_for_reindex(doc) }))
+				.filter((row) => row.search_field);
+			if (rows.length) changed += await ctx.store.set_search_fields(resource, rows);
+		}
+	}
+	if (meili && !cleared) await SearchEngine.clear_index(collection);
+	return changed;
 }
 
 function cfg_text(value: unknown, fallback = '') {

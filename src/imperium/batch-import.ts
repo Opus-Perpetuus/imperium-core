@@ -14,6 +14,8 @@ export async function run_batch_import(params: {
 	match_field: string | null;
 	persist_create: (doc: ImperiumDoc) => Promise<ImperiumDoc>;
 	persist_update: (id: string, doc: ImperiumDoc) => Promise<ImperiumDoc | null>;
+	/** Simulación (#458): misma preparación y coincidencia, sin persistir. */
+	dry_run?: boolean;
 }): Promise<Record<string, unknown>> {
 	const requested = text(params.match_field);
 	if (requested && !AUTOMATIC_MATCH.has(requested) && !allowed_match_field(params.store, params.resource, requested)) {
@@ -48,6 +50,19 @@ export async function run_batch_import(params: {
 				continue;
 			}
 			row_warnings.push(...existing.warnings);
+			if (params.dry_run) {
+				const operation = existing.record_id ? 'update' : 'create';
+				if (row_warnings.length) {
+					warnings.push({ row: row_number, data: raw, warnings: row_warnings });
+				}
+				success.push({
+					row: row_number,
+					_id: existing.record_id ?? null,
+					operation,
+					warnings: row_warnings.length ? row_warnings : undefined,
+				});
+				continue;
+			}
 			let persisted: ImperiumDoc | null;
 			let operation: 'create' | 'update';
 			if (existing.record_id) {
@@ -84,6 +99,28 @@ export async function run_batch_import(params: {
 		}
 	}
 
+	const created = success.filter((row) => row.operation === 'create').length;
+	const updated = success.length - created;
+	if (params.dry_run) {
+		return {
+			data: [],
+			total_elementos: 0,
+			dry_run: true,
+			message: `Simulación: ${created} nuevos, ${updated} actualizan, ${errors.length} con errores`,
+			summary: {
+				total_rows: params.rows.length,
+				successful: success.length,
+				failed: errors.length,
+				warnings: warnings.length,
+				created,
+				updated,
+			},
+			success,
+			errors,
+			warnings,
+		};
+	}
+
 	return {
 		data: [],
 		total_elementos: 0,
@@ -93,6 +130,8 @@ export async function run_batch_import(params: {
 			successful: success.length,
 			failed: errors.length,
 			warnings: warnings.length,
+			created,
+			updated,
 		},
 		success,
 		errors,

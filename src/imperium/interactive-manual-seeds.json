@@ -72,6 +72,24 @@
       {
         "order": 1,
         "step_id": "login-paso-1",
+        "title": "Verifica pantalla",
+        "body": "Usuario llega bloqueado (manual-autofill, autocomplete=username); el navegador sugiere al tocarlo, no lo llena solo",
+        "route": "/login",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "login-paso-2",
+        "title": "Verifica pantalla",
+        "body": "Contraseña llega vacía y bloqueada (autocomplete=current-password)",
+        "route": "/login",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "login-paso-3",
         "title": "Escribe en Usuario",
         "body": "Escribe en Usuario.",
         "route": "/login",
@@ -80,8 +98,8 @@
         "placement": "auto"
       },
       {
-        "order": 2,
-        "step_id": "login-paso-2",
+        "order": 4,
+        "step_id": "login-paso-4",
         "title": "Escribe en Contraseña",
         "body": "Escribe en Contraseña.",
         "route": "/login",
@@ -90,8 +108,8 @@
         "placement": "auto"
       },
       {
-        "order": 3,
-        "step_id": "login-paso-3",
+        "order": 5,
+        "step_id": "login-paso-5",
         "title": "Haz clic en Iniciar sesión",
         "body": "Haz clic en Iniciar sesión.",
         "route": "/login",
@@ -100,8 +118,8 @@
         "placement": "auto"
       },
       {
-        "order": 4,
-        "step_id": "login-paso-4",
+        "order": 6,
+        "step_id": "login-paso-6",
         "title": "Verifica shell-header",
         "body": "El encabezado del área interna confirma la sesión",
         "route": "/login",
@@ -189,6 +207,127 @@
         "route": "/internal/supplier-invoice",
         "anchor_attr": "view-list-new",
         "action_hint": "click",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-configuracion-impresora-por-vista",
+    "name": "Impresora por vista en la configuración de impresoras (#271)",
+    "description": "En Escritorio › Impresoras, la sección «Impresora por vista» asigna a cada vista (Pedidos, tablero de Almacén, Ventas en ruta, POS, bultos) su impresora de PDF y la de tickets/etiquetas. Se guarda en el equipo, se respeta después de recargar y la impresión directa ya no cae en la Zebra predeterminada.",
+    "icon": "fa-sliders",
+    "module_model_id": "Configuration",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "impresora-por-vista-paso-1",
+        "title": "Verifica printer-view-settings",
+        "body": "La sección «Impresora por vista» aparece en la configuración de impresoras (en la app de escritorio es la pestaña «Por vista»).",
+        "route": "/internal/escritorio",
+        "anchor_attr": "printer-view-settings",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "impresora-por-vista-paso-2",
+        "title": "Verifica printer-view-pedidos",
+        "body": "Pedidos: casillas «PDF (impresión directa)» y «Tickets y etiquetas (ZPL / ESC/POS)».",
+        "route": "/internal/escritorio",
+        "anchor_attr": "printer-view-pedidos",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "impresora-por-vista-paso-3",
+        "title": "Verifica printer-view-almacen-tablero",
+        "body": "Tablero de Almacén, con su propia impresora.",
+        "route": "/internal/escritorio",
+        "anchor_attr": "printer-view-almacen-tablero",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "impresora-por-vista-paso-4",
+        "title": "Verifica printer-view-offline",
+        "body": "Ventas en ruta (offline).",
+        "route": "/internal/escritorio",
+        "anchor_attr": "printer-view-offline",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 5,
+        "step_id": "impresora-por-vista-paso-5",
+        "title": "Verifica printer-view-pos",
+        "body": "Punto de venta.",
+        "route": "/internal/escritorio",
+        "anchor_attr": "printer-view-pos",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 6,
+        "step_id": "impresora-por-vista-paso-6",
+        "title": "Haz clic en printer-view-refresh",
+        "body": "«Actualizar impresoras detectadas» vuelve a leer las colas del sistema / QZ Tray y las guardadas del equipo.",
+        "route": "/internal/escritorio",
+        "anchor_attr": "printer-view-refresh",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 7,
+        "step_id": "impresora-por-vista-paso-7",
+        "title": "Haz clic en printer-view-input-pedidos-document",
+        "body": "El selector buscable de PDF de Pedidos lista las impresoras detectadas; «Sin asignación» deja el comportamiento anterior.",
+        "route": "/internal/escritorio",
+        "anchor_attr": "printer-view-input-pedidos-document",
+        "action_hint": "click",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-configuracion-indexar-busqueda",
+    "name": "Indexar búsqueda de texto (SQL o Meilisearch)",
+    "description": "Abre «Indexar búsqueda» en el rastreador de tablas SQL y lee qué motor usará el reindexado; sin Meilisearch configurado regenera el texto de búsqueda en SQL (Postgres), nunca en Mongo.",
+    "icon": "fa-sliders",
+    "module_model_id": "Configuration",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "indexar-busqueda-paso-1",
+        "title": "Haz clic en header-actions-menu",
+        "body": "«Indexar búsqueda» vive en el menú Acciones de la barra superior; primero se abre ese menú.",
+        "route": "/internal/postgres-table-tracker",
+        "anchor_attr": "header-actions-menu",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "indexar-busqueda-paso-2",
+        "title": "Haz clic en Indexar búsqueda",
+        "body": "Abre el modal de indexado con el estado del motor de búsqueda.",
+        "route": "/internal/postgres-table-tracker",
+        "anchor_attr": "indexar-busqueda-abrir",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "indexar-busqueda-paso-3",
+        "title": "Verifica Postgres",
+        "body": "Sin MEILI_URL en el núcleo, el aviso dice que reindexar regenera el texto de búsqueda en SQL (Postgres) (#264).",
+        "route": "/internal/postgres-table-tracker",
+        "action_hint": "observe",
         "placement": "auto"
       }
     ]
@@ -333,6 +472,101 @@
         "route": "/internal/cfdi",
         "anchor_attr": "cfdi-hub-cfdi-document",
         "action_hint": "click",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-herramientas-herr-asistente-ordenes",
+    "name": "Asistente de Herramientas con «Últimas órdenes» en view-list",
+    "description": "El Asistente (/internal/herr-asistente) muestra «Últimas órdenes» con el view-list de Imperium (buscador y paginador 25/50/100 en el header), no con una tabla propia (Odoo #255).",
+    "icon": "fa-book-open",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "herr-asistente-ordenes-paso-1",
+        "title": "Verifica Últimas órdenes",
+        "body": "La sección «Últimas órdenes» cargó (view-list con ancla herr-asistente-ultimas-ordenes, que pinta la app).",
+        "route": "/internal/herr-asistente",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "herr-asistente-ordenes-paso-2",
+        "title": "Verifica view-list-paginador",
+        "body": "La lista tiene el paginador del view-list en el header, como las demás apps; la tabla propia de antes no lo tenía.",
+        "route": "/internal/herr-asistente",
+        "anchor_attr": "view-list-paginador",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "herr-asistente-ordenes-paso-3",
+        "title": "Verifica view-list-buscar",
+        "body": "Trae el buscador del view-list («Buscar orden»).",
+        "route": "/internal/herr-asistente",
+        "anchor_attr": "view-list-buscar",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-herramientas-herr-mis-tablas-paginador",
+    "name": "Mis tablas con el paginador 25/50/100 en el header",
+    "description": "En Herramientas → Mis tablas, la lista de tablas es un view-list con el paginador en el header (25, 50 y 100 por página), como las listas de las demás apps (Odoo #254).",
+    "icon": "fa-book-open",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "herr-mis-tablas-paginador-paso-1",
+        "title": "Verifica Tus tablas",
+        "body": "La lista «Tus tablas» cargó (view-list con ancla herr-tablas-mis-tablas, que pinta la app).",
+        "route": "/internal/herr-tabla",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "herr-mis-tablas-paginador-paso-2",
+        "title": "Verifica view-list-paginador",
+        "body": "El paginador está en el header de la lista aunque haya menos de 50 tablas.",
+        "route": "/internal/herr-tabla",
+        "anchor_attr": "view-list-paginador",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "herr-mis-tablas-paginador-paso-3",
+        "title": "Verifica Por página",
+        "body": "El paginador ofrece elegir cuántas tablas ver por página (25, 50 o 100).",
+        "route": "/internal/herr-tabla",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "herr-mis-tablas-paginador-paso-4",
+        "title": "Verifica pantalla",
+        "body": "La tabla de prueba sale como una fila de la lista.",
+        "route": "/internal/herr-tabla",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 5,
+        "step_id": "herr-mis-tablas-paginador-paso-5",
+        "title": "Verifica Diseñar",
+        "body": "La columna Acciones trae los enlaces Abrir, Capturar y Diseñar de cada tabla (antes salía vacía).",
+        "route": "/internal/herr-tabla",
+        "action_hint": "observe",
         "placement": "auto"
       }
     ]
@@ -1695,6 +1929,88 @@
     ]
   },
   {
+    "_ref": "interactive-manual-flow-usuarios-editar-usuario-sin-autollenado",
+    "name": "Editar usuario sin autollenado del navegador",
+    "description": "En la ficha de un usuario, Email (type=email, autocomplete=off) y Contraseña (autocomplete=new-password) llegan bloqueados por manual-autofill; el navegador no les pone el acceso de quien edita y la persona escribe o pega al tocarlos. Ticket Odoo",
+    "icon": "fa-users-gear",
+    "module_model_id": "User",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "editar-usuario-sin-autollenado-paso-1",
+        "title": "Verifica pantalla",
+        "body": "Email trae el correo guardado del usuario (no el de quien edita) y sigue bloqueado hasta que la persona lo toque.",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "editar-usuario-sin-autollenado-paso-2",
+        "title": "Verifica pantalla",
+        "body": "Contraseña llega vacía y bloqueada; Chrome no pone la contraseña guardada.",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "editar-usuario-sin-autollenado-paso-3",
+        "title": "Escribe en Contraseña",
+        "body": "Al tocarla se libera (también Email, mismo formulario) y se escribe; el flujo no guarda.",
+        "anchor_attr": "field-password",
+        "action_hint": "input",
+        "placement": "auto",
+        "expected_value": "Prueba-manual-252"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-usuarios-grupos-ficha-usuario",
+    "name": "Grupos en la ficha de usuario",
+    "description": "La pestaña «Grupos» de la ficha de un usuario lista los grupos cuyo user_ids lo contiene y abre el detalle del grupo al hacer clic.",
+    "icon": "fa-users-gear",
+    "module_model_id": "User",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "grupos-ficha-usuario-paso-1",
+        "title": "Verifica pantalla",
+        "body": "El núcleo devuelve los grupos cuyo arreglo user_ids contiene al usuario (antes comparaba la celda completa y no traía ninguno).",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "grupos-ficha-usuario-paso-2",
+        "title": "Haz clic en Grupos",
+        "body": "Abre la pestaña Grupos de la ficha; ya no dice «Este usuario no pertenece a ningún grupo».",
+        "anchor_attr": "user-form-groups",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "grupos-ficha-usuario-paso-3",
+        "title": "Verifica QA-IA Consulta",
+        "body": "Aparece el grupo de prueba de ia.consulta que siembra cuentas-ia.",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "grupos-ficha-usuario-paso-4",
+        "title": "Haz clic en QA-IA Consulta",
+        "body": "El clic en el grupo abre su detalle.",
+        "anchor_attr": "user-form-group-item",
+        "action_hint": "click",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
     "_ref": "interactive-manual-flow-vehiculos-padron-vehiculo",
     "name": "Padrón de vehículos y chofer asignado",
     "description": "Gerencia abre el padrón de vehículos, encuentra la unidad QA-IA con sus placas y entra a su ficha para ver el estado operativo y el chofer asignado.",
@@ -1727,6 +2043,305 @@
         "title": "Verifica QA-IA IA Chofer",
         "body": "El chofer de la unidad es el empleado de ia.chofer; su cola de carga y entrega sale de aquí",
         "route": "/internal/vehicle",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-imprimir-pedido-detalle-almacen",
+    "name": "Imprimir un pedido desde su detalle con usuario de Almacén (#259)",
+    "description": "En el detalle de un pedido, el usuario de Almacén (leer Pedidos y Reports) abre Acciones → Imprimir y ve los 2 formatos de pedido para descargar, ver o mandar directo a la impresora.",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "imprimir-pedido-detalle-almacen-paso-1",
+        "title": "Haz clic en Acciones",
+        "body": "El menú Acciones del detalle trae Imprimir también para Almacén.",
+        "anchor_attr": "header-actions-menu",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "imprimir-pedido-detalle-almacen-paso-2",
+        "title": "Haz clic en Imprimir",
+        "body": "Aparecen reports-pedido-tablero-0 y reports-pedido-surtido-0.",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "imprimir-pedido-detalle-almacen-paso-3",
+        "title": "Verifica Pedido | Hoja de surtido",
+        "body": "Verifica Pedido | Hoja de surtido.",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-imprimir-pedido-directo-detalle",
+    "name": "Impresión directa desde el detalle de un pedido (#277)",
+    "description": "Ventas abre el detalle de un pedido, entra a Acciones → Imprimir y ve los formatos con «Impresión directa». La hoja debe salir con el contenido del pedido y sin fondo gris (mismo envío plano que en la lista).",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "imprimir-pedido-directo-detalle-paso-1",
+        "title": "Haz clic en Acciones",
+        "body": "El menú Acciones del detalle también trae Imprimir (vista pedidos).",
+        "anchor_attr": "header-actions-menu",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "imprimir-pedido-directo-detalle-paso-2",
+        "title": "Haz clic en Imprimir",
+        "body": "Aparecen los 2 formatos de pedido y «Impresión directa».",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "imprimir-pedido-directo-detalle-paso-3",
+        "title": "Verifica Pedido | Hoja de surtido",
+        "body": "Verifica Pedido | Hoja de surtido.",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "imprimir-pedido-directo-detalle-paso-4",
+        "title": "Verifica Impresión directa",
+        "body": "No se pulsa «Impresión directa» en el runner (no hay impresora de red). El envío plano se prueba en form-printer.service.spec.ts y pdf-print-pages.spec.ts.",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-imprimir-pedido-directo-lista",
+    "name": "Impresión directa desde la lista de Pedidos (no el tablero) (#277)",
+    "description": "Ventas abre la lista de Pedidos (no el tablero de Almacén), entra a Acciones → Imprimir y ve los formatos de pedido con «Impresión directa». En escritorio, a la impresora de red se manda un PDF plano (JPEG por hoja, fondo blanco) para que no salga una hoja carta gris/negra vacía.",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "imprimir-pedido-directo-lista-paso-1",
+        "title": "Verifica view-list-row",
+        "body": "La lista de Pedidos carga (no el tablero de Almacén).",
+        "route": "/internal/pedidos",
+        "anchor_attr": "view-list-row",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "imprimir-pedido-directo-lista-paso-2",
+        "title": "Haz clic en Acciones",
+        "body": "En la lista, Acciones incluye Imprimir (vista pedidos, no almacen-tablero).",
+        "route": "/internal/pedidos",
+        "anchor_attr": "header-actions-menu",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "imprimir-pedido-directo-lista-paso-3",
+        "title": "Haz clic en Imprimir",
+        "body": "El catálogo ofrece los 2 formatos de pedido y «Impresión directa».",
+        "route": "/internal/pedidos",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "imprimir-pedido-directo-lista-paso-4",
+        "title": "Verifica Pedido | Hoja de surtido",
+        "body": "Verifica Pedido | Hoja de surtido.",
+        "route": "/internal/pedidos",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 5,
+        "step_id": "imprimir-pedido-directo-lista-paso-5",
+        "title": "Verifica Impresión directa",
+        "body": "No se pulsa «Impresión directa» en el runner (no hay impresora de red). El envío plano se prueba en form-printer.service.spec.ts y pdf-print-pages.spec.ts.",
+        "route": "/internal/pedidos",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-imprimir-pedido-vista-previa-varios",
+    "name": "Vista previa de varios pedidos seleccionados (#281)",
+    "description": "Ventas marca dos pedidos en la lista, entra a Acciones → Imprimir y abre «Vista previa». El visor anuncia los 2 registros y el documento tiene 2 hojas (no solo la primera).",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "imprimir-pedido-vista-previa-varios-paso-1",
+        "title": "Verifica view-list-row",
+        "body": "La lista de Pedidos carga con al menos una fila.",
+        "route": "/internal/pedidos",
+        "anchor_attr": "view-list-row",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "imprimir-pedido-vista-previa-varios-paso-2",
+        "title": "Verifica pantalla",
+        "body": "Está el pedido de reportes-pedido.",
+        "route": "/internal/pedidos",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "imprimir-pedido-vista-previa-varios-paso-3",
+        "title": "Verifica pantalla",
+        "body": "Está el segundo pedido del lote (#281).",
+        "route": "/internal/pedidos",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "imprimir-pedido-vista-previa-varios-paso-4",
+        "title": "Haz clic en Seleccionar pedido",
+        "body": "Se marca el primer pedido.",
+        "route": "/internal/pedidos",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 5,
+        "step_id": "imprimir-pedido-vista-previa-varios-paso-5",
+        "title": "Haz clic en Seleccionar pedido 2",
+        "body": "Se marca el segundo pedido.",
+        "route": "/internal/pedidos",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 6,
+        "step_id": "imprimir-pedido-vista-previa-varios-paso-6",
+        "title": "Haz clic en Acciones",
+        "body": "Acciones incluye Imprimir.",
+        "route": "/internal/pedidos",
+        "anchor_attr": "header-actions-menu",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 7,
+        "step_id": "imprimir-pedido-vista-previa-varios-paso-7",
+        "title": "Haz clic en Imprimir",
+        "body": "El catálogo ofrece los formatos de pedido.",
+        "route": "/internal/pedidos",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 8,
+        "step_id": "imprimir-pedido-vista-previa-varios-paso-8",
+        "title": "Haz clic en Vista previa",
+        "body": "La vista previa anuncia los dos pedidos marcados, no solo el primero.",
+        "route": "/internal/pedidos",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 9,
+        "step_id": "imprimir-pedido-vista-previa-varios-paso-9",
+        "title": "Verifica de 2",
+        "body": "El visor pagina las 2 hojas del lote. La interpolación de fichas sin delimitador es la de",
+        "route": "/internal/pedidos",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-imprimir-pedidos-almacen",
+    "name": "Imprimir pedidos desde el tablero de Almacén y desde el detalle (#259,",
+    "description": "El usuario de Almacén imprime «Pedido | Formato de impresión» y «Pedido | Hoja de surtido» desde Acciones → Imprimir del tablero (pedidos marcados, un solo PDF con una hoja por pedido) y desde el detalle de un pedido; la cabecera lleva el nombre del pedido (folio automático).",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "imprimir-pedidos-almacen-paso-1",
+        "title": "Verifica header-actions-buscar",
+        "body": "El tablero usa la barra superior de todas las listas (migas «Tablero de pedidos», «Acciones» y buscador); ya no lleva título ni buscador propios.",
+        "route": "/internal/pedidos",
+        "anchor_attr": "header-actions-buscar",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "imprimir-pedidos-almacen-paso-2",
+        "title": "Verifica pantalla",
+        "body": "El pedido de prueba (seed:reportes-pedido) está en el tablero en «Por surtir», listo para marcarlo e imprimirlo.",
+        "route": "/internal/pedidos",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "imprimir-pedidos-almacen-paso-3",
+        "title": "Haz clic en Acciones",
+        "body": "«Acciones» del tablero solo trae Imprimir (#259); lo había ocultado 45d7db42e.",
+        "route": "/internal/pedidos",
+        "anchor_attr": "header-actions-menu",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "imprimir-pedidos-almacen-paso-4",
+        "title": "Haz clic en Imprimir",
+        "body": "El catálogo de impresión ofrece los 2 formatos de pedido.",
+        "route": "/internal/pedidos",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 5,
+        "step_id": "imprimir-pedidos-almacen-paso-5",
+        "title": "Verifica Pedido | Hoja de surtido",
+        "body": "Verifica Pedido | Hoja de surtido.",
+        "route": "/internal/pedidos",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 6,
+        "step_id": "imprimir-pedidos-almacen-paso-6",
+        "title": "Verifica pantalla",
+        "body": "El formato del seed (reports-pedido-tablero-0) trae name en la cabecera (#263).",
+        "route": "/internal/pedidos",
         "action_hint": "observe",
         "placement": "auto"
       }
@@ -1805,9 +2420,172 @@
     ]
   },
   {
+    "_ref": "interactive-manual-flow-ventas-pedidos-columna-vendedor",
+    "name": "Ver y filtrar el vendedor en la lista de pedidos",
+    "description": "Ventas abre Pedidos y ve la columna Vendedor en el view-list; filtra por un vendedor y la lista pide solo los pedidos de ese vendedor.",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "pedidos-columna-vendedor-paso-1",
+        "title": "Verifica view-list-row",
+        "body": "La lista de pedidos carga con al menos un pedido",
+        "route": "/internal/pedidos",
+        "anchor_attr": "view-list-row",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "pedidos-columna-vendedor-paso-2",
+        "title": "Verifica view-list-column-usuario",
+        "body": "La columna Vendedor aparece en el view-list",
+        "route": "/internal/pedidos",
+        "anchor_attr": "view-list-column-usuario",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "pedidos-columna-vendedor-paso-3",
+        "title": "Haz clic en Vendedor",
+        "body": "El menú de la columna lista los vendedores para filtrar",
+        "route": "/internal/pedidos",
+        "anchor_attr": "view-list-column-usuario",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "pedidos-columna-vendedor-paso-4",
+        "title": "Haz clic en view-list-filter-option",
+        "body": "Al elegir un vendedor, la lista se filtra a sus pedidos",
+        "route": "/internal/pedidos",
+        "anchor_attr": "view-list-filter-option",
+        "action_hint": "click",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-pedidos-vendedor-ruta",
+    "name": "Ver vendedor y ruta del pedido en la lista y en el detalle",
+    "description": "Ventas abre Pedidos y ve las columnas Vendedor y Ruta del view-list con nombres; al abrir el pedido, el detalle muestra el mismo vendedor y la misma ruta (#275).",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "pedidos-vendedor-ruta-paso-1",
+        "title": "Verifica view-list-row",
+        "body": "La lista trae el pedido del cliente con su ruta por nombre",
+        "route": "/internal/pedidos",
+        "anchor_attr": "view-list-row",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "pedidos-vendedor-ruta-paso-2",
+        "title": "Verifica view-list-column-usuario",
+        "body": "La columna Vendedor aparece en el view-list",
+        "route": "/internal/pedidos",
+        "anchor_attr": "view-list-column-usuario",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "pedidos-vendedor-ruta-paso-3",
+        "title": "Verifica view-list-column-ruta",
+        "body": "La columna Ruta aparece en el view-list",
+        "route": "/internal/pedidos",
+        "anchor_attr": "view-list-column-ruta",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "pedidos-vendedor-ruta-paso-4",
+        "title": "Haz clic en view-list-row",
+        "body": "Al abrir el pedido, el detalle muestra el nombre del vendedor",
+        "route": "/internal/pedidos",
+        "anchor_attr": "view-list-row",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 5,
+        "step_id": "pedidos-vendedor-ruta-paso-5",
+        "title": "Verifica pedidos-detalle-ruta",
+        "body": "El detalle muestra la ruta del cliente por nombre",
+        "route": "/internal/pedidos",
+        "anchor_attr": "pedidos-detalle-ruta",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-tablero-pedidos-vendedor-ruta",
+    "name": "Ver vendedor y ruta en el tablero de pedidos",
+    "description": "Almacén abre Pedidos en modo tablero y ve las columnas Vendedor y Ruta con nombres en el pedido por surtir (#275).",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "tablero-pedidos-vendedor-ruta-paso-1",
+        "title": "Verifica header-actions-buscar",
+        "body": "Almacén entra a la lista en modo tablero (buscador en la barra superior)",
+        "route": "/internal/pedidos",
+        "anchor_attr": "header-actions-buscar",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "tablero-pedidos-vendedor-ruta-paso-2",
+        "title": "Verifica view-list-row",
+        "body": "El pedido por surtir del cliente muestra su ruta por nombre",
+        "route": "/internal/pedidos",
+        "anchor_attr": "view-list-row",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "tablero-pedidos-vendedor-ruta-paso-3",
+        "title": "Verifica view-list-column-usuario",
+        "body": "La columna Vendedor aparece en el tablero",
+        "route": "/internal/pedidos",
+        "anchor_attr": "view-list-column-usuario",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "tablero-pedidos-vendedor-ruta-paso-4",
+        "title": "Verifica view-list-column-ruta",
+        "body": "La columna Ruta aparece en el tablero",
+        "route": "/internal/pedidos",
+        "anchor_attr": "view-list-column-ruta",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
     "_ref": "interactive-manual-flow-ventas-tablero-surtido",
     "name": "Tablero de surtido de pedidos (almacén)",
-    "description": "Almacén entra a Pedidos y ve el tablero de surtido en lugar de la lista normal; busca un pedido por folio o cliente y lo asigna a quien lo va a surtir.",
+    "description": "Almacén entra a Pedidos y ve el tablero de surtido en lugar de la lista normal, con la barra superior de las demás listas; busca un pedido desde el buscador de esa barra y lo asigna a quien lo va a surtir.",
     "icon": "fa-cart-shopping",
     "module_model_id": "Pedidos",
     "is_default_for_module": true,
@@ -1816,10 +2594,164 @@
       {
         "order": 1,
         "step_id": "tablero-surtido-paso-1",
-        "title": "Verifica pedidos-tablero-buscar",
-        "body": "Para el grupo Almacén la lista de pedidos se abre como tablero de surtido; busca aquí por folio o cliente",
+        "title": "Haz clic en Buscar",
+        "body": "Para el grupo Almacén la lista de pedidos se abre como tablero de surtido (migas «Tablero de pedidos»); el buscador está en la barra superior, junto a «Acciones», como en las demás listas (#276)",
         "route": "/internal/pedidos",
-        "anchor_attr": "pedidos-tablero-buscar",
+        "anchor_attr": "header-actions-buscar",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "tablero-surtido-paso-2",
+        "title": "Escribe en header-actions-buscar-campo",
+        "body": "Escribe en header-actions-buscar-campo.",
+        "route": "/internal/pedidos",
+        "anchor_attr": "header-actions-buscar-campo",
+        "action_hint": "input",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "tablero-surtido-paso-3",
+        "title": "Presiona Enter",
+        "body": "La búsqueda filtra el tablero por folio, cliente o producto",
+        "route": "/internal/pedidos",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-ventas-ruta-enviar-pendientes",
+    "name": "Ventas en ruta, enviar pendientes (llega Confirmado con aviso)",
+    "description": "El vendedor sincroniza, captura sin red un pedido con un artículo sin precio, lo guarda en el teléfono y, ya con red, pulsa «Enviar pendientes»: el núcleo lo crea Confirmado (parámetro «Pedidos offline · Estado al sincronizar», Odoo #262) y avisa que se confirmó sin precio.",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "ventas-ruta-enviar-pendientes-paso-1",
+        "title": "Haz clic en Abrir opciones de usuario",
+        "body": "Haz clic en Abrir opciones de usuario.",
+        "route": "/offline/pedidos/mis-pedidos",
+        "anchor_attr": "cuenta-opciones",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "ventas-ruta-enviar-pendientes-paso-2",
+        "title": "Haz clic en Sincronizar datos",
+        "body": "Baja al teléfono el catálogo vendible, los clientes y la existencia del almacén del vendedor",
+        "route": "/offline/pedidos/mis-pedidos",
+        "anchor_attr": "offline-sincronizar",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "ventas-ruta-enviar-pendientes-paso-3",
+        "title": "Haz clic en Nuevo pedido",
+        "body": "Haz clic en Nuevo pedido.",
+        "route": "/offline/pedidos/mis-pedidos",
+        "anchor_attr": "offline-pedido-nuevo",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "ventas-ruta-enviar-pendientes-paso-4",
+        "title": "Simula modo sin conexión Sin conexión",
+        "body": "El pedido se captura sin red con lo guardado en el teléfono",
+        "route": "/crear",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 5,
+        "step_id": "ventas-ruta-enviar-pendientes-paso-5",
+        "title": "Escribe en Buscar cliente",
+        "body": "Escribe en Buscar cliente.",
+        "route": "/crear",
+        "anchor_attr": "offline-cliente",
+        "action_hint": "input",
+        "placement": "auto"
+      },
+      {
+        "order": 6,
+        "step_id": "ventas-ruta-enviar-pendientes-paso-6",
+        "title": "Haz clic en envio",
+        "body": "Haz clic en envio.",
+        "route": "/crear",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 7,
+        "step_id": "ventas-ruta-enviar-pendientes-paso-7",
+        "title": "Escribe en Buscar artículos",
+        "body": "Escribe en Buscar artículos.",
+        "route": "/crear",
+        "anchor_attr": "offline-catalogo-buscar",
+        "action_hint": "input",
+        "placement": "auto"
+      },
+      {
+        "order": 8,
+        "step_id": "ventas-ruta-enviar-pendientes-paso-8",
+        "title": "Haz clic en envio",
+        "body": "Tiene existencia en el almacén del vendedor, así que entra al pedido aunque su precio sea $0",
+        "route": "/crear",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 9,
+        "step_id": "ventas-ruta-enviar-pendientes-paso-9",
+        "title": "Haz clic en Guardar",
+        "body": "Haz clic en Guardar.",
+        "route": "/crear",
+        "anchor_attr": "offline-pedido-guardar",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 10,
+        "step_id": "ventas-ruta-enviar-pendientes-paso-10",
+        "title": "Haz clic en No ahora",
+        "body": "Haz clic en No ahora.",
+        "route": "/crear",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 11,
+        "step_id": "ventas-ruta-enviar-pendientes-paso-11",
+        "title": "Restablece la conexión pantalla",
+        "body": "Vuelve la señal",
+        "route": "/crear",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 12,
+        "step_id": "ventas-ruta-enviar-pendientes-paso-12",
+        "title": "Haz clic en Enviar (1)",
+        "body": "El núcleo crea el pedido en el estado del parámetro (Confirmado por omisión) y, como no tiene precio, lo confirma con aviso en vez de bajarlo a borrador",
+        "route": "/crear",
+        "anchor_attr": "offline-enviar-pendientes",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 13,
+        "step_id": "ventas-ruta-enviar-pendientes-paso-13",
+        "title": "Verifica pantalla",
+        "body": "En Ventas → Pedidos el pedido aparece Confirmado",
+        "route": "/crear",
         "action_hint": "observe",
         "placement": "auto"
       }
@@ -1914,6 +2846,16 @@
       {
         "order": 9,
         "step_id": "ventas-ruta-sin-conexion-paso-9",
+        "title": "Haz clic en Borrar texto",
+        "body": "Al escribir aparece la X del buscador; tocarla borra lo escrito y reinicia la búsqueda del catálogo (#258)",
+        "route": "/crear",
+        "anchor_attr": "input-clear",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 10,
+        "step_id": "ventas-ruta-sin-conexion-paso-10",
         "title": "Escribe en Buscar artículos",
         "body": "Escribe en Buscar artículos.",
         "route": "/crear",
@@ -1922,8 +2864,8 @@
         "placement": "auto"
       },
       {
-        "order": 10,
-        "step_id": "ventas-ruta-sin-conexion-paso-10",
+        "order": 11,
+        "step_id": "ventas-ruta-sin-conexion-paso-11",
         "title": "Haz clic en ruta",
         "body": "Haz clic en ruta.",
         "route": "/crear",
@@ -1931,8 +2873,8 @@
         "placement": "auto"
       },
       {
-        "order": 11,
-        "step_id": "ventas-ruta-sin-conexion-paso-11",
+        "order": 12,
+        "step_id": "ventas-ruta-sin-conexion-paso-12",
         "title": "Haz clic en Guardar",
         "body": "Se guarda en el teléfono como pendiente de enviar",
         "route": "/crear",
@@ -1941,8 +2883,8 @@
         "placement": "auto"
       },
       {
-        "order": 12,
-        "step_id": "ventas-ruta-sin-conexion-paso-12",
+        "order": 13,
+        "step_id": "ventas-ruta-sin-conexion-paso-13",
         "title": "Haz clic en No ahora",
         "body": "Sin impresora Zebra no se imprime; vuelve a la lista con 1 pedido por enviar",
         "route": "/crear",
@@ -1950,8 +2892,8 @@
         "placement": "auto"
       },
       {
-        "order": 13,
-        "step_id": "ventas-ruta-sin-conexion-paso-13",
+        "order": 14,
+        "step_id": "ventas-ruta-sin-conexion-paso-14",
         "title": "Verifica pantalla",
         "body": "Bloqueo; con pedidos pendientes y sin red, «Enviar» no se puede usar",
         "route": "/crear",
@@ -1959,8 +2901,8 @@
         "placement": "auto"
       },
       {
-        "order": 14,
-        "step_id": "ventas-ruta-sin-conexion-paso-14",
+        "order": 15,
+        "step_id": "ventas-ruta-sin-conexion-paso-15",
         "title": "Restablece la conexión pantalla",
         "body": "Restablece la conexión pantalla.",
         "route": "/crear",

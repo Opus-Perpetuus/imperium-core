@@ -141,55 +141,41 @@ describe('alta de pedido', () => {
 });
 
 describe('sync offline', () => {
-	test('el mismo folio local no crea un segundo pedido', () => {
-		expect(
-			decidir_sync_offline({
-				ya_existe_uuid: false,
-				ya_existe_folio: true,
-				folio_visto_en_lote: false,
-				folio: 'Prueba Vendedor-20260927-001558',
-			}),
-		).toEqual({ decision: 'duplicado', motivo: 'folio' });
-		expect(
-			decidir_sync_offline({
-				ya_existe_uuid: false,
-				ya_existe_folio: false,
-				folio_visto_en_lote: true,
-				folio: 'Prueba Vendedor-20260927-001558',
-			}),
-		).toEqual({ decision: 'duplicado', motivo: 'folio' });
+	const F = 'Prueba Vendedor-20260927-001558';
+	const base = { ya_existe_uuid: false, folio: F, offline_uuid: 'u-2' } as const;
+
+	test('el mismo folio del mismo pedido no crea un segundo pedido', () => {
+		expect(decidir_sync_offline({ ...base, coincidencia_folio: 'mismo_pedido' })).toEqual({
+			decision: 'duplicado',
+			motivo: 'folio',
+		});
+	});
+
+	test('el mismo folio de otro pedido (otro teléfono) sí crea, con folio desambiguado (Odoo #272)', () => {
+		expect(decidir_sync_offline({ ...base, coincidencia_folio: 'otro_pedido' })).toEqual({
+			decision: 'crear',
+			folio_offline: `${F}#u-2`,
+		});
 	});
 
 	test('el mismo uuid sí devuelve su fila', () => {
-		expect(
-			decidir_sync_offline({
-				ya_existe_uuid: true,
-				ya_existe_folio: true,
-				folio_visto_en_lote: false,
-				folio: 'Prueba Vendedor-20260927-001558',
-			}),
-		).toEqual({ decision: 'duplicado', motivo: 'uuid' });
+		expect(decidir_sync_offline({ ...base, ya_existe_uuid: true, coincidencia_folio: 'mismo_pedido' })).toEqual({
+			decision: 'duplicado',
+			motivo: 'uuid',
+		});
 	});
 
 	test('un folio vacío no se colapsa', () => {
-		expect(
-			decidir_sync_offline({
-				ya_existe_uuid: false,
-				ya_existe_folio: true,
-				folio_visto_en_lote: true,
-				folio: '   ',
-			}),
-		).toEqual({ decision: 'crear' });
+		expect(decidir_sync_offline({ ...base, folio: '   ', coincidencia_folio: 'mismo_pedido' })).toEqual({
+			decision: 'crear',
+			folio_offline: undefined,
+		});
 	});
 
 	test('otro uuid con otro folio sí crea', () => {
-		expect(
-			decidir_sync_offline({
-				ya_existe_uuid: false,
-				ya_existe_folio: false,
-				folio_visto_en_lote: false,
-				folio: 'otro-folio',
-			}),
-		).toEqual({ decision: 'crear' });
+		expect(decidir_sync_offline({ ...base, coincidencia_folio: 'ninguna' })).toEqual({
+			decision: 'crear',
+			folio_offline: F,
+		});
 	});
 });

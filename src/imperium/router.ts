@@ -31,6 +31,7 @@ import { handle_sync_http } from './offline/http.ts';
 import { meta_http_response } from './meta.ts';
 import { handle_action } from './actions.ts';
 import { handle_db_admin, is_db_admin_path } from './db-admin.ts';
+import { handle_feature_map_test, is_feature_map_test_path } from './feature-map-test-http.ts';
 import {
 	ensure_app_registry_schema,
 	handle_app_registry_http,
@@ -354,6 +355,9 @@ async function dispatch(
 			}
 			if (path === '/subjects' || path.startsWith('/subjects/')) {
 				return add_cors(req, await handle_subjects(store, sql, req, path));
+			}
+			if (is_feature_map_test_path(path)) {
+				return add_cors(req, await handle_feature_map_test(store, sql, req, path));
 			}
 			if (is_db_admin_path(path)) {
 				return add_cors(

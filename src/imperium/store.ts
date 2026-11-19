@@ -2,6 +2,12 @@
  * Almacén de documentos Imperium sobre los schemas SQL de las apps.
  * Un recurso canónico (products, pedidos) aunque el menú lo repita.
  */
+import {
+	ensure_feature_map_test_columns,
+	FEATURE_MAP_TEST_COLUMN,
+	FEATURE_MAP_TEST_COLUMN_DDL,
+	in_feature_map_test,
+} from './feature-map-test.ts';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
@@ -18,7 +24,7 @@ import {
 } from './envelope.ts';
 import { is_record_id } from './record-id.ts';
 import { GEO_LEGACY_SCHEMA, relocate_geo_tables, seed_geo_catalog, type GeoSeedResult } from './geo-catalog.ts';
-import { SearchEngine, search_text_from_doc } from './search-engine.ts';
+import { SearchEngine, search_index_text } from './search-engine.ts';
 import {
 	ACTIVITY_CONTEXTS,
 	CHAT_ATTACHMENT_MODELS,
@@ -34,6 +40,7 @@ import { products_inventory_cost } from './products-flow.ts';
 import { vehicle_by_status } from './vehicle-flow.ts';
 import { delivery_package_by_status } from './delivery-package-flow.ts';
 import { pedidos_sales_stats } from './pedidos-flow.ts';
+import { ensure_pedido_fecha, is_pedido_resource } from './pedidos-fecha.ts';
 import { pedido_fecha_order_sql, pedido_order_sql, pedido_search_predicates } from './pedidos-list-order.ts';
 import {
 	purchase_order_stats,
@@ -5222,6 +5229,8 @@ export class ImperiumStore {
 		await this.ensure_orphan_tables();
 		await this.ensure_geo_tables_location();
 		await this.ensure_catalog_columns();
+		// Toda tabla (núcleo y apps) lleva `feature_map_test` para el borrado de pruebas.
+		await ensure_feature_map_test_columns(this.sql).catch(() => 0);
 		try {
 			await this.ensure_postgres_table_tracker_table();
 			const { sync_postgres_table_tracker, ensure_postgres_table_tracker_access } =
@@ -5386,7 +5395,7 @@ export class ImperiumStore {
 						.filter((doc) => loc.resource !== 'attachment-management' || !is_chat_attachment(doc))
 						.map((doc) => ({
 							id: String(doc._id),
-							search_text: search_text_from_doc(doc),
+							search_text: search_index_text(doc),
 						}))
 						.filter((doc) => doc.search_text),
 				);
@@ -5474,7 +5483,7 @@ export class ImperiumStore {
 				const docs = page
 					.map((doc) => ({
 						id: String(doc._id),
-						search_text: search_text_from_doc(doc),
+						search_text: search_index_text(doc),
 					}))
 					.filter((doc) => doc.search_text);
 				if (docs.length) {
@@ -5504,7 +5513,8 @@ export class ImperiumStore {
           custom_data JSONB DEFAULT '{}'::jsonb,
           payload JSONB DEFAULT '{}'::jsonb,
           created_at TEXT,
-          updated_at TEXT
+          updated_at TEXT,
+          ${FEATURE_MAP_TEST_COLUMN_DDL}
         )
       `);
 		await this.ensure_loc_columns('postgres-table-tracker');
@@ -5560,7 +5570,8 @@ export class ImperiumStore {
           custom_data JSONB DEFAULT '{}'::jsonb,
           payload JSONB DEFAULT '{}'::jsonb,
           created_at TEXT,
-          updated_at TEXT
+          updated_at TEXT,
+          ${FEATURE_MAP_TEST_COLUMN_DDL}
         )
       `);
 			} catch {
@@ -5673,7 +5684,8 @@ export class ImperiumStore {
           custom_data JSONB DEFAULT '{}'::jsonb,
           payload JSONB DEFAULT '{}'::jsonb,
           created_at TEXT,
-          updated_at TEXT
+          updated_at TEXT,
+          ${FEATURE_MAP_TEST_COLUMN_DDL}
         )
       `);
 			await this.ensure_loc_columns(resource);
@@ -5682,6 +5694,20 @@ export class ImperiumStore {
 
 	has(resource: string): boolean {
 		return this.locs.has(resource);
+	}
+
+	private readonly feature_map_test_ready = new Set<string>();
+
+	/** La tabla del recurso tiene `feature_map_test` (una sola vez por tabla y proceso). */
+	private async ensure_feature_map_test_column(resource: string): Promise<void> {
+		const qt = this.qt(resource);
+		if (this.feature_map_test_ready.has(qt)) return;
+		try {
+			await this.sql.unsafe(`ALTER TABLE ${qt} ADD COLUMN IF NOT EXISTS ${FEATURE_MAP_TEST_COLUMN_DDL}`);
+		} catch {
+			/* sin permiso o tabla aún sin crear: el INSERT dirá el error real */
+		}
+		this.feature_map_test_ready.add(qt);
 	}
 
 	/**
@@ -5920,6 +5946,8 @@ export class ImperiumStore {
 	flatten(row: Record<string, unknown> | null, resource?: string): ImperiumDoc | null {
 		if (!row) return null;
 		const parsed = { ...row };
+		// Marca interna de las corridas de prueba: no sale en los documentos.
+		delete parsed[FEATURE_MAP_TEST_COLUMN];
 		const jsons = resource
 			? this.json_cols(resource)
 			: new Set(['payload', 'custom_data']);
@@ -6023,7 +6051,10 @@ export class ImperiumStore {
 						params.push(item);
 						return `$${params.length}`;
 					});
-					if (cols.has(k)) clauses.push(`${qident(k)} IN (${marks.join(', ')})`);
+					if (is_id_list_field(k)) {
+						const expr = filter_text_expr(cols, k);
+						clauses.push(`(${marks.map((mark) => id_list_member_sql(expr, mark)).join(' OR ')})`);
+					} else if (cols.has(k)) clauses.push(`${qident(k)} IN (${marks.join(', ')})`);
 					else clauses.push(payload_field_in_sql(k, marks));
 					continue;
 				}
@@ -6048,7 +6079,8 @@ export class ImperiumStore {
 					continue;
 				}
 				params.push(v);
-				if (cols.has(k)) clauses.push(`${qident(k)} = $${params.length}`);
+				if (is_id_list_field(k)) clauses.push(id_list_member_sql(filter_text_expr(cols, k), `$${params.length}`));
+				else if (cols.has(k)) clauses.push(`${qident(k)} = $${params.length}`);
 				else clauses.push(payload_field_eq_sql(k, `$${params.length}`));
 			}
 		}
@@ -6444,6 +6476,7 @@ export class ImperiumStore {
 
 	async insert(resource: string, doc: ImperiumDoc): Promise<ImperiumDoc> {
 		guard_store_insert(resource, doc);
+		if (is_pedido_resource(resource)) ensure_pedido_fecha(doc);
 		apply_inventory_movement_ledger(resource, doc);
 		ensure_sql_name(resource, doc);
 		await this.assert_unique_business_keys(resource, doc);
@@ -6456,8 +6489,17 @@ export class ImperiumStore {
 		row.created_at ??= ts;
 		row.updated_at ??= ts;
 		if (row.is_active === undefined) row.is_active = true;
+		const test_run = in_feature_map_test();
+		if (test_run) await this.ensure_feature_map_test_column(resource);
 		const keys = Object.keys(row).filter((k) => cols.has(k));
-		const values = keys.map((k) => cell(row[k], jsons.has(k), bools.has(k)));
+		// Corrida de feature map: la fila queda marcada para el borrado en masa.
+		if (test_run && !keys.includes(FEATURE_MAP_TEST_COLUMN)) {
+			keys.push(FEATURE_MAP_TEST_COLUMN);
+			row[FEATURE_MAP_TEST_COLUMN] = true;
+		}
+		const values = keys.map((k) =>
+			k === FEATURE_MAP_TEST_COLUMN ? row[k] === true : cell(row[k], jsons.has(k), bools.has(k)),
+		);
 		const qt = this.qt(resource);
 		const inserted = await this.sql.unsafe(
 			`INSERT INTO ${qt} (${keys.map(qident).join(', ')}) VALUES (${keys.map((k, i) => json_placeholder(i + 1, jsons.has(k))).join(', ')}) RETURNING *`,
@@ -6486,6 +6528,7 @@ export class ImperiumStore {
 			payload: { ...as_object(existing), ...as_object(patch) },
 		};
 		apply_schema_setters(resource, merged, { apply_defaults: false });
+		if (is_pedido_resource(resource)) ensure_pedido_fecha(merged, existing);
 		assert_required_fields(resource, merged, Object.keys(patch));
 		assert_objectid_refs(resource, merged, Object.keys(patch));
 		await this.assert_unique_business_keys(resource, merged, id);
@@ -6540,6 +6583,27 @@ export class ImperiumStore {
 		return rows.length;
 	}
 
+	/**
+	 * Reindexado (#268): escribe solo `search_field` y solo en las filas donde cambia. No toca
+	 * `updated_at`, ni el historial, ni Meilisearch (el reindexado los maneja aparte). Regresa
+	 * cuántas filas cambiaron.
+	 */
+	async set_search_fields(
+		resource: string,
+		rows: Array<{ id: string; search_field: string }>,
+	): Promise<number> {
+		if (!rows.length) return 0;
+		const changed = await this.sql.unsafe(
+			`UPDATE ${this.qt(resource)} AS t
+			 SET search_field = v.search_field
+			 FROM jsonb_to_recordset($1::jsonb) AS v(id text, search_field text)
+			 WHERE t.id::text = v.id AND t.search_field IS DISTINCT FROM v.search_field
+			 RETURNING t.id`,
+			[rows],
+		);
+		return changed.length;
+	}
+
 	async sync_search(resource: string, doc: ImperiumDoc) {
 		if (is_chat_private_resource(resource)) return;
 		const collection = this.loc(resource).collection;
@@ -6549,7 +6613,7 @@ export class ImperiumStore {
 			await SearchEngine.delete_documents(collection, [id]);
 			return;
 		}
-		const search_text = search_text_from_doc(doc);
+		const search_text = search_index_text(doc);
 		if (!search_text) return;
 		await SearchEngine.index_documents(collection, [{ id, search_text }]);
 	}
@@ -7872,6 +7936,24 @@ export function payload_field_range_sql(
 export function payload_field_eq_sql(field: string, param: string): string {
 	const key = literal(field);
 	return `payload ->> ${key} = ${param}::text`;
+}
+
+/** `user_ids`, `menus_ids`…: arreglo de ids guardado como texto JSON, jsonb o en `payload`. */
+function is_id_list_field(field: string): boolean {
+	return field.endsWith('_ids');
+}
+
+function filter_text_expr(cols: Set<string>, field: string): string {
+	return cols.has(field) ? `${qident(field)}::text` : `payload ->> ${literal(field)}`;
+}
+
+/**
+ * Pertenencia a la lista: el id entrecomillado como JSON aparece en el texto
+ * (`["a","b"]`, `[{"_id":"a"}]`) o la celda es el id suelto. Sin cast a jsonb:
+ * una celda legada que no es JSON no tumba la consulta. NULL no coincide.
+ */
+export function id_list_member_sql(expr: string, param: string): string {
+	return `(${expr} = ${param}::text OR strpos(${expr}, to_json(${param}::text)::text) > 0)`;
 }
 
 export function payload_field_in_sql(field: string, marks: string[]): string {

@@ -25,6 +25,7 @@ const COLUMNS: Record<string, Record<string, ColumnSpec>> = {
 	pedidos: {
 		folio_interno: { label: 'Folio interno' },
 		fecha: { label: 'Fecha', tipo: FECHA },
+		usuario: { label: 'Vendedor' },
 		init_time: { label: 'Hora de inicio', tipo: FECHA },
 		end_time: { label: 'Hora de fin', tipo: FECHA },
 		assigned_employee: { label: 'Empleado asignado' },

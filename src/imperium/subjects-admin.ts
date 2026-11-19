@@ -39,8 +39,10 @@ import {
 	manifest_fits_catalog,
 	NEEDS_CATALOG,
 	NEEDS_CORE,
-	core_satisfies,
-	required_core,
+	NEEDS_FRONT,
+	catalog_requires_check_wanted,
+	front_version,
+	unmet_requirement,
 	read_update_policy,
 	subject_update_target,
 	update_wanted,
@@ -76,6 +78,7 @@ import {
 	type CatalogEntry,
 } from './subject-catalog.ts';
 import { DATA_ALIASES, PREFER_OWNER, type ImperiumStore, type SubjectInfo } from './store.ts';
+import { FEATURE_MAP_TEST_COLUMN_DDL } from './feature-map-test.ts';
 
 type JobCtx = {
 	store: ImperiumStore;
@@ -220,7 +223,8 @@ async function create_install_table(sql: Bun.SQL): Promise<void> {
       status TEXT NOT NULL DEFAULT 'not_installed',
       installed_at TIMESTAMPTZ,
       uninstalled_at TIMESTAMPTZ,
-      version INTEGER
+      version INTEGER,
+      ${FEATURE_MAP_TEST_COLUMN_DDL}
     )
   `);
 	await sql.unsafe(`
@@ -2404,6 +2408,39 @@ export async function list_subject_updates(
 	return out;
 }
 
+/** Versión del front de este servidor (`IMPERIUM_FRONT_VERSION`/`_TAG` o la del núcleo). */
+const FRONT_VERSION = front_version(process.env, CORE_VERSION);
+
+/** Mínimo de núcleo o front que el manifiesto pide y este servidor no cumple. */
+function requirement_message(
+	sub: SubjectInfo,
+	tag: string | null,
+	manifest: Record<string, unknown> | null | undefined,
+): { code: string; message: string } | null {
+	const unmet = unmet_requirement(manifest, { core: CORE_VERSION, front: FRONT_VERSION });
+	if (!unmet) return null;
+	return {
+		code: unmet.code,
+		message: `La versión ${tag} de ${sub.name} necesita el ${unmet.part} ${unmet.need} o más nuevo (este es ${unmet.have}); sigue en la actual`,
+	};
+}
+
+/**
+ * La imagen del catálogo también puede venir del autoescaneo (la versión más
+ * alta publicada), así que antes de moverse a ella se revisan sus mínimos de
+ * núcleo y front. Un manifiesto ilegible no detiene la actualización: así
+ * actualizaba antes y el pin del producto es de confianza.
+ */
+async function check_image_requires(
+	sub: SubjectInfo,
+	image: string,
+): Promise<{ ok: true } | { ok: false; code: string; message: string }> {
+	const next = await read_subject_image_manifest(sub.slug, image);
+	if (next.skipped || !next.ok) return { ok: true };
+	const unmet = requirement_message(sub, subject_image_tag(image), next.manifest);
+	return unmet ? { ok: false, ...unmet } : { ok: true };
+}
+
 /**
  * Antes de ir a una imagen que no es el pin, se lee su manifiesto (el
  * operador la baja) y se comprueba que lo que agrega ya está en el catálogo de
@@ -2424,14 +2461,8 @@ async function check_image_fits_catalog(
 			message: `No se pudo revisar la versión ${tag} de ${sub.name}: ${next.error}`,
 		};
 	}
-	const core_min = required_core(next.manifest);
-	if (core_min && !core_satisfies(core_min, CORE_VERSION)) {
-		return {
-			ok: false,
-			code: NEEDS_CORE,
-			message: `La versión ${tag} de ${sub.name} necesita el núcleo ${core_min} o más nuevo (este es ${CORE_VERSION}); sigue en la actual`,
-		};
-	}
+	const unmet = requirement_message(sub, tag, next.manifest);
+	if (unmet) return { ok: false, ...unmet };
 	let current = await fetch(`${subject_base_url(sub.technical_id)}/manifest`, {
 		signal: AbortSignal.timeout(10_000),
 	})
@@ -2505,7 +2536,7 @@ export async function run_subject_update(
 	) {
 		const fits = await check_image_fits_catalog(sub, target_image, running);
 		if (!fits.ok) {
-			if (fits.code === NEEDS_CATALOG || fits.code === NEEDS_CORE) {
+			if (fits.code === NEEDS_CATALOG || fits.code === NEEDS_CORE || fits.code === NEEDS_FRONT) {
 				await mark_discovered_note(sql, technical_id, target_image, fits.code);
 			}
 			// Una descubierta que no se pudo revisar no deja a la app sin el
@@ -2534,6 +2565,36 @@ export async function run_subject_update(
 				throw new SubjectLifecycleError(fits.message, 409, fits.code);
 			}
 			target_image = sub.image;
+		}
+	}
+	// Del catálogo (pin o autoescaneo) hacia una imagen distinta de la que
+	// corre y más nueva: también respeta los mínimos de núcleo y front.
+	if (
+		catalog_requires_check_wanted({
+			source: image_source,
+			target: target_image,
+			pin: sub.image,
+			running,
+			rollback,
+		})
+	) {
+		const req = await check_image_requires(sub, target_image);
+		if (!req.ok) {
+			emit_subject_event(
+				{
+					technical_id,
+					slug: sub.slug,
+					name: sub.name,
+					installed: true,
+					status: 'installed',
+					phase: 'error',
+					level: 'warning',
+					message: req.message,
+				},
+				job,
+			);
+			await write_install_row(sql, technical_id, true, ver.version, 'installed');
+			throw new SubjectLifecycleError(req.message, 409, req.code);
 		}
 	}
 	await write_install_row(sql, technical_id, true, ver.version, 'updating');
