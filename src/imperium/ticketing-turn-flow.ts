@@ -1,6 +1,7 @@
 /**
  * Turnos de ventanilla: create/take/notify/end y sockets como el plugin original.
  */
+import { debug_warning } from './debug-request-log.ts';
 import { as_array, as_object, type ImperiumDoc } from './envelope.ts';
 import { emit_to_room } from './socket-stub.ts';
 import type { ImperiumStore } from './store.ts';
@@ -386,19 +387,14 @@ export async function take_next_turn(
 		}
 		const services_list = [...missing_services].join(', ');
 		const types_list = [...missing_types].join(', ');
+		let detail = `Los turnos disponibles requieren que la caja tenga el tipo de usuario '${types_list}' configurado. No fue posible tomar un turno.`;
 		if (missing_services.size && missing_types.size) {
-			throw new Error(
-				`Los turnos disponibles requieren que la caja tenga el servicio '${services_list}' y el tipo de usuario '${types_list}' configurado. No fue posible tomar un turno.`,
-			);
+			detail = `Los turnos disponibles requieren que la caja tenga el servicio '${services_list}' y el tipo de usuario '${types_list}' configurado. No fue posible tomar un turno.`;
+		} else if (missing_services.size) {
+			detail = `Los turnos disponibles requieren que la caja tenga el servicio '${services_list}' configurado. No fue posible tomar un turno.`;
 		}
-		if (missing_services.size) {
-			throw new Error(
-				`Los turnos disponibles requieren que la caja tenga el servicio '${services_list}' configurado. No fue posible tomar un turno.`,
-			);
-		}
-		throw new Error(
-			`Los turnos disponibles requieren que la caja tenga el tipo de usuario '${types_list}' configurado. No fue posible tomar un turno.`,
-		);
+		debug_warning(detail);
+		return { turn: null, waiting: 0 };
 	}
 	const ordered = await sort_pending(store, matching);
 	for (const next of ordered) {

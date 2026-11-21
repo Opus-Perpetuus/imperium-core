@@ -1,6 +1,7 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { remember_socket_ip } from './auth-rate-limit.ts';
 import { handle_action } from './actions.ts';
+import { bind_debug_store } from './debug-request-log.ts';
 import type { ImperiumDoc } from './envelope.ts';
 import { handle_socket_io } from './socket-stub.ts';
 import { ImperiumStore, load_catalog_path, status_guard_clause } from './store.ts';
@@ -152,7 +153,12 @@ async function call(store: ImperiumStore, action: string, json: Record<string, u
 		{},
 		null,
 	);
-	return (await res.json()) as { data: Row[]; message?: string; total_elementos?: number };
+	const body = (await res.json()) as {
+		data: Row[];
+		message?: string;
+		total_elementos?: number;
+	};
+	return { ...body, status: res.status };
 }
 
 function box_row(id: string, name: string): Row {
@@ -245,6 +251,98 @@ describe('tomar el siguiente turno es de una sola caja', () => {
 	});
 });
 
+describe('tomar el siguiente turno cuando ninguno le toca a la caja', () => {
+	test('responde 200 sin turno, deja el pendiente intacto y anota el detalle en el log', async () => {
+		const seed = desk();
+		seed['ticketing-system-box-config'] = [
+			{
+				_id: 'box-general',
+				name: 'Caja general',
+				is_active: true,
+				allowed_services: ['svc-1'],
+				allowed_customer_types: ['type-1'],
+			},
+			{
+				_id: 'box-lic',
+				name: 'Caja licencias',
+				is_active: true,
+				allowed_services: ['svc-lic'],
+				allowed_customer_types: ['type-3ra'],
+			},
+		];
+		seed['ticketing-system-service-type']!.push({
+			_id: 'svc-lic',
+			name: 'LICENCIAS, ACTAS',
+			priority_level: 1,
+			is_active: true,
+		});
+		seed['ticketing-system-customer-type']!.push({
+			_id: 'type-3ra',
+			name: '3RA EDAD Y DISCAPACITADOS',
+			priority_level: 1,
+			is_active: true,
+		});
+		seed['ticketing-system-turn'] = [
+			{
+				_id: 'turn-3ra',
+				name: 'L001',
+				status: 'pendiente',
+				estado: 'pendiente',
+				services: ['svc-lic'],
+				customer_type: 'type-3ra',
+				priority_level: 1,
+				createdAt: '2026-01-01T00:00:00.000Z',
+				is_active: true,
+			},
+		];
+		seed['debug-log'] = [];
+		const store = memory_store(seed);
+		bind_debug_store(store);
+		const log = spyOn(console, 'log');
+		try {
+			const res = await call(store, 'take_next_turn', { box_config_id: 'box-general' });
+			expect(res.status).toBe(200);
+			expect(res.data).toEqual([]);
+			expect(res.total_elementos).toBe(0);
+			expect(res.message).toBe('Sin turnos a la espera');
+			const pending = await store.find_id('ticketing-system-turn', 'turn-3ra');
+			expect(pending?.status).toBe('pendiente');
+			expect(pending?.assigned_box).toBeUndefined();
+			const logged = log.mock.calls.map((args) => args.map(String).join(' ')).join('\n');
+			expect(logged).toContain('LICENCIAS, ACTAS');
+			expect(logged).toContain('3RA EDAD Y DISCAPACITADOS');
+
+			const taken = await call(store, 'take_next_turn', { box_config_id: 'box-lic' });
+			expect(taken.status).toBe(200);
+			expect(taken.data.map((row) => String(row._id))).toEqual(['turn-3ra']);
+			expect(taken.message).toBe('Turno tomado');
+		} finally {
+			log.mockRestore();
+			bind_debug_store(null as unknown as ImperiumStore);
+		}
+	});
+
+	test('una caja que no encaja y otra que sí, a la vez, no se quedan el mismo turno', async () => {
+		const seed = desk();
+		const caja_ajena = box_row('box-ajena', 'Caja ajena');
+		caja_ajena.allowed_services = ['svc-otra'];
+		caja_ajena.allowed_customer_types = ['type-otra'];
+		seed['ticketing-system-box-config'] = [caja_ajena, box_row('box-1', 'Caja 3')];
+		const store = memory_store(seed);
+		const [ajena, propia] = await Promise.all([
+			call(store, 'take_next_turn', { box_config_id: 'box-ajena' }),
+			call(store, 'take_next_turn', { box_config_id: 'box-1' }),
+		]);
+		expect(ajena.status).toBe(200);
+		expect(ajena.data).toEqual([]);
+		expect(ajena.message).toBe('Sin turnos a la espera');
+		expect(propia.data.map((row) => String(row._id))).toEqual(['turn-waiting']);
+		const saved = await store.find_id('ticketing-system-turn', 'turn-waiting');
+		expect(saved?.status).toBe('en_atencion');
+		expect(assigned_box_id(saved!)).toBe('box-1');
+	});
+});
+
 describe('tomar el siguiente turno con fila vacía', () => {
 	test('responde 200 sin turno cuando no hay pendientes', async () => {
 		const seed = desk();
@@ -252,6 +350,7 @@ describe('tomar el siguiente turno con fila vacía', () => {
 		const res = await call(memory_store(seed), 'take_next_turn', {
 			box_config_id: 'box-1',
 		});
+		expect(res.status).toBe(200);
 		expect(res.data).toEqual([]);
 		expect(res.total_elementos).toBe(0);
 		expect(res.message).toBe('Sin turnos a la espera');
