@@ -80,6 +80,11 @@ import {
 	prepare_ticketing_turn_create,
 } from './ticketing-turn-flow.ts';
 import {
+	claim_turn_confirm,
+	schedule_ticketing_room_notice,
+	type TurnCreateClaim,
+} from './ticketing-turn-create-guard.ts';
+import {
 	actor_can_restore_pos_session,
 	prepare_pos_session_create,
 	prepare_pos_session_update,
@@ -827,6 +832,7 @@ export async function handle_crud(
 	}
 	if (method === 'POST' && segs.length === 0) {
 		assert_inventory_ledger_write(resource, 'create');
+		let turn_claim: TurnCreateClaim<ImperiumDoc> | null = null;
 		let confirmar_inventario_inconsistente = false;
 		let incoming = await prepare_user_write(
 			resource,
@@ -895,7 +901,18 @@ export async function handle_crud(
 			incoming = await prepare_supplier_invoice_create(store, incoming);
 		}
 		if (resource === 'ticketing-system-turn') {
-			incoming = await prepare_ticketing_turn_create(store, incoming);
+			turn_claim = claim_turn_confirm(incoming.client_request_id);
+			delete incoming.client_request_id;
+			if (turn_claim.status === 'replay') {
+				const turn = await turn_claim.turn;
+				return json(resource, ok([turn], 'Turno ya registrado'), 200);
+			}
+			try {
+				incoming = await prepare_ticketing_turn_create(store, incoming);
+			} catch (error) {
+				if (turn_claim.status === 'new') turn_claim.fail(error);
+				throw error;
+			}
 		}
 		if (resource === 'pos-session') {
 			incoming = await prepare_pos_session_create(store, incoming, actor);
@@ -987,8 +1004,21 @@ export async function handle_crud(
 		if (resource === 'lectura') {
 			incoming = await prepare_lectura_write(store, incoming);
 		}
-		const doc = await before_create(store, resource, incoming, actor);
-		const created = await store.insert(resource, doc);
+		let doc: ImperiumDoc;
+		try {
+			doc = await before_create(store, resource, incoming, actor);
+		} catch (error) {
+			if (turn_claim?.status === 'new') turn_claim.fail(error);
+			throw error;
+		}
+		let created: ImperiumDoc;
+		try {
+			created = await store.insert(resource, doc);
+		} catch (error) {
+			if (turn_claim?.status === 'new') turn_claim.fail(error);
+			throw error;
+		}
+		if (turn_claim?.status === 'new') turn_claim.settle(created);
 		if (resource === 'attachment-management') bind_deferred_image_optimize(store, created);
 		await link_attachments_to_record(store, resource, created);
 		const notice = user_pin_notice
@@ -1000,7 +1030,9 @@ export async function handle_crud(
 		}
 		if (resource === 'pedidos') await after_pedido_mutate(store, 'create', created);
 		if (resource === 'access-rights') await link_access_right_to_group(store, created);
-		if (resource === 'ticketing-system-turn') await notify_ticketing_rooms(store);
+		if (resource === 'ticketing-system-turn') {
+			schedule_ticketing_room_notice(() => notify_ticketing_rooms(store));
+		}
 		if (resource === 'purchase-order') {
 			await sync_inbound_supplier_invoice(store, created);
 			await ensure_pending_reception_from_purchase_order(store, created);
