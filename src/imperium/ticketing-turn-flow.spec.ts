@@ -5,6 +5,7 @@ import { bind_debug_store } from './debug-request-log.ts';
 import type { ImperiumDoc } from './envelope.ts';
 import { handle_socket_io } from './socket-stub.ts';
 import { ImperiumStore, load_catalog_path, status_guard_clause } from './store.ts';
+import { APOYO_MINUTOS_DEFAULT, apoyo_minutos } from './ticketing-turn-flow.ts';
 
 const ROOM = 'ticketing_system_turns';
 const POLLING = 'http://imperium.test/api/socket.io/?EIO=4&transport=polling';
@@ -546,5 +547,130 @@ describe('resumen de pendientes de la caja (box-turns-summary)', () => {
 			path: '/box-turns-summary',
 			action: 'box_turns_summary',
 		});
+	});
+});
+
+describe('apoyo entre cajas y licencias primero (#300)', () => {
+	function zapotlanejo(): Record<string, Row[]> {
+		const turn = (id: string, name: string, svc: string, type: string, at: string, priority = 1): Row => ({
+			_id: id,
+			name,
+			status: 'pendiente',
+			estado: 'pendiente',
+			services: [svc],
+			customer_type: type,
+			priority_level: priority,
+			createdAt: at,
+			is_active: true,
+		});
+		return {
+			'ticketing-system-box-config': [
+				{ _id: 'caja-1', name: 'Caja 1', is_active: true, allowed_services: ['svc-agua', 'svc-predial'], allowed_customer_types: ['type-gen'] },
+				{ _id: 'caja-3', name: 'Caja 3', is_active: true, allowed_services: ['svc-agua', 'svc-predial', 'svc-lic'], allowed_customer_types: ['type-gen', 'type-3ra'] },
+			],
+			'ticketing-system-service-type': [
+				{ _id: 'svc-agua', name: 'AGUA', priority_level: 1, is_active: true },
+				{ _id: 'svc-predial', name: 'PREDIAL', priority_level: 1, is_active: true },
+				{ _id: 'svc-lic', name: 'LICENCIAS', priority_level: 1, is_active: true },
+			],
+			'ticketing-system-customer-type': [
+				{ _id: 'type-gen', name: 'GENERAL', priority_level: 1, is_active: true },
+				{ _id: 'type-3ra', name: '3RA EDAD Y DISCAPACITADOS', priority_level: 3, is_active: true },
+				{ _id: 'type-emb', name: 'EMBARAZADA', priority_level: 3, is_active: true },
+			],
+			'ticketing-system-turn': [
+				turn('t-3ra-pred', 'T024', 'svc-predial', 'type-3ra', '2026-01-01T00:00:01.000Z', 3),
+				turn('t-3ra-lic', 'T025', 'svc-lic', 'type-3ra', '2026-01-01T00:00:02.000Z', 3),
+				turn('t-emb', 'E001', 'svc-agua', 'type-emb', '2026-01-01T00:00:03.000Z', 3),
+				turn('t-gen-lic', 'L039', 'svc-lic', 'type-gen', '2026-01-01T00:00:04.000Z', 1),
+			],
+		};
+	}
+
+	test('una caja general sin turnos propios apoya con un turno de tercera edad de sus servicios', async () => {
+		const store = memory_store(zapotlanejo());
+		const res = await call(store, 'take_next_turn', { box_config_id: 'caja-1' });
+		expect(res.data.map((row) => String(row._id))).toEqual(['t-3ra-pred']);
+		const saved = await store.find_id('ticketing-system-turn', 't-3ra-pred');
+		expect(assigned_box_id(saved!)).toBe('caja-1');
+		// No apoya con licencias, ni con tipos fuera de general / tercera edad.
+		const again = await call(store, 'take_next_turn', { box_config_id: 'caja-1' });
+		expect(again.data).toEqual([]);
+		expect((await store.find_id('ticketing-system-turn', 't-3ra-lic'))?.status).toBe('pendiente');
+		expect((await store.find_id('ticketing-system-turn', 't-emb'))?.status).toBe('pendiente');
+	});
+
+	test('si la caja tiene turnos propios, no toma los de apoyo', async () => {
+		const seed = zapotlanejo();
+		seed['ticketing-system-turn']!.push({
+			_id: 't-gen-agua',
+			name: 'G152',
+			status: 'pendiente',
+			estado: 'pendiente',
+			services: ['svc-agua'],
+			customer_type: 'type-gen',
+			priority_level: 1,
+			createdAt: '2026-01-01T00:00:09.000Z',
+			is_active: true,
+		});
+		const res = await call(memory_store(seed), 'take_next_turn', { box_config_id: 'caja-1' });
+		expect(res.data.map((row) => String(row._id))).toEqual(['t-gen-agua']);
+	});
+
+	test('la caja de licencias atiende primero las licencias aunque haya tercera edad de mayor prioridad', async () => {
+		const store = memory_store(zapotlanejo());
+		const first = await call(store, 'take_next_turn', { box_config_id: 'caja-3' });
+		expect(first.data.map((row) => String(row._id))).toEqual(['t-3ra-lic']);
+		const second = await call(store, 'take_next_turn', { box_config_id: 'caja-3' });
+		expect(second.data.map((row) => String(row._id))).toEqual(['t-gen-lic']);
+		const third = await call(store, 'take_next_turn', { box_config_id: 'caja-3' });
+		expect(third.data.map((row) => String(row._id))).toEqual(['t-3ra-pred']);
+	});
+
+	test('la caja de licencias no hace apoyo fuera de sus tipos', async () => {
+		const seed = zapotlanejo();
+		seed['ticketing-system-box-config']![1]!.allowed_customer_types = ['type-gen'];
+		seed['ticketing-system-turn'] = seed['ticketing-system-turn']!.filter((row) => row._id === 't-3ra-pred');
+		const res = await call(memory_store(seed), 'take_next_turn', { box_config_id: 'caja-3' });
+		expect(res.data).toEqual([]);
+	});
+
+	test('umbral: un turno de 3ra edad con menos de 10 min esperando no se apoya; con más, sí', async () => {
+		const minutes_ago = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
+		const seed = zapotlanejo();
+		seed['ticketing-system-turn'] = seed['ticketing-system-turn']!.filter((row) => row._id === 't-3ra-pred');
+		seed['ticketing-system-turn']![0]!.createdAt = minutes_ago(9);
+		const fresh = await call(memory_store(seed), 'take_next_turn', { box_config_id: 'caja-1' });
+		expect(fresh.data).toEqual([]);
+		seed['ticketing-system-turn']![0]!.createdAt = minutes_ago(11);
+		const late = await call(memory_store(seed), 'take_next_turn', { box_config_id: 'caja-1' });
+		expect(late.data.map((row) => String(row._id))).toEqual(['t-3ra-pred']);
+	});
+
+	test('umbral por servicio: apoyo_minutos del servicio cambia el default; 0 apoya de inmediato', async () => {
+		const seed = zapotlanejo();
+		seed['ticketing-system-turn'] = seed['ticketing-system-turn']!.filter((row) => row._id === 't-3ra-pred');
+		seed['ticketing-system-turn']![0]!.createdAt = new Date(Date.now() - 3 * 60_000).toISOString();
+		const predial = seed['ticketing-system-service-type']!.find((row) => row._id === 'svc-predial')!;
+		predial.apoyo_minutos = 5;
+		const before = await call(memory_store(seed), 'take_next_turn', { box_config_id: 'caja-1' });
+		expect(before.data).toEqual([]);
+		predial.apoyo_minutos = 2;
+		const after = await call(memory_store(seed), 'take_next_turn', { box_config_id: 'caja-1' });
+		expect(after.data.map((row) => String(row._id))).toEqual(['t-3ra-pred']);
+		predial.apoyo_minutos = 0;
+		seed['ticketing-system-turn']![0]!.createdAt = new Date().toISOString();
+		const now = await call(memory_store(seed), 'take_next_turn', { box_config_id: 'caja-1' });
+		expect(now.data.map((row) => String(row._id))).toEqual(['t-3ra-pred']);
+	});
+
+	test('apoyo_minutos vacío o inválido usa el default de 10', () => {
+		expect(APOYO_MINUTOS_DEFAULT).toBe(10);
+		expect(apoyo_minutos(undefined)).toBe(10);
+		expect(apoyo_minutos('')).toBe(10);
+		expect(apoyo_minutos(-3)).toBe(10);
+		expect(apoyo_minutos('abc')).toBe(10);
+		expect(apoyo_minutos('15')).toBe(15);
+		expect(apoyo_minutos(0)).toBe(0);
 	});
 });

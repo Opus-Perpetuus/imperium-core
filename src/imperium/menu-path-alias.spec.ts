@@ -48,7 +48,15 @@ describe('alias de path de menú al recurso que sí existe', () => {
 		expect(rewrite('/database-manager/backups')).toBe('/db-admin/backups');
 		expect(rewrite('/database-manager/health')).toBe('/db-admin/health');
 		expect(rewrite('/database-manager/audit/1')).toBe('/db-admin/audit/1');
-		expect(rewrite('/database-manager/console')).toBe('/database-manager/console');
+		expect(rewrite('/database-manager/console')).toBe('/db-admin/schemas');
+	});
+
+	test('#338: raíz, consola y restaurar del gestor ya no dan 404', () => {
+		expect(rewrite('/database-manager')).toBe('/db-admin');
+		expect(rewrite('/database-manager/')).toBe('/db-admin');
+		expect(rewrite('/database-manager/restore')).toBe('/db-admin/restores');
+		expect(rewrite('/database-manager/restore/r1')).toBe('/db-admin/restores/r1');
+		expect(rewrite('/api/database-manager/restore')).toBe('/api/database-manager/restore');
 	});
 
 	test('no toca la tienda de Marketo, raíces de app ni rutas de núcleo que no son colecciones', () => {

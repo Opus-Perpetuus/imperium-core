@@ -206,6 +206,112 @@ async function sort_pending(store: ImperiumStore, turns: ImperiumDoc[]): Promise
 	return ranked.map((row) => row.turn);
 }
 
+/** #300: la caja de licencias se reconoce por tener un servicio «Licencia(s)». */
+const LICENCIAS = /licencia/i;
+/** #300: filas en las que otra caja puede apoyar: general y tercera edad / discapacitados. */
+const APOYO_TYPES = /general|3ra|tercera|discapac/i;
+
+/**
+ * #300: minutos que un turno de General o 3ra edad espera antes de que otra
+ * caja lo apoye. Cada servicio lo cambia con `apoyo_minutos` (0 = apoyo
+ * inmediato); si el turno trae varios servicios manda el menor.
+ */
+export const APOYO_MINUTOS_DEFAULT = 10;
+
+async function service_doc(store: ImperiumStore, raw: unknown): Promise<ImperiumDoc> {
+	if (raw && typeof raw === 'object') return as_object(raw);
+	const id = text(raw);
+	if (!id || !store.has('ticketing-system-service-type')) return {};
+	return (await store.find_id('ticketing-system-service-type', id)) ?? {};
+}
+
+async function service_name(store: ImperiumStore, raw: unknown): Promise<string> {
+	return text((await service_doc(store, raw)).name);
+}
+
+export function apoyo_minutos(value: unknown): number {
+	if (value == null || String(value).trim() === '') return APOYO_MINUTOS_DEFAULT;
+	const n = Number(value);
+	return Number.isFinite(n) && n >= 0 ? n : APOYO_MINUTOS_DEFAULT;
+}
+
+async function apoyo_threshold_minutes(store: ImperiumStore, turn: ImperiumDoc): Promise<number> {
+	const values: number[] = [];
+	for (const raw of as_array(turn.services)) {
+		values.push(apoyo_minutos((await service_doc(store, raw)).apoyo_minutos));
+	}
+	return values.length ? Math.min(...values) : APOYO_MINUTOS_DEFAULT;
+}
+
+function waiting_minutes(turn: ImperiumDoc, now: number): number {
+	const created = new Date(String(turn.createdAt ?? turn.created_at ?? '')).getTime();
+	if (!Number.isFinite(created)) return 0;
+	return (now - created) / 60_000;
+}
+
+async function has_licencias_service(store: ImperiumStore, raws: unknown[]): Promise<boolean> {
+	for (const raw of raws) {
+		if (LICENCIAS.test(await service_name(store, raw))) return true;
+	}
+	return false;
+}
+
+async function apoyo_type_ids(store: ImperiumStore): Promise<string[]> {
+	if (!store.has('ticketing-system-customer-type')) return [];
+	const ids: string[] = [];
+	for await (const page of store.scan('ticketing-system-customer-type')) {
+		for (const row of page) {
+			if (row.is_active !== false && APOYO_TYPES.test(text(row.name))) ids.push(text(row._id));
+		}
+	}
+	return ids;
+}
+
+/**
+ * #300 apoyo entre cajas: la fila de un turno de General o 3ra edad está
+ * saturada cuando ese turno lleva más de su umbral esperando (ver
+ * APOYO_MINUTOS_DEFAULT). Entonces una caja que no es de licencias y no tiene
+ * turnos propios lo toma aunque no tenga ese tipo de cliente, siempre que
+ * tenga los servicios del turno y el turno no sea de licencias.
+ */
+async function apoyo_turns(
+	store: ImperiumStore,
+	box: ImperiumDoc,
+	waiting: ImperiumDoc[],
+): Promise<ImperiumDoc[]> {
+	const allowed_services = as_id_list(box.allowed_services);
+	const allowed_types = as_id_list(box.allowed_customer_types);
+	if (await has_licencias_service(store, allowed_services)) return [];
+	const apoyo = await apoyo_type_ids(store);
+	if (!allowed_types.some((id) => apoyo.includes(id))) return [];
+	const now = Date.now();
+	const out: ImperiumDoc[] = [];
+	for (const turn of waiting) {
+		const services = as_array(turn.services);
+		if (!apoyo.includes(ref_id(turn.customer_type))) continue;
+		if (!as_id_list(turn.services).every((id) => allowed_services.includes(id))) continue;
+		if (await has_licencias_service(store, services)) continue;
+		if (waiting_minutes(turn, now) < (await apoyo_threshold_minutes(store, turn))) continue;
+		out.push(turn);
+	}
+	return out;
+}
+
+/** #300: en la caja de licencias, los turnos de licencias van primero. */
+async function licencias_first(
+	store: ImperiumStore,
+	box: ImperiumDoc,
+	ordered: ImperiumDoc[],
+): Promise<ImperiumDoc[]> {
+	if (!(await has_licencias_service(store, as_id_list(box.allowed_services)))) return ordered;
+	const first: ImperiumDoc[] = [];
+	const rest: ImperiumDoc[] = [];
+	for (const turn of ordered) {
+		((await has_licencias_service(store, as_array(turn.services))) ? first : rest).push(turn);
+	}
+	return [...first, ...rest];
+}
+
 async function box_turns_summary(store: ImperiumStore, box: ImperiumDoc) {
 	const allowed_services = as_id_list(box.allowed_services);
 	const allowed_types = as_id_list(box.allowed_customer_types);
@@ -218,11 +324,13 @@ async function box_turns_summary(store: ImperiumStore, box: ImperiumDoc) {
 		const type_ok = allowed_types.includes(type_id);
 		if (services_ok && type_ok) matching.push(turn);
 	}
+	// #300: la pantalla muestra lo mismo que tomará «Tomar siguiente turno».
+	if (!matching.length) matching.push(...(await apoyo_turns(store, box, waiting)));
 	// La pantalla de caja muestra customer_type.name y services[].name;
 	// sin populate llegan ids crudos (ObjectId) y el front los pinta tal cual.
 	const pending_queue = await populate_turns(
 		store,
-		await sort_pending(store, matching),
+		await licencias_first(store, box, await sort_pending(store, matching)),
 	);
 	const turns_by_service: Record<string, ImperiumDoc[]> = {};
 	const turns_by_user_type: Record<string, ImperiumDoc[]> = {};
@@ -361,6 +469,7 @@ export async function take_next_turn(
 			matching.push(turn);
 		}
 	}
+	if (!matching.length) matching.push(...(await apoyo_turns(store, box, waiting)));
 	if (!matching.length) {
 		const missing_services = new Set<string>();
 		const missing_types = new Set<string>();
@@ -396,7 +505,7 @@ export async function take_next_turn(
 		debug_warning(detail);
 		return { turn: null, waiting: 0 };
 	}
-	const ordered = await sort_pending(store, matching);
+	const ordered = await licencias_first(store, box, await sort_pending(store, matching));
 	for (const next of ordered) {
 		const stamp = new Date().toISOString();
 		const updated = await store.update(

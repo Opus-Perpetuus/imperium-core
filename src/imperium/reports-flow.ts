@@ -24,6 +24,12 @@ import {
 import type { ImperiumStore } from './store.ts';
 import { pedidos_con_ruta } from './contacto-rutas.ts';
 import { is_pedido_resource } from './pedidos-fecha.ts';
+import {
+	PHYSICAL_DEVICE_KARDEX_FIELDS,
+	physical_device_kardex,
+	physical_device_promoted,
+	physical_device_report_fields,
+} from './physical-device-report.ts';
 
 const STATIC_PLACEHOLDERS = new Set([
 	'fecha_actual',
@@ -584,7 +590,7 @@ export async function assert_report_template_write(
 		resource = '';
 	}
 	if (!resource) return;
-	const fields = fields_from_store(store, resource);
+	const fields = [...fields_from_store(store, resource), ...(REPORT_VIRTUAL_FIELDS[resource] ?? [])];
 	/* El diseñador ofrece también las claves que viven en el payload de las
 	 * filas (no son columnas); validarlas solo contra columnas rechazaba al
 	 * guardar campos que el propio diseñador había propuesto. */
@@ -629,7 +635,50 @@ export function report_validation_ok(
 
 /** Campos que el registro solo tiene al leerse (no guardados), para que el reporte los vea. */
 async function report_rows(store: ImperiumStore, resource: string, rows: ImperiumDoc[]): Promise<ImperiumDoc[]> {
+	if (resource === 'physical-device') return physical_device_report_rows(store, rows);
 	return is_pedido_resource(resource) ? pedidos_con_ruta(store, rows) : rows;
+}
+
+/**
+ * Campos que solo existen al generar el reporte, por recurso (#337). El
+ * validador los acepta aunque ninguna fila los tenga guardados.
+ */
+const REPORT_VIRTUAL_FIELDS: Record<string, ReportFieldLike[]> = {
+	'physical-device': [
+		{ field_name: 'disk_count' },
+		{ field_name: 'ram_gb' },
+		{ field_name: 'disk_total_gb' },
+		{ field_name: 'vram_gb' },
+		{ field_name: 'ultima_revision' },
+		{
+			field_name: 'kardex',
+			is_array: true,
+			related_fields: PHYSICAL_DEVICE_KARDEX_FIELDS.map((field_name) => ({ field_name })),
+		},
+	],
+};
+
+/** Dispositivos: GB legibles y su kárdex (historial sin ruido, antiguo → reciente). */
+async function physical_device_report_rows(store: ImperiumStore, rows: ImperiumDoc[]): Promise<ImperiumDoc[]> {
+	const has_history = store.has('document-change-history');
+	const out: ImperiumDoc[] = [];
+	for (const row of rows) {
+		let kardex: ReturnType<typeof physical_device_kardex> = [];
+		if (has_history && row._id) {
+			const { rows: history } = await store.find_many('document-change-history', {
+				where: { documentId: String(row._id) },
+				take: 500,
+				include_inactive: true,
+				sort: 'created_at:asc',
+				populate: false,
+				skip_total: true,
+			});
+			kardex = physical_device_kardex(history as Record<string, unknown>[]);
+		}
+		const promoted = physical_device_promoted(row.raw_snapshot);
+		out.push({ ...row, ...promoted, ...physical_device_report_fields({ ...row, ...promoted }), kardex });
+	}
+	return out;
 }
 
 export async function* iter_report_record_pages(

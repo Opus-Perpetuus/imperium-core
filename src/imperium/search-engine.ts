@@ -56,7 +56,18 @@ class SearchEngineService {
 		return `imp_${safe}`;
 	}
 
-	async index_documents(collection: string, docs: SearchDocument[]) {
+	/**
+	 * `wait: false` encola en Meili y regresa sin esperar a que termine la tarea.
+	 * El guardado de un registro lo usa: esperar cada tarea (pedido, productos,
+	 * kardex, historial, bitácora) sumaba ~200 ms por documento y un pedido de
+	 * 37 partidas tardaba 35 s (503 en el proxy). Meili procesa en orden, así que
+	 * el documento aparece en la búsqueda unos cientos de ms después.
+	 */
+	async index_documents(
+		collection: string,
+		docs: SearchDocument[],
+		opts: { wait?: boolean } = {},
+	) {
 		if (!docs.length || !this.is_enabled()) return;
 		try {
 			await this.ensure_index(collection);
@@ -66,7 +77,7 @@ class SearchEngineService {
 				docs,
 			);
 			this.mark_available(Boolean(res?.ok));
-			if (res?.ok) await this.wait_task(res);
+			if (res?.ok && opts.wait !== false) await this.wait_task(res);
 		} catch (error) {
 			this.mark_available(false);
 			this.log_error(error);

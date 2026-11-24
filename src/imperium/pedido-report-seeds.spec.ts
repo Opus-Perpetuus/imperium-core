@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { module_seed_records } from './module-data.ts';
 import { interpolate_report_template } from './reports-flow.ts';
 import seeds from './pedido-report-seeds.json';
+import device_seeds from './physical-device-report-seeds.json';
 
 describe('bundled canonical pedido reports', () => {
   test('install-data resolves both reports without backend sources', () => {
@@ -12,7 +13,7 @@ describe('bundled canonical pedido reports', () => {
     process.env.IMPERIUM_BACKEND_SRC = mkdtempSync(join(tmpdir(), 'no-backend-'));
     try {
     const records = module_seed_records({ model_id: 'Reports', module_name: 'no-backend-module', module_location: 'missing' });
-    expect(records.map((r) => r.doc._ref)).toEqual(seeds.map((r) => r.doc._ref));
+    expect(records.map((r) => r.doc._ref)).toEqual([...seeds, ...device_seeds].map((r) => r.doc._ref));
     expect(records.every((r) => r.override)).toBe(true);
     expect(module_seed_records({ model_id: 'UnrelatedMissingModule', module_name: 'no-backend-module' })).toEqual([]);
     } finally {

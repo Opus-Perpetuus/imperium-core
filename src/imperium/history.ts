@@ -2,6 +2,7 @@
  * Historial de cambios: mismo contrato que el plugin de Mongoose del original.
  * El panel de formularios lee `document-change-history` por documentId + modelo.
  */
+import { physical_device_history_view } from './physical-device-report.ts';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { is_chat_private_resource } from './chat-access.ts';
 import { as_object, type ImperiumDoc } from './envelope.ts';
@@ -279,9 +280,18 @@ export function enrich_history_row(row: ImperiumDoc): ImperiumDoc {
 	};
 }
 
-export function diff_docs(before: ImperiumDoc | null, after: ImperiumDoc | null) {
-	const prev = as_object(before);
-	const next = as_object(after);
+/**
+ * Vista del documento para el diff, por recurso (#336): quita lo volátil y
+ * compara objetos grandes por ruta. Solo afecta qué se anota, no lo guardado.
+ */
+const HISTORY_VIEWS: Record<string, (doc: ImperiumDoc | null) => ImperiumDoc | null> = {
+	'physical-device': (doc) => physical_device_history_view(doc) as ImperiumDoc | null,
+};
+
+export function diff_docs(before: ImperiumDoc | null, after: ImperiumDoc | null, resource?: string) {
+	const view = resource ? HISTORY_VIEWS[resource] : undefined;
+	const prev = as_object(view ? view(before) : before);
+	const next = as_object(view ? view(after) : after);
 	const keys = new Set([...Object.keys(prev), ...Object.keys(next)]);
 	const changes: Array<Record<string, unknown>> = [];
 	for (const key of keys) {
@@ -339,7 +349,7 @@ export async function record_document_history(
 	if (skips_history(canonical)) return;
 	const document_id = String(after?._id ?? before?._id ?? '').trim();
 	if (!document_id) return;
-	const changes = diff_docs(before, after);
+	const changes = diff_docs(before, after, canonical);
 	if (!changes.length) return;
 	const operation = !before ? 'save' : after?.is_active === false && before.is_active !== false ? 'deleteOne' : 'save';
 	const collection_name = loc?.collection ?? canonical;

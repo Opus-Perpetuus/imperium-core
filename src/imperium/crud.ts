@@ -184,6 +184,7 @@ import {
 	FIELD_VALUES_ALLOW,
 	field_values_denied,
 	FIELD_VALUES_DENIED_MESSAGE,
+	field_values_from_counts,
 	field_values_from_distinct,
 	field_values_message,
 	field_values_missing_field_error,
@@ -521,7 +522,21 @@ export async function handle_crud(
 		}
 		const termino = String(url.searchParams.get('termino') ?? '').trim();
 		const scope = await record_rule_scope(store, actor, resource, method);
-		const values = await store.distinct(resource, field_path, termino, scope.match);
+		// #327/#329: valores y conteos de la MISMA vista de la lista (filtros de
+		// las otras columnas y contexto de la ruta, p. ej. el padre de la subtabla).
+		const view_where = await field_values_view_where(store, resource, url, actor, field_path);
+		const counted =
+			typeof store.distinct_counts === 'function'
+				? await store.distinct_counts(resource, field_path, {
+						q: termino,
+						mongo_match: scope.match,
+						where: view_where,
+						include_inactive: query_list(url).include_inactive,
+					})
+				: null;
+		const values = counted
+			? counted.map((row) => row.v)
+			: await store.distinct(resource, field_path, termino, scope.match);
 		const metadata = await load_state_fields_metadata(store, resource);
 		if (!state_field_for(metadata, field_path)) {
 			const bound = store.has(resource)
@@ -534,7 +549,15 @@ export async function handle_crud(
 				bound,
 			);
 			if (listed) {
-				return json(resource, ok(listed, field_values_message(field_path), listed.length));
+				const listed_counts = counted
+					? new Map(
+							field_values_from_counts(counted, field_path, null).map((o) => [o.value, o.count]),
+						)
+					: null;
+				const with_counts = listed_counts
+					? listed.map((o) => ({ ...o, count: listed_counts.get(String(o.value)) ?? 0 }))
+					: listed;
+				return json(resource, ok(with_counts, field_values_message(field_path), with_counts.length));
 			}
 		}
 		const options = await filter_pedido_estado_options(
@@ -546,7 +569,9 @@ export async function handle_crud(
 				store,
 				resource,
 				field_path,
-				field_values_from_distinct(values, field_path, state_field_for(metadata, field_path)),
+				counted
+					? field_values_from_counts(counted, field_path, state_field_for(metadata, field_path))
+					: field_values_from_distinct(values, field_path, state_field_for(metadata, field_path)),
 			),
 		);
 		return json(resource, ok(options, field_values_message(field_path), options.length));
@@ -1552,6 +1577,34 @@ export async function handle_crud(
 function is_excel_export(url: URL) {
 	const raw = String(url.searchParams.get('export_excel') ?? '').trim().toLowerCase();
 	return raw === '1' || raw === 'true';
+}
+
+/**
+ * #327/#329: el `where` que usaría la lista para este recurso, sin la columna
+ * cuyos valores se piden (su propio filtro no debe esconder sus opciones).
+ */
+async function field_values_view_where(
+	store: ImperiumStore,
+	resource: string,
+	url: URL,
+	actor: ImperiumDoc | null,
+	field_path: string,
+): Promise<Record<string, unknown>> {
+	const q = query_list(url);
+	let where = { ...q.where };
+	for (const key of Object.keys(where)) {
+		if (key === field_path) delete where[key];
+	}
+	if (is_personal_task_resource(resource)) {
+		const uid = String(actor?._id ?? '');
+		if (uid) where.owner_user = uid;
+	}
+	if (is_incidencia_resource(resource)) where = apply_incidencia_list_where(where);
+	if (is_registro_asistencia_resource(resource)) where = apply_registro_asistencia_list_where(where);
+	if (is_lista_asistencia_resource(resource)) where = apply_lista_asistencia_list_where(where);
+	if (resource === 'reports') where = apply_report_list_where(store, where);
+	if (is_pedido_resource(resource)) where = await resolve_pedidos_usuario_filter(store, where);
+	return strip_root_parent_where(where);
 }
 
 async function read_list_docs(

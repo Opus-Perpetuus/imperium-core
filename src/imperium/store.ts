@@ -6048,50 +6048,7 @@ export class ImperiumStore {
 			const marks = opts.ids.map((_, i) => `$${start + i}`).join(', ');
 			clauses.push(`id IN (${marks})`);
 		}
-		if (opts.where) {
-			for (const [raw_key, v] of Object.entries(opts.where)) {
-				if (v === undefined) continue;
-				const k = physical_filter_field(cols, raw_key);
-				if (v && typeof v === 'object' && !Array.isArray(v) && 'in' in v && Array.isArray((v as { in: unknown[] }).in)) {
-					const values = (v as { in: unknown[] }).in.map(String);
-					if (!values.length) continue;
-					const marks = values.map((item) => {
-						params.push(item);
-						return `$${params.length}`;
-					});
-					if (is_id_list_field(k)) {
-						const expr = filter_text_expr(cols, k);
-						clauses.push(`(${marks.map((mark) => id_list_member_sql(expr, mark)).join(' OR ')})`);
-					} else if (cols.has(k)) clauses.push(`${qident(k)} IN (${marks.join(', ')})`);
-					else clauses.push(payload_field_in_sql(k, marks));
-					continue;
-				}
-				if (is_range_filter(v)) {
-					const range = v as { gte?: unknown; lte?: unknown; gt?: unknown; lt?: unknown };
-					if (range.gte !== undefined && range.gte !== '') {
-						params.push(range_bound(String(range.gte), 'gte'));
-						clauses.push(range_compare_sql(cols, k, '>=', params.length));
-					}
-					if (range.lte !== undefined && range.lte !== '') {
-						params.push(range_bound(String(range.lte), 'lte'));
-						clauses.push(range_compare_sql(cols, k, '<=', params.length));
-					}
-					if (range.gt !== undefined && range.gt !== '') {
-						params.push(range_bound(String(range.gt), 'gte'));
-						clauses.push(range_compare_sql(cols, k, '>', params.length));
-					}
-					if (range.lt !== undefined && range.lt !== '') {
-						params.push(range_bound(String(range.lt), 'lte'));
-						clauses.push(range_compare_sql(cols, k, '<', params.length));
-					}
-					continue;
-				}
-				params.push(v);
-				if (is_id_list_field(k)) clauses.push(id_list_member_sql(filter_text_expr(cols, k), `$${params.length}`));
-				else if (cols.has(k)) clauses.push(`${qident(k)} = $${params.length}`);
-				else clauses.push(payload_field_eq_sql(k, `$${params.length}`));
-			}
-		}
+		if (opts.where) push_where_clauses(cols, opts.where, params, clauses);
 		if (opts.mongo_match) {
 			const extra = mongo_match_to_sql(opts.mongo_match, cols, params);
 			if (extra) clauses.push(extra);
@@ -6574,6 +6531,40 @@ export class ImperiumStore {
 		return saved;
 	}
 
+	/**
+	 * Toque sin historial (#336): escribe solo `fields` (columnas y su copia en
+	 * `payload`) y solo si algo cambia. No toca `updated_at`, ni el historial,
+	 * ni las notificaciones, ni el buscador. Para datos volátiles que no son un
+	 * cambio del registro (p. ej. la última revisión de un dispositivo).
+	 */
+	async touch_fields(resource: string, id: string, fields: ImperiumDoc): Promise<number> {
+		const keys = Object.keys(fields).filter((k) => /^[a-z_][a-z0-9_]*$/i.test(k));
+		if (!keys.length || !this.has(resource)) return 0;
+		const cols = this.column_names(resource);
+		const jsons = this.json_cols(resource);
+		const bools = this.bool_cols(resource);
+		const col_keys = keys.filter((k) => cols.has(k) && k !== 'id' && k !== 'payload');
+		const values: unknown[] = col_keys.map((k) => cell(fields[k], jsons.has(k), bools.has(k)));
+		const sets = col_keys.map((k, i) => `${qident(k)} = ${json_placeholder(i + 1, jsons.has(k))}`);
+		const distinct = col_keys.map((k, i) => `${qident(k)} IS DISTINCT FROM ${json_placeholder(i + 1, jsons.has(k))}`);
+		if (cols.has('payload')) {
+			const patch: Record<string, unknown> = {};
+			for (const k of keys) patch[k] = fields[k] ?? null;
+			values.push(JSON.stringify(patch));
+			const n = values.length;
+			const base = `(CASE WHEN jsonb_typeof(payload) = 'object' THEN payload WHEN jsonb_typeof(payload) = 'string' THEN COALESCE((payload #>> '{}')::jsonb, '{}'::jsonb) ELSE '{}'::jsonb END)`;
+			sets.push(`payload = ${base} || $${n}::jsonb`);
+			distinct.push(`NOT (${base} @> $${n}::jsonb)`);
+		}
+		if (!sets.length) return 0;
+		values.push(id);
+		const rows = await this.sql.unsafe(
+			`UPDATE ${this.qt(resource)} SET ${sets.join(', ')} WHERE id = $${values.length} AND (${distinct.join(' OR ')}) RETURNING id`,
+			values,
+		);
+		return rows.length;
+	}
+
 	/** Como `updateMany({ _id: { $in } }, { is_active: false })` del original. */
 	async set_inactive_ids(resource: string, ids: string[]): Promise<number> {
 		const wanted = [...new Set(ids.map(String).filter(Boolean))];
@@ -6640,7 +6631,7 @@ export class ImperiumStore {
 		}
 		const search_text = search_index_text(doc);
 		if (!search_text) return;
-		await SearchEngine.index_documents(collection, [{ id, search_text }]);
+		await SearchEngine.index_documents(collection, [{ id, search_text }], { wait: false });
 	}
 
 	async remove(resource: string, id: string): Promise<ImperiumDoc | null> {
@@ -6777,6 +6768,46 @@ export class ImperiumStore {
 			params,
 		);
 		return rows.map((r) => (r as { v: unknown }).v).filter((v) => v != null && v !== '');
+	}
+
+	/**
+	 * #327/#329: valores distintos CON su conteo, dentro de la misma vista que
+	 * la lista (búsqueda, filtros de las otras columnas, contexto de la ruta
+	 * —p. ej. el documento padre de una subtabla— y la regla de registros).
+	 * Sin archivados salvo `include_inactive`.
+	 */
+	async distinct_counts(
+		resource: string,
+		field: string,
+		opts: {
+			q?: string;
+			mongo_match?: Record<string, unknown> | null;
+			where?: Record<string, unknown>;
+			include_inactive?: boolean;
+		} = {},
+	): Promise<Array<{ v: unknown; n: number }>> {
+		const cols = this.column_names(resource);
+		const qt = this.qt(resource);
+		const expr = cols.has(field) ? qident(field) : payload_distinct_expr(field);
+		const params: unknown[] = [];
+		const clauses: string[] = [];
+		if (!opts.include_inactive && cols.has('is_active')) clauses.push('is_active IS DISTINCT FROM false');
+		if (opts.q) {
+			params.push(`%${opts.q}%`);
+			clauses.push(`${expr}::text ILIKE $${params.length}`);
+		}
+		if (opts.where && Object.keys(opts.where).length) push_where_clauses(cols, opts.where, params, clauses);
+		const scoped = mongo_match_to_sql(opts.mongo_match ?? null, cols, params);
+		if (scoped) clauses.push(scoped);
+		const where = clauses.length ? ` WHERE ${clauses.join(' AND ')}` : '';
+		const rows = await this.sql.unsafe(
+			`SELECT ${expr} AS v, COUNT(*)::int AS n FROM ${qt}${where} GROUP BY 1 ORDER BY 2 DESC LIMIT 500`,
+			params,
+		);
+		return rows
+			.map((r) => r as { v: unknown; n: unknown })
+			.filter((r) => r.v != null && r.v !== '')
+			.map((r) => ({ v: r.v, n: Number(r.n ?? 0) || 0 }));
 	}
 
 	/**
@@ -7984,6 +8015,60 @@ export function id_list_member_sql(expr: string, param: string): string {
 export function payload_field_in_sql(field: string, marks: string[]): string {
 	const key = literal(field);
 	return `payload ->> ${key} IN (${marks.join(', ')})`;
+}
+
+/**
+ * `where` de la lista → cláusulas SQL. La comparten `find_many` y
+ * `distinct_counts` (#327/#329): los valores del filtro salen de la misma vista.
+ */
+export function push_where_clauses(
+	cols: Set<string>,
+	where: Record<string, unknown>,
+	params: unknown[],
+	clauses: string[],
+): void {
+	for (const [raw_key, v] of Object.entries(where)) {
+		if (v === undefined) continue;
+		const k = physical_filter_field(cols, raw_key);
+		if (v && typeof v === 'object' && !Array.isArray(v) && 'in' in v && Array.isArray((v as { in: unknown[] }).in)) {
+			const values = (v as { in: unknown[] }).in.map(String);
+			if (!values.length) continue;
+			const marks = values.map((item) => {
+				params.push(item);
+				return `$${params.length}`;
+			});
+			if (is_id_list_field(k)) {
+				const expr = filter_text_expr(cols, k);
+				clauses.push(`(${marks.map((mark) => id_list_member_sql(expr, mark)).join(' OR ')})`);
+			} else if (cols.has(k)) clauses.push(`${qident(k)} IN (${marks.join(', ')})`);
+			else clauses.push(payload_field_in_sql(k, marks));
+			continue;
+		}
+		if (is_range_filter(v)) {
+			const range = v as { gte?: unknown; lte?: unknown; gt?: unknown; lt?: unknown };
+			if (range.gte !== undefined && range.gte !== '') {
+				params.push(range_bound(String(range.gte), 'gte'));
+				clauses.push(range_compare_sql(cols, k, '>=', params.length));
+			}
+			if (range.lte !== undefined && range.lte !== '') {
+				params.push(range_bound(String(range.lte), 'lte'));
+				clauses.push(range_compare_sql(cols, k, '<=', params.length));
+			}
+			if (range.gt !== undefined && range.gt !== '') {
+				params.push(range_bound(String(range.gt), 'gte'));
+				clauses.push(range_compare_sql(cols, k, '>', params.length));
+			}
+			if (range.lt !== undefined && range.lt !== '') {
+				params.push(range_bound(String(range.lt), 'lte'));
+				clauses.push(range_compare_sql(cols, k, '<', params.length));
+			}
+			continue;
+		}
+		params.push(v);
+		if (is_id_list_field(k)) clauses.push(id_list_member_sql(filter_text_expr(cols, k), `$${params.length}`));
+		else if (cols.has(k)) clauses.push(`${qident(k)} = $${params.length}`);
+		else clauses.push(payload_field_eq_sql(k, `$${params.length}`));
+	}
 }
 
 function payload_distinct_expr(field: string): string {

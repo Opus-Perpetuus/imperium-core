@@ -1,4 +1,5 @@
 import pedido_report_seeds from "./pedido-report-seeds.json";
+import physical_device_report_seeds from "./physical-device-report-seeds.json";
 /**
  * Acciones de module-management: mocks, seeds e índices de búsqueda.
  * Mismos mensajes que `module-management.service.ts`.
@@ -529,10 +530,11 @@ export function module_seed_records(module_record: ImperiumDoc): SeedRecord[] {
 	const file = resolve_module_data_file(module_record);
 	const records = file ? parse_module_data_file(file) : [];
 	if (String(module_record.model_id ?? '') !== 'Reports') return records;
-	const canonical_refs = new Set(pedido_report_seeds.map((seed) => seed.doc._ref));
+	const canonical = [...pedido_report_seeds, ...physical_device_report_seeds];
+	const canonical_refs = new Set(canonical.map((seed) => seed.doc._ref));
 	return [
 		...records.filter((record) => !canonical_refs.has(String(record.doc._ref))),
-		...pedido_report_seeds,
+		...canonical,
 	];
 }
 

@@ -253,6 +253,8 @@ export function field_values_from_distinct(
 	values: unknown[],
 	field_path: string,
 	configured: StateField | null,
+	/** #327: conteo real por valor (mismo índice que `values`); sin él cuenta 1. */
+	counts?: number[],
 ): FieldValueOption[] {
 	const records = values.map((value) => {
 		const doc: ImperiumDoc = {};
@@ -266,28 +268,60 @@ export function field_values_from_distinct(
 		cursor[parts[parts.length - 1] ?? field_path] = value;
 		return doc;
 	});
-	return build_field_values(records, field_path, configured);
+	return build_field_values(records, field_path, configured, counts);
+}
+
+/** #327: filas `{v, n}` de `store.distinct_counts` → opciones con su conteo real. */
+export function field_values_from_counts(
+	rows: ReadonlyArray<{ v: unknown; n: number }>,
+	field_path: string,
+	configured: StateField | null,
+): FieldValueOption[] {
+	return field_values_from_distinct(
+		rows.map((row) => parse_distinct_value(row.v)),
+		field_path,
+		configured,
+		rows.map((row) => row.n),
+	);
+}
+
+/** `payload ->> 'tags'` llega como texto JSON: se abre para contar cada elemento. */
+function parse_distinct_value(value: unknown): unknown {
+	if (typeof value !== 'string') return value;
+	const trimmed = value.trim();
+	if (!(trimmed.startsWith('[') || trimmed.startsWith('{'))) return value;
+	try {
+		return JSON.parse(trimmed);
+	} catch {
+		return value;
+	}
 }
 
 export function build_field_values(
 	records: ImperiumDoc[],
 	field_path: string,
 	configured: StateField | null,
+	weights?: number[],
 ): FieldValueOption[] {
 	const value_map = new Map<string, FieldValueOption>();
-	for (const record of records) {
+	records.forEach((record, index) => {
+		const weight = weights ? Math.max(0, Number(weights[index] ?? 0) || 0) : 1;
+		// Un registro cuenta una vez por valor aunque el arreglo lo repita.
+		const seen = new Set<string>();
 		for (const option of extract_state_values(
 			resolve_value_by_path(record, field_path),
 			configured,
 		)) {
+			if (seen.has(option.value)) continue;
+			seen.add(option.value);
 			const existing = value_map.get(option.value);
 			if (existing) {
-				existing.count += 1;
+				existing.count += weight;
 				continue;
 			}
-			value_map.set(option.value, { ...option });
+			value_map.set(option.value, { ...option, count: weight });
 		}
-	}
+	});
 	for (const state_value of configured?.values ?? []) {
 		const value = state_value.value.trim();
 		if (!value) continue;

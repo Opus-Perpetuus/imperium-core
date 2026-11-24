@@ -2,6 +2,11 @@
  * Acciones custom de Imperium, portadas a documentos SQL.
  * Cada handler replica la transición / efecto del service original.
  */
+import {
+	physical_device_fingerprint,
+	physical_device_promoted,
+	physical_device_touch,
+} from './physical-device-report.ts';
 import { register_manual_movement } from './inventory-manual-movement.ts';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
@@ -7323,9 +7328,19 @@ async function physical_device_report(ctx: Ctx) {
 		last_user_name: actor_name(ctx),
 		last_seen: now(),
 		raw_snapshot: payload.raw_snapshot ?? {},
+		...physical_device_promoted(payload.raw_snapshot),
 		is_active: true,
 	};
 	const existing = await ctx.store.find_where('physical-device', { install_uuid });
+	// #336: sin cambio de hardware solo se toca la última revisión y lo volátil,
+	// sin historial ni notificaciones; con cambio real, una sola entrada legible.
+	const fingerprint = physical_device_fingerprint(doc);
+	doc.hardware_fingerprint = fingerprint;
+	if (existing && physical_device_fingerprint(existing) === fingerprint) {
+		const id = String(existing._id);
+		await ctx.store.touch_fields('physical-device', id, physical_device_touch(doc, fingerprint));
+		return ok([{ ...existing, ...doc, _id: id }], 'Dispositivo registrado (sin cambios de hardware)');
+	}
 	const saved = existing
 		? await ctx.store.update('physical-device', String(existing._id), doc)
 		: await ctx.store.insert('physical-device', doc);
