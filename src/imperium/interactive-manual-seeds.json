@@ -106,6 +106,16 @@
       {
         "order": 4,
         "step_id": "login-paso-4",
+        "title": "Espera a que cargue la pantalla",
+        "body": "PWA en Chrome (#344): al cargar o recargar, con IndexedDB disponible no aparece el aviso «Navegador no compatible»; un fallo transitorio al abrir la base no se reporta como navegador incompatible",
+        "route": "/login",
+        "route_kind": "confirmada",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 5,
+        "step_id": "login-paso-5",
         "title": "Escribe en «Usuario»",
         "body": "Escribe en «Usuario».",
         "route": "/login",
@@ -115,8 +125,8 @@
         "placement": "auto"
       },
       {
-        "order": 5,
-        "step_id": "login-paso-5",
+        "order": 6,
+        "step_id": "login-paso-6",
         "title": "Escribe en «Contraseña»",
         "body": "Escribe en «Contraseña».",
         "route": "/login",
@@ -126,8 +136,8 @@
         "placement": "auto"
       },
       {
-        "order": 6,
-        "step_id": "login-paso-6",
+        "order": 7,
+        "step_id": "login-paso-7",
         "title": "Haz clic en «Iniciar sesión»",
         "body": "Haz clic en «Iniciar sesión».",
         "route": "/login",
@@ -137,8 +147,8 @@
         "placement": "auto"
       },
       {
-        "order": 7,
-        "step_id": "login-paso-7",
+        "order": 8,
+        "step_id": "login-paso-8",
         "title": "Revisa esta parte de la pantalla",
         "body": "El encabezado del área interna confirma la sesión",
         "route": "/login",
@@ -4110,6 +4120,113 @@
         "route_kind": "heredada",
         "action_hint": "observe",
         "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-ventas-ruta-observaciones-partida",
+    "name": "Observaciones de partida se teclean en orden, no al revés",
+    "description": "En Ventas en ruta, al escribir letra por letra una observación de partida («Ejemplo») el campo conserva el texto en el mismo orden. Antes cada tecla podía dejar el cursor en 0 y se guardaba «olpmejE» (PROFESA,",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "ventas-ruta-observaciones-partida-paso-1",
+        "title": "Haz clic en «Abrir opciones de usuario»",
+        "body": "Haz clic en «Abrir opciones de usuario».",
+        "route": "/offline/pedidos/mis-pedidos",
+        "route_kind": "inicio",
+        "anchor_attr": "cuenta-opciones",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "ventas-ruta-observaciones-partida-paso-2",
+        "title": "Haz clic en «Sincronizar datos»",
+        "body": "Haz clic en «Sincronizar datos».",
+        "route": "/offline/pedidos/mis-pedidos",
+        "route_kind": "heredada",
+        "anchor_attr": "offline-sincronizar",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "ventas-ruta-observaciones-partida-paso-3",
+        "title": "Haz clic en «Nuevo pedido»",
+        "body": "Haz clic en «Nuevo pedido».",
+        "route": "/offline/pedidos/mis-pedidos",
+        "route_kind": "heredada",
+        "anchor_attr": "offline-pedido-nuevo",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "ventas-ruta-observaciones-partida-paso-4",
+        "title": "Escribe en «Buscar cliente»",
+        "body": "Escribe en «Buscar cliente».",
+        "route": "/crear",
+        "route_kind": "confirmada",
+        "anchor_attr": "offline-cliente",
+        "action_hint": "input",
+        "placement": "auto"
+      },
+      {
+        "order": 5,
+        "step_id": "ventas-ruta-observaciones-partida-paso-5",
+        "title": "Haz clic en el control señalado",
+        "body": "Haz clic en el control señalado.",
+        "route": "/crear",
+        "route_kind": "confirmada",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 6,
+        "step_id": "ventas-ruta-observaciones-partida-paso-6",
+        "title": "Escribe en «Buscar artículos»",
+        "body": "Escribe en «Buscar artículos».",
+        "route": "/crear",
+        "route_kind": "heredada",
+        "anchor_attr": "offline-catalogo-buscar",
+        "action_hint": "input",
+        "placement": "auto"
+      },
+      {
+        "order": 7,
+        "step_id": "ventas-ruta-observaciones-partida-paso-7",
+        "title": "Haz clic en el control señalado",
+        "body": "Haz clic en el control señalado.",
+        "route": "/crear",
+        "route_kind": "heredada",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 8,
+        "step_id": "ventas-ruta-observaciones-partida-paso-8",
+        "title": "Haz clic en «Notas por línea»",
+        "body": "Abre el campo de observación de cada partida",
+        "route": "/crear",
+        "route_kind": "heredada",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 9,
+        "step_id": "ventas-ruta-observaciones-partida-paso-9",
+        "title": "Escribe en «Observaciones de la línea»",
+        "body": "Teclea «Ejemplo» letra por letra; no debe quedar «olpmejE»",
+        "route": "/crear",
+        "route_kind": "heredada",
+        "action_hint": "input",
+        "placement": "auto",
+        "expected_value": "Ejemplo"
       }
     ]
   },
