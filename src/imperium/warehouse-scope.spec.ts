@@ -146,7 +146,7 @@ function quant(ubicacion: string, cantidad: number): Row {
 	};
 }
 
-function store_con(quants: Row[], opts: { existencia?: number; negativos?: boolean } = {}) {
+function store_con(quants: Row[], opts: { existencia?: number; negativos?: boolean | null } = {}) {
 	const existencia = opts.existencia ?? quants.reduce((s, q) => s + Number(q.cantidad), 0);
 	const data: Record<string, Row[]> = {
 		products: [{ _id: PRODUCTO, name: 'Codo', codigo: 'COD-1', existencia }],
@@ -163,8 +163,8 @@ function store_con(quants: Row[], opts: { existencia?: number; negativos?: boole
 			{ _id: SESION_NORTE, branch_office: SUC_NORTE },
 		],
 	};
-	if (opts.negativos !== undefined) {
-		data.configuration = [{ _id: 'c', _ref: ALLOW_NEGATIVE_STOCK_REF, value: opts.negativos }];
+	if (opts.negativos !== null) {
+		data.configuration = [{ _id: 'c', _ref: ALLOW_NEGATIVE_STOCK_REF, value: opts.negativos ?? false }];
 	}
 	return memory_store(data);
 }
@@ -792,6 +792,15 @@ describe('pedidos del vendedor: salen de su almacén', () => {
 	test('con existencia negativa permitida el surtido no se bloquea', async () => {
 		const store = store_con([quant(ALM_RUTA, 1)], { negativos: true });
 		await assert_surtido_sin_negativos(store, [{ product: PRODUCTO, cantidad: 4 }], ALM_RUTA);
+	});
+
+	test('sin el parámetro surte sin existencia y deja negativo el almacén del vendedor', async () => {
+		const store = store_con([quant(ALM_RUTA, 1), quant(GENERAL, 50)], { negativos: null });
+		const articulos = [{ product: PRODUCTO, cantidad: 4 }];
+		await assert_surtido_sin_negativos(store, articulos, ALM_RUTA);
+		await register_order_fulfillment_exit(store, { _id: PEDIDO, folio: 'F-1', almacen: ALM_RUTA, articulos });
+		expect(cantidades(store)).toEqual({ RUT: -3, GEN: 50 });
+		expect(store.data.products[0].existencia).toBe(47);
 	});
 
 	test('un pedido viejo sin almacén se surte del almacén actual del vendedor', async () => {

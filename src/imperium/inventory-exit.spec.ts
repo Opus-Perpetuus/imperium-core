@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { ImperiumDoc } from './envelope.ts';
+import { ALLOW_NEGATIVE_STOCK_REF } from './negative-stock.ts';
 import type { ImperiumStore } from './store.ts';
 import {
 	apply_quant_delta,
@@ -191,8 +192,9 @@ describe('salidas de inventario por ubicación', () => {
 		expect(cantidades(store)).toEqual({ 'A-01': 6 });
 	});
 
-	test('el ticket de POS descuenta por ubicación lo mismo que baja la existencia', async () => {
+	test('con el parámetro en NO el ticket de POS descuenta por ubicación lo mismo que baja la existencia', async () => {
 		const store = store_con(2, [quant(ANAQUEL_A, 'A-01', 2)]);
+		store.data.configuration = [{ _id: 'c', _ref: ALLOW_NEGATIVE_STOCK_REF, value: false }];
 		await register_pos_ticket_exit(store, {
 			ticket_type: 'VENTA',
 			items: [{ item_id: PRODUCTO, quantity: 5 }],
@@ -200,6 +202,29 @@ describe('salidas de inventario por ubicación', () => {
 		const product = await store.find_id('products', PRODUCTO);
 		expect(product?.existencia).toBe(0);
 		expect(cantidades(store)).toEqual({ 'A-01': 0 });
+	});
+
+	test('sin el parámetro la venta POS sin existencia deja negativa la existencia y el almacén', async () => {
+		const store = store_con(2, [quant(ANAQUEL_A, 'A-01', 2)]);
+		await register_pos_ticket_exit(store, {
+			ticket_type: 'VENTA',
+			items: [{ item_id: PRODUCTO, quantity: 5 }],
+		});
+		const product = await store.find_id('products', PRODUCTO);
+		expect(product?.existencia).toBe(-3);
+		expect(suma_quants(store)).toBe(-3);
+		expect(cantidades(store)['A-01']).toBe(0);
+	});
+
+	test('sin el parámetro una venta con existencia suficiente descuenta igual que antes', async () => {
+		const store = store_con(5, [quant(ANAQUEL_A, 'A-01', 5)]);
+		await register_pos_ticket_exit(store, {
+			ticket_type: 'VENTA',
+			items: [{ item_id: PRODUCTO, quantity: 3 }],
+		});
+		const product = await store.find_id('products', PRODUCTO);
+		expect(product?.existencia).toBe(2);
+		expect(cantidades(store)).toEqual({ 'A-01': 2 });
 	});
 
 	test('la venta POS queda en movimientos de inventario', async () => {

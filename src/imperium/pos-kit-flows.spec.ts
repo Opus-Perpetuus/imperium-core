@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { ImperiumDoc } from './envelope.ts';
+import { ALLOW_NEGATIVE_STOCK_REF } from './negative-stock.ts';
 import { register_pos_ticket_exit } from './inventory-exit.ts';
 import { clients_aging } from './pos-credit.ts';
 import {
@@ -64,6 +65,7 @@ const kit = { _id: 'kit', name: 'Kit baño', existencia: 0, kit_componentes: [{ 
 
 function base_store() {
 	return memory_store({
+		configuration: [{ _id: 'neg', _ref: ALLOW_NEGATIVE_STOCK_REF, value: false }],
 		products: [kit, { _id: 'codo', name: 'Codo', existencia: 10 }, { _id: 'tubo', name: 'Tubo', existencia: 5 }],
 		'inventory-movement': [],
 		'pos-tickets': [],

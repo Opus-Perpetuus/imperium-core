@@ -73,7 +73,7 @@ describe('sync offline de pedidos con existencia', () => {
 	});
 
 	test('en un mismo lote lo ya confirmado se resta del siguiente para el aviso', async () => {
-		const store = memory_store([{ _id: PRODUCTO, name: 'Codo', existencia: 10 }]);
+		const store = memory_store([{ _id: PRODUCTO, name: 'Codo', existencia: 10 }], false);
 		const res = await pedidos_sync_offline({
 			store,
 			actor: ADMIN,
@@ -111,10 +111,13 @@ describe('sync offline de pedidos con existencia', () => {
 	});
 
 	test('sin existencia llega confirmado con aviso', async () => {
-		const store = memory_store([
-			{ _id: PRODUCTO, name: 'Codo', existencia: 2 },
-			{ _id: PRODUCTO_2, name: 'Tubo', existencia: 50 },
-		]);
+		const store = memory_store(
+			[
+				{ _id: PRODUCTO, name: 'Codo', existencia: 2 },
+				{ _id: PRODUCTO_2, name: 'Tubo', existencia: 50 },
+			],
+			false,
+		);
 		const out = await sync(store, [
 			{ product: PRODUCTO, cantidad: 5, precio: 1 },
 			{ product: PRODUCTO_2, cantidad: 1, precio: 1 },
@@ -205,8 +208,15 @@ describe('permitir existencia negativa (configurable)', () => {
 	const previo = (articulos: ImperiumDoc[]) =>
 		({ _id: 'p1', estado: 'surtiendo', articulos }) as ImperiumDoc;
 
-	test('por defecto bloquea surtir si la existencia quedaría negativa', async () => {
+	test('sin el parámetro permite surtir aunque quede negativa', async () => {
 		const store = memory_store([{ _id: PRODUCTO, name: 'Codo', existencia: 3 }]);
+		const articulos = [{ product: PRODUCTO, cantidad: 5, precio: 1 }];
+		const out = await prepare_pedido_update(store, { estado: 'surtido', articulos }, ADMIN, previo(articulos));
+		expect(out.estado).toBe('surtido');
+	});
+
+	test('con el parámetro en NO bloquea surtir si la existencia quedaría negativa', async () => {
+		const store = memory_store([{ _id: PRODUCTO, name: 'Codo', existencia: 3 }], false);
 		const articulos = [{ product: PRODUCTO, cantidad: 5, precio: 1 }];
 		await expect(
 			prepare_pedido_update(store, { estado: 'surtido', articulos }, ADMIN, previo(articulos)),

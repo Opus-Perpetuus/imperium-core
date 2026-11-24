@@ -3,7 +3,7 @@ import type { ImperiumDoc } from './envelope.ts';
 import type { ImperiumStore } from './store.ts';
 import { assert_pos_ticket_stock, register_pos_ticket_exit } from './inventory-exit.ts';
 import { register_package_delivery_exit } from './inventory-logistics-flow.ts';
-import { ALLOW_NEGATIVE_STOCK_REF, assert_salida_sin_negativos } from './negative-stock.ts';
+import { ALLOW_NEGATIVE_STOCK_REF, allow_negative_stock, assert_salida_sin_negativos } from './negative-stock.ts';
 import { revert_pos_return_entry } from './pos-return.ts';
 
 const P = '507f1f77bcf86cd799439013';
@@ -69,9 +69,31 @@ const venta = (quantity: number) => ({
 });
 const existencia = async (s: ImperiumStore) => (await s.find_id('products', P))?.existencia;
 
+describe('parámetro de existencia negativa', () => {
+	test('sin parámetro o vacío se permite; solo un NO explícito la bloquea', async () => {
+		const con = (value: unknown) => {
+			const s = store_con(0);
+			(s as unknown as { data: Record<string, Row[]> }).data.configuration = [
+				{ _id: 'c', _ref: ALLOW_NEGATIVE_STOCK_REF, value },
+			];
+			return allow_negative_stock(s);
+		};
+		expect(await allow_negative_stock(store_con(0))).toBe(true);
+		for (const value of [null, '', true, 'true', 'si']) expect(await con(value)).toBe(true);
+		for (const value of [false, 'false', 'no', 'NO', 0, '0']) expect(await con(value)).toBe(false);
+	});
+});
+
 describe('caja / POS', () => {
-	test('por defecto bloquea la venta que dejaría existencia negativa', async () => {
+	test('sin el parámetro vende sin existencia y queda negativa', async () => {
 		const s = store_con(2, {}, undefined, 0);
+		await assert_pos_ticket_stock(s, venta(5));
+		await register_pos_ticket_exit(s, venta(5));
+		expect(await existencia(s)).toBe(-3);
+	});
+
+	test('con el parámetro en NO bloquea la venta que dejaría existencia negativa', async () => {
+		const s = store_con(2, {}, false, 0);
 		await expect(assert_pos_ticket_stock(s, venta(5))).rejects.toThrow(
 			'No se puede vender: la existencia quedaría negativa en Codo (sale 5, hay 2)',
 		);
@@ -82,7 +104,7 @@ describe('caja / POS', () => {
 	});
 
 	test('sin almacén, lo libre descuenta lo apartado', async () => {
-		const s = store_con(10, {}, undefined, 4);
+		const s = store_con(10, {}, false, 4);
 		const salidas = new Map([[P, 7]]);
 		await expect(assert_salida_sin_negativos(s, 'vender', salidas, null, { libre: true })).rejects.toThrow(
 			'Codo (sale 7, hay 6)',
@@ -109,8 +131,8 @@ describe('caja / POS', () => {
 describe('entrega de bulto (logística)', () => {
 	const bulto = { _id: '507f1f77bcf86cd799439012', name: 'BULTO-1', contenido: [{ product: P, quantity: 4 }] };
 
-	test('por defecto bloquea la entrega sin existencia', async () => {
-		const s = store_con(1);
+	test('con el parámetro en NO bloquea la entrega sin existencia', async () => {
+		const s = store_con(1, {}, false);
 		await expect(
 			register_package_delivery_exit(s, bulto, 'e1', '2026-11-04T12:00:00.000Z'),
 		).rejects.toThrow('No se puede entregar: la existencia quedaría negativa');
@@ -137,8 +159,8 @@ describe('cancelar devolución de caja (revierte reingreso)', () => {
 		stock_total_resultante: 3,
 	};
 
-	test('por defecto bloquea si dejaría existencia negativa', async () => {
-		const s = store_con(1, { 'inventory-movement': [movimiento] });
+	test('con el parámetro en NO bloquea si dejaría existencia negativa', async () => {
+		const s = store_con(1, { 'inventory-movement': [movimiento] }, false);
 		await expect(revert_pos_return_entry(s, devolucion)).rejects.toThrow(
 			'No se puede cancelar la devolución',
 		);

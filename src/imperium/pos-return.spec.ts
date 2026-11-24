@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { ImperiumDoc } from './envelope.ts';
+import { ALLOW_NEGATIVE_STOCK_REF } from './negative-stock.ts';
 import { register_pos_ticket_exit } from './inventory-exit.ts';
 import {
 	pos_return_lookup,
@@ -70,6 +71,7 @@ const sale: Row = {
 
 function store_with(existencia1: number, existencia2 = 10) {
 	return memory_store({
+		configuration: [{ _id: 'neg', _ref: ALLOW_NEGATIVE_STOCK_REF, value: false }],
 		products: [
 			{ _id: P1, name: 'Codo', codigo: 'C1', existencia: existencia1 },
 			{ _id: P2, name: 'Tubo', codigo: 'T1', existencia: existencia2 },

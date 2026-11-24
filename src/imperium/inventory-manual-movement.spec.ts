@@ -55,8 +55,15 @@ describe('entrada / salida manual', () => {
 		expect(movement_delta(mov)).toBe(-2);
 	});
 
-	test('por defecto bloquea la salida que dejaría negativo', async () => {
+	test('sin el parámetro la salida sin existencia se registra y queda negativa', async () => {
 		const store = memory_store(1);
+		const mov = await register_manual_movement(store, { tipo: 'salida_manual', producto: PRODUCTO, cantidad: 3 });
+		expect(store.data.products[0].existencia).toBe(-2);
+		expect(mov).toMatchObject({ stock_total_previo: 1, stock_total_resultante: -2 });
+	});
+
+	test('con el parámetro en NO bloquea la salida que dejaría negativo', async () => {
+		const store = memory_store(1, false);
 		await expect(
 			register_manual_movement(store, { tipo: 'salida_manual', producto: PRODUCTO, cantidad: 2 }),
 		).rejects.toThrow('existencia suficiente');

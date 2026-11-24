@@ -1,18 +1,21 @@
 /**
  * Regla única de existencia negativa para todas las salidas de inventario.
- * Por defecto NO se permite; el parámetro de sistema
- * `configuration-inventory-allow-negative-stock` en SÍ la habilita.
+ * Por defecto SÍ se permite; solo el parámetro de sistema
+ * `configuration-inventory-allow-negative-stock` en NO la bloquea.
  */
-import { coerce_flag, read_config_value } from './subject-versions.ts';
+import { read_config_value } from './subject-versions.ts';
 import type { ImperiumStore } from './store.ts';
 import { scope_stock, type WarehouseScope } from './warehouse-scope.ts';
 
 export const ALLOW_NEGATIVE_STOCK_REF = 'configuration-inventory-allow-negative-stock';
 export const ALLOW_NEGATIVE_STOCK_LABEL = 'Inventario · Permitir existencia negativa';
 
-/** ¿Se permite existencia negativa? Solo un SÍ explícito la habilita. */
+/** ¿Se permite existencia negativa? Solo un NO explícito la bloquea. */
 export async function allow_negative_stock(store: ImperiumStore): Promise<boolean> {
-	return coerce_flag(await read_config_value(store, ALLOW_NEGATIVE_STOCK_REF));
+	const value = await read_config_value(store, ALLOW_NEGATIVE_STOCK_REF);
+	if (value === false || value === 0) return false;
+	if (typeof value === 'string') return !['false', 'no', '0'].includes(value.trim().toLowerCase());
+	return true;
 }
 
 export type FaltanteSalida = { nombre: string; requerido: number; disponible: number };
