@@ -248,6 +248,39 @@
     ]
   },
   {
+    "_ref": "interactive-manual-flow-configuracion-apps-detalle-movil",
+    "name": "Detalle de una app instalada legible en el celular",
+    "description": "En Módulos, «Detalles» de una app instalada abre su ficha (Estatus, Salud, Versión, Instalado, Datos en base…). En un celular de 360 px las etiquetas no se parten letra por letra; si el valor no cabe al lado, baja abajo de la etiqueta.",
+    "icon": "fa-sliders",
+    "module_model_id": "Configuration",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "apps-detalle-movil-paso-1",
+        "title": "Haz clic en «Detalles»",
+        "body": "Abre la ficha de la primera app instalada",
+        "route": "/internal/module-management",
+        "route_kind": "inicio",
+        "anchor_attr": "app-detalles",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "apps-detalle-movil-paso-2",
+        "title": "Revisa «Datos en base»",
+        "body": "Cada etiqueta (Estatus, Salud, Instalado, Datos en base…) mide al menos 96 px o su ancho natural en una línea",
+        "route": "/internal/module-management",
+        "route_kind": "heredada",
+        "anchor_attr": "app-detalle-estado",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
     "_ref": "interactive-manual-flow-configuracion-impresora-por-vista",
     "name": "Impresora por vista en la configuración de impresoras (#271)",
     "description": "En Escritorio › Impresoras, la sección «Impresora por vista» asigna a cada vista (Pedidos, tablero de Almacén, Ventas en ruta, POS, bultos) su impresora de PDF y la de tickets/etiquetas. Se guarda en el equipo, se respeta después de recargar y la impresión directa ya no cae en la Zebra predeterminada.",
@@ -1050,6 +1083,84 @@
         "route": "/internal/lista-de-precios/new",
         "route_kind": "heredada",
         "anchor_attr": "flotante-pie",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-inventario-flotante-ultima-opcion-movil",
+    "name": "La última opción de un flotante se alcanza en el celular",
+    "description": "En un celular de 360×740 con barra de botones del sistema, el selector de productos (datalist en hoja móvil) deja la última opción arriba de la barra; se ve y se puede tocar.",
+    "icon": "fa-boxes-stacked",
+    "module_model_id": "InventoryMovement",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "flotante-ultima-opcion-movil-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "El formulario de lista de precios muestra la tabla embebida de productos.",
+        "route": "/internal/lista-de-precios/new",
+        "route_kind": "inicio",
+        "anchor_attr": "view-list-agregar-fila",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "flotante-ultima-opcion-movil-paso-2",
+        "title": "Haz clic en «Agregar producto»",
+        "body": "Haz clic en «Agregar producto».",
+        "route": "/internal/lista-de-precios/new",
+        "route_kind": "confirmada",
+        "anchor_attr": "view-list-agregar-fila",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "flotante-ultima-opcion-movil-paso-3",
+        "title": "Haz clic en «Producto»",
+        "body": "En el celular el datalist abre como hoja inferior con su paginador al pie.",
+        "route": "/internal/lista-de-precios/new",
+        "route_kind": "heredada",
+        "anchor_attr": "field-product",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "flotante-ultima-opcion-movil-paso-4",
+        "title": "Haz clic en el control señalado",
+        "body": "Haz clic en el control señalado.",
+        "route": "/internal/lista-de-precios/new",
+        "route_kind": "heredada",
+        "anchor_attr": "paginador-tamano",
+        "within_anchor": "flotante-pie",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 5,
+        "step_id": "flotante-ultima-opcion-movil-paso-5",
+        "title": "Haz clic en «16»",
+        "body": "16 filas no caben en la hoja; el cuerpo scrollea.",
+        "route": "/internal/lista-de-precios/new",
+        "route_kind": "heredada",
+        "anchor_attr": "paginador-tamano-16",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 6,
+        "step_id": "flotante-ultima-opcion-movil-paso-6",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Con una barra de botones de 48 px, la última opción llega arriba de la barra y recibe el toque.",
+        "route": "/internal/lista-de-precios/new",
+        "route_kind": "heredada",
+        "anchor_attr": "flotante-cuerpo",
         "action_hint": "observe",
         "placement": "auto"
       }
@@ -2760,6 +2871,74 @@
         "route_kind": "heredada",
         "action_hint": "observe",
         "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-buscador-lista-escritorio",
+    "name": "El buscador de la lista es imperium-sic-input y conserva lo que se escribe (escritorio)",
+    "description": "En Pedidos a 1440×900, el buscador de la barra superior es el componente de input de Imperium; lo tecleado llega al campo tal cual y Enter busca.",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "buscador-lista-escritorio-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "La barra superior de la lista trae el buscador.",
+        "route": "/internal/pedidos",
+        "route_kind": "inicio",
+        "anchor_attr": "header-actions-buscar-campo",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "buscador-lista-escritorio-paso-2",
+        "title": "Escribe en «Buscar...»",
+        "body": "Lo escrito queda en el campo sin invertirse ni perderse.",
+        "route": "/internal/pedidos",
+        "route_kind": "confirmada",
+        "anchor_attr": "header-actions-buscar-campo",
+        "action_hint": "input",
+        "placement": "auto",
+        "expected_value": "zz sin resultados 345"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-buscador-lista-movil",
+    "name": "El buscador de la lista es imperium-sic-input y conserva lo que se escribe (celular)",
+    "description": "En Pedidos a 360×740, el buscador de la barra móvil de la lista es el componente de input de Imperium; lo tecleado llega al campo tal cual.",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "buscador-lista-movil-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "En el celular el buscador vive en la barra de la lista.",
+        "route": "/internal/pedidos",
+        "route_kind": "inicio",
+        "anchor_attr": "view-list-buscar-movil",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "buscador-lista-movil-paso-2",
+        "title": "Escribe en «Buscar...»",
+        "body": "Lo escrito queda en el campo sin invertirse ni perderse.",
+        "route": "/internal/pedidos",
+        "route_kind": "confirmada",
+        "anchor_attr": "view-list-buscar-movil",
+        "action_hint": "input",
+        "placement": "auto",
+        "expected_value": "zz sin resultados 345"
       }
     ]
   },
