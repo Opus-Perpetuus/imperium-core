@@ -28,6 +28,8 @@ import {
 	send_subject_notification_email,
 } from './email.ts';
 import { read_public_registration } from './public-registration.ts';
+import { ensure_auth_attempts_table } from './auth-attempts.ts';
+import { BADGE_SESSION, authenticate_badge } from './badge.ts';
 import { share_binding_of } from './share-binding.ts';
 import {
 	find_user_by_define_token,
@@ -88,7 +90,11 @@ type Session = {
 	id: string;
 	user: ImperiumDoc;
 	expires: number;
+	checked_at?: number;
 };
+
+const SESSION_RECHECK_MS = 60 * 1000;
+const LAST_SEEN_WRITE_MS = 60 * 1000;
 
 const memory = new Map<string, Session>();
 
@@ -113,6 +119,10 @@ export function ensure_session_table(sql: Bun.SQL): Promise<void> {
     )
   `);
 		await ensure_auth_rate_limit_table(sql);
+		await sql.unsafe(
+			`CREATE INDEX IF NOT EXISTS imperium_sessions_user_id_idx ON public.imperium_sessions ((payload->>'_id'))`,
+		);
+		await ensure_auth_attempts_table(sql);
 	})().catch((err) => {
 		session_tables_ready = null;
 		throw err;
@@ -152,7 +162,9 @@ export function is_auth_login_post(req: Request): boolean {
 		path === '/auth/login' ||
 		path === '/auth/login/' ||
 		path === '/auth/public/login' ||
-		path === '/auth/public/login/'
+		path === '/auth/public/login/' ||
+		path === '/auth/badge/login' ||
+		path === '/auth/badge/login/'
 	);
 }
 
@@ -187,6 +199,9 @@ export async function handle_auth(
 		(rest === '/public/login' || rest === '/public/login/')
 	) {
 		return login_on_surface(store, sql, req, 'public');
+	}
+	if (method === 'POST' && (rest === '/badge/login' || rest === '/badge/login/')) {
+		return login_with_badge(store, sql, req);
 	}
 
 	if (
@@ -454,7 +469,7 @@ async function verify_password(plain: string, hash: string): Promise<boolean> {
 	}
 }
 
-async function dummy_verify(): Promise<boolean> {
+export async function dummy_verify(): Promise<boolean> {
 	try {
 		const dummy = await Bun.password.hash(
 			'imperium-dummy-login',
@@ -667,6 +682,33 @@ async function login_on_surface(
 	);
 }
 
+async function login_with_badge(
+	store: ImperiumStore,
+	sql: Bun.SQL,
+	req: Request,
+): Promise<Response> {
+	const auth = await authenticate_badge(store, sql, req, await read_imperium_body(req));
+	if (!auth.ok) return Response.json(auth.body, { status: auth.status });
+	const safe: ImperiumDoc = {
+		...public_user(auth.user),
+		auth_method: 'badge',
+		badge_id: String(auth.badge._id),
+		badge_serie: auth.badge.serie,
+		idle_ms: BADGE_SESSION.idle_unregistered_ms,
+		last_seen: Date.now(),
+	};
+	const session = await create_session(sql, safe, BADGE_SESSION.ttl_ms);
+	const access_rights = await build_access(store, safe);
+	const menus = await build_menus(store, sql, access_rights);
+	return with_cookie(
+		Response.json({ user: safe, menus, access_rights, destination: auth.destination }),
+		session.id,
+		false,
+		req,
+		BADGE_SESSION.ttl_ms / 1000,
+	);
+}
+
 /**
  * Tipo explícito del principal de una sesión. Las sesiones solo nacen del login:
  * el público y el registro graban `type: 'external'`, así que una sesión (o el
@@ -683,11 +725,12 @@ export function with_session_principal_type(user: ImperiumDoc): ImperiumDoc {
 async function create_session(
 	sql: Bun.SQL,
 	raw_user: ImperiumDoc,
+	ttl_ms = 7 * 24 * 3600 * 1000,
 ): Promise<Session> {
 	const user = with_session_principal_type(raw_user);
 	const id = crypto.randomUUID();
-	const expires = Date.now() + 7 * 24 * 3600 * 1000;
-	const session: Session = { id, user, expires };
+	const expires = Date.now() + ttl_ms;
+	const session: Session = { id, user, expires, checked_at: Date.now() };
 	memory.set(id, session);
 	await sql.unsafe(
 		`INSERT INTO public.imperium_sessions (id, payload, expires_at)
@@ -749,6 +792,30 @@ async function destroy_session(sql: Bun.SQL, id: string): Promise<void> {
 	]);
 }
 
+export async function destroy_sessions_for_user(
+	sql: Bun.SQL,
+	user_id: string,
+	badge_id?: string,
+): Promise<number> {
+	const rows = (await sql.unsafe(
+		badge_id
+			? `DELETE FROM public.imperium_sessions WHERE payload->>'_id' = $1 AND payload->>'badge_id' = $2 RETURNING id`
+			: `DELETE FROM public.imperium_sessions WHERE payload->>'_id' = $1 RETURNING id`,
+		badge_id ? [user_id, badge_id] : [user_id],
+	)) as { id: string }[];
+	const ids = new Set(rows.map((row) => String(row.id)));
+	for (const [id, session] of memory) {
+		if (String(session.user._id ?? '') !== user_id) continue;
+		if (badge_id && String(session.user.badge_id ?? '') !== badge_id) continue;
+		ids.add(id);
+	}
+	for (const id of ids) {
+		memory.delete(id);
+		disconnect_sockets_for_auth_sid(id);
+	}
+	return ids.size;
+}
+
 async function load_session(
 	sql: Bun.SQL,
 	req: Request,
@@ -789,17 +856,43 @@ export async function user_for_session_id(
 }
 
 async function stored_session(sql: Bun.SQL, id: string): Promise<Session | null> {
+	const now = Date.now();
 	const mem = memory.get(id);
-	if (mem && mem.expires > Date.now()) return mem;
+	const fresh =
+		mem !== undefined &&
+		mem.expires > now &&
+		(mem.user.auth_method !== 'badge' || now - (mem.checked_at ?? 0) <= SESSION_RECHECK_MS);
+	if (mem && fresh) return enforce_idle(sql, mem, now);
 	const rows = await sql.unsafe(
 		`SELECT payload, extract(epoch from expires_at) * 1000 AS exp FROM public.imperium_sessions WHERE id = $1`,
 		[id],
 	);
 	const row = rows[0] as { payload: unknown; exp: number } | undefined;
-	if (!row || Number(row.exp) < Date.now()) return null;
+	if (!row || Number(row.exp) < now) {
+		memory.delete(id);
+		return null;
+	}
 	const user = with_session_principal_type(as_object(row.payload) as ImperiumDoc);
-	const session: Session = { id, user, expires: Number(row.exp) };
+	const session: Session = { id, user, expires: Number(row.exp), checked_at: now };
 	memory.set(id, session);
+	return enforce_idle(sql, session, now);
+}
+
+async function enforce_idle(sql: Bun.SQL, session: Session, now: number): Promise<Session | null> {
+	const idle_ms = Number(session.user.idle_ms ?? 0);
+	if (!idle_ms) return session;
+	const last_seen = Number(session.user.last_seen ?? 0);
+	if (now - last_seen > idle_ms) {
+		await destroy_session(sql, session.id);
+		return null;
+	}
+	if (now - last_seen >= LAST_SEEN_WRITE_MS) {
+		session.user = { ...session.user, last_seen: now };
+		await sql.unsafe(
+			`UPDATE public.imperium_sessions SET payload = jsonb_set(payload, '{last_seen}', to_jsonb($2::bigint)) WHERE id = $1`,
+			[session.id, now],
+		);
+	}
 	return session;
 }
 
@@ -823,13 +916,13 @@ export function request_is_https(req: Request): boolean {
 
 export function session_set_cookie(
 	sid: string,
-	opts: { https: boolean; clear?: boolean },
+	opts: { https: boolean; clear?: boolean; max_age_s?: number },
 ): string {
 	const secure = opts.https ? '; Secure' : '';
 	if (opts.clear || !sid) {
 		return `${COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`;
 	}
-	return `${COOKIE}=${encodeURIComponent(sid)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${7 * 24 * 3600}${secure}`;
+	return `${COOKIE}=${encodeURIComponent(sid)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${opts.max_age_s ?? 7 * 24 * 3600}${secure}`;
 }
 
 function with_cookie(
@@ -837,6 +930,7 @@ function with_cookie(
 	sid: string,
 	clear = false,
 	req?: Request,
+	max_age_s?: number,
 ): Response {
 	const headers = new Headers(res.headers);
 	headers.append(
@@ -844,6 +938,7 @@ function with_cookie(
 		session_set_cookie(sid, {
 			https: req ? request_is_https(req) : false,
 			clear,
+			max_age_s,
 		}),
 	);
 	return new Response(res.body, { status: res.status, headers });

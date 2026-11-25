@@ -40,6 +40,7 @@ import {
 import { start_registry_cold_sync } from './app-registry-boot.ts';
 import { handle_mcp_agent, seed_mcp_access } from './mcp-agent.ts';
 import { handle_cli_token, seed_cli_access, authenticate_cli_user, is_cli_token_resource } from './cli-token.ts';
+import { BADGE_RESOURCE } from './badge.ts';
 import { ChatError, media_token_actor } from './chat-access.ts';
 import { serve_media } from './media.ts';
 import { guest_media_reader } from './meetings-flow.ts';
@@ -433,7 +434,7 @@ async function dispatch(
 			}
 			const hit = split_resource(path, store);
 			if (!hit) return null;
-			if (is_cli_token_resource(hit.resource)) {
+			if (is_cli_token_resource(hit.resource) || hit.resource === BADGE_RESOURCE) {
 				return add_cors(
 					req,
 					Response.json(

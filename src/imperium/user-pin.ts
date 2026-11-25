@@ -157,12 +157,12 @@ function generate_numeric_pin(length = 4) {
 	return out;
 }
 
-async function hash_pin(plain: string) {
+export async function hash_pin(plain: string) {
 	const argon2 = await import('argon2');
 	return argon2.hash(plain);
 }
 
-async function verify_pin_hash(hash: string, plain: string) {
+export async function verify_pin_hash(hash: string, plain: string) {
 	if (!hash) return false;
 	try {
 		if (hash.startsWith('$argon2')) {

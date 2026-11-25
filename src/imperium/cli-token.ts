@@ -31,7 +31,7 @@ export function hash_cli_token(plaintext: string): string {
 	return createHash('sha256').update(plaintext, 'utf8').digest('hex');
 }
 
-function safe_equal_hex(a: string, b: string): boolean {
+export function safe_equal_hex(a: string, b: string): boolean {
 	try {
 		const ba = Buffer.from(a, 'hex');
 		const bb = Buffer.from(b, 'hex');
