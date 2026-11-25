@@ -865,7 +865,7 @@
   {
     "_ref": "interactive-manual-flow-historial-historial-simple",
     "name": "Historial simple con detalle técnico a un clic",
-    "description": "El historial de un registro muestra quién · qué · cuándo y una línea por cambio; «Ver detalle técnico» y «Modo avanzado» enseñan todo lo de antes sin perder información (#334).",
+    "description": "El historial de un registro muestra quién · qué · cuándo y una línea por cambio con el nombre visible de las referencias (no el id) y resaltado de alta, cambio y baja; «Ver detalle técnico» y «Modo avanzado» enseñan todo lo de antes sin perder información (#334, #349).",
     "icon": "fa-book-open",
     "is_default_for_module": true,
     "is_active": true,
@@ -893,6 +893,16 @@
       {
         "order": 3,
         "step_id": "historial-simple-paso-3",
+        "title": "Haz clic en «Expandir registro del historial»",
+        "body": "Al expandir un movimiento, cada cambio es una línea con chip de tipo (Nuevo, Actualizado, Eliminado o Reordenado), el nombre visible de la referencia (no el id crudo) y el resaltado de antes → después.",
+        "route_kind": "dinamica",
+        "anchor_attr": "history-entry-summary",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "historial-simple-paso-4",
         "title": "Haz clic en «Modo avanzado»",
         "body": "«Modo avanzado» deja abierto el detalle técnico (operación, ruta del campo, antes/después completos, comparativo de objetos) en todos los movimientos y se recuerda en el navegador.",
         "route_kind": "dinamica",
@@ -901,8 +911,8 @@
         "placement": "auto"
       },
       {
-        "order": 4,
-        "step_id": "historial-simple-paso-4",
+        "order": 5,
+        "step_id": "historial-simple-paso-5",
         "title": "Haz clic en «Modo avanzado»",
         "body": "Se regresa a la vista simple.",
         "route_kind": "dinamica",
