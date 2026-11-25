@@ -13,11 +13,13 @@ describe('decorate_list_instance_type', () => {
 	});
 
 	test('Pedidos: fechas como fecha y factura en español', () => {
-		const out = decorate_list_instance_type('pedidos', raw('fecha', 'init_time', 'end_time', 'invoice_request_id'));
+		const out = decorate_list_instance_type('pedidos', raw('fecha', 'init_time', 'end_time', 'invoice_request_id', 'ruta', 'usuario'));
 		expect(out.fecha?.tipo).toBe('Date');
 		expect(out.init_time).toEqual({ nombre_encabezado: 'Hora de inicio', tipo: 'Date' });
 		expect(out.end_time?.tipo).toBe('Date');
 		expect(out.invoice_request_id?.nombre_encabezado).toBe('Id de solicitud de factura');
+		expect(out.ruta).toEqual({ nombre_encabezado: 'Ruta', tipo: 'string' });
+		expect(out.usuario?.nombre_encabezado).toBe('Vendedor');
 	});
 
 	test('Fechas de auditoría en cualquier lista', () => {

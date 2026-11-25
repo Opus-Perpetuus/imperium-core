@@ -32,8 +32,8 @@ import {
 	is_pedido_resource,
 	prepare_pedido_create,
 	prepare_pedido_update,
-	resolve_pedidos_usuario_filter,
 } from './pedidos-flow.ts';
+import { computed_distinct_counts, resolve_list_filters } from './list-computed-fields.ts';
 import {
 	after_delivery_package_mutate,
 	prepare_delivery_package_create,
@@ -525,15 +525,23 @@ export async function handle_crud(
 		// #327/#329: valores y conteos de la MISMA vista de la lista (filtros de
 		// las otras columnas y contexto de la ruta, p. ej. el padre de la subtabla).
 		const view_where = await field_values_view_where(store, resource, url, actor, field_path);
+		const include_inactive = query_list(url).include_inactive;
+		const computed = await computed_distinct_counts(store, resource, field_path, {
+			q: termino,
+			mongo_match: scope.match,
+			where: view_where,
+			include_inactive,
+		});
 		const counted =
-			typeof store.distinct_counts === 'function'
+			computed ??
+			(typeof store.distinct_counts === 'function'
 				? await store.distinct_counts(resource, field_path, {
 						q: termino,
 						mongo_match: scope.match,
 						where: view_where,
-						include_inactive: query_list(url).include_inactive,
+						include_inactive,
 					})
-				: null;
+				: null);
 		const values = counted
 			? counted.map((row) => row.v)
 			: await store.distinct(resource, field_path, termino, scope.match);
@@ -579,9 +587,7 @@ export async function handle_crud(
 	if (method === 'GET' && segs[0] === 'export.csv' && segs.length === 1) {
 		const { q, include_inactive, where, ids } = query_list(url);
 		const scope = await record_rule_scope(store, actor, resource, method);
-		const list_where = is_pedido_resource(resource)
-			? await resolve_pedidos_usuario_filter(store, where)
-			: where;
+		const list_where = await resolve_list_filters(store, resource, where);
 		return stream_export_csv(store, resource, {
 			q,
 			include_inactive,
@@ -1603,7 +1609,7 @@ async function field_values_view_where(
 	if (is_registro_asistencia_resource(resource)) where = apply_registro_asistencia_list_where(where);
 	if (is_lista_asistencia_resource(resource)) where = apply_lista_asistencia_list_where(where);
 	if (resource === 'reports') where = apply_report_list_where(store, where);
-	if (is_pedido_resource(resource)) where = await resolve_pedidos_usuario_filter(store, where);
+	where = await resolve_list_filters(store, resource, where);
 	return strip_root_parent_where(where);
 }
 
@@ -1634,9 +1640,7 @@ async function read_list_docs(
 	if (resource === 'reports') {
 		q.where = apply_report_list_where(store, q.where);
 	}
-	if (is_pedido_resource(resource)) {
-		q.where = await resolve_pedidos_usuario_filter(store, q.where);
-	}
+	q.where = await resolve_list_filters(store, resource, q.where);
 	const where = strip_root_parent_where(q.where);
 	const scope = await record_rule_scope(store, actor, resource, 'GET');
 	const excel = is_excel_export(url);

@@ -26,6 +26,7 @@ const COLUMNS: Record<string, Record<string, ColumnSpec>> = {
 		folio_interno: { label: 'Folio interno' },
 		fecha: { label: 'Fecha', tipo: FECHA },
 		usuario: { label: 'Vendedor' },
+		ruta: { label: 'Ruta' },
 		init_time: { label: 'Hora de inicio', tipo: FECHA },
 		end_time: { label: 'Hora de fin', tipo: FECHA },
 		assigned_employee: { label: 'Empleado asignado' },
@@ -34,6 +35,9 @@ const COLUMNS: Record<string, Record<string, ColumnSpec>> = {
 		invoice_request_estado: { label: 'Estado de la solicitud de factura' },
 		invoice_request_monto_total: { label: 'Monto de la solicitud de factura' },
 		invoice_request_actualizado: { label: 'Solicitud de factura actualizada', tipo: FECHA },
+	},
+	contacto: {
+		ruta: { label: 'Ruta' },
 	},
 	products: {
 		positional_code: { label: 'Código de ubicación' },
