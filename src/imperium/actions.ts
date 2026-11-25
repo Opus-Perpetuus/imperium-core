@@ -380,6 +380,7 @@ import {
 	type DocumentoComercial,
 } from './comercial-envio-flow.ts';
 import { detail_fields, plan_from_model, widgets_from_plan } from './ai-query-harness.ts';
+import { validate_widget_spec, widget_kinds } from './widget-kinds.ts';
 import {
 	resolve_dashboard_catalog,
 	resolve_saved_widget_data,
@@ -3157,14 +3158,21 @@ async function dashboard_catalog(ctx: Ctx) {
 	return resolve_dashboard_catalog(ctx.store, ctx.actor);
 }
 
-const AI_QUERY_JSON_SCHEMA: Record<string, unknown> = {
-	type: 'object',
-	required: [],
-	properties: {
-		answer: { type: 'string' },
-		widgets: { type: 'array' },
-	},
-};
+function ai_query_json_schema(): Record<string, unknown> {
+	const items = {
+		type: 'object',
+		properties: { widget_type: { type: 'string', enum: widget_kinds().map((kind) => kind.widget_type) } },
+	};
+	return {
+		type: 'object',
+		required: [],
+		properties: {
+			answer: { type: 'string' },
+			steps: { type: 'array', items },
+			widgets: { type: 'array', items },
+		},
+	};
+}
 
 function coerce_ai_query(raw: Record<string, unknown>) {
 	const nested = as_object(raw.result ?? raw.data);
@@ -3189,7 +3197,7 @@ const AI_QUERY_INSTRUCTIONS = [
 	'Eres el asistente de reportes de un ERP.',
 	'Responde con `answer` en español y `steps`. Cada step abre una lista existente: { "model_id", "title", "search"?, "limit"?, "sort"?, "filters"?, "widget_type"?, "aggregation"? }.',
 	'filters es una lista corta { "field", "op", "value" }. op es eq, lt, lte, gt o gte. search es texto libre (descripcion de un producto, nombre o correo de un usuario), nunca un estado. Un estado va en filters sobre el campo estado, con el valor guardado: confirmado, cancelado, borrador, surtido, surtiendo, por_surtir. No uses confirmada ni cancelada.',
-	'Una lista es widget_type table. La fila más reciente es limit 1 y sort updated_at:desc. Una suma es widget_type kpi y aggregation { "op": "sum", "field": "total" }, o el campo numérico del modelo si no es el total. No uses chart salvo que pidan una gráfica.',
+	'Una lista es widget_type table. La fila más reciente es limit 1 y sort updatedAt:desc. Una suma es widget_type kpi y aggregation { "op": "sum", "field": "total" }, o el campo numérico del modelo si no es el total. No uses chart salvo que pidan una gráfica.',
 	'Puedes devolver de 1 a 3 steps. No pidas el nombre del campo. Si te falta un campo numérico, devuelve steps vacío y `detail` con hasta 4 id.',
 	'Si lo pedido no está en la lista de modelos, explícalo en answer y devuelve steps vacío. No inventes un model_id.',
 ].join('\n\n');
@@ -3212,7 +3220,7 @@ async function dashboard_ai_query(ctx: Ctx) {
 		coerce_ai_query(
 			await extract_structured(ctx.store, {
 				instructions,
-				json_schema: AI_QUERY_JSON_SCHEMA,
+				json_schema: ai_query_json_schema(),
 				text: [...history, `Usuario: ${question}`].join('\n\n'),
 			}),
 		);
@@ -3231,12 +3239,17 @@ async function dashboard_ai_query(ctx: Ctx) {
 	for (const raw_widget of raw_widgets) {
 		const spec = { ...as_object(raw_widget) };
 		if (!spec.widget_type && spec.model_id) spec.widget_type = 'table';
+		const checked = validate_widget_spec(spec, entries);
+		if (!checked.ok) {
+			widgets.push({ spec, error: checked.errors.join(' ') });
+			continue;
+		}
 		try {
-			const inner: Ctx = { ...ctx, body: { spec } };
+			const inner: Ctx = { ...ctx, body: { spec: checked.spec } };
 			const result = await widget_data(inner);
 			const payload = (result as { data?: unknown }).data;
 			const data = Array.isArray(payload) ? payload[0] : payload ?? result;
-			widgets.push({ spec, result: data });
+			widgets.push({ spec: checked.spec, result: data });
 		} catch (error) {
 			widgets.push({
 				spec,
