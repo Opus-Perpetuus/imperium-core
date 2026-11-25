@@ -206,7 +206,6 @@ describe('assign_document_increments', () => {
 			model_name: 'ServiciosRealizados',
 			increment_field: 'name',
 			type: 'custom',
-			// Distinto del SCHEMA_INCREMENTS: se realinea al patrón declarado sin resetear seq.
 			custom_pattern: 'SERV-[seq;ceros=3]',
 			ref_value: null,
 			is_active: true,
@@ -217,9 +216,9 @@ describe('assign_document_increments', () => {
 			'servicios-realizados': [],
 		});
 		const out = await assign_document_increments(store as never, 'servicios-realizados', { name: '' });
-		expect(out.name).toBe('SRV-000008');
+		expect(out.name).toBe('SERV-008');
 		expect(store.data['auto-increment-control']).toHaveLength(1);
-		expect(store.data['auto-increment-control'][0].custom_pattern).toBe('SRV-[seq;ceros=6]');
+		expect(store.data['auto-increment-control'][0].custom_pattern).toBe('SERV-[seq;ceros=3]');
 
 		const disabled = memory_store({
 			'auto-increment-control': [{ ...configured, is_active: false }],
@@ -230,6 +229,48 @@ describe('assign_document_increments', () => {
 		});
 		expect(untouched.name).toBe('');
 		expect(disabled.data['auto-increment-control']).toHaveLength(1);
+	});
+
+	test('Patient realinea el patrón legado EXP- a CON- y deja intacto uno personalizado', async () => {
+		const legacy: Row = {
+			_id: 'pac-legacy',
+			model_name: 'Patient',
+			increment_field: 'numero_expediente',
+			type: 'custom',
+			custom_pattern: 'EXP-[seq;ceros=6]',
+			ref_value: null,
+			is_active: true,
+			current_sequence: 4,
+		};
+		const store = memory_store({
+			'auto-increment-control': [legacy],
+			patient: [],
+		});
+		const out = await assign_document_increments(store as never, 'patient', { numero_expediente: '' });
+		expect(out.numero_expediente).toBe('CON-000005');
+		expect(store.data['auto-increment-control']).toHaveLength(1);
+		expect(store.data['auto-increment-control'][0].custom_pattern).toBe('CON-[seq;ceros=6]');
+
+		const custom: Row = {
+			_id: 'pac-custom',
+			model_name: 'Patient',
+			increment_field: 'numero_expediente',
+			type: 'custom',
+			custom_pattern: 'PAC-[seq;ceros=4]',
+			ref_value: null,
+			is_active: true,
+			current_sequence: 2,
+		};
+		const custom_store = memory_store({
+			'auto-increment-control': [custom],
+			patient: [],
+		});
+		const kept = await assign_document_increments(custom_store as never, 'patient', {
+			numero_expediente: '',
+		});
+		expect(kept.numero_expediente).toBe('PAC-0003');
+		expect(custom_store.data['auto-increment-control']).toHaveLength(1);
+		expect(custom_store.data['auto-increment-control'][0].custom_pattern).toBe('PAC-[seq;ceros=4]');
 	});
 
 	test('si otra alta crea el contador a la vez, se reutiliza en vez de fallar', async () => {
