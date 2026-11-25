@@ -503,7 +503,7 @@
   {
     "_ref": "interactive-manual-flow-database-manager-restaurar-abrir",
     "name": "Abrir la pantalla de restaurar respaldos",
-    "description": "La pantalla de restaurar abre sin 404, con las 3 pestañas de origen (servidor, subir archivo, traer de un destino) y el historial debajo (#360, #338).",
+    "description": "La pantalla de restaurar abre sin 404, con las 3 pestañas de origen (servidor, subir archivo, traer de un destino) y el historial debajo (#368, #360, #338).",
     "icon": "fa-database",
     "is_default_for_module": true,
     "is_active": true,
@@ -534,7 +534,7 @@
         "order": 3,
         "step_id": "restaurar-abrir-paso-3",
         "title": "Haz clic en «Subir archivo»",
-        "body": "La pestaña «Subir archivo» muestra el formulario para elegir un archivo; el botón se habilita al seleccionar uno.",
+        "body": "La pestaña «Subir archivo» muestra el formulario y el botón Restaurar (visible en web y móvil; se habilita al elegir un archivo).",
         "route": "/internal/database-manager/restore",
         "route_kind": "confirmada",
         "anchor_attr": "dbm-restore-upload",
