@@ -1,6 +1,8 @@
 /**
  * CRUD Imperium: mismas rutas que `crud_routes()` del backend Express.
  */
+import { refund_return_to_card } from './pos-card-refund.ts';
+import type { TerminalDeps } from './pos-card-terminal-flow.ts';
 import { principal_type_of } from './subject-identity.ts';
 import { is_master_request } from './subject-secret.ts';
 import { odoo_only_config_denied } from './odoo-only-config.ts';
@@ -438,6 +440,7 @@ export async function handle_crud(
 	resource: string,
 	rest: string,
 	actor: ImperiumDoc | null = null,
+	terminal: TerminalDeps | null = null,
 ): Promise<Response | null> {
 	if (is_chat_private_resource(resource)) return null;
 	const method = req.method.toUpperCase();
@@ -961,7 +964,7 @@ export async function handle_crud(
 				String(incoming.pos_session ?? ''),
 				{ method: 'POST', path: '/pos-tickets', label: 'Crear ticket POS' },
 				actor,
-			);
+			);	incoming = await refund_return_to_card(terminal, incoming);
 		}
 		if (resource === 'products') {
 			incoming = await prepare_product_write(store, incoming);

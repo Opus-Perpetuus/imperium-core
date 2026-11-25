@@ -1380,6 +1380,42 @@
     "action": "bulk_close_sessions"
   },
   {
+    "resource": "pos-session",
+    "method": "get",
+    "path": "/card-terminal/config/:id",
+    "action": "read_card_terminal"
+  },
+  {
+    "resource": "pos-session",
+    "method": "post",
+    "path": "/card-terminal/config/:id",
+    "action": "save_card_terminal"
+  },
+  {
+    "resource": "pos-session",
+    "method": "post",
+    "path": "/card-terminal/charge/:id",
+    "action": "charge_card_terminal"
+  },
+  {
+    "resource": "pos-session",
+    "method": "get",
+    "path": "/card-terminal/charge-status/:id",
+    "action": "read_card_terminal_charge"
+  },
+  {
+    "resource": "pos-session",
+    "method": "post",
+    "path": "/card-terminal/charge-cancel/:id",
+    "action": "cancel_card_terminal_charge"
+  },
+  {
+    "resource": "pos-session",
+    "method": "post",
+    "path": "/card-terminal/webhook/mercadopago",
+    "action": "mercadopago_orders_webhook"
+  },
+  {
     "resource": "purchase-order",
     "method": "post",
     "path": "/:id/approve",

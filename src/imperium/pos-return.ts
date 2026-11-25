@@ -23,6 +23,7 @@ import { apply_quant_delta, find_warehouse_location } from './delivery-return-fl
 import { ref_id } from './warehouse-scope.ts';
 import { as_array, as_object, type ImperiumDoc } from './envelope.ts';
 import { round_quantity } from './inventory-picking.ts';
+import { CARD_METHOD, card_refund_lines } from './pos-card-refund.ts';
 import { CREDIT_METHOD, credit_refund_for_return } from './pos-credit.ts';
 import { expand_kit_quantities } from './pos-product-rules.ts';
 import { STORE_CREDIT_METHOD } from './pos-store-credit.ts';
@@ -76,7 +77,7 @@ export function is_linked_return(ticket: ImperiumDoc): boolean {
 }
 
 /** Devoluciones vivas ligadas a la venta, opcionalmente sin contar una. */
-async function returns_of(store: ImperiumStore, original_id: string, except = ''): Promise<ImperiumDoc[]> {
+export async function returns_of(store: ImperiumStore, original_id: string, except = ''): Promise<ImperiumDoc[]> {
 	const out: ImperiumDoc[] = [];
 	for await (const page of store.scan('pos-tickets', { where: { original_ticket: original_id } })) {
 		for (const row of page) {
@@ -193,6 +194,10 @@ export async function prepare_pos_return(store: ImperiumStore, doc: ImperiumDoc)
 		throw new Error('El saldo a favor requiere un cliente en la venta o en la devolución');
 	}
 	if (store_credit > 0) refund_lines.push({ method: STORE_CREDIT_METHOD, amount: store_credit });
+	if (text(doc.refund_method).toLowerCase() === CARD_METHOD) {
+		const prior = await returns_of(store, original_id, String(doc._id ?? ''));
+		refund_lines.push(...card_refund_lines(original, prior, money(refund - credit_refund)));
+	}
 	const methods = [...new Set(refund_lines.map((p) => String(p.method)))];
 	const credit = refund_lines.length
 		? { payments: refund_lines, payment_method: methods.length === 1 ? methods[0] : 'mixto' }

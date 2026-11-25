@@ -2677,9 +2677,42 @@
     ]
   },
   {
+    "_ref": "interactive-manual-flow-turnos-turnos-caja-usuario",
+    "name": "Caja de turnos",
+    "description": "El cajero abre su caja, toma el siguiente turno, lo notifica, lo termina y cierra la caja. Esta guía no pulsa esas acciones para no mover turnos reales.",
+    "icon": "fa-ticket",
+    "module_model_id": "TicketingSystemTurn",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "turnos-caja-usuario-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "«Tomar siguiente turno» atiende al siguiente de la fila que esta caja puede ver. Ábrela antes desde Turnos → Acciones → Abrir caja a turnos.",
+        "route": "/internal/subruta/ticketing-system-open-box",
+        "route_kind": "inicio",
+        "anchor_attr": "turn-open-box-take",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "turnos-caja-usuario-paso-2",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "«Cerrar caja» deja de atender en esta ventanilla. Si hay un turno abierto, la app te lo avisa.",
+        "route": "/internal/subruta/ticketing-system-open-box",
+        "route_kind": "confirmada",
+        "anchor_attr": "turn-open-box-close",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
     "_ref": "interactive-manual-flow-turnos-turnos-kiosko",
-    "name": "Kiosko de generación de turnos",
-    "description": "Recorre el asistente de ventanilla/kiosko para seleccionar tipo de ciudadano y avanzar al servicio.",
+    "name": "Asistentes de turnos",
+    "description": "En el kiosko o ventanilla, el ciudadano elige su tipo de atención, sigue a los servicios con Siguiente y confirma para obtener su folio. Esta guía no pulsa Confirmar para no crear turnos de prueba.",
     "icon": "fa-ticket",
     "module_model_id": "TicketingSystemTurn",
     "is_default_for_module": true,
@@ -2689,7 +2722,7 @@
         "order": 1,
         "step_id": "turnos-kiosko-paso-1",
         "title": "Revisa esta parte de la pantalla",
-        "body": "Carga el paso inicial del asistente con los tipos de ciudadano/cliente.",
+        "body": "El primer paso muestra los tipos de ciudadano (por ejemplo general o 3a edad). Elige uno para poder seguir.",
         "route": "/internal/ticketing-system-turn/turn-wizard",
         "route_kind": "inicio",
         "anchor_attr": "turn-wizard-customer-type",
@@ -2700,7 +2733,7 @@
         "order": 2,
         "step_id": "turnos-kiosko-paso-2",
         "title": "Revisa esta parte de la pantalla",
-        "body": "Con este botón avanzas al siguiente paso del turno.",
+        "body": "Con Siguiente pasas a elegir el servicio y luego a Confirmar, donde sale el folio. No pulses Confirmar en una corrida que no deba crear un turno.",
         "route": "/internal/ticketing-system-turn/turn-wizard",
         "route_kind": "confirmada",
         "anchor_attr": "turn-wizard-next",
@@ -2711,8 +2744,8 @@
   },
   {
     "_ref": "interactive-manual-flow-turnos-turnos-tablero",
-    "name": "Tablero público de turnos de atención",
-    "description": "Verifica la carga del tablero de llamados de turnos y su reloj en tiempo real para sala de espera.",
+    "name": "Tablero de turnos",
+    "description": "El tablero de la sala de espera muestra el reloj, los turnos en atención y los próximos, con voz y pantalla completa.",
     "icon": "fa-ticket",
     "module_model_id": "TicketingSystemTurn",
     "is_default_for_module": true,
@@ -2722,7 +2755,7 @@
         "order": 1,
         "step_id": "turnos-tablero-paso-1",
         "title": "Revisa esta parte de la pantalla",
-        "body": "Confirma que el tablero de turnos en sala de espera está activo.",
+        "body": "Esta pantalla se pone en el monitor de la sala de espera para que la gente vea su turno.",
         "route": "/internal/turn-dashboard",
         "route_kind": "inicio",
         "anchor_attr": "turn-board",
@@ -2733,10 +2766,21 @@
         "order": 2,
         "step_id": "turnos-tablero-paso-2",
         "title": "Revisa esta parte de la pantalla",
-        "body": "Verifica el reloj del tablero visible para los ciudadanos.",
+        "body": "El reloj del tablero corre en tiempo real.",
         "route": "/internal/turn-dashboard",
         "route_kind": "confirmada",
         "anchor_attr": "turn-board-clock",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "turnos-tablero-paso-3",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Pantalla completa deja el tablero sin menús, listo para la sala.",
+        "route": "/internal/turn-dashboard",
+        "route_kind": "confirmada",
+        "anchor_attr": "turn-board-fullscreen",
         "action_hint": "observe",
         "placement": "auto"
       }

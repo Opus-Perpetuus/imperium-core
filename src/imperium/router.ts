@@ -1,6 +1,7 @@
 /**
  * Enruta el contrato HTTP original de Imperium sobre SQL.
  */
+import { sql_terminal_deps } from './pos-card-terminal-flow.ts';
 import {
 	apply_odoo_autoscan,
 	apply_self_autoscan,
@@ -489,7 +490,7 @@ async function dispatch(
 					);
 					return add_cors(req, res);
 				}
-				const crud = await handle_crud(store, req, url, hit.resource, hit.rest, actor);
+				const crud = await handle_crud(store, req, url, hit.resource, hit.rest, actor, sql_terminal_deps(sql, store.has('payment-gateways') ? store.qt('payment-gateways') : null));
 				if (crud) return add_cors(req, crud);
 				return add_cors(
 					req,

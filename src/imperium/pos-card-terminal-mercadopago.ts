@@ -46,7 +46,7 @@ type MpOrder = {
 	status?: unknown;
 	external_reference?: unknown;
 	total_amount?: unknown;
-	transactions?: { payments?: Array<{ amount?: unknown }> };
+	transactions?: { payments?: Array<{ id?: unknown; amount?: unknown }>; refunds?: Array<{ amount?: unknown }> };
 };
 
 function mp_error(data: unknown): string {
@@ -120,8 +120,14 @@ export function create_mercadopago_point(opts: MercadoPagoPointOptions): CardTer
 		async cancel_charge(id, idempotency_key) {
 			return call('POST', `${order_path(id)}/cancel`, required_key(idempotency_key));
 		},
-		async refund_charge(id, idempotency_key) {
-			return call('POST', `${order_path(id)}/refund`, required_key(idempotency_key));
+		async refund_charge(id, idempotency_key, amount) {
+			const key = required_key(idempotency_key);
+			if (amount === undefined) return call('POST', `${order_path(id)}/refund`, key);
+			const order = await call('GET', order_path(id));
+			if (!order.ok) return order;
+			const payment_id = String((order.charge.raw as MpOrder).transactions?.payments?.[0]?.id ?? '');
+			if (!payment_id) return { ok: false, error: 'La orden de Mercado Pago no tiene pago que reembolsar', status_code: null };
+			return call('POST', `${order_path(id)}/refund`, key, { transactions: [{ id: payment_id, amount: amount_string(amount) }] });
 		},
 	};
 }

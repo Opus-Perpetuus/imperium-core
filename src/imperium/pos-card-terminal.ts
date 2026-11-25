@@ -33,6 +33,7 @@ export type TerminalCharge = {
 	provider_status: string;
 	amount: number;
 	external_reference: string;
+	refunded_amount?: number;
 	raw?: unknown;
 };
 
@@ -44,7 +45,7 @@ export interface CardTerminalProvider {
 	create_charge(input: TerminalChargeInput): Promise<TerminalResult>;
 	fetch_charge(id: string): Promise<TerminalResult>;
 	cancel_charge(id: string, idempotency_key: string): Promise<TerminalResult>;
-	refund_charge?(id: string, idempotency_key: string): Promise<TerminalResult>;
+	refund_charge?(id: string, idempotency_key: string, amount?: number): Promise<TerminalResult>;
 }
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
@@ -129,7 +130,7 @@ export function create_manual_terminal(label = 'Terminal aparte (referencia a ma
 }
 
 export type SimulatedTerminal = CardTerminalProvider & {
-	refund_charge(id: string, idempotency_key: string): Promise<TerminalResult>;
+	refund_charge(id: string, idempotency_key: string, amount?: number): Promise<TerminalResult>;
 	force_status(id: string, status: TerminalStatus): void;
 };
 
@@ -137,6 +138,7 @@ export function create_simulated_terminal(opts: { label?: string; final_status?:
 	const final_status = opts.final_status ?? 'aprobado';
 	const charges = new Map<string, TerminalCharge>();
 	const by_key = new Map<string, string>();
+	const refunds = new Map<string, number>();
 	let seq = 0;
 	const found = (id: string): TerminalResult => {
 		const charge = charges.get(id);
@@ -176,8 +178,24 @@ export function create_simulated_terminal(opts: { label?: string; final_status?:
 		async cancel_charge(id, idempotency_key) {
 			return move(id, (s) => !is_final_status(s), 'cancelado', idempotency_key);
 		},
-		async refund_charge(id, idempotency_key) {
-			return move(id, (s) => s === 'aprobado', 'reembolsado', idempotency_key);
+		async refund_charge(id, idempotency_key, amount) {
+			required_key(idempotency_key);
+			const charge = charges.get(id);
+			if (!charge) return found(id);
+			const key = `${id}:${idempotency_key}`;
+			if (!refunds.has(key)) {
+				const done = charge.refunded_amount ?? 0;
+				const want = amount === undefined ? charge.amount - done : charge_amount(amount);
+				if (charge.status !== 'aprobado') return { ok: false, error: `El cobro está ${charge.status}`, status_code: 409 };
+				if (want - (charge.amount - done) > 0.005) return { ok: false, error: 'El reembolso pasa de lo cobrado', status_code: 400 };
+				refunds.set(key, want);
+				charge.refunded_amount = Math.round((done + want) * 100) / 100;
+				if (charge.amount - charge.refunded_amount < 0.005) {
+					charge.status = 'reembolsado';
+					charge.provider_status = 'reembolsado';
+				}
+			}
+			return found(id);
 		},
 		force_status(id, status) {
 			const charge = charges.get(id);

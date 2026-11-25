@@ -1087,6 +1087,8 @@ const PUBLIC_EXTRA_ACTIONS = new Set([
 	'payments:stripe_webhook',
 	'cobranza:stripe_webhook',
 	'cobranza:mitec_webhook',
+	// Aviso de Mercado Pago (órdenes de terminal); el handler exige x-signature con el secreto de la pasarela.
+	'pos-session:mercadopago_orders_webhook',
 	'agua:public_contrato',
 	'agua:public_url',
 	'messages:receive_interinstance_message',

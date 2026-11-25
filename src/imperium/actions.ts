@@ -26,7 +26,8 @@ import { cancel_layaway, layaway_lookup } from './pos-layaway.ts';
 import { quote_lookup } from './pos-quote.ts';
 import { pos_ticket_by_folio, register_pos_reprint } from './pos-reprint.ts';
 import { store_credit_lookup } from './pos-store-credit.ts';
-import { pos_return_lookup } from './pos-return.ts';
+import { pos_return_lookup, returns_of } from './pos-return.ts';
+import { card_refundable } from './pos-card-refund.ts';
 import { products_to_replenish } from './inventory-replenishment.ts';
 import { supplier_aging } from './supplier-aging.ts';
 import { expiring_stock } from './inventory-expiry.ts';
@@ -82,6 +83,18 @@ import {
 } from './interinstance.ts';
 import { mitec_create_link, mitec_parse_callback } from './mitec.ts';
 import { assert_stripe_webhook, mitec_callback_xml } from './webhook-guards.ts';
+import {
+	cancel_terminal_charge,
+	card_terminal_view,
+	charge_on_terminal,
+	handle_mp_orders_webhook,
+	normalize_card_terminal,
+	read_card_terminal,
+	read_terminal_charge,
+	sql_terminal_deps,
+	terminal_external_reference,
+	type TerminalDeps,
+} from './pos-card-terminal-flow.ts';
 import {
 	email_is_configured,
 	resolve_email_settings,
@@ -1015,10 +1028,13 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'pos-tickets:read_return_availability':
 			return ok(
 				[
-					await pos_return_lookup(ctx.store, {
-						id: ctx.url.searchParams.get('id'),
-						folio: ctx.url.searchParams.get('folio'),
-					}),
+					await with_card_refundable(
+						ctx,
+						await pos_return_lookup(ctx.store, {
+							id: ctx.url.searchParams.get('id'),
+							folio: ctx.url.searchParams.get('folio'),
+						}),
+					),
 				],
 				'Disponible para devolución',
 			);
@@ -1049,6 +1065,18 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return pos_cancel(ctx);
 		case 'pos-session:bulk_close_sessions':
 			return bulk_close_pos_sessions(ctx.store, ctx.actor, ctx.body ?? {});
+		case 'pos-session:read_card_terminal':
+			return pos_card_terminal_read(ctx);
+		case 'pos-session:save_card_terminal':
+			return pos_card_terminal_save(ctx);
+		case 'pos-session:charge_card_terminal':
+			return pos_card_terminal_charge(ctx);
+		case 'pos-session:read_card_terminal_charge':
+			return pos_card_terminal_status(ctx);
+		case 'pos-session:cancel_card_terminal_charge':
+			return pos_card_terminal_cancel(ctx);
+		case 'pos-session:mercadopago_orders_webhook':
+			return pos_card_terminal_webhook(ctx);
 		case 'purchase-order:approve':
 			return po_approve(ctx);
 		case 'purchase-order:register_receipt':
@@ -4946,6 +4974,74 @@ async function pos_runtime(ctx: Ctx) {
 	const runtime_state = normalize_pos_runtime_state(ctx.body.runtime_state ?? ctx.body);
 	await ctx.store.update('pos-session', session_id, { runtime_state });
 	return ok([runtime_state], 'Estado operativo del POS guardado correctamente');
+}
+
+function card_terminal_deps(ctx: Ctx): TerminalDeps {
+	return sql_terminal_deps(ctx.sql, ctx.store.has('payment-gateways') ? ctx.store.qt('payment-gateways') : null);
+}
+
+async function with_card_refundable(ctx: Ctx, lookup: ImperiumDoc): Promise<ImperiumDoc> {
+	const original = await ctx.store.find_id('pos-tickets', String(lookup._id));
+	if (!original) return lookup;
+	const prior = await returns_of(ctx.store, String(lookup._id));
+	return { ...lookup, tarjeta_reembolsable: await card_refundable(card_terminal_deps(ctx), original, prior) };
+}
+
+async function pos_card_terminal_read(ctx: Ctx) {
+	const session = await pos_session_for_report(ctx);
+	return ok([await card_terminal_view(session, card_terminal_deps(ctx).gateways)], 'Terminal de la caja');
+}
+
+async function pos_card_terminal_save(ctx: Ctx) {
+	const session = await pos_session_for_report(ctx);
+	const card_terminal = normalize_card_terminal(ctx.body);
+	await ctx.store.update('pos-session', String(session._id), { card_terminal });
+	return ok([await card_terminal_view({ card_terminal }, card_terminal_deps(ctx).gateways)], 'Terminal de la caja guardada');
+}
+
+async function pos_card_terminal_charge(ctx: Ctx) {
+	const session = await pos_session_for_report(ctx);
+	if (!is_pos_session_open(session)) throw new Error('Solo se cobra en una sesión abierta');
+	const external_reference = String(ctx.body.external_reference ?? '').trim()
+		|| terminal_external_reference(ctx.body.folio ?? ctx.body.ticket, ctx.body.attempt);
+	const view = await charge_on_terminal(card_terminal_deps(ctx), {
+		session_id: String(session._id),
+		terminal: read_card_terminal(session),
+		amount: Number(ctx.body.amount),
+		external_reference,
+		idempotency_key: String(ctx.body.idempotency_key ?? ''),
+	});
+	return ok([view], 'Cobro en terminal');
+}
+
+async function pos_card_terminal_status(ctx: Ctx) {
+	const session = await pos_session_for_report(ctx);
+	const view = await read_terminal_charge(card_terminal_deps(ctx), {
+		session_id: String(session._id),
+		terminal: read_card_terminal(session),
+		id: String(ctx.url.searchParams.get('order') ?? ctx.body.order ?? ''),
+	});
+	return ok([view], 'Cobro en terminal');
+}
+
+async function pos_card_terminal_cancel(ctx: Ctx) {
+	const session = await pos_session_for_report(ctx);
+	const view = await cancel_terminal_charge(card_terminal_deps(ctx), {
+		session_id: String(session._id),
+		terminal: read_card_terminal(session),
+		id: String(ctx.body.order ?? ''),
+		idempotency_key: String(ctx.body.idempotency_key ?? ''),
+	});
+	return ok([view], 'Cobro en terminal cancelado');
+}
+
+async function pos_card_terminal_webhook(ctx: Ctx) {
+	const reply = await handle_mp_orders_webhook(card_terminal_deps(ctx), {
+		headers: ctx.req.headers,
+		query: ctx.url.searchParams,
+		body: ctx.body ?? {},
+	});
+	return Response.json(reply.body, { status: reply.status });
 }
 
 async function pos_session_for_report(ctx: Ctx) {
