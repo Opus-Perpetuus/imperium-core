@@ -785,5 +785,14 @@
 		"module_id": "NA",
 		"type": "switch",
 		"value": false
+	},
+	{
+		"_ref": "configuration-turnos-impresion-directa",
+		"name": "Imprimir turnos directo (APK/escritorio) en lugar de Zebra Browser Print",
+		"description": "Si está en SI, el ticket del turno sale por la impresora del equipo (app Android, app de escritorio o ayudante local). Si está en NO, por Zebra Browser Print.",
+		"is_system": false,
+		"module_id": "ticketing-system-turn",
+		"type": "switch",
+		"value": false
 	}
 ]
