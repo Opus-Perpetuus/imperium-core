@@ -643,6 +643,10 @@ describe('lanzador de almacén', () => {
 		const planned = plan_subject_menus(almacen!, [
 			{ _ref: 'menu-management-inventory' },
 			...almacen!.modules.map((mod) => ({ _ref: mod.menu_ref })),
+			// Surtido/Por surtir ya están guardados en un almacén instalado.
+			...(almacen!.menus ?? [])
+				.filter((menu) => menu.menu_ref !== 'inventory-movement-traslado-menu-0')
+				.map((menu) => ({ _ref: menu.menu_ref })),
 		]);
 		expect(planned.map((row) => row._ref)).toEqual(['inventory-movement-traslado-menu-0']);
 		expect(planned[0]).toMatchObject({
@@ -907,5 +911,24 @@ describe('reshape_subject_menus vehiculos icons', () => {
 			path: '/padron-vehiculos',
 			parent_id: 'folder-id',
 		});
+	});
+});
+
+describe('reshape_subject_menus: path compartido con app sin instalar', () => {
+	test('Pedidos de Ventas sigue visible si logística no está instalada', () => {
+		const store = {
+			subjects: [
+				{ slug: 'ventas', name: 'Ventas', path: '/ventas', menu_ref: 'pedidos_menu_root', technical_id: 'subject-ventas', image: '',
+					modules: [{ resource: 'pedidos', path: '/pedidos', menu_ref: 'pedidos-ventas-menu-0', name: 'Pedidos' }] },
+				{ slug: 'logistica', name: 'Logística', path: '/logistica', menu_ref: 'logistica-root', technical_id: 'subject-logistica', image: '',
+					modules: [{ resource: 'pedidos', path: '/pedidos', menu_ref: 'logistics-pedidos-empaque-menu-0', name: 'Pedidos por empacar' }] },
+			],
+		} as unknown as Pick<ImperiumStore, 'subjects'>;
+		const rows = [
+			{ _id: 'root', name: 'Ventas', path: '', parent_id: null, _ref: 'pedidos_menu_root', is_active: true },
+			{ _id: 'ped', name: 'Pedidos', path: '/pedidos', parent_id: 'root', _ref: 'pedidos-ventas-menu-0', is_active: true },
+		];
+		const out = reshape_subject_menus(store, rows, new Set(['logistica']));
+		expect(out.some((m) => m.path === '/pedidos' && m.parent_id === 'root')).toBe(true);
 	});
 });

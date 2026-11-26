@@ -471,6 +471,20 @@ describe("requires.core", () => {
     const result = validate_kirlet_manifest({ ...hr_manifest_0_3, requires: { core: "latest" } });
     expect(result.ok).toBe(false);
   });
+
+  test("requires.front pasa junto con core y solo", () => {
+    const both = validate_kirlet_manifest({ ...hr_manifest_0_3, requires: { core: "13.83.0", front: "13.83.0" } });
+    expect(both.ok).toBe(true);
+    if (both.ok) expect(both.manifest.requires).toEqual({ core: "13.83.0", front: "13.83.0" });
+    const front = validate_kirlet_manifest({ ...hr_manifest_0_3, requires: { front: "13.90.1" } });
+    expect(front.ok).toBe(true);
+    if (front.ok) expect(front.manifest.requires).toEqual({ front: "13.90.1" });
+  });
+
+  test("requires.front que no es X.Y.Z o requires vacío se rechazan", () => {
+    expect(validate_kirlet_manifest({ ...hr_manifest_0_3, requires: { core: "13.83.0", front: "13" } }).ok).toBe(false);
+    expect(validate_kirlet_manifest({ ...hr_manifest_0_3, requires: {} }).ok).toBe(false);
+  });
 });
 
 const LEAF_SCHEMA = KIRLET_MANIFEST_SCHEMA_URI;

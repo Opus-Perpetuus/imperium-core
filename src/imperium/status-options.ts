@@ -745,7 +745,33 @@ type StatusSeedEntry = {
 	module_name?: string;
 	status_fields?: unknown;
 	options?: unknown;
+	/**
+	 * Valores sembrados que el subject ya no usa: se quitan del catálogo de
+	 * `status_fields` salvo los que creó el usuario o los que la misma semilla
+	 * vuelve a pedir. El subject los manda solo tras migrar sus registros.
+	 */
+	retire_values?: unknown;
 };
+
+/** Quita las opciones sembradas cuyo valor se retira (nunca las del usuario). */
+export function retire_seeded_options(
+	options: StatusOption[],
+	retire_values: unknown,
+	status_fields: string[],
+	keep: StatusOption[],
+): { options: StatusOption[]; retired: number } {
+	const values = new Set(as_array(retire_values).map((v) => text(v)).filter(Boolean));
+	if (!values.size) return { options, retired: 0 };
+	const kept = new Set(keep.map((o) => `${o.field_name || 'state'}::${o.value}`));
+	const next = options.filter((option) => {
+		const field = option.field_name || 'state';
+		if (!values.has(text(option.value))) return true;
+		if (option.is_user_defined === true) return true;
+		if (status_fields.length && !status_fields.includes(field)) return true;
+		return kept.has(`${field}::${option.value}`);
+	});
+	return { options: next, retired: options.length - next.length };
+}
 
 function status_seed_plan(body: Record<string, unknown>) {
 	const many = as_array(body.entries).map((item) => as_object(item) as StatusSeedEntry);
@@ -775,6 +801,7 @@ export async function seed_status_defaults(ctx: StatusCtx) {
 	let inserted = 0;
 	let skipped = 0;
 	let filled_total = 0;
+	let retired_total = 0;
 	let created_configurations = 0;
 	const results: Array<Record<string, unknown>> = [];
 	for (const entry of entries) {
@@ -802,6 +829,13 @@ export async function seed_status_defaults(ctx: StatusCtx) {
 		}));
 		const merged = insert_missing(current_options, incoming, true);
 		const filled = fill_empty_presentation(merged.options, incoming, true);
+		const retire = retire_seeded_options(
+			filled.options,
+			entry.retire_values,
+			normalize_fields(entry.status_fields),
+			incoming,
+		);
+		retired_total += retire.retired;
 		inserted += merged.inserted;
 		skipped += merged.skipped;
 		filled_total += filled.filled;
@@ -811,14 +845,15 @@ export async function seed_status_defaults(ctx: StatusCtx) {
 			inserted: merged.inserted,
 			skipped: merged.skipped,
 			filled: filled.filled,
+			retired: retire.retired,
 		});
-		if (merged.inserted === 0 && filled.filled === 0) continue;
+		if (merged.inserted === 0 && filled.filled === 0 && retire.retired === 0) continue;
 		const fields = normalize_fields(value.status_fields);
 		for (const field of normalize_fields(entry.status_fields)) {
 			if (!fields.includes(field)) fields.push(field);
 		}
 		for (const option of incoming) {
-			if (!filled.options.includes(option)) continue;
+			if (!retire.options.includes(option)) continue;
 			const field = option.field_name || 'state';
 			if (!fields.includes(field)) fields.push(field);
 		}
@@ -828,7 +863,7 @@ export async function seed_status_defaults(ctx: StatusCtx) {
 			module_name: text(value.module_name) || module_name,
 			model_id: text(value.model_id) || model_id,
 			status_fields: fields,
-			options: filled.options,
+			options: retire.options,
 		};
 		if (existing?._id) {
 			await ctx.store.update('configuration', String(existing._id), { value: next_value });
@@ -846,10 +881,11 @@ export async function seed_status_defaults(ctx: StatusCtx) {
 		});
 		created_configurations += 1;
 	}
-	const summary = { inserted, skipped, filled: filled_total, created_configurations, results };
+	const summary = { inserted, skipped, filled: filled_total, retired: retired_total, created_configurations, results };
 	const parts: string[] = [];
 	if (inserted) parts.push(`Se agregaron ${inserted} opciones de estatus que faltaban`);
 	if (filled_total) parts.push(`se rellenó color/icon en ${filled_total} vacías`);
+	if (retired_total) parts.push(`se retiraron ${retired_total} opciones que ya no se usan`);
 	const message = parts.length
 		? `${parts.join('; ')}. ${skipped} ya existían con presentación completa.`
 		: 'No había opciones de estatus nuevas ni color/icon vacíos: las existentes se dejaron igual.';

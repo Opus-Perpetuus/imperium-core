@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { ImperiumDoc } from './envelope.ts';
+import { ALLOW_NEGATIVE_STOCK_REF } from './negative-stock.ts';
 import { register_pos_ticket_exit } from './inventory-exit.ts';
 import { clients_aging } from './pos-credit.ts';
 import {
@@ -64,6 +65,7 @@ const kit = { _id: 'kit', name: 'Kit baño', existencia: 0, kit_componentes: [{ 
 
 function base_store() {
 	return memory_store({
+		configuration: [{ _id: 'neg', _ref: ALLOW_NEGATIVE_STOCK_REF, value: false }],
 		products: [kit, { _id: 'codo', name: 'Codo', existencia: 10 }, { _id: 'tubo', name: 'Tubo', existencia: 5 }],
 		'inventory-movement': [],
 		'pos-tickets': [],
@@ -231,10 +233,11 @@ describe('lotes en la salida POS', () => {
 		await register_pos_ticket_exit(s, { _id: 'v1', ticket_type: 'VENTA', items: [{ item_id: 'codo', quantity: 4 }] });
 		const left = Object.fromEntries(s.data['inventory-stock-quant'].map((q) => [q.lote, q.cantidad]));
 		expect(left).toEqual({ A: 2, B: 0 });
-		const mov = s.data['inventory-movement'][0];
-		expect(mov.lote_codigo).toBe('B, A');
-		expect(String(mov.description)).toContain('Lotes: B (3), A (1)');
+		expect(s.data['inventory-movement'].map((m) => [m.lote, m.cantidad])).toEqual([
+			['B', 3],
+			['A', 1],
+		]);
 		await register_pos_ticket_exit(s, { _id: 'v2', ticket_type: 'VENTA', items: [{ item_id: 'codo', quantity: 1 }] });
-		expect(s.data['inventory-movement'][1]).toMatchObject({ lote: 'A', lote_codigo: 'A', fecha_caducidad: '2026-12-01' });
+		expect(s.data['inventory-movement'][2]).toMatchObject({ lote: 'A', lote_codigo: 'A', fecha_caducidad: '2026-12-01', cantidad: 1 });
 	});
 });

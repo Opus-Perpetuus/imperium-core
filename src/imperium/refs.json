@@ -5,7 +5,8 @@
       "unidad": "UnitOfMeasure"
     },
     "inventory-internal-location": {
-      "parent": "InventoryInternalLocation"
+      "parent": "InventoryInternalLocation",
+      "sucursal": "Branchoffice"
     },
     "pedidos": {
       "contacto": "Contacto",
@@ -13,7 +14,8 @@
       "listaDePreciosId": "ListaDePrecios",
       "assigned_employee": "Employee",
       "invoice_request_id": "InvoiceRequest",
-      "articulos.product": "Products"
+      "articulos.product": "Products",
+      "almacen": "InventoryInternalLocation"
     },
     "pedidos-surtir": {
       "contacto": "Contacto",
@@ -21,11 +23,13 @@
       "listaDePreciosId": "ListaDePrecios",
       "assigned_employee": "Employee",
       "invoice_request_id": "InvoiceRequest",
-      "articulos.product": "Products"
+      "articulos.product": "Products",
+      "almacen": "InventoryInternalLocation"
     },
     "user": {
       "employee": "Employee",
-      "listaDePrecios": "ListaDePrecios"
+      "listaDePrecios": "ListaDePrecios",
+      "almacen": "InventoryInternalLocation"
     },
     "vehicle": {
       "chofer": "Employee"

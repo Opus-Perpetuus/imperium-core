@@ -41,6 +41,12 @@ export type StatusOptionSeed = {
   module_name?: string;
   status_fields?: string[];
   options: OptionSeedItem[];
+  /**
+   * Valores sembrados que ya no se usan: el núcleo los quita del catálogo de
+   * `status_fields` (nunca los creados por el usuario). Mandar solo después de
+   * migrar los registros que los tenían. Un núcleo viejo lo ignora.
+   */
+  retire_values?: string[];
 };
 
 /** `optionsSource` de un campo que no es estatus. `as=options` → `{ value, label }[]`. */

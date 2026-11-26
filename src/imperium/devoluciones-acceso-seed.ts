@@ -146,6 +146,93 @@ const DERECHO_PLANTILLA_TICKET_VENDEDORES: DevolucionAccessRight = {
 	is_active: true,
 };
 
+/**
+ * Lectura de las plantillas de impresión (ticket Epson y etiqueta ZPL) para los
+ * grupos que ya leen Reportes. Imprimir un pedido pide las tres listas; sin
+ * estas filas el núcleo contestaba 403 en cada apertura del pedido (PROFESA,
+ * grupo Ventas, 130 veces en un día).
+ */
+const GRUPOS_IMPRIMEN: Array<{ ref: string; nombre: string; slug: string }> = [
+	{ ref: 'user-group-ventas', nombre: 'Ventas', slug: 'ventas' },
+	{ ref: 'user-group-almacen', nombre: 'Almacén', slug: 'almacen' },
+	{ ref: 'user-group-surtidores', nombre: 'Surtidores', slug: 'surtidores' },
+	{ ref: 'user-group-logistica', nombre: 'Logística', slug: 'logistica' },
+	{ ref: 'user-group-gerencia-general', nombre: 'Gerencia General', slug: 'gerencia-general' },
+];
+
+function derecho_plantilla(
+	model_id: 'EpsonTicketTemplate' | 'ZplManagement',
+	grupo: { ref: string; nombre: string; slug: string },
+): DevolucionAccessRight {
+	const slug_modelo = model_id === 'EpsonTicketTemplate' ? 'epson-ticket-template' : 'zpl-management';
+	return {
+		_ref: `${grupo.slug}-access-rights-${slug_modelo}`,
+		name: `${model_id} | ${grupo.nombre} (leer)`,
+		description: `${grupo.nombre}: leer las plantillas con las que se imprimen pedidos y bultos.`,
+		model_id,
+		group_id: grupo.ref,
+		allow_read: true,
+		allow_create: false,
+		allow_update: false,
+		allow_delete: false,
+		is_active: true,
+	};
+}
+
+export const PLANTILLAS_IMPRESION_ACCESS_RIGHTS: DevolucionAccessRight[] = [
+	...GRUPOS_IMPRIMEN.map((g) => derecho_plantilla('EpsonTicketTemplate', g)),
+	...[
+		...GRUPOS_IMPRIMEN,
+		{ ref: 'user-group-vendedores', nombre: 'Vendedores', slug: 'vendedores' },
+		{ ref: 'user-group-choferes', nombre: 'Choferes', slug: 'choferes' },
+	].map((g) => derecho_plantilla('ZplManagement', g)),
+];
+
+/**
+ * Gerencia General abre «Reportes comerciales» y el padrón de vehículos, pero no
+ * leía los modelos detrás: cada pestaña salía «No fue posible consultar el
+ * reporte» (403). Solo lectura.
+ */
+const MODELOS_LECTURA_GERENCIA = [
+	['PosTickets', 'pos-tickets', 'ventas por artículo, estado de cuenta y antigüedad de clientes'],
+	['SupplierInvoice', 'supplier-invoice', 'antigüedad de saldos con proveedores'],
+	['InventoryStockQuant', 'inventory-stock-quant', 'caducidades e inventario valorizado'],
+	['Vehicle', 'vehicle', 'el padrón de vehículos'],
+] as const;
+
+export const GERENCIA_REPORTES_ACCESS_RIGHTS: DevolucionAccessRight[] = MODELOS_LECTURA_GERENCIA.map(
+	([model_id, slug, para]) => ({
+		_ref: `gerencia-general-access-rights-${slug}`,
+		name: `${model_id} | Gerencia General (leer)`,
+		description: `Gerencia General: leer ${para}.`,
+		model_id,
+		group_id: 'user-group-gerencia-general',
+		allow_read: true,
+		allow_create: false,
+		allow_update: false,
+		allow_delete: false,
+		is_active: true,
+	}),
+);
+
+/**
+ * Almacén registra movimientos manuales y traslados, y su menú abre Productos,
+ * pero no leía Products: el buscador de producto salía vacío (403 en
+ * /api/products y /api/products/buscar, #286). Solo lectura.
+ */
+export const ALMACEN_PRODUCTOS_ACCESS_RIGHT: DevolucionAccessRight = {
+	_ref: 'almacen-access-rights-products',
+	name: 'Products | Almacén (leer)',
+	description: 'Almacén: buscar productos para movimientos, traslados y conteos.',
+	model_id: 'Products',
+	group_id: 'user-group-almacen',
+	allow_read: true,
+	allow_create: false,
+	allow_update: false,
+	allow_delete: false,
+	is_active: true,
+};
+
 export type DevolucionRecordRule = DevolucionAccessRight & { domain: string };
 
 const REGLA_PLANTILLA_TICKET_VENDEDORES: DevolucionRecordRule = {
@@ -171,6 +258,9 @@ export const DEVOLUCIONES_ACCESS_RIGHTS: DevolucionAccessRight[] = [
 	...DERECHOS_CARGA_ALMACEN,
 	DERECHO_PLANTILLA_TICKET_CHOFERES,
 	DERECHO_PLANTILLA_TICKET_VENDEDORES,
+	...PLANTILLAS_IMPRESION_ACCESS_RIGHTS,
+	...GERENCIA_REPORTES_ACCESS_RIGHTS,
+	ALMACEN_PRODUCTOS_ACCESS_RIGHT,
 ];
 
 type FilaRef = { _ref?: unknown };

@@ -353,6 +353,48 @@ describe('menú SIC desde el snapshot instalado', () => {
 });
 
 describe('overlay del snapshot', () => {
+	test('una hoja del manifest con path = recurso no duplica la fila del catálogo con otro path', () => {
+		const planeacion: SubjectInfo = {
+			slug: 'vehiculos',
+			name: 'Vehículos',
+			path: '/vehicle',
+			menu_ref: 'vehicle-menu-management-0',
+			technical_id: 'subject-vehiculos',
+			image: '',
+			modules: [
+				{
+					resource: 'envio-revision',
+					path: '/vehicle/envios',
+					menu_ref: 'envios-menu-management-0',
+					name: 'Envíos a revisión',
+					icon: 'fa-file-signature',
+				},
+			],
+		};
+		const snap = project(
+			manifest(
+				[
+					{
+						id: 'vehiculos.root',
+						label: 'Vehículos',
+						children: [
+							{
+								id: 'vehiculos.envio-revision',
+								label: 'Envíos a revisión',
+								path: 'envio-revision',
+								pageId: 'vehiculos.envio-revision',
+								permission: 'subject.vehiculos.envio-revision.read',
+							},
+						],
+					},
+				],
+				[envio_page],
+			),
+		);
+		const out = overlay_snapshot_menus([planeacion], [snap]);
+		expect(out[0]?.menus ?? []).toHaveLength(0);
+	});
+
 	test('no pisa paths del catálogo ni un subject que no está en el snapshot', () => {
 		const input = [reportes, vehiculos];
 		const out = overlay_snapshot_menus(input, [vehiculos_snapshot]);
@@ -417,6 +459,63 @@ describe('overlay del snapshot', () => {
 		const planned = plan_subject_menus(overlaid!, []);
 		expect(planned.map((row) => row._ref)).toContain('vehiculos-envio-revision');
 		expect(planned.map((row) => row._ref)).toContain('vehiculos-operacion');
+	});
+
+	test('una carpeta del manifest que el catálogo ya trae se reutiliza (por id o por hijos)', () => {
+		const con_carpeta: SubjectInfo = {
+			...vehiculos,
+			menus: [
+				...(vehiculos.menus ?? []),
+				{
+					name: 'Administración',
+					menu_ref: 'vehiculos-nav-admin',
+					path: '',
+					icon: 'fa-cogs',
+					parent_ref: 'vehicle-menu-management-0',
+				},
+				{
+					name: 'Bitácoras',
+					menu_ref: 'vehiculos-bitacora-menu',
+					path: '/bitacora',
+					icon: 'fa-book-open',
+					parent_ref: 'vehiculos-nav-admin',
+				},
+			],
+		};
+		const carpeta = (id: string) =>
+			project(
+				manifest(
+					[
+						{
+							id,
+							label: 'Administración',
+							children: [
+								{
+									id: 'vehiculos.bitacora',
+									label: 'Bitácoras',
+									path: 'bitacora',
+									pageId: 'vehiculos.bitacora',
+									permission: 'subject.vehiculos.bitacora.read',
+								},
+								{
+									id: 'vehiculos.envio-revision',
+									label: 'Envíos a revisión',
+									path: 'envio-revision',
+									pageId: 'vehiculos.envio-revision',
+									permission: 'subject.vehiculos.envio-revision.read',
+								},
+							],
+						},
+					],
+					[bitacora_page, envio_page],
+				),
+			);
+		for (const id of ['vehiculos.nav.admin', 'otro-id']) {
+			const [out] = overlay_snapshot_menus([con_carpeta], [carpeta(id)]);
+			const extra = (out?.menus ?? []).slice(con_carpeta.menus!.length);
+			expect(extra.map((menu) => menu.menu_ref)).toEqual(['vehiculos-envio-revision']);
+			expect(extra[0]).toMatchObject({ parent_ref: 'vehiculos-nav-admin' });
+		}
 	});
 
 	test('una hoja sin entrada de menú igual entra, en solo lectura si no hay write', () => {
@@ -511,5 +610,62 @@ describe('overlay del snapshot', () => {
 		expect(server).toContain('overlay_snapshot_menus');
 		expect(server).toContain('catalog_subject_with_snapshot');
 		expect(seed).toContain('overlay_snapshot_menus');
+	});
+});
+
+describe('overlay: páginas públicas fuera del menú interno', () => {
+	const sub: SubjectInfo = {
+		slug: 'vehiculos',
+		name: 'Vehículos',
+		path: '/vehicle',
+		menu_ref: 'vehicle-menu-management-0',
+		technical_id: 'subject-vehiculos',
+		image: '',
+		modules: [],
+	};
+	const body = {
+		...manifest(
+			[
+				{
+					id: 'vehiculos-root',
+					label: 'Vehículos',
+					children: [
+						{
+							id: 'vehiculos.bitacora',
+							label: 'Bitácoras',
+							path: 'bitacora',
+							pageId: 'vehiculos.bitacora',
+							permission: 'subject.vehiculos.bitacora.read',
+						},
+					],
+				},
+			],
+			[bitacora_page, escaparate_page],
+		),
+		public: { pages: [{ id: 'vehiculos.escaparate', access: 'anonymous', segment: 'escaparate' }] },
+	};
+
+	test('la hoja de public.pages que el menú no cuelga no sale en la raíz; la interna sí', () => {
+		const snap = project(body);
+		expect(snap.leaves.find((leaf) => leaf.pageId === 'vehiculos.escaparate')?.public).toBe(true);
+		expect(snap.leaves.find((leaf) => leaf.pageId === 'vehiculos.bitacora')?.public).toBeUndefined();
+		const [out] = overlay_snapshot_menus([sub], [snap]);
+		const paths = (out?.menus ?? []).map((menu) => menu.path);
+		expect(paths).toContain('/bitacora');
+		expect(paths).not.toContain('/escaparate');
+		expect(out?.retired_menu_paths).toEqual(['/escaparate']);
+	});
+
+	test('sin public.pages el menú queda como antes', () => {
+		const snap = project({ ...body, public: undefined });
+		const [out] = overlay_snapshot_menus([sub], [snap]);
+		expect((out?.menus ?? []).map((menu) => menu.path).sort()).toEqual(['/bitacora', '/escaparate']);
+		expect(out?.retired_menu_paths ?? []).toEqual([]);
+	});
+
+	test('retired_menu_paths del catálogo: el manifest no la vuelve a sembrar', () => {
+		const snap = project({ ...body, public: undefined });
+		const [out] = overlay_snapshot_menus([{ ...sub, retired_menu_paths: ['/escaparate'] }], [snap]);
+		expect((out?.menus ?? []).map((menu) => menu.path)).toEqual(['/bitacora']);
 	});
 });

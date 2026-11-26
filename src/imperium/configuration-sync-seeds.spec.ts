@@ -76,6 +76,8 @@ describe('configuration seed insert (store.insert → assert_required_fields)', 
 			'configuration-comercial-cola-activa',
 			'configuration-comercial-pedido-concepto',
 			'configuration-comercial-pedido-serie',
+			'configuration-inventory-allow-negative-stock',
+			'configuration-pedidos-offline-sync-estado',
 		]);
 		expect(snapshot.find((row) => row._ref === 'configuration-comercial-cola-activa')).toMatchObject({
 			name: 'Comercial · Cola activa',

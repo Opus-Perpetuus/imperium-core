@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { list_search_columns } from './list-search.ts';
+import { ImperiumStore, load_catalog_path } from './store.ts';
 
 describe('list_search_columns', () => {
 	test('citizen-report busca nombre de ciudadano y descripción además de name', () => {
@@ -38,6 +39,41 @@ describe('list_search_columns', () => {
 		]);
 	});
 
+	test('inventory-internal-location busca por codigo además de name', () => {
+		const cols = list_search_columns(
+			'inventory-internal-location',
+			new Set([
+				'name',
+				'description',
+				'search_field',
+				'codigo',
+				'tipo',
+				'parent',
+			]),
+		);
+		expect(cols).toEqual(['name', 'description', 'search_field', 'codigo']);
+	});
+
+	test('el ILIKE de ubicaciones incluye codigo: PRUEBAALBA no está en el nombre', async () => {
+		const queries: string[] = [];
+		const sql = {
+			unsafe(query: string) {
+				queries.push(query);
+				if (query.startsWith('SELECT count(*)')) return Promise.resolve([{ n: 0 }]);
+				return Promise.resolve([]);
+			},
+		} as unknown as Bun.SQL;
+		const store = new ImperiumStore(sql, load_catalog_path());
+		await store.find_many('inventory-internal-location', {
+			q: 'PRUEBAALBA',
+			take: 30,
+			populate: false,
+			sql_search_only: true,
+		});
+		const like = queries.find((query) => query.includes('ILIKE'));
+		expect(like).toContain('"codigo"');
+	});
+
 	test('products busca por codigo además de name, description y search_field', () => {
 		const cols = list_search_columns(
 			'products',
@@ -51,6 +87,25 @@ describe('list_search_columns', () => {
 			]),
 		);
 		expect(cols).toEqual(['name', 'description', 'search_field', 'codigo']);
+	});
+
+	test('movimientos de inventario buscan por código y nombre del producto (#216)', () => {
+		const cols = list_search_columns(
+			'inventory-movement',
+			new Set([
+				'name',
+				'description',
+				'search_field',
+				'producto_codigo',
+				'producto_nombre',
+				'lote_codigo',
+				'documento_referencia',
+				'tipo_movimiento',
+			]),
+		);
+		expect(cols).toContain('producto_codigo');
+		expect(cols).toContain('producto_nombre');
+		expect(cols).not.toContain('tipo_movimiento');
 	});
 
 	test('pedidos busca por folio y folio interno', () => {

@@ -162,3 +162,28 @@ describe("una página pública puede nombrar su sección", () => {
     expect(page?.label).toBeUndefined();
   });
 });
+
+describe("define_kirlet requires (I+D #432)", () => {
+  const base = {
+    id: "KIRLET-notes",
+    name: "Notas",
+    version: "0.1.0",
+    image: "kirel/kirlet-notes:0.1.0",
+    compat,
+    modules: [notes_module()],
+  };
+
+  test("emite núcleo y front mínimos en el manifiesto", () => {
+    const def = define_subject({ ...base, requires: { core: "13.83.0", front: "13.83.0" } });
+    expect(def.manifest().requires).toEqual({ core: "13.83.0", front: "13.83.0" });
+  });
+
+  test("solo el front también se emite", () => {
+    const def = define_subject({ ...base, requires: { front: "13.90.0" } });
+    expect(def.manifest().requires).toEqual({ front: "13.90.0" });
+  });
+
+  test("sin requires no hay clave", () => {
+    expect("requires" in define_subject(base).manifest()).toBe(false);
+  });
+});

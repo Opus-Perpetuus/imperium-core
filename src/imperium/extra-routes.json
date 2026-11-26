@@ -415,6 +415,12 @@
   },
   {
     "resource": "inventory-movement",
+    "method": "post",
+    "path": "/manual",
+    "action": "register_manual"
+  },
+  {
+    "resource": "inventory-movement",
     "method": "get",
     "path": "/kardex/:producto_id",
     "action": "read_kardex"
@@ -1302,6 +1308,12 @@
     "action": "sync_offline"
   },
   {
+    "resource": "pedidos",
+    "method": "get",
+    "path": "/offline/existencia-almacen",
+    "action": "read_offline_stock"
+  },
+  {
     "resource": "lista-de-precios",
     "method": "get",
     "path": "/offline/sincronizar",
@@ -1366,6 +1378,42 @@
     "method": "post",
     "path": "/bulk-close",
     "action": "bulk_close_sessions"
+  },
+  {
+    "resource": "pos-session",
+    "method": "get",
+    "path": "/card-terminal/config/:id",
+    "action": "read_card_terminal"
+  },
+  {
+    "resource": "pos-session",
+    "method": "post",
+    "path": "/card-terminal/config/:id",
+    "action": "save_card_terminal"
+  },
+  {
+    "resource": "pos-session",
+    "method": "post",
+    "path": "/card-terminal/charge/:id",
+    "action": "charge_card_terminal"
+  },
+  {
+    "resource": "pos-session",
+    "method": "get",
+    "path": "/card-terminal/charge-status/:id",
+    "action": "read_card_terminal_charge"
+  },
+  {
+    "resource": "pos-session",
+    "method": "post",
+    "path": "/card-terminal/charge-cancel/:id",
+    "action": "cancel_card_terminal_charge"
+  },
+  {
+    "resource": "pos-session",
+    "method": "post",
+    "path": "/card-terminal/webhook/mercadopago",
+    "action": "mercadopago_orders_webhook"
   },
   {
     "resource": "purchase-order",
@@ -1754,6 +1802,12 @@
   {
     "resource": "ticketing-system-turn",
     "method": "post",
+    "path": "/boxes-attending-turns",
+    "action": "boxes_attending_turns"
+  },
+  {
+    "resource": "ticketing-system-turn",
+    "method": "post",
     "path": "/box-turns-summary",
     "action": "box_turns_summary"
   },
@@ -1888,6 +1942,12 @@
     "method": "get",
     "path": "/search-engine/status",
     "action": "get_search_engine_status"
+  },
+  {
+    "resource": "postgres-table-tracker",
+    "method": "get",
+    "path": "/reindex/estado",
+    "action": "get_reindex_status"
   },
   {
     "resource": "postgres-table-tracker",

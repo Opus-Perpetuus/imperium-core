@@ -40,6 +40,7 @@ function memory_store(seed: Record<string, Row[]>) {
 			if (model === 'ServiciosRealizados') return 'servicios-realizados';
 			if (model === 'RegistroEmergencias') return 'registro-emergencias';
 			if (model === 'RescateAnimal') return 'rescate-animal';
+			if (model === 'Patient') return 'patient';
 			return null;
 		},
 		async *scan(resource: string, opts: { where?: Record<string, unknown> } = {}) {
@@ -158,21 +159,43 @@ describe('assign_document_increments', () => {
 
 	test('folio automático sin contador en la BD: crea el del esquema original y numera', async () => {
 		const cases = [
-			{ resource: 'servicios-realizados', model: 'ServiciosRealizados', folios: ['SRV-000001', 'SRV-000002'] },
-			{ resource: 'registro-emergencias', model: 'RegistroEmergencias', folios: ['AVISO-00001', 'AVISO-00002'] },
-			{ resource: 'rescate-animal', model: 'RescateAnimal', folios: ['INT-000001', 'INT-000002'] },
+			{
+				resource: 'servicios-realizados',
+				model: 'ServiciosRealizados',
+				field: 'name',
+				folios: ['SRV-000001', 'SRV-000002'],
+			},
+			{
+				resource: 'registro-emergencias',
+				model: 'RegistroEmergencias',
+				field: 'name',
+				folios: ['AVISO-00001', 'AVISO-00002'],
+			},
+			{
+				resource: 'rescate-animal',
+				model: 'RescateAnimal',
+				field: 'name',
+				folios: ['INT-000001', 'INT-000002'],
+			},
+			{
+				resource: 'patient',
+				model: 'Patient',
+				field: 'numero_expediente',
+				folios: ['CON-000001', 'CON-000002'],
+			},
 		];
-		for (const { resource, model, folios } of cases) {
+		for (const { resource, model, field, folios } of cases) {
 			const store = memory_store({ 'auto-increment-control': [], [resource]: [] });
-			const first = await assign_document_increments(store as never, resource, { name: '' });
+			const first = await assign_document_increments(store as never, resource, { [field]: '' });
 			const second = await assign_document_increments(store as never, resource, {});
-			expect([first.name, second.name]).toEqual(folios);
+			expect([first[field], second[field]]).toEqual(folios);
 			const globals = store.data['auto-increment-control'].filter(
-				(row) => row.model_name === model && row.increment_field === 'name' && row.ref_value == null,
+				(row) =>
+					row.model_name === model && row.increment_field === field && row.ref_value == null,
 			);
 			expect(globals.length).toBe(1);
 			expect(globals[0]._unique_string_reference).toBe(
-				`${resource}::${model}::name::${globals[0].index_name}::null`,
+				`${resource}::${model}::${field}::${globals[0].index_name}::null`,
 			);
 		}
 	});
@@ -194,7 +217,8 @@ describe('assign_document_increments', () => {
 		});
 		const out = await assign_document_increments(store as never, 'servicios-realizados', { name: '' });
 		expect(out.name).toBe('SERV-008');
-		expect(store.data['auto-increment-control'].length).toBe(1);
+		expect(store.data['auto-increment-control']).toHaveLength(1);
+		expect(store.data['auto-increment-control'][0].custom_pattern).toBe('SERV-[seq;ceros=3]');
 
 		const disabled = memory_store({
 			'auto-increment-control': [{ ...configured, is_active: false }],
@@ -204,7 +228,49 @@ describe('assign_document_increments', () => {
 			name: '',
 		});
 		expect(untouched.name).toBe('');
-		expect(disabled.data['auto-increment-control'].length).toBe(1);
+		expect(disabled.data['auto-increment-control']).toHaveLength(1);
+	});
+
+	test('Patient realinea el patrón legado EXP- a CON- y deja intacto uno personalizado', async () => {
+		const legacy: Row = {
+			_id: 'pac-legacy',
+			model_name: 'Patient',
+			increment_field: 'numero_expediente',
+			type: 'custom',
+			custom_pattern: 'EXP-[seq;ceros=6]',
+			ref_value: null,
+			is_active: true,
+			current_sequence: 4,
+		};
+		const store = memory_store({
+			'auto-increment-control': [legacy],
+			patient: [],
+		});
+		const out = await assign_document_increments(store as never, 'patient', { numero_expediente: '' });
+		expect(out.numero_expediente).toBe('CON-000005');
+		expect(store.data['auto-increment-control']).toHaveLength(1);
+		expect(store.data['auto-increment-control'][0].custom_pattern).toBe('CON-[seq;ceros=6]');
+
+		const custom: Row = {
+			_id: 'pac-custom',
+			model_name: 'Patient',
+			increment_field: 'numero_expediente',
+			type: 'custom',
+			custom_pattern: 'PAC-[seq;ceros=4]',
+			ref_value: null,
+			is_active: true,
+			current_sequence: 2,
+		};
+		const custom_store = memory_store({
+			'auto-increment-control': [custom],
+			patient: [],
+		});
+		const kept = await assign_document_increments(custom_store as never, 'patient', {
+			numero_expediente: '',
+		});
+		expect(kept.numero_expediente).toBe('PAC-0003');
+		expect(custom_store.data['auto-increment-control']).toHaveLength(1);
+		expect(custom_store.data['auto-increment-control'][0].custom_pattern).toBe('PAC-[seq;ceros=4]');
 	});
 
 	test('si otra alta crea el contador a la vez, se reutiliza en vez de fallar', async () => {

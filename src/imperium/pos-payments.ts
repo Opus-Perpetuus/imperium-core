@@ -81,3 +81,9 @@ export function payments_by_method(sales: ImperiumDoc[]): Record<string, number>
 	}
 	return out;
 }
+
+export const CARD_REFUNDS_KEY = 'devolucion_tarjeta';
+
+export function card_refunds_total(returns: ImperiumDoc[]): number {
+	return money(returns.flatMap(read_payments).filter((p) => p.method === 'tarjeta').reduce((s, p) => s + p.amount, 0));
+}

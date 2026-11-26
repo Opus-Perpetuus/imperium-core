@@ -7,6 +7,15 @@ import type { ImperiumStore } from './store.ts';
 
 const AUTOMATIC_MATCH = new Set(['_id', 'name', 'description']);
 
+/**
+ * Llave natural que también se busca en automático. En productos el código es
+ * lo que identifica la fila: sin esto la vista previa marcaba «Crear» el 1262
+ * hasta elegir «Campo adicional = codigo» y quien no lo elegía duplicaba (#294).
+ */
+const AUTOMATIC_NATURAL_KEYS: Record<string, readonly string[]> = {
+	products: ['codigo'],
+};
+
 export async function run_batch_import(params: {
 	store: ImperiumStore;
 	resource: string;
@@ -14,6 +23,8 @@ export async function run_batch_import(params: {
 	match_field: string | null;
 	persist_create: (doc: ImperiumDoc) => Promise<ImperiumDoc>;
 	persist_update: (id: string, doc: ImperiumDoc) => Promise<ImperiumDoc | null>;
+	/** Simulación (#458): misma preparación y coincidencia, sin persistir. */
+	dry_run?: boolean;
 }): Promise<Record<string, unknown>> {
 	const requested = text(params.match_field);
 	if (requested && !AUTOMATIC_MATCH.has(requested) && !allowed_match_field(params.store, params.resource, requested)) {
@@ -48,6 +59,19 @@ export async function run_batch_import(params: {
 				continue;
 			}
 			row_warnings.push(...existing.warnings);
+			if (params.dry_run) {
+				const operation = existing.record_id ? 'update' : 'create';
+				if (row_warnings.length) {
+					warnings.push({ row: row_number, data: raw, warnings: row_warnings });
+				}
+				success.push({
+					row: row_number,
+					_id: existing.record_id ?? null,
+					operation,
+					warnings: row_warnings.length ? row_warnings : undefined,
+				});
+				continue;
+			}
 			let persisted: ImperiumDoc | null;
 			let operation: 'create' | 'update';
 			if (existing.record_id) {
@@ -84,6 +108,28 @@ export async function run_batch_import(params: {
 		}
 	}
 
+	const created = success.filter((row) => row.operation === 'create').length;
+	const updated = success.length - created;
+	if (params.dry_run) {
+		return {
+			data: [],
+			total_elementos: 0,
+			dry_run: true,
+			message: `Simulación: ${created} nuevos, ${updated} actualizan, ${errors.length} con errores`,
+			summary: {
+				total_rows: params.rows.length,
+				successful: success.length,
+				failed: errors.length,
+				warnings: warnings.length,
+				created,
+				updated,
+			},
+			success,
+			errors,
+			warnings,
+		};
+	}
+
 	return {
 		data: [],
 		total_elementos: 0,
@@ -93,6 +139,8 @@ export async function run_batch_import(params: {
 			successful: success.length,
 			failed: errors.length,
 			warnings: warnings.length,
+			created,
+			updated,
 		},
 		success,
 		errors,
@@ -113,6 +161,7 @@ async function prepare_batch_row(
 	row_warnings: string[],
 ): Promise<ImperiumDoc> {
 	const processed: ImperiumDoc = { ...raw };
+	normalize_code_fields(processed);
 	if (processed.is_active !== undefined) {
 		const parsed = parse_excel_boolean(processed.is_active);
 		if (parsed === null) {
@@ -232,6 +281,9 @@ async function resolve_existing(
 	add('_id', processed._id);
 	add('name', processed.name);
 	add('description', processed.description);
+	for (const field of AUTOMATIC_NATURAL_KEYS[resource] ?? []) {
+		if (store.column_names(resource).has(field)) add(field, processed[field]);
+	}
 	if (requested_match_field) add(requested_match_field, processed[requested_match_field]);
 	if (!strategies.length) return { record_id: null, warnings: [], error: null };
 
@@ -295,6 +347,36 @@ async function find_exact_batch_match(
 	}
 	const id = rows[0]?._id ? String(rows[0]._id) : null;
 	return { record_id: id, error: null };
+}
+
+/**
+ * Campos de código (`codigo`, `codigo_*`, `*_codigo`): Excel guarda los códigos
+ * numéricos como número y, al exportar o copiar con formato, llegan como
+ * «1,262» o «1262.0». Sin normalizar, la fila no coincide con el «1262»
+ * existente y se crea un producto duplicado (#294). Se quitan solo separadores
+ * de miles y decimales en cero de códigos puramente numéricos; «AH0119» o
+ * «1/2» no se tocan.
+ */
+export function is_code_field(field: string) {
+	return /^codigo(_|$)|_codigo$/i.test(field);
+}
+
+export function normalize_code_value(value: unknown): unknown {
+	if (typeof value === 'number') {
+		if (!Number.isFinite(value)) return value;
+		return Number.isInteger(value) ? String(value) : String(value).trim();
+	}
+	if (typeof value !== 'string') return value;
+	const trimmed = value.trim();
+	if (/^\d{1,3}(,\d{3})+(\.0+)?$/.test(trimmed)) return trimmed.replace(/,/g, '').replace(/\.0+$/, '');
+	if (/^\d+\.0+$/.test(trimmed)) return trimmed.replace(/\.0+$/, '');
+	return trimmed;
+}
+
+function normalize_code_fields(doc: ImperiumDoc) {
+	for (const key of Object.keys(doc)) {
+		if (is_code_field(key)) doc[key] = normalize_code_value(doc[key]);
+	}
 }
 
 function parse_excel_boolean(value: unknown): boolean | null | undefined {

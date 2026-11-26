@@ -419,14 +419,23 @@ export function validate_kirlet_manifest(input: unknown): KirletManifestValidati
     );
   }
 
-  let requires: { core: string } | undefined;
+  let requires: { core?: string; front?: string } | undefined;
   if (input["requires"] !== undefined && input["requires"] !== null) {
-    const core = (input["requires"] as { core?: unknown }).core;
-    if (typeof core === "string" && /^\d+\.\d+\.\d+$/.test(core.trim())) {
-      requires = { core: core.trim() };
-    } else {
+    const raw_requires = input["requires"] as { core?: unknown; front?: unknown };
+    const parsed: { core?: string; front?: string } = {};
+    for (const key of ["core", "front"] as const) {
+      const value = raw_requires[key];
+      if (value === undefined) continue;
+      if (typeof value === "string" && /^\d+\.\d+\.\d+$/.test(value.trim())) {
+        parsed[key] = value.trim();
+      } else {
+        issues.push({ path: `$.requires.${key}`, message: `requires.${key} must be a version X.Y.Z` });
+      }
+    }
+    if (parsed.core === undefined && parsed.front === undefined && raw_requires.core === undefined && raw_requires.front === undefined) {
       issues.push({ path: "$.requires.core", message: "requires.core must be a version X.Y.Z" });
     }
+    if (parsed.core !== undefined || parsed.front !== undefined) requires = parsed;
   }
 
   let widgets: KirletManifestWidget[] | undefined;

@@ -13,6 +13,7 @@ import {
 } from './custom-fields.ts';
 import { as_array, as_object } from './envelope.ts';
 import { option_lists_for_model } from './general-option-lists.ts';
+import { state_icon_or_default } from './state-icons.ts';
 import { RESOURCE_ALIASES, type ImperiumStore } from './store.ts';
 
 type SchemaConstraints = {
@@ -137,13 +138,13 @@ const RAW_DEFAULTS: Record<
 > = {
 	pedidos: [
 		field('estado', [
-			v('borrador', 'neutral', 'Borrador'),
-			v('confirmado', 'primary', 'Confirmado'),
-			v('por_surtir', 'warning', 'Por surtir'),
-			v('surtiendo', 'info', 'Surtiendo'),
-			v('surtido', 'success', 'Surtido'),
-			v('enviado', 'success', 'Enviado'),
-			v('cancelado', 'danger', 'Cancelado'),
+			v('borrador', 'neutral', 'Borrador', { icon: 'fas fa-file-pen' }),
+			v('confirmado', 'primary', 'Confirmado', { icon: 'fas fa-circle-check' }),
+			v('por_surtir', 'warning', 'Por surtir', { icon: 'fas fa-box-open' }),
+			v('surtiendo', 'info', 'Surtiendo', { icon: 'fas fa-dolly' }),
+			v('surtido', 'success', 'Surtido', { icon: 'fas fa-boxes-stacked' }),
+			v('enviado', 'success', 'Enviado', { icon: 'fas fa-truck' }),
+			v('cancelado', 'danger', 'Cancelado', { icon: 'fas fa-ban' }),
 		]),
 	],
 	'purchase-order': [
@@ -248,6 +249,8 @@ const RAW_DEFAULTS: Record<
 				v('transferencia_interna', 'secondary', 'Transferencia interna'),
 				v('ajuste_manual', 'danger', 'Ajuste manual'),
 				v('recepcion_devolucion', 'info', 'Recepción devolución'),
+				v('entrada_manual', 'success', 'Entrada manual'),
+				v('salida_manual', 'warning', 'Salida manual'),
 			],
 			{ read_only: true },
 		),
@@ -381,7 +384,7 @@ export function builtin_status_seed_entries() {
 				field_name: field.field_name,
 				type: value.type,
 				color: value_color(value.type, value.color),
-				icon: value.icon,
+				icon: state_icon_or_default(value.icon, value.value, value.type),
 			})),
 		),
 	}));
@@ -400,7 +403,8 @@ function normalize_values(values: unknown): StateValue[] {
 			type,
 			display_leyend,
 			color: value_color(type, rec.color),
-			icon: text(rec.icon) || undefined,
+			// #323: ningún estatus sin ícono.
+			icon: state_icon_or_default(text(rec.icon), value, type),
 		});
 	}
 	return [...out.values()];
@@ -474,12 +478,14 @@ function merge_persisted(
 		const value = identifier(option.value);
 		const label = text(option.label) || text(option.display_leyend);
 		if (!value || !label) continue;
-		option_map.set(`${field_name}::${value}`, {
+		const key = `${field_name}::${value}`;
+		option_map.set(key, {
 			value,
 			label,
 			type: value_type(option.type),
 			color: text(option.color) || undefined,
-			icon: text(option.icon) || undefined,
+			// #323: la opción guardada sin ícono conserva el del núcleo.
+			icon: text(option.icon) || option_map.get(key)?.icon || undefined,
 			field_name,
 		});
 	}

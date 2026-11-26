@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { ImperiumDoc } from './envelope.ts';
+import { ALLOW_NEGATIVE_STOCK_REF } from './negative-stock.ts';
 import { register_pos_ticket_exit } from './inventory-exit.ts';
 import { list_instance_type, project_list_docs } from './list-projection.ts';
 import {
@@ -113,6 +114,7 @@ describe('reglas de venta por producto', () => {
 
 	test('vender un kit descuenta sus componentes y no el kit', async () => {
 		const store = memory_store({
+			configuration: [{ _id: 'neg', _ref: ALLOW_NEGATIVE_STOCK_REF, value: false }],
 			products: [
 				{ _id: 'a', name: 'Tornillo', existencia: 100 },
 				{ _id: 'b', name: 'Taquete', existencia: 10 },

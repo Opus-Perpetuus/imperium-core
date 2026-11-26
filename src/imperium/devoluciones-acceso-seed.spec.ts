@@ -110,14 +110,14 @@ function pick(row: Record<string, unknown>) {
 }
 
 describe('siembra de accesos de Devoluciones', () => {
-	test('base vacía crea las 12 filas y anexa el menú a los 3 grupos', async () => {
+	test('base vacía crea las 29 filas y anexa el menú a los 3 grupos', async () => {
 		const store = base();
 		const result = await ensure_devoluciones_access(store);
 		expect(result.rights).toEqual(DEVOLUCIONES_ACCESS_RIGHTS.map((row) => row._ref));
 		expect(result.rules).toEqual(DEVOLUCIONES_RECORD_RULES.map((row) => row._ref));
 		expect(result.groups).toEqual(['g-choferes', 'g-almacen', 'g-logistica']);
-		expect(store.data['access-rights']).toHaveLength(12);
-		expect(store.inserts.filter((call) => call.resource === 'access-rights')).toHaveLength(12);
+		expect(store.data['access-rights']).toHaveLength(29);
+		expect(store.inserts.filter((call) => call.resource === 'access-rights')).toHaveLength(29);
 		expect(store.data['record-rules']).toHaveLength(1);
 		expect(store.inserts.filter((call) => call.resource === 'record-rules')).toHaveLength(1);
 		for (const row of store.data['access-rights'] ?? []) {
@@ -134,7 +134,10 @@ describe('siembra de accesos de Devoluciones', () => {
 			store.data['access-rights']
 				?.filter((row) => row.group_id === 'user-group-vendedores')
 				.map((row) => row._ref),
-		).toEqual(['vendedores-access-rights-epson-ticket-template']);
+		).toEqual([
+			'vendedores-access-rights-epson-ticket-template',
+			'vendedores-access-rights-zpl-management',
+		]);
 		expect(DEVOLUCIONES_MENU_GROUPS).toEqual([...GRUPOS]);
 	});
 
@@ -147,10 +150,10 @@ describe('siembra de accesos de Devoluciones', () => {
 		expect(second).toEqual({ rights: [], rules: [], groups: [] });
 		expect(store.inserts).toEqual([]);
 		expect(store.updates).toEqual([]);
-		expect(store.data['access-rights']).toHaveLength(12);
+		expect(store.data['access-rights']).toHaveLength(29);
 		expect(store.data['record-rules']).toHaveLength(1);
 		const refs = (store.data['access-rights'] ?? []).map((row) => row._ref);
-		expect(new Set(refs).size).toBe(12);
+		expect(new Set(refs).size).toBe(29);
 	});
 
 	test('no pisa un _ref existente y respeta menus_ids en JSON', async () => {
@@ -205,7 +208,7 @@ describe('siembra de accesos de Devoluciones', () => {
 			name: 'viejo',
 			description: 'distinto',
 		});
-		expect(store.data['access-rights']).toHaveLength(12);
+		expect(store.data['access-rights']).toHaveLength(29);
 		expect(store.updates.filter((call) => call.resource === 'access-rights')).toEqual([]);
 		expect(store.updates.map((call) => call.id).sort()).toEqual(['g-almacen', 'g-logistica']);
 		const almacen = store.data['user-group']?.find((row) => row._id === 'g-almacen');
@@ -230,12 +233,12 @@ describe('siembra de accesos de Devoluciones', () => {
 		expect(result.groups).toEqual([]);
 		expect(store.updates).toEqual([]);
 		expect(store.data['user-group']).toEqual(antes);
-		expect(result.rights).toHaveLength(12);
+		expect(result.rights).toHaveLength(29);
 	});
 
 	test('paridad con el backend en los tres grupos', () => {
 		expect(DEVOLUCIONES_MENU_REF).toBe(MENU_REF_DEVOLUCIONES);
-		expect(DEVOLUCIONES_ACCESS_RIGHTS).toHaveLength(12);
+		expect(DEVOLUCIONES_ACCESS_RIGHTS).toHaveLength(29);
 		const grupos = new Set<string>(GRUPOS);
 		const backend = [...permisos_devolucion(), ...permisos_adjunto_firma()].filter((row) =>
 			grupos.has(row.group_id),
@@ -285,13 +288,13 @@ describe('siembra de accesos de Devoluciones', () => {
 		expect(regla?.domain).toBe(regla_plantilla_ticket_offline().domain);
 	});
 
-	test('una base con las 11 filas previas sólo inserta vendedores-access-rights-epson-ticket-template', async () => {
+	test('una base con las 28 filas previas sólo inserta vendedores-access-rights-epson-ticket-template', async () => {
 		const previas = DEVOLUCIONES_ACCESS_RIGHTS.filter(
 			(row) => row._ref !== 'vendedores-access-rights-epson-ticket-template',
 		);
 		const store = base({ rights: previas, rules: false });
 		const result = await ensure_devoluciones_access(store);
-		expect(previas).toHaveLength(11);
+		expect(previas).toHaveLength(28);
 		expect(result.rights).toEqual(['vendedores-access-rights-epson-ticket-template']);
 		expect(result.rules).toEqual([]);
 		expect(
@@ -381,4 +384,62 @@ describe('siembra de accesos de Devoluciones', () => {
 		expect(between).toContain('console.warn');
 		expect(between).toContain('No se pudieron sembrar los permisos de Devoluciones');
 	});
+});
+
+test('Ventas, Almacén, Surtidores, Logística y Gerencia leen las plantillas Epson y ZPL', () => {
+	for (const slug of ['ventas', 'almacen', 'surtidores', 'logistica', 'gerencia-general']) {
+		for (const modelo of ['epson-ticket-template', 'zpl-management']) {
+			const fila = DEVOLUCIONES_ACCESS_RIGHTS.find((row) => row._ref === `${slug}-access-rights-${modelo}`);
+			expect(fila?.group_id).toBe(`user-group-${slug}`);
+			expect(fila?.allow_read).toBe(true);
+			expect(fila?.allow_create || fila?.allow_update || fila?.allow_delete).toBe(false);
+		}
+	}
+});
+
+test('Gerencia General lee lo que piden Reportes comerciales y el padrón de vehículos', () => {
+	for (const slug of ['pos-tickets', 'supplier-invoice', 'inventory-stock-quant', 'vehicle']) {
+		const fila = DEVOLUCIONES_ACCESS_RIGHTS.find((row) => row._ref === `gerencia-general-access-rights-${slug}`);
+		expect(fila?.group_id).toBe('user-group-gerencia-general');
+		expect(fila?.allow_read).toBe(true);
+		expect(fila?.allow_create || fila?.allow_update || fila?.allow_delete).toBe(false);
+	}
+});
+
+test('#286: Almacén busca productos (GET /api/products) sin poder escribirlos', async () => {
+	const store = base();
+	const usuario: Row = { _id: 'u-almacen', name: 'IA Almacén', email: 'ia.almacen@qa.imperium.test' };
+	const grupo = store.data['user-group']?.find((row) => row._ref === 'user-group-almacen');
+	if (grupo) grupo.user_ids = [usuario._id];
+	await expect(assert_http_access(store, usuario, 'products', 'GET')).rejects.toBeInstanceOf(
+		HttpAccessDeniedError,
+	);
+	await ensure_devoluciones_access(store);
+	await assert_http_access(store, usuario, 'products', 'GET');
+	for (const method of ['POST', 'PUT', 'DELETE'] as const) {
+		await expect(assert_http_access(store, usuario, 'products', method)).rejects.toBeInstanceOf(
+			HttpAccessDeniedError,
+		);
+	}
+	const backend = parse_module_data_file(
+		join(import.meta.dir, '../../../../backend/src/components/user-group/module.data.ts'),
+	).find((row) => row.doc._ref === 'almacen-access-rights-products');
+	const fila = DEVOLUCIONES_ACCESS_RIGHTS.find((row) => row._ref === 'almacen-access-rights-products');
+	expect(pick(fila ?? {})).toEqual(pick(backend?.doc ?? {}));
+});
+
+test('#286: Gerencia General lee existencias y vehículos tras la siembra', async () => {
+	const store = base({
+		groups: [{ _id: 'g-gerencia', _ref: 'user-group-gerencia-general', name: 'Gerencia General', menus_ids: [] }],
+	});
+	const usuario: Row = { _id: 'u-gerencia', name: 'IA Gerencia', email: 'ia.gerencia@qa.imperium.test' };
+	const grupo = store.data['user-group']?.find((row) => row._ref === 'user-group-gerencia-general');
+	if (grupo) grupo.user_ids = [usuario._id];
+	await ensure_devoluciones_access(store);
+	for (const resource of ['inventory-stock-quant', 'vehicle']) {
+		await assert_http_access(store, usuario, resource, 'GET');
+		await expect(assert_http_access(store, usuario, resource, 'PUT')).rejects.toBeInstanceOf(
+			HttpAccessDeniedError,
+		);
+	}
 });

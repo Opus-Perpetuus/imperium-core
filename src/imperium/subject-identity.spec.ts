@@ -125,7 +125,19 @@ describe('tipo de principal', () => {
 	test('sin sesión es anónimo; type external es externo', () => {
 		expect(principal_type_of(null)).toBe('anonymous');
 		expect(principal_type_of({ type: 'external' })).toBe('external');
-		expect(principal_type_of({ email: 'a@b.co' })).toBe('internal');
+		expect(principal_type_of({ type: 'internal' })).toBe('internal');
+	});
+	test('fase 5b: sin tipo o con un tipo desconocido es externo (niega por defecto)', () => {
+		expect(principal_type_of({ email: 'a@b.co' })).toBe('external');
+		expect(principal_type_of({ email: 'a@b.co', type: '' })).toBe('external');
+		expect(principal_type_of({ email: 'a@b.co', type: 'portal' })).toBe('external');
+	});
+	test('fase 5b: la sesión completa el tipo del personal legado; el externo se queda externo', async () => {
+		const { with_session_principal_type } = await import('./auth.ts');
+		expect(principal_type_of(with_session_principal_type({ email: 'a@b.co' }))).toBe('internal');
+		expect(principal_type_of(with_session_principal_type({ email: 'a@b.co', type: null }))).toBe('internal');
+		expect(principal_type_of(with_session_principal_type({ type: 'external' }))).toBe('external');
+		expect(principal_type_of(with_session_principal_type({ type: 'portal' }))).toBe('external');
 	});
 });
 

@@ -186,8 +186,12 @@ export interface KirletManifest {
   public?: KirletManifestPublic;
   /** Other kirlets that must be installed first (technical ids). */
   dependsOn?: string[];
-  /** Minimum product (core) version, `X.Y.Z`. */
-  requires?: { core?: string };
+  /**
+   * Minimum product versions, `X.Y.Z`: `core` (imperium-core) and `front` (the
+   * Angular front that renders nox). The core won't auto-apply a version whose
+   * minimum the server doesn't meet (`needs_core` / `needs_front`).
+   */
+  requires?: { core?: string; front?: string };
   /**
    * Widgets this kirlet offers the mobile host (in-app + launcher).
    * Absent ⇒ no kirlet widgets (NOX defaults still apply).

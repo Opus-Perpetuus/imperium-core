@@ -10,10 +10,18 @@ import {
 	pg_schema_name,
 	type KirletSchemaBundle,
 } from '@opus-perpetuus/imperium-core-kit';
+import {
+	ensure_feature_map_test_columns,
+	FEATURE_MAP_TEST_COLUMN,
+	FEATURE_MAP_TEST_COLUMN_DDL,
+	feature_map_test_requested,
+	in_feature_map_test,
+	run_with_feature_map_test,
+} from './imperium/feature-map-test.ts';
 import { handle_service_plane, service_plane_match } from './service-plane.ts';
 import { add_cors, create_imperium_layer } from './imperium/router.ts';
 import { restore_gate } from './imperium/db-admin-restore-gate.ts';
-import { CORE_VERSION, health_status, probe_database } from './imperium/health.ts';
+import { CORE_VERSION, health_status, min_app_version, probe_database } from './imperium/health.ts';
 import {
 	current_user,
 	ensure_session_table,
@@ -28,6 +36,7 @@ import { start_image_autoscan } from './imperium/subject-image-autoscan.ts';
 import { subject_files } from './imperium/subject-files.ts';
 import { start_support_sync } from './imperium/support-bridge.ts';
 import { seed_new_install } from './imperium/module-data.ts';
+import { fetch_subject_schemas } from './imperium/install-schemas.ts';
 import { superadmin_exists } from './imperium/superadmin-seed.ts';
 import {
 	bind_socket_identity_resolver,
@@ -40,10 +49,7 @@ import {
 	is_noisy_path,
 	print_console_log,
 } from './imperium/debug-request-log.ts';
-import {
-	apply_subject_schema_bundle,
-	schema_bundle_mismatch,
-} from './imperium/subject-schema.ts';
+import { apply_subject_schema_bundle } from './imperium/subject-schema.ts';
 import { ColumnListCache } from './imperium/column-list-cache.ts';
 import {
 	is_column_name,
@@ -208,7 +214,26 @@ function hash(s: string): number {
 
 async function apply_bundle(bundle: KirletSchemaBundle): Promise<void> {
 	await apply_subject_schema_bundle(sql, bundle);
+	// Las tablas nuevas de la app también llevan `feature_map_test` (aunque su kit sea viejo).
+	await ensure_feature_map_test_columns(sql).catch(() => 0);
 	forget_columns(pg_schema_name(bundle.technicalId));
+}
+
+const feature_map_test_tables = new Set<string>();
+
+/** La tabla de la app tiene `feature_map_test` antes de marcar una fila (una vez por proceso). */
+async function ensure_feature_map_test_column(schema: string, table: string): Promise<void> {
+	const key = `${schema}.${table}`;
+	if (feature_map_test_tables.has(key)) return;
+	try {
+		await sql.unsafe(
+			`ALTER TABLE ${qident(schema)}.${qident(table)} ADD COLUMN IF NOT EXISTS ${FEATURE_MAP_TEST_COLUMN_DDL}`,
+		);
+		forget_columns(schema);
+	} catch {
+		/* el INSERT dirá el error real */
+	}
+	feature_map_test_tables.add(key);
 }
 
 /**
@@ -311,7 +336,12 @@ async function data_plane(
 		return rows[0] ?? null;
 	}
 	if (op === 'insert') {
-		const row = (body.row ?? {}) as Record<string, unknown>;
+		const row = { ...((body.row ?? {}) as Record<string, unknown>) };
+		delete row[FEATURE_MAP_TEST_COLUMN];
+		if (in_feature_map_test()) {
+			await ensure_feature_map_test_column(schema, table);
+			row[FEATURE_MAP_TEST_COLUMN] = true;
+		}
 		const keys = Object.keys(row).filter(is_column_name);
 		const cols = keys.map(qident).join(', ');
 		const vals = keys.map((_, i) => `$${i + 1}`).join(', ');
@@ -360,11 +390,14 @@ async function data_plane(
 		const field = String(body.field ?? '');
 		if (!is_column_name(field)) throw new Error('invalid field');
 		const q = String(body.q ?? '').trim();
-		const params: unknown[] = [];
-		let extra = '';
+		// El mismo `where` que la lista (baja lógica): sin él, field-values
+		// enseñaba valores de filas archivadas que la lista ya no muestra.
+		const w = where_sql(body.where as Record<string, unknown> | undefined);
+		const params: unknown[] = [...w.params];
+		let extra = w.sql;
 		if (q) {
 			params.push(`%${q}%`);
-			extra = ` WHERE ${qident(field)}::text ILIKE $1`;
+			extra += `${w.sql ? ' AND' : ' WHERE'} ${qident(field)}::text ILIKE $${params.length}`;
 		}
 		const rows = await sql.unsafe(
 			`SELECT DISTINCT ${qident(field)} AS v FROM ${qt}${extra} LIMIT 200`,
@@ -667,7 +700,8 @@ const server = Bun.serve({
 		try {
 			req = await request_with_received_body(req);
 			remember_socket_ip(req, socket_ip);
-			res = await with_deadline((async (): Promise<Response> => {
+			// Corrida de feature map: lo que esta petición inserte queda `feature_map_test`.
+			res = await with_deadline(run_with_feature_map_test(feature_map_test_requested(req.headers), async (): Promise<Response> => {
 			if (
 				(req.method === 'GET' || req.method === 'HEAD') &&
 				(path === '/' || path === '/app' || path === '/app/')
@@ -697,6 +731,7 @@ const server = Bun.serve({
 						boot,
 						db: db_ok,
 						version: CORE_VERSION,
+						min_version: min_app_version(),
 						unit: 'imperium-core',
 						subjects: catalog.subjects.length,
 						catalog_hash: CATALOG_HASH,
@@ -962,41 +997,26 @@ const server = Bun.serve({
 						{ status: 404 },
 					);
 				}
+				const fetched = await fetch_subject_schemas(
+					targets.map((s) => s.technical_id),
+					subject_url,
+				);
 				const results = [];
-				for (const s of targets) {
-					const base = subject_url(s.technical_id);
+				for (const f of fetched) {
+					if (!f.ok) {
+						results.push(f);
+						continue;
+					}
 					try {
-						const res = await fetch(`${base}/schema`);
-						if (!res.ok) {
-							results.push({
-								id: s.technical_id,
-								ok: false,
-								status: res.status,
-							});
-							continue;
-						}
-						const bundle = (await res.json()) as KirletSchemaBundle;
-						const mismatch = schema_bundle_mismatch(
-							bundle,
-							s.technical_id,
-						);
-						if (mismatch) {
-							results.push({
-								id: s.technical_id,
-								ok: false,
-								error: mismatch,
-							});
-							continue;
-						}
-						await apply_bundle(bundle);
+						await apply_bundle(f.bundle);
 						results.push({
-							id: s.technical_id,
+							id: f.id,
 							ok: true,
-							schema: pg_schema_name(s.technical_id),
+							schema: pg_schema_name(f.id),
 						});
 					} catch (err) {
 						results.push({
-							id: s.technical_id,
+							id: f.id,
 							ok: false,
 							error: String(err),
 						});
@@ -1027,7 +1047,7 @@ const server = Bun.serve({
 			if (compat) return compat;
 
 			return Response.json({ error: 'not found' }, { status: 404 });
-			})(), http_deadline_ms());
+			}), http_deadline_ms());
 		} catch (err) {
 			const mapped = caught_http_error(err);
 			const raw = err instanceof Error ? err.message : String(err);
@@ -1072,7 +1092,8 @@ for (const warning of gateway_secret_warnings()) {
 // el operador arranca por `subject-operator.ts` y no pasa por aquí.
 start_subject_auto_update(imperium.store, sql);
 
-// Autoescaneo de repos de imágenes: solo hace algo si Odoo lo encendió.
+// Autodetección de apps (repos Git y de imágenes): solo hace algo si la
+// encendió Odoo (modo odoo) o Módulos / el `.env` (IMPERIUM_MANAGEMENT_MODE=self).
 start_image_autoscan(imperium.store, sql);
 
 // Reintentos hacia el soporte en Odoo. Solo con TKSUPPORT en el entorno.

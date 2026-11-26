@@ -17,6 +17,7 @@ import {
 import { history_find_many_opts, history_page_limits, run_with_history_context } from './history.ts';
 import { handle_crud } from './crud.ts';
 import { ATTACHMENT_SERVER_FIELDS } from './uploads.ts';
+import { schema_validation_for } from './state-fields.ts';
 
 const MODEL_ID = 'McpAgent';
 const TOKEN_PREFIX = 'isic_';
@@ -602,7 +603,91 @@ function describe_type(
 	return { type: 'string', is_array: false };
 }
 
-function describe_fields(store: ImperiumStore, resource: string) {
+type SchemaShape = {
+	required?: unknown;
+	properties?: Record<string, Record<string, unknown>>;
+	metadata?: Record<string, unknown>;
+};
+
+type DescribedField = {
+	field: string;
+	label: string;
+	type: string;
+	required: boolean;
+	ref?: string;
+	is_array: boolean;
+	component?: string;
+	enum?: unknown[];
+};
+
+/** Requeridos, componente y enum salen del schema_validation real (#443). */
+export function apply_schema_validation(
+	base: DescribedField[],
+	schema: SchemaShape | null | undefined,
+): DescribedField[] {
+	const required = new Set(
+		Array.isArray(schema?.required) ? schema.required.map((name) => String(name)) : [],
+	);
+	const props = schema?.properties ?? {};
+	const fields = base.map((field) => {
+		const prop = props[field.field] ?? {};
+		const component = typeof prop['x-component'] === 'string' ? prop['x-component'] : undefined;
+		const values = Array.isArray(prop.enum) ? prop.enum : undefined;
+		return {
+			...field,
+			required: required.size ? required.has(field.field) : field.field === 'name',
+			...(component ? { component } : {}),
+			...(values ? { enum: values } : {}),
+		};
+	});
+	for (const name of required) {
+		if (fields.some((f) => f.field === name) || INTERNAL.has(name) || SENSITIVE.test(name)) continue;
+		const prop = props[name] ?? {};
+		fields.push({
+			field: name,
+			label: title_label(name, typeof prop.title === 'string' ? prop.title : undefined),
+			type: typeof prop.type === 'string' ? prop.type : 'string',
+			required: true,
+			is_array: prop.type === 'array',
+			...(typeof prop['x-component'] === 'string' ? { component: prop['x-component'] } : {}),
+			...(Array.isArray(prop.enum) ? { enum: prop.enum } : {}),
+		});
+	}
+	fields.sort((a, b) => {
+		if (a.required !== b.required) return a.required ? -1 : 1;
+		return a.field.localeCompare(b.field);
+	});
+	return fields;
+}
+
+/** schema_validation sin campos internos ni sensibles, para el agente. */
+export function public_schema_validation(schema: SchemaShape | null | undefined) {
+	if (!schema) return null;
+	const hidden = (name: string) => INTERNAL.has(name) || SENSITIVE.test(name);
+	const properties = Object.fromEntries(
+		Object.entries(schema.properties ?? {}).filter(([name]) => !hidden(name)),
+	);
+	const required = Array.isArray(schema.required)
+		? schema.required.map((name) => String(name)).filter((name) => !hidden(name))
+		: [];
+	const meta = schema.metadata ?? {};
+	return {
+		required,
+		properties,
+		state_fields: meta.state_fields ?? null,
+		option_lists: meta.option_lists ?? null,
+	};
+}
+
+async function load_schema(store: ImperiumStore, resource: string): Promise<SchemaShape | null> {
+	try {
+		return (await schema_validation_for(store, resource)) as SchemaShape;
+	} catch {
+		return null;
+	}
+}
+
+async function describe_fields(store: ImperiumStore, resource: string, schema?: SchemaShape | null) {
 	const loc = store.loc(resource);
 	const refs = store.field_refs(resource);
 	const by_name = new Map(loc.columns.map((col) => [col.name, col]));
@@ -614,7 +699,7 @@ function describe_fields(store: ImperiumStore, resource: string) {
 			name !== 'payload' &&
 			name !== 'custom_data',
 	);
-	const fields = names.map((field) => {
+	const fields: DescribedField[] = names.map((field) => {
 		const col = by_name.get(field);
 		const ref = refs[field];
 		const typed = describe_type(col, ref);
@@ -622,16 +707,15 @@ function describe_fields(store: ImperiumStore, resource: string) {
 			field,
 			label: title_label(field, col?.label),
 			type: typed.type,
-			required: field === 'name',
+			required: false,
 			ref,
 			is_array: typed.is_array,
 		};
 	});
-	fields.sort((a, b) => {
-		if (a.required !== b.required) return a.required ? -1 : 1;
-		return a.field.localeCompare(b.field);
-	});
-	return fields;
+	return apply_schema_validation(
+		fields,
+		schema === undefined ? await load_schema(store, resource) : schema,
+	);
 }
 
 function mcp_read_scope(access: Access, actor: ImperiumDoc, resource: string, model_id: string) {
@@ -669,7 +753,8 @@ function merge_mongo_match(
 async function describe_model(store: ImperiumStore, access: Access, model_id: string) {
 	const resource = resolve_resource(store, model_id);
 	require_perm(access, resource, 'read');
-	const fields = describe_fields(store, resource);
+	const schema = await load_schema(store, resource);
+	const fields = await describe_fields(store, resource, schema);
 	return ok(
 		[
 			{
@@ -678,6 +763,7 @@ async function describe_model(store: ImperiumStore, access: Access, model_id: st
 				fields,
 				required_fields: fields.filter((f) => f.required).map((f) => f.field),
 				optional_fields: fields.filter((f) => !f.required).map((f) => f.field),
+				schema_validation: public_schema_validation(schema),
 				guidance: {
 					create:
 						'Para altas conversacionales usa prepare_create con los valores que ya sepas; pregunta al usuario solo required_missing. Los opcionales se pueden omitir.',
@@ -697,7 +783,7 @@ async function prepare_create(
 ) {
 	const resource = resolve_resource(store, model_id);
 	require_perm(access, resource, 'create');
-	const fields = describe_fields(store, resource);
+	const fields = await describe_fields(store, resource);
 	const clean = sanitize(values);
 	const required_missing = fields.filter(
 		(field) =>

@@ -22,6 +22,14 @@ import {
 	type TemplateScope,
 } from './report-template-engine.ts';
 import type { ImperiumStore } from './store.ts';
+import { pedidos_con_ruta } from './contacto-rutas.ts';
+import { is_pedido_resource } from './pedidos-fecha.ts';
+import {
+	PHYSICAL_DEVICE_KARDEX_FIELDS,
+	physical_device_kardex,
+	physical_device_promoted,
+	physical_device_report_fields,
+} from './physical-device-report.ts';
 
 const STATIC_PLACEHOLDERS = new Set([
 	'fecha_actual',
@@ -433,6 +441,17 @@ export async function interpolate_report_list(
 	);
 }
 
+/**
+ * Ficha sin delimitador con varios registros: la plantilla se repite una vez
+ * por registro, cada una en su propia hoja. Antes «Guardar como PDF» o la
+ * impresión directa con varios pedidos marcados sacaba solo el primero.
+ */
+export const REPORT_RECORD_PAGE_BREAK = '<div class="imperium-report-record-break" style="break-after:page;page-break-after:always"></div>';
+
+export function join_report_record_pieces(pieces: string[]): string {
+	return pieces.join(REPORT_RECORD_PAGE_BREAK);
+}
+
 function delimiter_token(template: string): string {
 	for (const token of ['{{report_item_delimiter}}', '{{reporte_delimitador}}']) {
 		if (template.includes(token)) return token;
@@ -453,7 +472,14 @@ export async function interpolate_report_records(
 	}
 	const token = delimiter_token(template);
 	if (!token) {
-		return interpolate_report_template(template, records[0] ?? {}, user_name, now, opts);
+		if (records.length <= 1) {
+			return interpolate_report_template(template, records[0] ?? {}, user_name, now, opts);
+		}
+		const pieces: string[] = [];
+		for (const record of records) {
+			pieces.push(await interpolate_report_template(template, record, user_name, now, opts));
+		}
+		return join_report_record_pieces(pieces);
 	}
 	if (!records.length) return template.replaceAll(token, '');
 	if (depth > 5000) {
@@ -474,6 +500,40 @@ export async function interpolate_report_records(
 	return current_html.replace(token, next_html);
 }
 
+/**
+ * Campos de una referencia: los de la tabla destino, como los ofrece el
+ * diseñador (`report_related_candidates`). Con solo name/description, guardar
+ * el formato oficial del pedido fallaba en {{contacto.codigo}}, rfc, calle…
+ * y la siembra los quitaba hasta dejar los bloques #if sin cerrar (#292).
+ */
+function reference_fields(store: ImperiumStore, reference_model: string): Array<{ field_name: string }> {
+	const out = [{ field_name: 'name' }, { field_name: 'description' }, { field_name: 'is_active' }];
+	let target: string | null = null;
+	try {
+		target = store.resource_for_model(reference_model) ?? null;
+	} catch {
+		target = null;
+	}
+	if (!target || !store.has(target)) return out;
+	const seen = new Set(out.map((f) => f.field_name));
+	for (const col of store.loc(target).columns) {
+		if (!col.name || col.name.startsWith('_') || seen.has(col.name)) continue;
+		seen.add(col.name);
+		out.push({ field_name: col.name });
+	}
+	return out;
+}
+
+/**
+ * Campos del pedido que no son columna ni salen en toda fila: `observaciones`
+ * vive en el payload solo si se capturó y `ruta` se agrega al leer (#275/#292).
+ * Sin pedidos con observaciones, el formato oficial no se podía guardar.
+ */
+const REPORT_PAYLOAD_FIELDS: Record<string, readonly string[]> = {
+	pedidos: ['observaciones', 'ruta'],
+	'pedidos-surtir': ['observaciones', 'ruta'],
+};
+
 function fields_from_store(store: ImperiumStore, resource: string): ReportFieldLike[] {
 	const refs = store.field_refs(resource);
 	const seen = new Set<string>();
@@ -483,7 +543,7 @@ function fields_from_store(store: ImperiumStore, resource: string): ReportFieldL
 		seen.add(field.field_name);
 		fields.push(field);
 	};
-	for (const name of ['name', 'description', 'is_active']) {
+	for (const name of ['name', 'description', 'is_active', ...(REPORT_PAYLOAD_FIELDS[resource] ?? [])]) {
 		push({ field_name: name });
 	}
 	for (const col of store.loc(resource).columns) {
@@ -492,18 +552,15 @@ function fields_from_store(store: ImperiumStore, resource: string): ReportFieldL
 			field_name: col.name,
 			is_reference: Boolean(reference_model),
 			is_array: col.pg === 'json' && !reference_model,
-			related_fields: reference_model
-				? [{ field_name: 'name' }, { field_name: 'description' }]
-				: [],
+			related_fields: reference_model ? reference_fields(store, reference_model) : [],
 		});
 	}
 	for (const [field_name, reference_model] of Object.entries(refs)) {
 		push({
 			field_name,
 			is_reference: true,
-			related_fields: [{ field_name: 'name' }, { field_name: 'description' }],
+			related_fields: reference_fields(store, reference_model),
 		});
-		void reference_model;
 	}
 	return fields;
 }
@@ -533,7 +590,7 @@ export async function assert_report_template_write(
 		resource = '';
 	}
 	if (!resource) return;
-	const fields = fields_from_store(store, resource);
+	const fields = [...fields_from_store(store, resource), ...(REPORT_VIRTUAL_FIELDS[resource] ?? [])];
 	/* El diseñador ofrece también las claves que viven en el payload de las
 	 * filas (no son columnas); validarlas solo contra columnas rechazaba al
 	 * guardar campos que el propio diseñador había propuesto. */
@@ -576,6 +633,54 @@ export function report_validation_ok(
 	);
 }
 
+/** Campos que el registro solo tiene al leerse (no guardados), para que el reporte los vea. */
+async function report_rows(store: ImperiumStore, resource: string, rows: ImperiumDoc[]): Promise<ImperiumDoc[]> {
+	if (resource === 'physical-device') return physical_device_report_rows(store, rows);
+	return is_pedido_resource(resource) ? pedidos_con_ruta(store, rows) : rows;
+}
+
+/**
+ * Campos que solo existen al generar el reporte, por recurso (#337). El
+ * validador los acepta aunque ninguna fila los tenga guardados.
+ */
+const REPORT_VIRTUAL_FIELDS: Record<string, ReportFieldLike[]> = {
+	'physical-device': [
+		{ field_name: 'disk_count' },
+		{ field_name: 'ram_gb' },
+		{ field_name: 'disk_total_gb' },
+		{ field_name: 'vram_gb' },
+		{ field_name: 'ultima_revision' },
+		{
+			field_name: 'kardex',
+			is_array: true,
+			related_fields: PHYSICAL_DEVICE_KARDEX_FIELDS.map((field_name) => ({ field_name })),
+		},
+	],
+};
+
+/** Dispositivos: GB legibles y su kárdex (historial sin ruido, antiguo → reciente). */
+async function physical_device_report_rows(store: ImperiumStore, rows: ImperiumDoc[]): Promise<ImperiumDoc[]> {
+	const has_history = store.has('document-change-history');
+	const out: ImperiumDoc[] = [];
+	for (const row of rows) {
+		let kardex: ReturnType<typeof physical_device_kardex> = [];
+		if (has_history && row._id) {
+			const { rows: history } = await store.find_many('document-change-history', {
+				where: { documentId: String(row._id) },
+				take: 500,
+				include_inactive: true,
+				sort: 'created_at:asc',
+				populate: false,
+				skip_total: true,
+			});
+			kardex = physical_device_kardex(history as Record<string, unknown>[]);
+		}
+		const promoted = physical_device_promoted(row.raw_snapshot);
+		out.push({ ...row, ...promoted, ...physical_device_report_fields({ ...row, ...promoted }), kardex });
+	}
+	return out;
+}
+
 export async function* iter_report_record_pages(
 	store: ImperiumStore,
 	resource: string,
@@ -584,7 +689,7 @@ export async function* iter_report_record_pages(
 	const mongo_match = without_chat_rows(resource, null);
 	if (body.apply_to_all === true) {
 		for await (const page of store.scan(resource, { page_size: 200, mongo_match })) {
-			if (page.length) yield page;
+			if (page.length) yield await report_rows(store, resource, page);
 		}
 		return;
 	}
@@ -602,7 +707,7 @@ export async function* iter_report_record_pages(
 			mongo_match,
 		});
 		/* Sin poblar, {{departamento.name}} salía vacío en la ficha de prueba. */
-		if (rows.length) yield await store.populate_docs(resource, rows, { full: true });
+		if (rows.length) yield await report_rows(store, resource, await store.populate_docs(resource, rows, { full: true }));
 		return;
 	}
 	for (let i = 0; i < ids.length; i += 200) {
@@ -612,7 +717,7 @@ export async function* iter_report_record_pages(
 			if (doc && !is_chat_row(resource, doc)) chunk.push(doc);
 		}
 		if (!chunk.length) continue;
-		yield await store.populate_docs(resource, chunk, { full: true });
+		yield await report_rows(store, resource, await store.populate_docs(resource, chunk, { full: true }));
 	}
 }
 
@@ -650,6 +755,7 @@ export async function render_report_from_pages(
 	}
 	const token = delimiter_token(template);
 	let html = '';
+	const pieces: string[] = [];
 	let count = 0;
 	let first: Record<string, unknown> | null = null;
 	for await (const page of pages) {
@@ -660,8 +766,11 @@ export async function render_report_from_pages(
 		for (const record of hydrated) {
 			count += 1;
 			if (!first) first = record;
-			if (!token) continue;
 			const piece = await interpolate_report_template(template, record, user_name, now, opts);
+			if (!token) {
+				pieces.push(piece);
+				continue;
+			}
 			html = count === 1 ? piece : html.replace(token, piece);
 		}
 	}
@@ -669,11 +778,8 @@ export async function render_report_from_pages(
 		return { html: '', count: 0, first: null };
 	}
 	if (!token) {
-		return {
-			html: await interpolate_report_template(template, first, user_name, now, opts),
-			count,
-			first,
-		};
+		// Sin delimitador: la ficha se repite por registro, una hoja cada una.
+		return { html: join_report_record_pieces(pieces), count, first };
 	}
 	return { html: html.replaceAll(token, ''), count, first };
 }

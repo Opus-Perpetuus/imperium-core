@@ -1,5 +1,6 @@
 //   #region FEATURE SHELL DESCRIPTOR
 
+import { code_completions_issues, type CodeCompletionCatalog } from "./code-completions.js";
 import type {
   NoxPageDescriptor,
   NoxUiValidationIssue,
@@ -215,6 +216,8 @@ export type FeatureShellFieldDescriptor = {
   code_editor_max_lines?: number;
   /** `input-code-editor`: autocompletado de plantillas de impresión. */
   code_editor_completion_kind?: "dsl" | "zpl";
+  /** `input-code-editor`: autocompletado y documentación del lenguaje de la app. */
+  code_editor_completions?: CodeCompletionCatalog;
   /** `input-date-range`. */
   date_range_placeholder?: string;
   date_range_show_quick_presets?: boolean;
@@ -228,6 +231,13 @@ export type FeatureShellFieldDescriptor = {
   coordinates_geocode_proxy_url?: string;
   /** `input-password`: barra de complejidad. */
   show_password_strength?: boolean;
+  /** `input-text`/`input-password`: `autocomplete` explícito del input nativo. */
+  autocomplete?: string;
+  /**
+   * Correo (`type: "email"`) y `input-password`: `manual` (default) no deja que
+   * el navegador llene el campo solo, solo sugiere; `browser` es el nativo.
+   */
+  autofill?: "manual" | "browser";
   /** `input-object`: solo inspector, sin editor. */
   object_read_only?: boolean;
   /** `input-object`: claves internas de solo lectura. */
@@ -249,6 +259,11 @@ export type FeatureShellHeaderActionDescriptor = {
   confirm?: string;
   invoke?: FeatureShellActionInvoke;
   refresh?: "record" | "list";
+  /**
+   * `data-manual-anchor` del botón (manual interactivo y `yarn flow`), p. ej.
+   * `tienda-pedido-reembolsar`. Minúsculas, dígitos, `-` y `_`.
+   */
+  anchor?: string;
 };
 
 export type FeatureShellColumnDescriptor = {
@@ -306,6 +321,7 @@ const FIELD_COMPONENTS: ReadonlySet<string> = new Set(
 /** Opciones con valor de catálogo: fuera de él el input caería a su default sin avisar. */
 const FIELD_ENUM_OPTIONS: Record<string, readonly string[]> = {
   type: ["text", "email", "search", "url", "tel"],
+  autofill: ["manual", "browser"],
   choice_appearance: ["switch", "radio", "segmented"],
   markdown_initial_mode: ["visual", "write", "split", "preview"],
   code_editor_completion_kind: ["dsl", "zpl"],
@@ -328,6 +344,12 @@ function validate_field_options(
         path: `${path}.${key}`,
         message: `${key} must be one of ${allowed.join("|")}`,
       });
+    }
+  }
+
+  if (field["code_editor_completions"] !== undefined) {
+    for (const message of code_completions_issues(field["code_editor_completions"])) {
+      issues.push({ path: `${path}.code_editor_completions`, message });
     }
   }
 

@@ -241,6 +241,30 @@ describe('ids de producto sincronizado', () => {
 		).rejects.toThrow('Debes indicar un producto válido');
 	});
 
+	test('el movimiento del traslado registra la existencia antes y después en origen y destino (#216)', async () => {
+		const store = almacen_con_sync();
+		store.data['inventory-stock-quant']!.push({
+			_id: 'q2',
+			producto: SYNC,
+			ubicacion: B,
+			ubicacion_codigo: 'A1',
+			cantidad: 3,
+		});
+		await register_internal_transfer(store, {
+			producto: SYNC,
+			ubicacion_origen: A,
+			ubicacion_destino: B,
+			cantidad: 4,
+		});
+		const mov = (store.data['inventory-movement'] ?? []).find((row) => row.cantidad === 4)!;
+		expect(mov.stock_ubicacion_origen_previo).toBe(10);
+		expect(mov.stock_ubicacion_origen_resultante).toBe(6);
+		expect(mov.stock_ubicacion_destino_previo).toBe(3);
+		expect(mov.stock_ubicacion_destino_resultante).toBe(7);
+		expect(String(mov.description)).toContain('REC: 10 → 6; A1: 3 → 7');
+		expect(mov.stock_total_previo).toBe(mov.stock_total_resultante);
+	});
+
 	test('acomodar y reservar aceptan el producto sync y rechazan texto', async () => {
 		const store = almacen_con_sync();
 		const acomodada = await acomodar_reception(store, REC, {

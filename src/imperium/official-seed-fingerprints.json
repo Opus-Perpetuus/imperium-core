@@ -1,0 +1,1421 @@
+{
+	"Pedido-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"43a62a4d5168bbff",
+				"5b35b28e50401011",
+				"c72b9f64a70d6084",
+				"5beef5356ab5468e",
+				"67b95d2835c56d11"
+			]
+		}
+	],
+	"alumnos-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"45f017cd4d4b6561"
+			]
+		}
+	],
+	"api-keys-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"bebbeab565c7b769"
+			]
+		}
+	],
+	"asociaciones-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"1d61aa8f61fd5b5b"
+			]
+		}
+	],
+	"aulas-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"d35c06a3e92faeba"
+			]
+		}
+	],
+	"auto-increment-control-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"9a001bd136f4d3aa",
+				"17131b80a472fc1d",
+				"36546a2e2b62cc58"
+			]
+		}
+	],
+	"auto-increment-control-menu-serials-root": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"99d4ad59635b4047"
+			]
+		}
+	],
+	"base-volcanica-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"441bf07308a548b1"
+			]
+		}
+	],
+	"categoria-base-volcanica-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"30c03ff8cd746741"
+			]
+		}
+	],
+	"categoria-despensa-solidaria-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"3e5e77c03db8f693"
+			]
+		}
+	],
+	"categoria-directorio-contactos-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"8572d4c7aa7440e0"
+			]
+		}
+	],
+	"categoria-inventario-sanitario-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"7d4e99315857870b"
+			]
+		}
+	],
+	"ciclos-escolares-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"13f66b4d865a9d32"
+			]
+		}
+	],
+	"citizen-report-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"15359a57fc4ea17d",
+				"e1f0d112cf991c64",
+				"c626b5bdb9642801"
+			]
+		}
+	],
+	"citizen_report_menu_root": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"4bebab3dd591670a",
+				"2f96bfb0b181f806"
+			]
+		}
+	],
+	"contacto-qr-label-pdf-setting-0": [
+		{
+			"fields": [
+				"custom_height_mm",
+				"custom_width_mm",
+				"description",
+				"display_header_footer",
+				"is_active",
+				"margin_bottom_mm",
+				"margin_left_mm",
+				"margin_right_mm",
+				"margin_top_mm",
+				"mirror_margins",
+				"name",
+				"orientation",
+				"page_size_preset",
+				"prefer_css_page_size",
+				"print_background",
+				"scale_percent"
+			],
+			"hashes": [
+				"9af8a4feed1da342"
+			]
+		}
+	],
+	"contacto-qr-label-report-0": [
+		{
+			"fields": [
+				"description",
+				"generated_report_name",
+				"html_content",
+				"is_active",
+				"name",
+				"related_model"
+			],
+			"hashes": [
+				"a53245d491833c4d"
+			]
+		}
+	],
+	"control-emergencias-menu-root": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"dae5e32ccb92cd04"
+			]
+		}
+	],
+	"control-escolar-menu-root": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"648fcfed952d3350"
+			]
+		}
+	],
+	"cuadrillas-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"52818d2a5c1383c1"
+			]
+		}
+	],
+	"custom-field-control-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"768f542d87834bbd"
+			]
+		}
+	],
+	"custom-pattern-condition-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"1bb0fe3be0673ecf",
+				"2612870a5c504c4f",
+				"55ec433d4cde2591"
+			]
+		}
+	],
+	"custom-pattern-increment-sequence-parts-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"b754b55ed5dd0777",
+				"30801c9d7cd8a680"
+			]
+		}
+	],
+	"delivery-package-entregas-online-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"dd83a14144d144f1",
+				"e41354ed6f2ca0cc"
+			]
+		}
+	],
+	"delivery-package-manifest-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"f969f138246c444f"
+			]
+		}
+	],
+	"delivery-package-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"32a1fecc918bd25b"
+			]
+		}
+	],
+	"delivery-package-reparto-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"ece07c4d436df32f"
+			]
+		}
+	],
+	"delivery-return-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"b408021490d62fcf"
+			]
+		}
+	],
+	"despensa-solidaria-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"3d7ac9dd4960e6a3"
+			]
+		}
+	],
+	"directorio-contactos-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"cbac6fa7c9190378"
+			]
+		}
+	],
+	"escuelas-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"ba6e8a5d6fdbfdee"
+			]
+		}
+	],
+	"grados-escolares-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"8312440d1c3b9647"
+			]
+		}
+	],
+	"grupo-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"f28e48f4458e715b"
+			]
+		}
+	],
+	"horarios-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"b9460c968c3a878b"
+			]
+		}
+	],
+	"inventario-general-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"613ae43d68366ee7"
+			]
+		}
+	],
+	"inventario-sanitario-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"d0895122492cbb8a"
+			]
+		}
+	],
+	"inventory-cost-entry-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"d869aba3b01530a9",
+				"c3a3b5ad7ff3fe20"
+			]
+		}
+	],
+	"inventory-internal-location-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"2d0910f7a120dd4d",
+				"ee26883e8f3e389a"
+			]
+		}
+	],
+	"inventory-movement-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"3d41c1cdda6faf0f",
+				"7efdba4bfcca377f"
+			]
+		}
+	],
+	"inventory-physical-count-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"62062d19aa8fdcfa",
+				"6ac42b6bf114c058",
+				"2087b33b601dded7"
+			]
+		}
+	],
+	"inventory-reception-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"6d6345ff6c9f4e9c",
+				"0cd5de36d5975e04"
+			]
+		}
+	],
+	"inventory-stock-quant-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"02e0cf30fc57f36c",
+				"775bb1bfa7b1c154"
+			]
+		}
+	],
+	"invoice-request-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"9c4564a9fd0914df"
+			]
+		}
+	],
+	"libro-cuentas-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"fe8399164fd7da8a"
+			]
+		}
+	],
+	"lista-asistencia-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"bab0bd64c49af52c"
+			]
+		}
+	],
+	"logistics-pedidos-empaque-menu-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"25e1085d9eba87bc"
+			]
+		}
+	],
+	"materias-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"b3746bee4646f7ad"
+			]
+		}
+	],
+	"medical-file-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"7b08c421ea7c93d5"
+			]
+		}
+	],
+	"medical-file-menu-management-1": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"f83047ead6a6f5ab",
+				"deea94f005043d37"
+			]
+		}
+	],
+	"medical-file-menu-root": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"b68e2ba26435ecd5"
+			]
+		}
+	],
+	"medical-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"579384258046abaf"
+			]
+		}
+	],
+	"menu-management-inventory": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"47f970ce1b5a417b",
+				"3cb4cc1c06b46a7a"
+			]
+		},
+		{
+			"fields": [
+				"icon",
+				"is_active",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"01b51c76a1b075d9",
+				"6af9c65c7b7a89d4",
+				"809a54694a624c65"
+			]
+		}
+	],
+	"menu-management-inventory-inbound": [
+		{
+			"fields": [
+				"icon",
+				"is_active",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"ad830d0ff80d9b7f"
+			]
+		}
+	],
+	"menu-management-inventory-picking": [
+		{
+			"fields": [
+				"icon",
+				"is_active",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"6ef6876bb774179e"
+			]
+		}
+	],
+	"menu-management-inventory-stock": [
+		{
+			"fields": [
+				"icon",
+				"is_active",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"9bec2de27580f7a4"
+			]
+		}
+	],
+	"model-tracker-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"7815ec18f2a24b03"
+			]
+		}
+	],
+	"patient-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"002a27db36d45505"
+			]
+		}
+	],
+	"pedidos-record-rule-logistica-empaque": [
+		{
+			"fields": [
+				"allow_create",
+				"allow_delete",
+				"allow_read",
+				"allow_update",
+				"description",
+				"domain",
+				"group_id",
+				"is_active",
+				"model_id",
+				"name"
+			],
+			"hashes": [
+				"5938d6574a2d0c27"
+			]
+		}
+	],
+	"pedidos-record-rule-surtidores-tablero": [
+		{
+			"fields": [
+				"allow_create",
+				"allow_delete",
+				"allow_read",
+				"allow_update",
+				"description",
+				"domain",
+				"group_id",
+				"is_active",
+				"model_id",
+				"name"
+			],
+			"hashes": [
+				"adb347130d48fed7",
+				"2d7680dba1781221"
+			]
+		}
+	],
+	"pedidos-ventas-menu-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"5beef5356ab5468e",
+				"925799e35d7495ee"
+			]
+		}
+	],
+	"pedidos_menu_root": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"e7b1a6def9da3796",
+				"a69140cb5377b258",
+				"7b74551d1ba75d1b"
+			]
+		}
+	],
+	"products-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"746581669c8fdab7"
+			]
+		},
+		{
+			"fields": [
+				"icon",
+				"is_active",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"deffb0ccd8ba6682",
+				"bf2de499642ace92",
+				"95055e8e9eb6d537"
+			]
+		}
+	],
+	"products-menu-management-sales-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"746581669c8fdab7"
+			]
+		},
+		{
+			"fields": [
+				"icon",
+				"is_active",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"deffb0ccd8ba6682",
+				"bf2de499642ace92",
+				"95055e8e9eb6d537"
+			]
+		}
+	],
+	"proyectos-task-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"b7ecef048257f826"
+			]
+		}
+	],
+	"purchase-order-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"01395e2cada4480b"
+			]
+		}
+	],
+	"registro-asistencias-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"89c971ea53cc2852"
+			]
+		}
+	],
+	"registro-emergencias-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"5f40f61fce0c7e7e"
+			]
+		}
+	],
+	"registro-incidencias-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"9bea43a3124256a9"
+			]
+		}
+	],
+	"reports-delivery-package-label-0": [
+		{
+			"fields": [
+				"description",
+				"generated_report_name",
+				"html_content",
+				"is_active",
+				"name",
+				"page_size",
+				"related_model"
+			],
+			"hashes": [
+				"edcd0ca25d57f6cb"
+			]
+		},
+		{
+			"fields": [
+				"description",
+				"generated_report_name",
+				"html_content",
+				"is_active",
+				"name",
+				"related_model"
+			],
+			"hashes": [
+				"d5811dd4e6897ac4",
+				"538a3b8854052cc6",
+				"dc02b37f348ca5df",
+				"32817ab83d1b2370"
+			]
+		}
+	],
+	"reports-delivery-package-label-pdf-setting-0": [
+		{
+			"fields": [
+				"custom_height_mm",
+				"custom_width_mm",
+				"description",
+				"display_header_footer",
+				"is_active",
+				"margin_bottom_mm",
+				"margin_left_mm",
+				"margin_right_mm",
+				"margin_top_mm",
+				"mirror_margins",
+				"name",
+				"orientation",
+				"page_size_preset",
+				"prefer_css_page_size",
+				"print_background",
+				"scale_percent"
+			],
+			"hashes": [
+				"c9178cd19a50ff75"
+			]
+		}
+	],
+	"reports-pedido-surtido-0": [
+		{
+			"fields": [
+				"description",
+				"generated_report_name",
+				"html_content",
+				"is_active",
+				"name",
+				"page_size",
+				"related_model"
+			],
+			"hashes": [
+				"38f562cf1bd341ee",
+				"de71e46fe08cdb01",
+				"848e400d86c00a0d",
+				"96034a7f379af9b5",
+				"b33a5e8f4ae88d43",
+				"bc8c37b383f4b1e2"
+			]
+		}
+	],
+	"reports-pedido-tablero-0": [
+		{
+			"fields": [
+				"description",
+				"generated_report_name",
+				"html_content",
+				"name",
+				"page_size",
+				"related_model"
+			],
+			"hashes": [
+				"2c7aa4c78fbbfe47",
+				"20deba3cabf75b05"
+			]
+		},
+		{
+			"fields": [
+				"description",
+				"generated_report_name",
+				"html_content",
+				"is_active",
+				"name",
+				"page_size",
+				"related_model"
+			],
+			"hashes": [
+				"8b9f0fa53486db63",
+				"d4474819efbab062",
+				"d3eaa06ee6390934",
+				"1f55dabd176f0c15",
+				"1a7dc4965a1f5869",
+				"5c098e668267f51b",
+				"05348fb7e9abc03a"
+			]
+		}
+	],
+	"reports-product-label-4x5-pdf-setting-0": [
+		{
+			"fields": [
+				"custom_height_mm",
+				"custom_width_mm",
+				"description",
+				"display_header_footer",
+				"is_active",
+				"margin_bottom_mm",
+				"margin_left_mm",
+				"margin_right_mm",
+				"margin_top_mm",
+				"mirror_margins",
+				"name",
+				"orientation",
+				"page_size_preset",
+				"prefer_css_page_size",
+				"print_background",
+				"scale_percent"
+			],
+			"hashes": [
+				"6015c68673ef5e09"
+			]
+		}
+	],
+	"reports-product-label-barcode-0": [
+		{
+			"fields": [
+				"description",
+				"generated_report_name",
+				"html_content",
+				"is_active",
+				"name",
+				"related_model"
+			],
+			"hashes": [
+				"c177a8c9b41b8b61",
+				"a62ea24417840398"
+			]
+		}
+	],
+	"reports-product-label-qr-4up-0": [
+		{
+			"fields": [
+				"description",
+				"generated_report_name",
+				"html_content",
+				"is_active",
+				"name",
+				"related_model"
+			],
+			"hashes": [
+				"4133728f76850325",
+				"8cc90a98850307bc"
+			]
+		}
+	],
+	"reports-product-label-qr-single-0": [
+		{
+			"fields": [
+				"description",
+				"generated_report_name",
+				"html_content",
+				"is_active",
+				"name",
+				"related_model"
+			],
+			"hashes": [
+				"63ee12e8af835bca",
+				"2dfd01272129e2fa"
+			]
+		}
+	],
+	"reports-product-label-quarter-pdf-setting-0": [
+		{
+			"fields": [
+				"custom_height_mm",
+				"custom_width_mm",
+				"description",
+				"display_header_footer",
+				"is_active",
+				"margin_bottom_mm",
+				"margin_left_mm",
+				"margin_right_mm",
+				"margin_top_mm",
+				"mirror_margins",
+				"name",
+				"orientation",
+				"page_size_preset",
+				"prefer_css_page_size",
+				"print_background",
+				"scale_percent"
+			],
+			"hashes": [
+				"f6cce7318ec60ed3"
+			]
+		}
+	],
+	"rescate-animal-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"1ba777990e62c24c"
+			]
+		}
+	],
+	"servicios-realizados-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"32c01549e99c7958"
+			]
+		}
+	],
+	"status-option-control-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"0ebe26df7f273b48"
+			]
+		}
+	],
+	"surtir-pedidos-menu-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"9630df2e57761531",
+				"9c2caf27ef240c2e",
+				"a8dbb095817da721"
+			]
+		}
+	],
+	"tablero-de-pedidos-menu-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"2cea9e59a1f700c5"
+			]
+		}
+	],
+	"ticketing-system-priority-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"61bcd67ab63b8738"
+			]
+		}
+	],
+	"ticketing-system-root-menu": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"b1918be29abbe0ff",
+				"6a896489b6b5477b"
+			]
+		}
+	],
+	"ticketing-system-turn-menu-management-1": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"5c6439143f886efc"
+			]
+		}
+	],
+	"tickets-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"0994807670079081"
+			]
+		}
+	],
+	"unit-of-measure-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"8ecc6ee119375cc1",
+				"2fdcf13bc22960e6",
+				"5ad7a6ab90bc5473"
+			]
+		}
+	],
+	"voluntariado-menu-management-0": [
+		{
+			"fields": [
+				"icon",
+				"model",
+				"name",
+				"order",
+				"path"
+			],
+			"hashes": [
+				"997469c3c9e468d2"
+			]
+		}
+	]
+}

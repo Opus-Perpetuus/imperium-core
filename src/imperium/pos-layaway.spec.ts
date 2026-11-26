@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { ImperiumDoc } from './envelope.ts';
+import { ALLOW_NEGATIVE_STOCK_REF } from './negative-stock.ts';
 import extra_routes from './extra-routes.json';
 import {
 	cancel_layaway,
@@ -59,6 +60,7 @@ function memory_store(seed: Record<string, Row[]>) {
 
 function base_store() {
 	return memory_store({
+		configuration: [{ _id: 'neg', _ref: ALLOW_NEGATIVE_STOCK_REF, value: false }],
 		products: [
 			{ _id: 'p1', name: 'Bici', codigo: 'B1', existencia: 3, existenciaApartada: 1 },
 			{ _id: 'p2', name: 'Casco', codigo: 'C1', existencia: 5 },

@@ -1,10 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import type { ImperiumDoc } from './envelope.ts';
+import { ALLOW_NEGATIVE_STOCK_REF } from './negative-stock.ts';
 import { register_pos_ticket_exit } from './inventory-exit.ts';
 import {
 	pos_return_lookup,
 	prepare_pos_return,
 	register_pos_return_entry,
+	revert_pos_return_entry,
 } from './pos-return.ts';
 import type { ImperiumStore } from './store.ts';
 
@@ -30,8 +32,10 @@ function memory_store(seed: Record<string, Row[]>) {
 		async find_where(r: string, where: Record<string, unknown>) {
 			return (data[r] ?? []).find((row) => matches(row, where)) ?? null;
 		},
-		async find_many(r: string, o: { where?: Record<string, unknown>; take?: number } = {}) {
-			const rows = (data[r] ?? []).filter((row) => matches(row, o.where));
+		async find_many(r: string, o: { where?: Record<string, unknown>; take?: number; ids?: string[] } = {}) {
+			const rows = (data[r] ?? []).filter(
+				(row) => matches(row, o.where) && (!o.ids || o.ids.includes(String(row._id))),
+			);
 			return { rows: rows.slice(0, o.take ?? rows.length), total: rows.length };
 		},
 		async *scan(r: string, o: { where?: Record<string, unknown> } = {}) {
@@ -67,6 +71,7 @@ const sale: Row = {
 
 function store_with(existencia1: number, existencia2 = 10) {
 	return memory_store({
+		configuration: [{ _id: 'neg', _ref: ALLOW_NEGATIVE_STOCK_REF, value: false }],
 		products: [
 			{ _id: P1, name: 'Codo', codigo: 'C1', existencia: existencia1 },
 			{ _id: P2, name: 'Tubo', codigo: 'T1', existencia: existencia2 },
@@ -214,6 +219,294 @@ describe('devoluciones POS ligadas a la venta', () => {
 		const again = await register_pos_return_entry(store, other.created);
 		expect(again[0].motivo).toBe('ya_reingresado');
 		expect(created._id).toBeTruthy();
+	});
+
+	test('la devolución vuelve a los anaqueles de los que salió la venta', async () => {
+		const A1 = '507f1f77bcf86cd7994390a1';
+		const A2 = '507f1f77bcf86cd7994390a2';
+		const store = memory_store({
+			products: [{ _id: P1, name: 'Codo', codigo: 'C1', existencia: 6 }],
+			'pos-tickets': [
+				{
+					_id: 'venta-anaquel',
+					ticket_type: 'VENTA',
+					ticket_sequence: 'CAJA-2-1',
+					state: 'confirmado',
+					items: [{ item_id: P1, item_name: 'Codo', quantity: 4, unit_price: 10 }],
+				},
+			],
+			'inventory-movement': [],
+			'inventory-stock-quant': [
+				{
+					_id: 'q1',
+					producto: P1,
+					ubicacion: A1,
+					ubicacion_codigo: 'A1',
+					cantidad: 1,
+					cantidad_apartada: 0,
+					cantidad_disponible: 1,
+				},
+				{
+					_id: 'q2',
+					producto: P1,
+					ubicacion: A2,
+					ubicacion_codigo: 'A2',
+					cantidad: 5,
+					cantidad_apartada: 0,
+					cantidad_disponible: 5,
+				},
+			],
+			'inventory-internal-location': [
+				{ _id: ALM, codigo: 'ALM', name: 'General', _ref: 'inventory-internal-location-warehouse' },
+				{ _id: A1, codigo: 'A1', name: 'Anaquel 1', secuencia_surtido: 1 },
+				{ _id: A2, codigo: 'A2', name: 'Anaquel 2', secuencia_surtido: 2 },
+			],
+		});
+		await register_pos_ticket_exit(store, store.data['pos-tickets'][0]);
+		const salidas = store.data['inventory-movement'].filter((m) => m.tipo_movimiento === 'salida_entrega');
+		expect(salidas.map((m) => [m.ubicacion_origen, m.cantidad])).toEqual([
+			[A1, 1],
+			[A2, 3],
+		]);
+		const { created } = await create_return(store, {
+			original_ticket: 'venta-anaquel',
+			items: [{ item_id: P1, quantity: 4 }],
+		});
+		const reingresos = store.data['inventory-movement'].filter(
+			(m) => m.tipo_movimiento === 'recepcion_devolucion' && m.documento_id === created._id,
+		);
+		expect(reingresos.map((m) => [m.ubicacion_destino, m.cantidad])).toEqual([
+			[A2, 3],
+			[A1, 1],
+		]);
+		const qty = (id: string) => store.data['inventory-stock-quant'].find((q) => q.ubicacion === id)?.cantidad;
+		expect(qty(A1)).toBe(1);
+		expect(qty(A2)).toBe(5);
+		expect(await existencia(store, P1)).toBe(6);
+		expect(reingresos.every((m) => !m.lote)).toBe(true);
+		expect(store.data['inventory-stock-quant'].every((q) => !q.lote)).toBe(true);
+	});
+
+	test('la devolución de un producto con lote regresa al mismo lote y caducidad', async () => {
+		const ZONA = '507f1f77bcf86cd7994390b1';
+		const store = memory_store({
+			products: [{ _id: P1, name: 'PRUEBA-LOTE', codigo: 'PRUEBA-LOTE', existencia: 1 }],
+			'pos-tickets': [
+				{
+					_id: 'venta-lote',
+					ticket_type: 'VENTA',
+					ticket_sequence: '20261112-POS2-0001',
+					state: 'confirmado',
+					items: [{ item_id: P1, item_name: 'PRUEBA-LOTE', quantity: 1, unit_price: 10 }],
+				},
+			],
+			'inventory-movement': [],
+			'inventory-stock-quant': [
+				{
+					_id: 'q-a',
+					producto: P1,
+					ubicacion: ZONA,
+					ubicacion_codigo: 'ZONA 1-A',
+					lote: 'lot-prueba-a',
+					lote_codigo: 'PRUEBA-A',
+					fecha_caducidad: '2026-12-01',
+					cantidad: 1,
+					cantidad_apartada: 0,
+					cantidad_disponible: 1,
+				},
+			],
+			'inventory-internal-location': [
+				{ _id: ALM, codigo: 'ALM', name: 'General', _ref: 'inventory-internal-location-warehouse' },
+				{ _id: ZONA, codigo: 'ZONA 1-A', name: 'ZONA 1-A', secuencia_surtido: 1 },
+			],
+		});
+		await register_pos_ticket_exit(store, store.data['pos-tickets'][0]);
+		expect(store.data['inventory-stock-quant'].find((q) => q.lote === 'lot-prueba-a')?.cantidad).toBe(0);
+		const { created } = await create_return(store, {
+			original_ticket: 'venta-lote',
+			items: [{ item_id: P1, quantity: 1 }],
+		});
+		const back = store.data['inventory-movement'].filter(
+			(m) => m.tipo_movimiento === 'recepcion_devolucion' && m.documento_id === created._id,
+		);
+		expect(back).toEqual([
+			expect.objectContaining({
+				lote: 'lot-prueba-a',
+				lote_codigo: 'PRUEBA-A',
+				fecha_caducidad: '2026-12-01',
+				ubicacion_destino: ZONA,
+				cantidad: 1,
+			}),
+		]);
+		expect(store.data['inventory-stock-quant']).toEqual([
+			expect.objectContaining({
+				lote: 'lot-prueba-a',
+				lote_codigo: 'PRUEBA-A',
+				fecha_caducidad: '2026-12-01',
+				ubicacion: ZONA,
+				cantidad: 1,
+			}),
+		]);
+		await revert_pos_return_entry(store, created);
+		expect(store.data['inventory-stock-quant'].find((q) => q.lote === 'lot-prueba-a')).toMatchObject({
+			cantidad: 0,
+			lote_codigo: 'PRUEBA-A',
+			fecha_caducidad: '2026-12-01',
+		});
+		expect(store.data['inventory-stock-quant'].some((q) => !q.lote && Number(q.cantidad) > 0)).toBe(false);
+	});
+
+	test('si la venta salió de varios lotes, cada pieza vuelve al suyo', async () => {
+		const ZONA = '507f1f77bcf86cd7994390b2';
+		const quant = (id: string, lote: string, codigo: string, fecha: string, cantidad: number) => ({
+			_id: id,
+			producto: P1,
+			ubicacion: ZONA,
+			ubicacion_codigo: 'ZONA 1-A',
+			lote,
+			lote_codigo: codigo,
+			fecha_caducidad: fecha,
+			cantidad,
+			cantidad_apartada: 0,
+			cantidad_disponible: cantidad,
+		});
+		const store = memory_store({
+			products: [{ _id: P1, name: 'PRUEBA-LOTE', codigo: 'PRUEBA-LOTE', existencia: 6 }],
+			'pos-tickets': [
+				{
+					_id: 'venta-lotes',
+					ticket_type: 'VENTA',
+					ticket_sequence: 'CAJA-LOTES',
+					state: 'confirmado',
+					items: [{ item_id: P1, item_name: 'PRUEBA-LOTE', quantity: 4, unit_price: 10 }],
+				},
+			],
+			'inventory-movement': [],
+			'inventory-stock-quant': [
+				quant('q-b', 'id-b', 'B', '2026-11-01', 3),
+				quant('q-a', 'id-a', 'A', '2026-12-01', 3),
+			],
+			'inventory-internal-location': [
+				{ _id: ALM, codigo: 'ALM', name: 'General', _ref: 'inventory-internal-location-warehouse' },
+				{ _id: ZONA, codigo: 'ZONA 1-A', name: 'ZONA 1-A', secuencia_surtido: 1 },
+			],
+		});
+		await register_pos_ticket_exit(store, store.data['pos-tickets'][0]);
+		const qty = (lote: string) => store.data['inventory-stock-quant'].find((q) => q.lote === lote)?.cantidad;
+		expect(qty('id-b')).toBe(0);
+		expect(qty('id-a')).toBe(2);
+		const first = await create_return(store, {
+			original_ticket: 'venta-lotes',
+			items: [{ item_id: P1, quantity: 1 }],
+		});
+		expect(first.created).toBeTruthy();
+		expect(qty('id-a')).toBe(3);
+		expect(qty('id-b')).toBe(0);
+		expect(store.data['inventory-movement'].filter((m) => m.tipo_movimiento === 'recepcion_devolucion')).toEqual([
+			expect.objectContaining({
+				lote: 'id-a',
+				lote_codigo: 'A',
+				fecha_caducidad: '2026-12-01',
+				cantidad: 1,
+				ubicacion_destino: ZONA,
+			}),
+		]);
+		await create_return(store, {
+			original_ticket: 'venta-lotes',
+			items: [{ item_id: P1, quantity: 3 }],
+		});
+		expect(qty('id-a')).toBe(3);
+		expect(qty('id-b')).toBe(3);
+		expect(store.data['inventory-stock-quant'].find((q) => q.lote === 'id-b')).toMatchObject({
+			lote_codigo: 'B',
+			fecha_caducidad: '2026-11-01',
+		});
+		expect(store.data['inventory-stock-quant'].some((q) => !q.lote && Number(q.cantidad) > 0)).toBe(false);
+		expect(await existencia(store, P1)).toBe(6);
+	});
+
+	test('lote y sin lote: la venta de 2 sale en dos líneas y cada devolución vuelve a la suya', async () => {
+		const ZONA = '507f1f77bcf86cd7994390b3';
+		const store = memory_store({
+			products: [{ _id: P1, name: 'PRUEBA-LOTE', codigo: 'PRUEBA-LOTE', existencia: 2 }],
+			'pos-tickets': [
+				{
+					_id: 'venta-mixta',
+					ticket_type: 'VENTA',
+					ticket_sequence: '20261113-POS6-0001',
+					state: 'confirmado',
+					items: [{ item_id: P1, item_name: 'PRUEBA-LOTE', quantity: 2, unit_price: 10 }],
+				},
+			],
+			'inventory-movement': [],
+			'inventory-stock-quant': [
+				{
+					_id: 'q-a',
+					producto: P1,
+					ubicacion: ZONA,
+					ubicacion_codigo: 'ZONA 1-A',
+					lote: 'lot-prueba-a',
+					lote_codigo: 'PRUEBA-A',
+					fecha_caducidad: '2026-12-31',
+					cantidad: 1,
+					cantidad_apartada: 0,
+					cantidad_disponible: 1,
+				},
+				{
+					_id: 'q-sin',
+					producto: P1,
+					ubicacion: ZONA,
+					ubicacion_codigo: 'ZONA 1-A',
+					cantidad: 1,
+					cantidad_apartada: 0,
+					cantidad_disponible: 1,
+				},
+			],
+			'inventory-internal-location': [
+				{ _id: ALM, codigo: 'ALM', name: 'General', _ref: 'inventory-internal-location-warehouse' },
+				{ _id: ZONA, codigo: 'ZONA 1-A', name: 'ZONA 1-A', secuencia_surtido: 1 },
+			],
+		});
+		await register_pos_ticket_exit(store, store.data['pos-tickets'][0]);
+		const salidas = store.data['inventory-movement'].filter((m) => m.tipo_movimiento === 'salida_entrega');
+		expect(salidas.map((m) => [m.lote_codigo ?? '', m.cantidad])).toEqual([
+			['', 1],
+			['PRUEBA-A', 1],
+		]);
+		expect(salidas[0].lote).toBeUndefined();
+		expect(salidas[1]).toMatchObject({
+			lote: 'lot-prueba-a',
+			fecha_caducidad: '2026-12-31',
+			ubicacion_origen: ZONA,
+		});
+		const qty = (lote: string) =>
+			store.data['inventory-stock-quant'].find((q) => (lote ? q.lote === lote : !q.lote))?.cantidad;
+		expect(qty('lot-prueba-a')).toBe(0);
+		expect(qty('')).toBe(0);
+		await create_return(store, {
+			original_ticket: 'venta-mixta',
+			items: [{ item_id: P1, quantity: 1 }],
+		});
+		expect(qty('lot-prueba-a')).toBe(1);
+		expect(qty('')).toBe(0);
+		const segunda = await create_return(store, {
+			original_ticket: 'venta-mixta',
+			items: [{ item_id: P1, quantity: 1 }],
+		});
+		expect(qty('lot-prueba-a')).toBe(1);
+		expect(qty('')).toBe(1);
+		expect(store.data['inventory-stock-quant'].find((q) => !q.lote)).toMatchObject({
+			ubicacion: ZONA,
+			cantidad: 1,
+		});
+		expect(store.data['inventory-stock-quant'].find((q) => q.lote === 'lot-prueba-a')).toMatchObject({
+			lote_codigo: 'PRUEBA-A',
+			fecha_caducidad: '2026-12-31',
+			cantidad: 1,
+		});
+		await revert_pos_return_entry(store, segunda.created);
+		expect(qty('lot-prueba-a')).toBe(1);
+		expect(qty('')).toBe(0);
 	});
 
 	test('solo se devuelve una venta viva', async () => {

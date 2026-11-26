@@ -12,11 +12,62 @@ export const NEEDS_CATALOG = 'needs_catalog';
 /** Nota de una versión descubierta que pide un núcleo más nuevo que el que corre. */
 export const NEEDS_CORE = 'needs_core';
 
+/** Nota de una versión descubierta que pide un front más nuevo que el que sirve este servidor. */
+export const NEEDS_FRONT = 'needs_front';
+
+function required_version(
+	manifest: Record<string, unknown> | null | undefined,
+	key: 'core' | 'front',
+): string | null {
+	const requires = manifest?.requires as Record<string, unknown> | undefined;
+	const value = requires?.[key];
+	const raw = typeof value === 'string' ? value.trim().replace(/^>=\s*/, '') : '';
+	return parse_semver(raw) ? raw : null;
+}
+
 /** Núcleo mínimo que declara el manifiesto (`requires.core`, admite `>=`); `null` si no declara uno válido. */
 export function required_core(manifest: Record<string, unknown> | null | undefined): string | null {
-	const requires = manifest?.requires as { core?: unknown } | undefined;
-	const raw = typeof requires?.core === 'string' ? requires.core.trim().replace(/^>=\s*/, '') : '';
-	return parse_semver(raw) ? raw : null;
+	return required_version(manifest, 'core');
+}
+
+/** Front mínimo que declara el manifiesto (`requires.front`, admite `>=`); `null` si no declara uno válido. */
+export function required_front(manifest: Record<string, unknown> | null | undefined): string | null {
+	return required_version(manifest, 'front');
+}
+
+/**
+ * Versión del front de este servidor. update-v13.sh sube front y núcleo de la
+ * misma versión de producto (`frontv13.X.Y` + núcleo `13.X.Y`), así que sin
+ * `IMPERIUM_FRONT_VERSION` ni `IMPERIUM_FRONT_TAG` legibles es la del núcleo.
+ */
+export function front_version(
+	env: Record<string, string | undefined>,
+	core_version: string,
+): string {
+	for (const raw of [env.IMPERIUM_FRONT_VERSION, env.IMPERIUM_FRONT_TAG]) {
+		const tag = String(raw ?? '').trim().replace(/^front-?v?/i, '').replace(/^v/i, '');
+		if (parse_semver(tag)) return tag;
+	}
+	return core_version;
+}
+
+/**
+ * Primer mínimo del manifiesto que este servidor no cumple (núcleo, luego
+ * front); `null` si cumple todo o la app no declara mínimos.
+ */
+export function unmet_requirement(
+	manifest: Record<string, unknown> | null | undefined,
+	have: { core: string; front: string },
+): { code: typeof NEEDS_CORE | typeof NEEDS_FRONT; part: 'núcleo' | 'front'; need: string; have: string } | null {
+	const core = required_core(manifest);
+	if (core && !core_satisfies(core, have.core)) {
+		return { code: NEEDS_CORE, part: 'núcleo', need: core, have: have.core };
+	}
+	const front = required_front(manifest);
+	if (front && !core_satisfies(front, have.front)) {
+		return { code: NEEDS_FRONT, part: 'front', need: front, have: have.front };
+	}
+	return null;
 }
 
 /** ¿El núcleo `current` es igual o más nuevo que `required`? Una versión ilegible no cumple. */
@@ -24,6 +75,25 @@ export function core_satisfies(required: string, current: string): boolean {
 	const need = parse_semver(required);
 	const have = parse_semver(current);
 	return Boolean(need && have && compare_semver(have, need) >= 0);
+}
+
+/**
+ * ¿Hay que revisar los mínimos de la imagen del catálogo antes de moverse a
+ * ella? Sí cuando la actualización va del catálogo (pin o lo que dejó el
+ * autoescaneo, que es la versión más alta publicada) a una imagen distinta y
+ * más nueva que la que corre. Descubiertas y fijadas ya se revisan con el
+ * catálogo; regresar a una vieja no se revisa.
+ */
+export function catalog_requires_check_wanted(input: {
+	source: string;
+	target: string;
+	pin: string;
+	running: string | null | undefined;
+	rollback: boolean;
+}): boolean {
+	if (input.rollback || !input.running) return false;
+	if (input.source !== 'catalog' && input.target !== input.pin) return false;
+	return update_wanted(input.running, { image: input.target, source: 'catalog', created_at: null });
 }
 
 export const SUBJECT_VERSION_HOLD_REF = 'configuration-subject-version-hold';
@@ -158,7 +228,7 @@ export type DiscoveredVersion = {
 
 /**
  * La imagen a la que debe ir una app. La descubierta gana al pin solo si es
- * más nueva en el mismo major, no está marcada como `needs_catalog` ni `needs_core` y
+ * más nueva en el mismo major, no está marcada como `needs_catalog`, `needs_core` ni `needs_front` y
  * `accept_discovered` la acepta (la pasada automática exige su espera; la
  * pantalla y el botón la aceptan siempre).
  */
@@ -181,6 +251,7 @@ export function subject_update_target(input: {
 		found?.image &&
 		found.note !== NEEDS_CATALOG &&
 		found.note !== NEEDS_CORE &&
+		found.note !== NEEDS_FRONT &&
 		image_parts(found.image)?.repo === image_parts(pin)?.repo &&
 		is_newer_same_major(image_parts(found.image)?.tag, image_parts(pin)?.tag) &&
 		(input.accept_discovered?.(found.created_at) ?? true)

@@ -388,6 +388,44 @@ if (has_db) {
 			expect(Number(rows[0]?.n)).toBe(1);
 		}, 40_000);
 	});
+
+	describe('reciclar el pool no deja conexiones colgadas', () => {
+		const watch = new Bun.SQL(DATABASE_URL, { max: 1, idleTimeout: 0, connectionTimeout: 5 });
+
+		afterAll(async () => {
+			await watch.close({ timeout: 1 }).catch(() => {});
+		});
+
+		test('las conexiones de la generación muerta se cierran en Postgres', async () => {
+			const sql = open_core_sql(DATABASE_URL, { max: 3, query_timeout_ms: 800 });
+			const count = async () => {
+				const rows = (await watch.unsafe(
+					`SELECT count(*)::int AS n FROM pg_stat_activity
+					 WHERE query LIKE '%core_sql_leak_probe%' AND pid <> pg_backend_pid()`,
+				)) as Array<{ n: number }>;
+				return Number(rows[0]?.n ?? 0);
+			};
+			try {
+				const hung = await Promise.allSettled(
+					Array.from({ length: 3 }, () =>
+						sql.unsafe('SELECT pg_sleep(20) /* core_sql_leak_probe */'),
+					),
+				);
+				expect(hung.every((r) => r.status === 'rejected')).toBe(true);
+				const deadline = Date.now() + 5_000;
+				let left = await count();
+				while (left > 0 && Date.now() < deadline) {
+					await Bun.sleep(100);
+					left = await count();
+				}
+				expect(left).toBe(0);
+				const rows = (await sql.unsafe('SELECT 1 AS n')) as Array<{ n: number }>;
+				expect(Number(rows[0]?.n)).toBe(1);
+			} finally {
+				await sql.close({ timeout: 1 }).catch(() => {});
+			}
+		}, 20_000);
+	});
 } else {
 	describe.skip('lecturas concurrentes del pool (sin postgres)', () => {
 		test('omitido sin base', () => {});
@@ -399,6 +437,9 @@ if (has_db) {
 		test('omitido sin base', () => {});
 	});
 	describe.skip('pool saturado (sin postgres)', () => {
+		test('omitido sin base', () => {});
+	});
+	describe.skip('reciclar el pool no deja conexiones colgadas (sin postgres)', () => {
 		test('omitido sin base', () => {});
 	});
 }

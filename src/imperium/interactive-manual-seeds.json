@@ -1,0 +1,4712 @@
+[
+  {
+    "_ref": "interactive-manual-flow-agua-agua-lectura-campo",
+    "name": "Captura de lecturas de agua en campo",
+    "description": "Abre la pantalla operativa de lecturas de medidores en campo y valida la barra de filtros por ruta.",
+    "icon": "fa-droplet",
+    "module_model_id": "Agua",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "agua-lectura-campo-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Carga la vista móvil/escritorio de lectura de medidores en campo.",
+        "route": "/internal/lectura/campo",
+        "route_kind": "inicio",
+        "anchor_attr": "agua-campo",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "agua-lectura-campo-paso-2",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Verifica los filtros disponibles para acotar tomas o rutas asignadas.",
+        "route": "/internal/lectura/campo",
+        "route_kind": "confirmada",
+        "anchor_attr": "agua-campo-filtros",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-agua-agua-reportes",
+    "name": "Hub de agua potable y reportes municipales",
+    "description": "Entra al hub municipal de agua potable y abre el módulo de reportes operativos y de recaudación.",
+    "icon": "fa-droplet",
+    "module_model_id": "Agua",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "agua-reportes-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Verifica la carga del hub principal de agua potable.",
+        "route": "/internal/agua",
+        "route_kind": "inicio",
+        "anchor_attr": "agua-hub",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "agua-reportes-paso-2",
+        "title": "Haz clic en el control señalado",
+        "body": "Navega hacia los reportes del padrón y cobranza de agua.",
+        "route": "/internal/agua",
+        "route_kind": "confirmada",
+        "anchor_attr": "agua-hub-agua-reportes",
+        "action_hint": "click",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-auth-login",
+    "name": "Iniciar sesión",
+    "description": "Entrar al área interna con correo y contraseña desde /login, sin sesión previa.",
+    "icon": "fa-right-to-bracket",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "login-paso-1",
+        "title": "Espera a que cargue la pantalla",
+        "body": "PWA instalable (#341): el shell enlaza /manifest.webmanifest con URL raíz-absoluta y responde el JSON del manifiesto; sin eso Chromium (Vivaldi, Chrome, Edge) avisa «Page has no manifest <link> URL»",
+        "route": "/login",
+        "route_kind": "inicio",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "login-paso-2",
+        "title": "Espera a que cargue la pantalla",
+        "body": "Usuario llega bloqueado (manual-autofill, autocomplete=username); el navegador sugiere al tocarlo, no lo llena solo",
+        "route": "/login",
+        "route_kind": "confirmada",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "login-paso-3",
+        "title": "Espera a que cargue la pantalla",
+        "body": "Contraseña llega vacía y bloqueada (autocomplete=current-password)",
+        "route": "/login",
+        "route_kind": "confirmada",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "login-paso-4",
+        "title": "Espera a que cargue la pantalla",
+        "body": "PWA en Chrome (#344): al cargar o recargar, con IndexedDB disponible no aparece el aviso «Navegador no compatible»; un fallo transitorio al abrir la base no se reporta como navegador incompatible",
+        "route": "/login",
+        "route_kind": "confirmada",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 5,
+        "step_id": "login-paso-5",
+        "title": "Escribe en «Usuario»",
+        "body": "Escribe en «Usuario».",
+        "route": "/login",
+        "route_kind": "confirmada",
+        "anchor_attr": "login-email",
+        "action_hint": "input",
+        "placement": "auto"
+      },
+      {
+        "order": 6,
+        "step_id": "login-paso-6",
+        "title": "Escribe en «Contraseña»",
+        "body": "Escribe en «Contraseña».",
+        "route": "/login",
+        "route_kind": "confirmada",
+        "anchor_attr": "login-password",
+        "action_hint": "input",
+        "placement": "auto"
+      },
+      {
+        "order": 7,
+        "step_id": "login-paso-7",
+        "title": "Haz clic en «Iniciar sesión»",
+        "body": "Haz clic en «Iniciar sesión».",
+        "route": "/login",
+        "route_kind": "confirmada",
+        "anchor_attr": "login-submit",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 8,
+        "step_id": "login-paso-8",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "El encabezado del área interna confirma la sesión",
+        "route": "/login",
+        "route_kind": "heredada",
+        "anchor_attr": "shell-header",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-compras-antiguedad-cxp",
+    "name": "Antigüedad de saldos por pagar (CxP)",
+    "description": "Consulta la pestaña de antigüedad de saldos de cuentas por pagar en Reportes comerciales.",
+    "icon": "fa-file-invoice-dollar",
+    "module_model_id": "PurchaseOrder",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "antiguedad-cxp-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Carga el módulo de reportes comerciales.",
+        "route": "/internal/reportes-comerciales",
+        "route_kind": "inicio",
+        "anchor_attr": "reportes-comerciales",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "antiguedad-cxp-paso-2",
+        "title": "Haz clic en el control señalado",
+        "body": "Cambia a la pestaña de antigüedad de saldos CxP.",
+        "route": "/internal/reportes-comerciales",
+        "route_kind": "confirmada",
+        "anchor_attr": "rc-tab-antiguedad_cxp",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "antiguedad-cxp-paso-3",
+        "title": "Haz clic en «Consultar»",
+        "body": "Ejecuta la consulta y muestra el resumen de antigüedad de saldos CxP.",
+        "route": "/internal/reportes-comerciales",
+        "route_kind": "heredada",
+        "anchor_attr": "rc-consultar",
+        "action_hint": "click",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-compras-factura-proveedor",
+    "name": "Registro de factura de proveedor",
+    "description": "Abre el listado de facturas de proveedor, despliega el menú de acciones e inicia la captura de un nuevo comprobante.",
+    "icon": "fa-file-invoice-dollar",
+    "module_model_id": "PurchaseOrder",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "factura-proveedor-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Aquí está la lista de facturas de proveedor.",
+        "route": "/internal/supplier-invoice",
+        "route_kind": "inicio",
+        "anchor_attr": "header-actions-menu",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "factura-proveedor-paso-2",
+        "title": "Haz clic en el control señalado",
+        "body": "Abre el menú de acciones para acceder al botón Nuevo.",
+        "route": "/internal/supplier-invoice",
+        "route_kind": "confirmada",
+        "anchor_attr": "header-actions-menu",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "factura-proveedor-paso-3",
+        "title": "Haz clic en «Nuevo»",
+        "body": "Abre el formulario de nueva factura de proveedor con el campo de folio visible.",
+        "route": "/internal/supplier-invoice",
+        "route_kind": "heredada",
+        "anchor_attr": "view-list-new",
+        "action_hint": "click",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-configuracion-apps-detalle-movil",
+    "name": "Detalle de una app instalada legible en el celular",
+    "description": "En Módulos, «Detalles» de una app instalada abre su ficha (Estatus, Salud, Versión, Instalado, Datos en base…). En un celular de 360 px las etiquetas no se parten letra por letra; si el valor no cabe al lado, baja abajo de la etiqueta.",
+    "icon": "fa-sliders",
+    "module_model_id": "Configuration",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "apps-detalle-movil-paso-1",
+        "title": "Haz clic en «Detalles»",
+        "body": "Abre la ficha de la primera app instalada",
+        "route": "/internal/module-management",
+        "route_kind": "inicio",
+        "anchor_attr": "app-detalles",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "apps-detalle-movil-paso-2",
+        "title": "Revisa «Datos en base»",
+        "body": "Cada etiqueta (Estatus, Salud, Instalado, Datos en base…) mide al menos 96 px o su ancho natural en una línea",
+        "route": "/internal/module-management",
+        "route_kind": "heredada",
+        "anchor_attr": "app-detalle-estado",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-configuracion-impresora-por-vista",
+    "name": "Impresora por vista en la configuración de impresoras (#271)",
+    "description": "En Escritorio › Impresoras, la sección «Impresora por vista» asigna a cada vista (Pedidos, tablero de Almacén, Ventas en ruta, POS, bultos) su impresora de PDF y la de tickets/etiquetas. Se guarda en el equipo, se respeta después de recargar y la impresión directa ya no cae en la Zebra predeterminada.",
+    "icon": "fa-sliders",
+    "module_model_id": "Configuration",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "impresora-por-vista-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "La sección «Impresora por vista» aparece en la configuración de impresoras (en la app de escritorio es la pestaña «Por vista»).",
+        "route": "/internal/escritorio",
+        "route_kind": "inicio",
+        "anchor_attr": "printer-view-settings",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "impresora-por-vista-paso-2",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Pedidos: casillas «PDF (impresión directa)» y «Tickets y etiquetas (ZPL / ESC/POS)».",
+        "route": "/internal/escritorio",
+        "route_kind": "confirmada",
+        "anchor_attr": "printer-view-pedidos",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "impresora-por-vista-paso-3",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Tablero de Almacén, con su propia impresora.",
+        "route": "/internal/escritorio",
+        "route_kind": "confirmada",
+        "anchor_attr": "printer-view-almacen-tablero",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "impresora-por-vista-paso-4",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Ventas en ruta (offline).",
+        "route": "/internal/escritorio",
+        "route_kind": "confirmada",
+        "anchor_attr": "printer-view-offline",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 5,
+        "step_id": "impresora-por-vista-paso-5",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Punto de venta.",
+        "route": "/internal/escritorio",
+        "route_kind": "confirmada",
+        "anchor_attr": "printer-view-pos",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 6,
+        "step_id": "impresora-por-vista-paso-6",
+        "title": "Haz clic en el control señalado",
+        "body": "«Actualizar impresoras detectadas» vuelve a leer las colas del sistema / QZ Tray y las guardadas del equipo.",
+        "route": "/internal/escritorio",
+        "route_kind": "confirmada",
+        "anchor_attr": "printer-view-refresh",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 7,
+        "step_id": "impresora-por-vista-paso-7",
+        "title": "Haz clic en «Sin asignación (comportamiento actual)»",
+        "body": "El selector buscable de PDF de Pedidos lista las impresoras detectadas; «Sin asignación» deja el comportamiento anterior.",
+        "route": "/internal/escritorio",
+        "route_kind": "heredada",
+        "anchor_attr": "printer-view-input-pedidos-document",
+        "action_hint": "click",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-configuracion-indexar-busqueda",
+    "name": "Indexar búsqueda de texto (SQL o Meilisearch)",
+    "description": "Abre «Indexar búsqueda» en el rastreador de tablas SQL y lee qué motor usará el reindexado; sin Meilisearch configurado regenera el texto de búsqueda en SQL (Postgres), nunca en Mongo.",
+    "icon": "fa-sliders",
+    "module_model_id": "Configuration",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "indexar-busqueda-paso-1",
+        "title": "Haz clic en «Indexar búsqueda»",
+        "body": "«Indexar búsqueda» vive en el menú Acciones de la barra superior; primero se abre ese menú.",
+        "route": "/internal/postgres-table-tracker",
+        "route_kind": "inicio",
+        "anchor_attr": "header-actions-menu",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "indexar-busqueda-paso-2",
+        "title": "Haz clic en «Indexar búsqueda»",
+        "body": "Abre el modal de indexado con el estado del motor de búsqueda.",
+        "route": "/internal/postgres-table-tracker",
+        "route_kind": "heredada",
+        "anchor_attr": "indexar-busqueda-abrir",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "indexar-busqueda-paso-3",
+        "title": "Revisa «Postgres»",
+        "body": "Sin MEILI_URL en el núcleo, el aviso dice que reindexar regenera el texto de búsqueda en SQL (Postgres) (#264).",
+        "route": "/internal/postgres-table-tracker",
+        "route_kind": "heredada",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-configuracion-parametros-sistema",
+    "name": "Parámetros de configuración del sistema",
+    "description": "Consulta el listado general de configuración y abre el menú de acciones para mostrar el alta de parámetros.",
+    "icon": "fa-sliders",
+    "module_model_id": "Configuration",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "parametros-sistema-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Aquí está la lista de parámetros de configuración y su barra de acciones.",
+        "route": "/internal/configuration",
+        "route_kind": "inicio",
+        "anchor_attr": "header-actions-menu",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "parametros-sistema-paso-2",
+        "title": "Haz clic en el control señalado",
+        "body": "Abre el menú de acciones rápidas donde aparece la opción de crear un nuevo registro.",
+        "route": "/internal/configuration",
+        "route_kind": "confirmada",
+        "anchor_attr": "header-actions-menu",
+        "action_hint": "click",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-configuracion-pines-inicio",
+    "name": "Pines rápidos en el tablero de inicio",
+    "description": "Crea o abre el editor de pines del tablero principal para fijar accesos directos en /internal/dashboard.",
+    "icon": "fa-sliders",
+    "module_model_id": "Configuration",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "pines-inicio-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "En esta sección están los pines de tu tablero de inicio.",
+        "route": "/internal/dashboard",
+        "route_kind": "inicio",
+        "anchor_attr": "home-pins",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "pines-inicio-paso-2",
+        "title": "Haz clic en el control señalado",
+        "body": "Abre el editor para registrar un nuevo pin rápido.",
+        "route": "/internal/dashboard",
+        "route_kind": "confirmada",
+        "anchor_attr": "home-pins-create",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "pines-inicio-paso-3",
+        "title": "Escribe en el campo señalado",
+        "body": "Escribe el nombre descriptivo del pin.",
+        "route": "/internal/dashboard",
+        "route_kind": "heredada",
+        "anchor_attr": "home-pin-editor-name",
+        "action_hint": "input",
+        "placement": "auto",
+        "expected_value": "Acceso QA-IA"
+      },
+      {
+        "order": 4,
+        "step_id": "pines-inicio-paso-4",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Confirma que el botón de guardar pin queda disponible para completar el alta.",
+        "route": "/internal/dashboard",
+        "route_kind": "heredada",
+        "anchor_attr": "home-pin-editor-save",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-database-manager-restaurar-abrir",
+    "name": "Abrir la pantalla de restaurar respaldos",
+    "description": "La pantalla de restaurar abre sin 404, con las 3 pestañas de origen (servidor, subir archivo, traer de un destino) y el historial debajo (#368, #360, #338).",
+    "icon": "fa-database",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "restaurar-abrir-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "La URL escrita sin el prefijo interno (/database-manager/restore) ya no pinta el 404; se manda a /internal/database-manager/restore. Las 3 opciones están en pestañas.",
+        "route": "/database-manager/restore",
+        "route_kind": "inicio",
+        "anchor_attr": "dbm-restore-tabs",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "restaurar-abrir-paso-2",
+        "title": "Revisa «Elige un respaldo que ya está en este servidor»",
+        "body": "La primera pestaña, «En el servidor», deja elegir un respaldo que ya está en el servidor y restaurarlo.",
+        "route": "/internal/database-manager/restore",
+        "route_kind": "confirmada",
+        "anchor_attr": "dbm-restore-form-servidor",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "restaurar-abrir-paso-3",
+        "title": "Haz clic en «Subir archivo»",
+        "body": "La pestaña «Subir archivo» muestra el formulario y el botón Restaurar (visible en web y móvil; se habilita al elegir un archivo).",
+        "route": "/internal/database-manager/restore",
+        "route_kind": "confirmada",
+        "anchor_attr": "dbm-restore-upload",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "restaurar-abrir-paso-4",
+        "title": "Haz clic en «Traer de un destino»",
+        "body": "La pestaña «Traer de un destino» muestra el formulario para elegir destino y respaldo remoto.",
+        "route": "/internal/database-manager/restore",
+        "route_kind": "heredada",
+        "anchor_attr": "dbm-restore-remote",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 5,
+        "step_id": "restaurar-abrir-paso-5",
+        "title": "Haz clic en el control señalado",
+        "body": "«Respaldos» regresa a la lista de respaldos con el prefijo interno.",
+        "route": "/internal/database-manager/restore",
+        "route_kind": "heredada",
+        "anchor_attr": "dbm-restore-back",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 6,
+        "step_id": "restaurar-abrir-paso-6",
+        "title": "Haz clic en «Subir respaldo»",
+        "body": "Subir, traer de Drive y Restauraciones viven en el menú Acciones de Respaldos.",
+        "route": "/internal/database-manager/backups",
+        "route_kind": "confirmada",
+        "anchor_attr": "header-actions-menu",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 7,
+        "step_id": "restaurar-abrir-paso-7",
+        "title": "Haz clic en «Subir respaldo»",
+        "body": "«Subir respaldo» abre la pantalla de restaurar en la pestaña «Subir archivo».",
+        "route": "/internal/database-manager/backups",
+        "route_kind": "heredada",
+        "anchor_attr": "dbm-backups-subir",
+        "action_hint": "click",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-database-manager-salud-bd",
+    "name": "Monitor de salud de base de datos",
+    "description": "Consulta la pantalla de salud del administrador de base de datos y actualiza el estado en vivo.",
+    "icon": "fa-database",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "salud-bd-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Carga el monitor de salud de base de datos con el control de recarga.",
+        "route": "/internal/database-manager/health",
+        "route_kind": "inicio",
+        "anchor_attr": "dbm-health-reload",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "salud-bd-paso-2",
+        "title": "Haz clic en el control señalado",
+        "body": "Solicita una actualización inmediata de métricas y estado de nodos.",
+        "route": "/internal/database-manager/health",
+        "route_kind": "confirmada",
+        "anchor_attr": "dbm-health-reload",
+        "action_hint": "click",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-dispositivos-ficha-dispositivo",
+    "name": "Ficha técnica legible del dispositivo",
+    "description": "El detalle de un dispositivo muestra el snapshot ya parseado por secciones (memoria, discos, gráficos, red…) con RAM, VRAM y discos en GB, sin JSON (#335).",
+    "icon": "fa-book-open",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "ficha-dispositivo-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Debajo de los campos del dispositivo aparece «Ficha técnica», con la nota de unidades (RAM/VRAM base 1024, discos base 1000).",
+        "route_kind": "dinamica",
+        "anchor_attr": "device-ficha",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "ficha-dispositivo-paso-2",
+        "title": "Revisa «8 GB»",
+        "body": "Memoria con la RAM total en GB y los 2 módulos (tamaño, tipo y velocidad).",
+        "route_kind": "dinamica",
+        "anchor_attr": "device-ficha-memoria",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "ficha-dispositivo-paso-3",
+        "title": "Revisa «2 discos»",
+        "body": "Almacenamiento con el número de discos, cada uno con tipo y tamaño (512.1 GB y 1 TB), y el espacio usado/libre por unidad.",
+        "route_kind": "dinamica",
+        "anchor_attr": "device-ficha-discos",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "ficha-dispositivo-paso-4",
+        "title": "Revisa «4 GB»",
+        "body": "Gráficos con la tarjeta de video y su VRAM en GB, y las pantallas.",
+        "route_kind": "dinamica",
+        "anchor_attr": "device-ficha-graficos",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-dispositivos-kardex-dispositivo",
+    "name": "Kárdex de un dispositivo",
+    "description": "Desde el detalle de un dispositivo, Acciones → Imprimir ofrece «Dispositivos | Kárdex» con la ficha del equipo y sus movimientos en orden, sin revisiones vacías (#337).",
+    "icon": "fa-book-open",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "kardex-dispositivo-paso-1",
+        "title": "Haz clic en «Acciones»",
+        "body": "El menú Acciones del detalle trae Imprimir.",
+        "route_kind": "dinamica",
+        "anchor_attr": "header-actions-menu",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "kardex-dispositivo-paso-2",
+        "title": "Haz clic en «Imprimir»",
+        "body": "Aparece el kárdex sembrado por el núcleo (reports-physical-device-kardex-0).",
+        "route_kind": "dinamica",
+        "action_hint": "click",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-dispositivos-reporte-inventario",
+    "name": "Inventario de dispositivos (varios registros)",
+    "description": "En la lista de dispositivos, Acciones → Imprimir ofrece «Dispositivos | Inventario», una tabla con todos los equipos seleccionados o filtrados y su total (#337).",
+    "icon": "fa-book-open",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "reporte-inventario-paso-1",
+        "title": "Espera a que cargue la pantalla",
+        "body": "La lista (view-list) muestra el dispositivo de prueba.",
+        "route": "/internal/physical-device",
+        "route_kind": "inicio",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "reporte-inventario-paso-2",
+        "title": "Haz clic en «Acciones»",
+        "body": "El menú Acciones de la lista trae Imprimir.",
+        "route": "/internal/physical-device",
+        "route_kind": "confirmada",
+        "anchor_attr": "header-actions-menu",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "reporte-inventario-paso-3",
+        "title": "Haz clic en «Imprimir»",
+        "body": "Aparece el inventario sembrado (reports-physical-device-inventario-0); imprime la selección o el filtro actual, con nombre, tipo, modelo, serie, sistema, CPU, RAM, discos, GPU, último usuario y última revisión.",
+        "route": "/internal/physical-device",
+        "route_kind": "heredada",
+        "action_hint": "click",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-dispositivos-reporte-sin-cambios",
+    "name": "Reporte de dispositivo sin cambios no llena el historial",
+    "description": "Un dispositivo que se reporta otra vez sin cambio de hardware solo actualiza su última revisión; el historial no crece y no hay notificaciones (#336).",
+    "icon": "fa-book-open",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "reporte-sin-cambios-paso-1",
+        "title": "Haz clic en «Historial»",
+        "body": "El historial del dispositivo de prueba se abre; el reenvío con memoria libre, batería, uso de disco e IP distintos no agregó movimientos (lo comprueba seed:dispositivo-reenvio-sin-cambios contando GET /api/document-change-history antes y después).",
+        "route_kind": "dinamica",
+        "anchor_attr": "history-open",
+        "action_hint": "click",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-facturacion-cfdi-documentos",
+    "name": "Hub de facturación electrónica y documentos CFDI",
+    "description": "Accede al centro de facturación CFDI y entra al listado de documentos fiscales timbrados.",
+    "icon": "fa-file-code",
+    "module_model_id": "CfdiDocument",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "cfdi-documentos-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Carga el tablero principal de facturación electrónica.",
+        "route": "/internal/cfdi",
+        "route_kind": "inicio",
+        "anchor_attr": "cfdi-hub",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "cfdi-documentos-paso-2",
+        "title": "Haz clic en el control señalado",
+        "body": "Abre la vista de documentos CFDI desde el acceso directo del hub.",
+        "route": "/internal/cfdi",
+        "route_kind": "confirmada",
+        "anchor_attr": "cfdi-hub-cfdi-document",
+        "action_hint": "click",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-herramientas-herr-asistente-ordenes",
+    "name": "Asistente de Herramientas con «Últimas órdenes» en view-list",
+    "description": "El Asistente (/internal/herr-asistente) muestra «Últimas órdenes» con el view-list de Imperium (buscador y paginador 25/50/100 en el header), no con una tabla propia (Odoo #255).",
+    "icon": "fa-book-open",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "herr-asistente-ordenes-paso-1",
+        "title": "Revisa «Últimas órdenes»",
+        "body": "La sección «Últimas órdenes» cargó (view-list con ancla herr-asistente-ultimas-ordenes, que pinta la app).",
+        "route": "/internal/herr-asistente",
+        "route_kind": "inicio",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "herr-asistente-ordenes-paso-2",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "La lista tiene el paginador del view-list en el header, como las demás apps; la tabla propia de antes no lo tenía.",
+        "route": "/internal/herr-asistente",
+        "route_kind": "confirmada",
+        "anchor_attr": "view-list-paginador",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "herr-asistente-ordenes-paso-3",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Trae el buscador del view-list («Buscar orden»).",
+        "route": "/internal/herr-asistente",
+        "route_kind": "confirmada",
+        "anchor_attr": "view-list-buscar",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-herramientas-herr-mis-tablas-paginador",
+    "name": "Mis tablas con el paginador 25/50/100 en el header",
+    "description": "En Herramientas → Mis tablas, la lista de tablas es un view-list con el paginador en el header (25, 50 y 100 por página), como las listas de las demás apps (Odoo #254).",
+    "icon": "fa-book-open",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "herr-mis-tablas-paginador-paso-1",
+        "title": "Revisa «Tus tablas»",
+        "body": "La lista «Tus tablas» cargó (view-list con ancla herr-tablas-mis-tablas, que pinta la app).",
+        "route": "/internal/herr-tabla",
+        "route_kind": "inicio",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "herr-mis-tablas-paginador-paso-2",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "El paginador está en el header de la lista aunque haya menos de 50 tablas.",
+        "route": "/internal/herr-tabla",
+        "route_kind": "confirmada",
+        "anchor_attr": "view-list-paginador",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "herr-mis-tablas-paginador-paso-3",
+        "title": "Revisa «Por página»",
+        "body": "El paginador ofrece elegir cuántas tablas ver por página (25, 50 o 100).",
+        "route": "/internal/herr-tabla",
+        "route_kind": "confirmada",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "herr-mis-tablas-paginador-paso-4",
+        "title": "Espera a que cargue la pantalla",
+        "body": "La tabla de prueba sale como una fila de la lista.",
+        "route": "/internal/herr-tabla",
+        "route_kind": "confirmada",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 5,
+        "step_id": "herr-mis-tablas-paginador-paso-5",
+        "title": "Revisa «Diseñar»",
+        "body": "La columna Acciones trae los enlaces Abrir, Capturar y Diseñar de cada tabla (antes salía vacía).",
+        "route": "/internal/herr-tabla",
+        "route_kind": "confirmada",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-historial-historial-simple",
+    "name": "Historial simple con detalle técnico a un clic",
+    "description": "El historial de un registro muestra quién · qué · cuándo y una línea por cambio con el nombre visible de las referencias (no el id) y resaltado de alta, cambio y baja; «Ver detalle técnico» y «Modo avanzado» enseñan todo lo de antes sin perder información (#334, #349).",
+    "icon": "fa-book-open",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "historial-simple-paso-1",
+        "title": "Haz clic en «Historial»",
+        "body": "«Historial» abre el panel con los movimientos del almacén de prueba.",
+        "route_kind": "dinamica",
+        "anchor_attr": "history-open",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "historial-simple-paso-2",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Cada movimiento dice quién, qué y cuándo («IA Admin cambió Nombre · hace 2 h»), con la fecha exacta en el tooltip.",
+        "route_kind": "dinamica",
+        "anchor_attr": "history-entry-summary",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "historial-simple-paso-3",
+        "title": "Haz clic en «Expandir registro del historial»",
+        "body": "Al expandir un movimiento, cada cambio es una línea con chip de tipo (Nuevo, Actualizado, Eliminado o Reordenado), el nombre visible de la referencia (no el id crudo) y el resaltado de antes → después.",
+        "route_kind": "dinamica",
+        "anchor_attr": "history-entry-summary",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "historial-simple-paso-4",
+        "title": "Haz clic en «Modo avanzado»",
+        "body": "«Modo avanzado» deja abierto el detalle técnico (operación, ruta del campo, antes/después completos, comparativo de objetos) en todos los movimientos y se recuerda en el navegador.",
+        "route_kind": "dinamica",
+        "anchor_attr": "history-mode-toggle",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 5,
+        "step_id": "historial-simple-paso-5",
+        "title": "Haz clic en «Modo avanzado»",
+        "body": "Se regresa a la vista simple.",
+        "route_kind": "dinamica",
+        "anchor_attr": "history-mode-toggle",
+        "action_hint": "click",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-inventario-caducidades",
+    "name": "Lotes por vencer en Reportes comerciales",
+    "description": "Gerencia consulta los lotes vencidos o por vencer en los próximos días y ve el lote QA-IA que vence en 20 días con su ubicación y cantidad.",
+    "icon": "fa-boxes-stacked",
+    "module_model_id": "InventoryMovement",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "caducidades-paso-1",
+        "title": "Haz clic en «Caducidades»",
+        "body": "Haz clic en «Caducidades».",
+        "route": "/internal/reportes-comerciales",
+        "route_kind": "inicio",
+        "anchor_attr": "rc-tab-caducidades",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "caducidades-paso-2",
+        "title": "Escribe en «Días hacia adelante»",
+        "body": "Escribe en «Días hacia adelante». Valor: 30.",
+        "route": "/internal/reportes-comerciales",
+        "route_kind": "heredada",
+        "anchor_attr": "rc-filtro-dias",
+        "action_hint": "input",
+        "placement": "auto",
+        "expected_value": "30"
+      },
+      {
+        "order": 3,
+        "step_id": "caducidades-paso-3",
+        "title": "Haz clic en «Consultar»",
+        "body": "Solo sale el lote que vence dentro de 30 días; el de 200 días no",
+        "route": "/internal/reportes-comerciales",
+        "route_kind": "heredada",
+        "anchor_attr": "rc-consultar",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "caducidades-paso-4",
+        "title": "Espera a que cargue la pantalla",
+        "body": "El lote que vence en 200 días no aparece",
+        "route": "/internal/reportes-comerciales",
+        "route_kind": "heredada",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-inventario-flotante-lista-scroll",
+    "name": "El selector de productos scrollea solo la lista",
+    "description": "En una lista de precios nueva, el selector de productos (datalist con paginador compacto) deja fijos el ≡ y el pie al hacer scroll; solo se mueve la lista interior.",
+    "icon": "fa-boxes-stacked",
+    "module_model_id": "InventoryMovement",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "flotante-lista-scroll-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "El formulario de lista de precios muestra la tabla embebida de productos.",
+        "route": "/internal/lista-de-precios/new",
+        "route_kind": "inicio",
+        "anchor_attr": "view-list-agregar-fila",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "flotante-lista-scroll-paso-2",
+        "title": "Haz clic en «Agregar producto»",
+        "body": "Haz clic en «Agregar producto».",
+        "route": "/internal/lista-de-precios/new",
+        "route_kind": "confirmada",
+        "anchor_attr": "view-list-agregar-fila",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "flotante-lista-scroll-paso-3",
+        "title": "Haz clic en «Producto»",
+        "body": "Se abre el datalist paginado del selector de productos.",
+        "route": "/internal/lista-de-precios/new",
+        "route_kind": "heredada",
+        "anchor_attr": "field-product",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "flotante-lista-scroll-paso-4",
+        "title": "Haz clic en el control señalado",
+        "body": "El tamaño de página es un menú de Imperium (#332), no un select nativo.",
+        "route": "/internal/lista-de-precios/new",
+        "route_kind": "heredada",
+        "anchor_attr": "paginador-tamano",
+        "within_anchor": "flotante-pie",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 5,
+        "step_id": "flotante-lista-scroll-paso-5",
+        "title": "Haz clic en «16»",
+        "body": "16 filas no caben en el max_height 480 del datalist; el cuerpo debe scrollear.",
+        "route": "/internal/lista-de-precios/new",
+        "route_kind": "heredada",
+        "anchor_attr": "paginador-tamano-16",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 6,
+        "step_id": "flotante-lista-scroll-paso-6",
+        "title": "Observa esta parte de la pantalla",
+        "body": "Observa esta parte de la pantalla.",
+        "route": "/internal/lista-de-precios/new",
+        "route_kind": "heredada",
+        "anchor_attr": "flotante-asa",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 7,
+        "step_id": "flotante-lista-scroll-paso-7",
+        "title": "Observa esta parte de la pantalla",
+        "body": "Observa esta parte de la pantalla.",
+        "route": "/internal/lista-de-precios/new",
+        "route_kind": "heredada",
+        "anchor_attr": "flotante-pie",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 8,
+        "step_id": "flotante-lista-scroll-paso-8",
+        "title": "Desplázate con la rueda del mouse",
+        "body": "Solo el cuerpo de la lista se desplaza; el ≡ y el paginador no se mueven.",
+        "route": "/internal/lista-de-precios/new",
+        "route_kind": "heredada",
+        "anchor_attr": "flotante-cuerpo",
+        "action_hint": "input",
+        "placement": "auto"
+      },
+      {
+        "order": 9,
+        "step_id": "flotante-lista-scroll-paso-9",
+        "title": "Espera a que cargue la pantalla",
+        "body": "Espera a que cargue la pantalla.",
+        "route": "/internal/lista-de-precios/new",
+        "route_kind": "heredada",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 10,
+        "step_id": "flotante-lista-scroll-paso-10",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Revisa esta parte de la pantalla.",
+        "route": "/internal/lista-de-precios/new",
+        "route_kind": "heredada",
+        "anchor_attr": "flotante-pie",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-inventario-flotante-ultima-opcion-movil",
+    "name": "La última opción de un flotante se alcanza en el celular",
+    "description": "En un celular de 360×740 con barra de botones del sistema, el selector de productos (datalist en hoja móvil) deja la última opción arriba de la barra; se ve y se puede tocar.",
+    "icon": "fa-boxes-stacked",
+    "module_model_id": "InventoryMovement",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "flotante-ultima-opcion-movil-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "El formulario de lista de precios muestra la tabla embebida de productos.",
+        "route": "/internal/lista-de-precios/new",
+        "route_kind": "inicio",
+        "anchor_attr": "view-list-agregar-fila",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "flotante-ultima-opcion-movil-paso-2",
+        "title": "Haz clic en «Agregar producto»",
+        "body": "Haz clic en «Agregar producto».",
+        "route": "/internal/lista-de-precios/new",
+        "route_kind": "confirmada",
+        "anchor_attr": "view-list-agregar-fila",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "flotante-ultima-opcion-movil-paso-3",
+        "title": "Haz clic en «Producto»",
+        "body": "En el celular el datalist abre como hoja inferior con su paginador al pie.",
+        "route": "/internal/lista-de-precios/new",
+        "route_kind": "heredada",
+        "anchor_attr": "field-product",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "flotante-ultima-opcion-movil-paso-4",
+        "title": "Haz clic en el control señalado",
+        "body": "Haz clic en el control señalado.",
+        "route": "/internal/lista-de-precios/new",
+        "route_kind": "heredada",
+        "anchor_attr": "paginador-tamano",
+        "within_anchor": "flotante-pie",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 5,
+        "step_id": "flotante-ultima-opcion-movil-paso-5",
+        "title": "Haz clic en «16»",
+        "body": "16 filas no caben en la hoja; el cuerpo scrollea.",
+        "route": "/internal/lista-de-precios/new",
+        "route_kind": "heredada",
+        "anchor_attr": "paginador-tamano-16",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 6,
+        "step_id": "flotante-ultima-opcion-movil-paso-6",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Con una barra de botones de 48 px, la última opción llega arriba de la barra y recibe el toque.",
+        "route": "/internal/lista-de-precios/new",
+        "route_kind": "heredada",
+        "anchor_attr": "flotante-cuerpo",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-inventario-movimiento-manual",
+    "name": "Entrada y salida manual de existencia",
+    "description": "Almacén suma una pieza encontrada y luego la saca como merma, sin pasar por compras ni pedidos; las dos quedan en el kárdex del producto.",
+    "icon": "fa-boxes-stacked",
+    "module_model_id": "InventoryMovement",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "movimiento-manual-paso-1",
+        "title": "Haz clic en «Entrada»",
+        "body": "Haz clic en «Entrada».",
+        "route": "/internal/inventory-movement/manual",
+        "route_kind": "inicio",
+        "anchor_attr": "mm-entrada",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "movimiento-manual-paso-2",
+        "title": "Escribe en «Producto»",
+        "body": "Escribe en «Producto».",
+        "route": "/internal/inventory-movement/manual",
+        "route_kind": "heredada",
+        "anchor_attr": "mm-producto",
+        "action_hint": "input",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "movimiento-manual-paso-3",
+        "title": "Haz clic en el control señalado",
+        "body": "Haz clic en el control señalado.",
+        "route": "/internal/inventory-movement/manual",
+        "route_kind": "heredada",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "movimiento-manual-paso-4",
+        "title": "Escribe en «Ubicación»",
+        "body": "La ubicación es el input de Imperium (combobox), ya no un select nativo (ticket 332): se escribe el código y se elige la opción",
+        "route": "/internal/inventory-movement/manual",
+        "route_kind": "heredada",
+        "anchor_attr": "mm-ubicacion",
+        "action_hint": "input",
+        "placement": "auto"
+      },
+      {
+        "order": 5,
+        "step_id": "movimiento-manual-paso-5",
+        "title": "Haz clic en el control señalado",
+        "body": "Haz clic en el control señalado.",
+        "route": "/internal/inventory-movement/manual",
+        "route_kind": "heredada",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 6,
+        "step_id": "movimiento-manual-paso-6",
+        "title": "Escribe en «Cantidad»",
+        "body": "Escribe en «Cantidad». Valor: 1.",
+        "route": "/internal/inventory-movement/manual",
+        "route_kind": "heredada",
+        "anchor_attr": "mm-cantidad",
+        "action_hint": "input",
+        "placement": "auto",
+        "expected_value": "1"
+      },
+      {
+        "order": 7,
+        "step_id": "movimiento-manual-paso-7",
+        "title": "Escribe en «Motivo (opcional)»",
+        "body": "Escribe en «Motivo (opcional)». Valor: QA-IA mercancía encontrada.",
+        "route": "/internal/inventory-movement/manual",
+        "route_kind": "heredada",
+        "anchor_attr": "mm-motivo",
+        "action_hint": "input",
+        "placement": "auto",
+        "expected_value": "QA-IA mercancía encontrada"
+      },
+      {
+        "order": 8,
+        "step_id": "movimiento-manual-paso-8",
+        "title": "Haz clic en «Registrar entrada»",
+        "body": "Haz clic en «Registrar entrada».",
+        "route": "/internal/inventory-movement/manual",
+        "route_kind": "heredada",
+        "anchor_attr": "mm-registrar",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 9,
+        "step_id": "movimiento-manual-paso-9",
+        "title": "Haz clic en «Salida»",
+        "body": "Haz clic en «Salida».",
+        "route": "/internal/inventory-movement/manual",
+        "route_kind": "heredada",
+        "anchor_attr": "mm-salida",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 10,
+        "step_id": "movimiento-manual-paso-10",
+        "title": "Escribe en «Producto»",
+        "body": "Escribe en «Producto».",
+        "route": "/internal/inventory-movement/manual",
+        "route_kind": "heredada",
+        "anchor_attr": "mm-producto",
+        "action_hint": "input",
+        "placement": "auto"
+      },
+      {
+        "order": 11,
+        "step_id": "movimiento-manual-paso-11",
+        "title": "Haz clic en el control señalado",
+        "body": "Haz clic en el control señalado.",
+        "route": "/internal/inventory-movement/manual",
+        "route_kind": "heredada",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 12,
+        "step_id": "movimiento-manual-paso-12",
+        "title": "Escribe en «Ubicación»",
+        "body": "La ubicación es el input de Imperium (combobox), ya no un select nativo (ticket 332): se escribe el código y se elige la opción",
+        "route": "/internal/inventory-movement/manual",
+        "route_kind": "heredada",
+        "anchor_attr": "mm-ubicacion",
+        "action_hint": "input",
+        "placement": "auto"
+      },
+      {
+        "order": 13,
+        "step_id": "movimiento-manual-paso-13",
+        "title": "Haz clic en el control señalado",
+        "body": "Haz clic en el control señalado.",
+        "route": "/internal/inventory-movement/manual",
+        "route_kind": "heredada",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 14,
+        "step_id": "movimiento-manual-paso-14",
+        "title": "Escribe en «Cantidad»",
+        "body": "Escribe en «Cantidad». Valor: 1.",
+        "route": "/internal/inventory-movement/manual",
+        "route_kind": "heredada",
+        "anchor_attr": "mm-cantidad",
+        "action_hint": "input",
+        "placement": "auto",
+        "expected_value": "1"
+      },
+      {
+        "order": 15,
+        "step_id": "movimiento-manual-paso-15",
+        "title": "Escribe en «Motivo (opcional)»",
+        "body": "Escribe en «Motivo (opcional)». Valor: QA-IA merma.",
+        "route": "/internal/inventory-movement/manual",
+        "route_kind": "heredada",
+        "anchor_attr": "mm-motivo",
+        "action_hint": "input",
+        "placement": "auto",
+        "expected_value": "QA-IA merma"
+      },
+      {
+        "order": 16,
+        "step_id": "movimiento-manual-paso-16",
+        "title": "Haz clic en «Registrar salida»",
+        "body": "La existencia queda como estaba",
+        "route": "/internal/inventory-movement/manual",
+        "route_kind": "heredada",
+        "anchor_attr": "mm-registrar",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 17,
+        "step_id": "movimiento-manual-paso-17",
+        "title": "Espera a que cargue la pantalla",
+        "body": "Las dos quedan en el kárdex del producto (entrada y salida con el saldo después de cada una)",
+        "route": "/internal/inventory-movement/manual",
+        "route_kind": "heredada",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-inventario-reabastecer",
+    "name": "Productos por reabastecer",
+    "description": "Gerencia consulta qué comprar; un producto con mínimo 10, máximo 50 y 8 disponibles sale con sugerido 42 (llegar al máximo).",
+    "icon": "fa-boxes-stacked",
+    "module_model_id": "InventoryMovement",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "reabastecer-paso-1",
+        "title": "Haz clic en «Productos por reabastecer»",
+        "body": "Haz clic en «Productos por reabastecer».",
+        "route": "/internal/reportes-comerciales",
+        "route_kind": "inicio",
+        "anchor_attr": "rc-tab-reabastecer",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "reabastecer-paso-2",
+        "title": "Haz clic en «Consultar»",
+        "body": "Haz clic en «Consultar».",
+        "route": "/internal/reportes-comerciales",
+        "route_kind": "heredada",
+        "anchor_attr": "rc-consultar",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "reabastecer-paso-3",
+        "title": "Revisa «7,560.00»",
+        "body": "Sugerido 42 = máximo − disponible (50 − 8), por el último costo de $180; sin máximo sería llegar al mínimo",
+        "route": "/internal/reportes-comerciales",
+        "route_kind": "heredada",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-inventario-traslado-apartado",
+    "name": "Trasladar piezas apartadas por pedidos",
+    "description": "Almacén intenta trasladar a otro almacén una pieza que un pedido en «Por surtir» ya apartó; el núcleo lo rechaza y la pantalla dice cuánto hay libre y cuánto apartado.",
+    "icon": "fa-boxes-stacked",
+    "module_model_id": "InventoryMovement",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "traslado-apartado-paso-1",
+        "title": "Escribe en «Ubicación origen»",
+        "body": "Código de la ubicación de origen (se puede escanear)",
+        "route": "/internal/inventory-movement/traslado",
+        "route_kind": "inicio",
+        "anchor_attr": "traslado-origen",
+        "action_hint": "input",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "traslado-apartado-paso-2",
+        "title": "Escribe en «Producto (código)»",
+        "body": "Escribe en «Producto (código)».",
+        "route": "/internal/inventory-movement/traslado",
+        "route_kind": "confirmada",
+        "anchor_attr": "traslado-producto",
+        "action_hint": "input",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "traslado-apartado-paso-3",
+        "title": "Escribe en «Ubicación destino»",
+        "body": "Otro almacén; dentro del mismo almacén lo apartado sí se mueve",
+        "route": "/internal/inventory-movement/traslado",
+        "route_kind": "confirmada",
+        "anchor_attr": "traslado-destino",
+        "action_hint": "input",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "traslado-apartado-paso-4",
+        "title": "Escribe en «Cantidad»",
+        "body": "Escribe en «Cantidad». Valor: 1.",
+        "route": "/internal/inventory-movement/traslado",
+        "route_kind": "confirmada",
+        "anchor_attr": "traslado-cantidad",
+        "action_hint": "input",
+        "placement": "auto",
+        "expected_value": "1"
+      },
+      {
+        "order": 5,
+        "step_id": "traslado-apartado-paso-5",
+        "title": "Haz clic en «Registrar traslado»",
+        "body": "Todo lo del origen está apartado por el pedido del seed",
+        "route": "/internal/inventory-movement/traslado",
+        "route_kind": "confirmada",
+        "anchor_attr": "traslado-registrar",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 6,
+        "step_id": "traslado-apartado-paso-6",
+        "title": "Revisa «apartado por el pedido»",
+        "body": "Revisa «apartado por el pedido».",
+        "route": "/internal/inventory-movement/traslado",
+        "route_kind": "heredada",
+        "anchor_attr": "traslado-error",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-inventario-valuacion",
+    "name": "Inventario valorizado en Reportes comerciales",
+    "description": "Gerencia consulta el inventario valorizado (una fila por ubicación y producto) y encuentra la existencia QA-IA del almacén de prueba con su costo.",
+    "icon": "fa-boxes-stacked",
+    "module_model_id": "InventoryMovement",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "valuacion-paso-1",
+        "title": "Haz clic en «Inventario valorizado»",
+        "body": "Haz clic en «Inventario valorizado».",
+        "route": "/internal/reportes-comerciales",
+        "route_kind": "inicio",
+        "anchor_attr": "rc-tab-valuacion",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "valuacion-paso-2",
+        "title": "Haz clic en «Consultar»",
+        "body": "Haz clic en «Consultar».",
+        "route": "/internal/reportes-comerciales",
+        "route_kind": "heredada",
+        "anchor_attr": "rc-consultar",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "valuacion-paso-3",
+        "title": "Revisa «CSV»",
+        "body": "Con filas en la tabla aparece la descarga en CSV",
+        "route": "/internal/reportes-comerciales",
+        "route_kind": "heredada",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-logistica-devoluciones-entrega",
+    "name": "Devoluciones de entregas",
+    "description": "Logística consulta las devoluciones de mercancía registradas en ruta, con su estado, y desde ahí abre o registra una nueva.",
+    "icon": "fa-truck-fast",
+    "module_model_id": "DeliveryPackage",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "devoluciones-entrega-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Lista de devoluciones de entregas; abre una para revisarla o registra una nueva desde el botón de la tarjeta",
+        "route": "/internal/delivery-return",
+        "route_kind": "inicio",
+        "anchor_attr": "delivery-return-list",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-logistica-entrega-chofer",
+    "name": "Carga y entrega de un bulto con QR y firma del chofer",
+    "description": "El chofer escanea (o escribe) el código del bulto para cargarlo en su vehículo y, ya en el cliente, lo vuelve a escanear para entregarlo con ticket, GPS y firma de recibido.",
+    "icon": "fa-truck-fast",
+    "module_model_id": "DeliveryPackage",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "entrega-chofer-paso-1",
+        "title": "Escribe en «O escribe el código»",
+        "body": "Lo mismo que lee la pistola o la cámara del QR de la caja",
+        "route": "/internal/entregas",
+        "route_kind": "inicio",
+        "anchor_attr": "chofer-codigo",
+        "action_hint": "input",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "entrega-chofer-paso-2",
+        "title": "Haz clic en «Procesar carga»",
+        "body": "Modo «Cargar»; el bulto pasa a cargado en el vehículo del chofer",
+        "route": "/internal/entregas",
+        "route_kind": "confirmada",
+        "anchor_attr": "chofer-codigo-procesar",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "entrega-chofer-paso-3",
+        "title": "Haz clic en «Entregar»",
+        "body": "Haz clic en «Entregar».",
+        "route": "/internal/entregas",
+        "route_kind": "heredada",
+        "anchor_attr": "chofer-modo-entregar",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "entrega-chofer-paso-4",
+        "title": "Escribe en «O escribe el código»",
+        "body": "Escribe en «O escribe el código».",
+        "route": "/internal/entregas",
+        "route_kind": "heredada",
+        "anchor_attr": "chofer-codigo",
+        "action_hint": "input",
+        "placement": "auto"
+      },
+      {
+        "order": 5,
+        "step_id": "entrega-chofer-paso-5",
+        "title": "Haz clic en «Buscar bulto»",
+        "body": "Haz clic en «Buscar bulto».",
+        "route": "/internal/entregas",
+        "route_kind": "heredada",
+        "anchor_attr": "chofer-codigo-procesar",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 6,
+        "step_id": "entrega-chofer-paso-6",
+        "title": "Escribe en «Ticket o referencia de entrega»",
+        "body": "Escribe en «Ticket o referencia de entrega».",
+        "route": "/internal/entregas",
+        "route_kind": "heredada",
+        "anchor_attr": "chofer-entrega-ticket",
+        "action_hint": "input",
+        "placement": "auto"
+      },
+      {
+        "order": 7,
+        "step_id": "entrega-chofer-paso-7",
+        "title": "Firma en el recuadro",
+        "body": "Firma de recibido del cliente en la pantalla",
+        "route": "/internal/entregas",
+        "route_kind": "heredada",
+        "anchor_attr": "chofer-entrega-firma",
+        "action_hint": "input",
+        "placement": "auto"
+      },
+      {
+        "order": 8,
+        "step_id": "entrega-chofer-paso-8",
+        "title": "Haz clic en «Guardar entrega»",
+        "body": "El GPS lo da el navegador (el runner fija uno de prueba); sin GPS pide el motivo",
+        "route": "/internal/entregas",
+        "route_kind": "heredada",
+        "anchor_attr": "chofer-entrega-guardar",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 9,
+        "step_id": "entrega-chofer-paso-9",
+        "title": "Espera a que cargue la pantalla",
+        "body": "El bulto quedó entregado",
+        "route": "/internal/entregas",
+        "route_kind": "heredada",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-logistica-manifiesto-carga",
+    "name": "Manifiesto de carga por vehículo",
+    "description": "Logística filtra el manifiesto por vehículo y ve los bultos que le tocan, con pedido, cliente y totales (bultos, pedidos, cargados y peso), listo para imprimir en PDF.",
+    "icon": "fa-truck-fast",
+    "module_model_id": "DeliveryPackage",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "manifiesto-carga-paso-1",
+        "title": "Escribe en «Vehículo»",
+        "body": "Escribe en «Vehículo».",
+        "route": "/internal/delivery-package/manifiesto",
+        "route_kind": "inicio",
+        "anchor_attr": "manifiesto-vehiculo",
+        "action_hint": "input",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "manifiesto-carga-paso-2",
+        "title": "Haz clic en el control señalado",
+        "body": "Al elegir el vehículo el manifiesto se recarga solo",
+        "route": "/internal/delivery-package/manifiesto",
+        "route_kind": "confirmada",
+        "anchor_attr": "manifiesto-grupo",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "manifiesto-carga-paso-3",
+        "title": "Espera a que cargue la pantalla",
+        "body": "El bulto asignado al vehículo aparece en su grupo con pedido, cliente y estado",
+        "route": "/internal/delivery-package/manifiesto",
+        "route_kind": "heredada",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-manuales-reproducir-guia",
+    "name": "Reproducir una guía sin saltos de página ni resaltes errados (#333)",
+    "description": "Inicia una guía generada desde flujos, avanza pasos y confirma que el coachmark señala su objetivo y que la página no regresa sola a la ruta de inicio.",
+    "icon": "fa-book-open",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "reproducir-guia-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Aquí ves el catálogo de guías con el estado de cada una.",
+        "route": "/internal/interactive-manual/board",
+        "route_kind": "inicio",
+        "anchor_attr": "manual-flow-catalog",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "reproducir-guia-paso-2",
+        "title": "Escribe en el campo señalado",
+        "body": "Busca la guía que quieres seguir.",
+        "route": "/internal/interactive-manual/board",
+        "route_kind": "confirmada",
+        "anchor_attr": "manual-flow-search",
+        "action_hint": "input",
+        "placement": "auto",
+        "expected_value": "Tablero de manuales"
+      },
+      {
+        "order": 3,
+        "step_id": "reproducir-guia-paso-3",
+        "title": "Haz clic en «Iniciar»",
+        "body": "Inicia la guía.",
+        "route": "/internal/interactive-manual/board",
+        "route_kind": "confirmada",
+        "anchor_attr": "manual-flow-card",
+        "filter_text": "Tablero de manuales y versión estática",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "reproducir-guia-paso-4",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "La guía te muestra una tarjeta junto a la parte de la pantalla que explica.",
+        "route": "/internal/interactive-manual/board",
+        "route_kind": "heredada",
+        "anchor_attr": "manual-coachmark",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 5,
+        "step_id": "reproducir-guia-paso-5",
+        "title": "Haz clic en «Siguiente»",
+        "body": "Avanza al siguiente paso.",
+        "route": "/internal/interactive-manual/board",
+        "route_kind": "heredada",
+        "anchor_attr": "manual-coachmark-next",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 6,
+        "step_id": "reproducir-guia-paso-6",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "La tarjeta sigue en la misma página; la guía no te cambia de pantalla sin que lo pidas.",
+        "route": "/internal/interactive-manual/board",
+        "route_kind": "heredada",
+        "anchor_attr": "manual-coachmark",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-manuales-tablero-manuales",
+    "name": "Tablero de manuales y versión estática",
+    "description": "Consulta el tablero de manuales interactivos, busca guías generadas desde flujos y abre el catálogo estático con capturas.",
+    "icon": "fa-book-open",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "tablero-manuales-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Carga la vista principal del tablero de manuales.",
+        "route": "/internal/interactive-manual/board",
+        "route_kind": "inicio",
+        "anchor_attr": "manual-board",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "tablero-manuales-paso-2",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Aquí ves el catálogo de guías con el estado de cada una.",
+        "route": "/internal/interactive-manual/board",
+        "route_kind": "confirmada",
+        "anchor_attr": "manual-flow-catalog",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "tablero-manuales-paso-3",
+        "title": "Escribe en el campo señalado",
+        "body": "Filtra las guías del sistema desde el buscador del catálogo.",
+        "route": "/internal/interactive-manual/board",
+        "route_kind": "confirmada",
+        "anchor_attr": "manual-flow-search",
+        "action_hint": "input",
+        "placement": "auto",
+        "expected_value": "Turnos"
+      },
+      {
+        "order": 4,
+        "step_id": "tablero-manuales-paso-4",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Confirma la disponibilidad del enlace hacia la versión estática con capturas.",
+        "route": "/internal/interactive-manual/board",
+        "route_kind": "confirmada",
+        "anchor_attr": "manual-flow-static-link",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-mensajes-centro-mensajes",
+    "name": "Centro de mensajería interna",
+    "description": "Abre el centro de mensajes internos en /mensajes, filtra conversaciones y verifica el botón de nueva conversación.",
+    "icon": "fa-comments",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "centro-mensajes-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Carga la vista principal del centro de mensajes.",
+        "route": "/mensajes",
+        "route_kind": "inicio",
+        "anchor_attr": "chat-center",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "centro-mensajes-paso-2",
+        "title": "Escribe en el campo señalado",
+        "body": "Filtra el listado de chats usando el buscador lateral.",
+        "route": "/mensajes",
+        "route_kind": "confirmada",
+        "anchor_attr": "chat-list-search",
+        "action_hint": "input",
+        "placement": "auto",
+        "expected_value": "General"
+      },
+      {
+        "order": 3,
+        "step_id": "centro-mensajes-paso-3",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Confirma que el botón para iniciar una nueva conversación está disponible.",
+        "route": "/mensajes",
+        "route_kind": "confirmada",
+        "anchor_attr": "chat-new-conversation",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-nomina-periodos-nomina",
+    "name": "Hub de nómina y períodos de pago",
+    "description": "Abre el hub de nómina y navega al módulo de períodos de nómina para revisar o calcular dispersiones.",
+    "icon": "fa-money-check-dollar",
+    "module_model_id": "PayrollPeriod",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "periodos-nomina-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Carga el tablero principal de nómina y recursos humanos.",
+        "route": "/internal/nomina",
+        "route_kind": "inicio",
+        "anchor_attr": "nomina-hub",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "periodos-nomina-paso-2",
+        "title": "Haz clic en el control señalado",
+        "body": "Ingresa al listado de períodos de nómina.",
+        "route": "/internal/nomina",
+        "route_kind": "confirmada",
+        "anchor_attr": "nomina-hub-payroll-period",
+        "action_hint": "click",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-pos-pos-cierre-caja",
+    "name": "Ubicar el cierre de caja",
+    "description": "El cajero toma su caja con PIN y ubica el botón de cierre de caja, que genera el corte con el arqueo por denominaciones.",
+    "icon": "fa-cash-register",
+    "module_model_id": "PosSession",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "pos-cierre-caja-paso-1",
+        "title": "Haz clic en el control señalado",
+        "body": "Elige la caja QA-IA de la lista; con varias sesiones abiertas la app preselecciona la primera, que puede ser de otro cajero",
+        "route": "/internal/pos",
+        "route_kind": "inicio",
+        "anchor_attr": "pos-sesion-opcion",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "pos-cierre-caja-paso-2",
+        "title": "Haz clic en «Usar sesión seleccionada»",
+        "body": "Toma la caja abierta y libre",
+        "route": "/internal/pos",
+        "route_kind": "heredada",
+        "anchor_attr": "pos-sesion-usar",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "pos-cierre-caja-paso-3",
+        "title": "Escribe en «PIN»",
+        "body": "Escribe el PIN de la caja",
+        "route": "/internal/pos",
+        "route_kind": "heredada",
+        "anchor_attr": "pin-prompt-input",
+        "action_hint": "input",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "pos-cierre-caja-paso-4",
+        "title": "Haz clic en «Validar PIN»",
+        "body": "Haz clic en «Validar PIN».",
+        "route": "/internal/pos",
+        "route_kind": "heredada",
+        "anchor_attr": "pin-prompt-submit",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 5,
+        "step_id": "pos-cierre-caja-paso-5",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Al terminar el turno, Cierre de caja genera el corte; no lo presiones si la caja sigue en uso",
+        "route": "/internal/pos",
+        "route_kind": "heredada",
+        "anchor_attr": "pos-cierre-caja",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-pos-pos-devolucion-lote",
+    "name": "Venta FEFO y devolución que conserva el lote",
+    "description": "El cajero vende una pieza de un producto con lotes (sale el lote que vence primero, FEFO) y la devuelve con F9; la pieza regresa al inventario en el mismo lote y con la misma caducidad.",
+    "icon": "fa-cash-register",
+    "module_model_id": "PosSession",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "pos-devolucion-lote-paso-1",
+        "title": "Haz clic en el control señalado",
+        "body": "Elige la caja QA-IA de la lista; con varias sesiones abiertas la app preselecciona la primera, que puede ser de otro cajero",
+        "route": "/internal/pos",
+        "route_kind": "inicio",
+        "anchor_attr": "pos-sesion-opcion",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "pos-devolucion-lote-paso-2",
+        "title": "Haz clic en «Usar sesión seleccionada»",
+        "body": "Toma la caja fija QA-IA",
+        "route": "/internal/pos",
+        "route_kind": "heredada",
+        "anchor_attr": "pos-sesion-usar",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "pos-devolucion-lote-paso-3",
+        "title": "Escribe en «PIN»",
+        "body": "Escribe en «PIN».",
+        "route": "/internal/pos",
+        "route_kind": "heredada",
+        "anchor_attr": "pin-prompt-input",
+        "action_hint": "input",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "pos-devolucion-lote-paso-4",
+        "title": "Haz clic en «Validar PIN»",
+        "body": "Haz clic en «Validar PIN».",
+        "route": "/internal/pos",
+        "route_kind": "heredada",
+        "anchor_attr": "pin-prompt-submit",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 5,
+        "step_id": "pos-devolucion-lote-paso-5",
+        "title": "Revisa «Sesión asignada correctamente»",
+        "body": "Revisa «Sesión asignada correctamente».",
+        "route": "/internal/pos",
+        "route_kind": "heredada",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 6,
+        "step_id": "pos-devolucion-lote-paso-6",
+        "title": "Haz clic en el control señalado",
+        "body": "Una pieza del producto con lotes QAIA-L1 (vence en 20 días) y QAIA-L2 (200 días)",
+        "route": "/internal/pos",
+        "route_kind": "heredada",
+        "anchor_attr": "pos-catalogo-producto",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 7,
+        "step_id": "pos-devolucion-lote-paso-7",
+        "title": "Haz clic en «Cobrar ahora»",
+        "body": "Haz clic en «Cobrar ahora».",
+        "route": "/internal/pos",
+        "route_kind": "heredada",
+        "anchor_attr": "pos-cobrar",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 8,
+        "step_id": "pos-devolucion-lote-paso-8",
+        "title": "Escribe en el campo señalado",
+        "body": "Escribe en el campo señalado. Valor: 500.",
+        "route": "/internal/pos",
+        "route_kind": "heredada",
+        "anchor_attr": "pos-pago-efectivo",
+        "action_hint": "input",
+        "placement": "auto",
+        "expected_value": "500"
+      },
+      {
+        "order": 9,
+        "step_id": "pos-devolucion-lote-paso-9",
+        "title": "Haz clic en el control señalado",
+        "body": "Haz clic en el control señalado.",
+        "route": "/internal/pos",
+        "route_kind": "heredada",
+        "anchor_attr": "pos-pago-finalizar",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 10,
+        "step_id": "pos-devolucion-lote-paso-10",
+        "title": "Revisa «Su cambio»",
+        "body": "Revisa «Su cambio».",
+        "route": "/internal/pos",
+        "route_kind": "heredada",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 11,
+        "step_id": "pos-devolucion-lote-paso-11",
+        "title": "Espera a que cargue la pantalla",
+        "body": "FEFO, sale el lote que vence primero (QAIA-L1 baja de 2 a 1)",
+        "route": "/internal/pos",
+        "route_kind": "heredada",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 12,
+        "step_id": "pos-devolucion-lote-paso-12",
+        "title": "Haz clic en «Aceptar»",
+        "body": "Sin impresora (QZ Tray) sale «Algo salió mal»; se acepta. Con impresora no aparece.",
+        "route": "/internal/pos",
+        "route_kind": "heredada",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 13,
+        "step_id": "pos-devolucion-lote-paso-13",
+        "title": "Haz clic en el control señalado",
+        "body": "Cierra el cobro («Cerrar»)",
+        "route": "/internal/pos",
+        "route_kind": "heredada",
+        "anchor_attr": "pos-pago-finalizar",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 14,
+        "step_id": "pos-devolucion-lote-paso-14",
+        "title": "Presiona «Folio del ticket de venta»",
+        "body": "Devolución de una venta",
+        "route": "/internal/pos",
+        "route_kind": "heredada",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 15,
+        "step_id": "pos-devolucion-lote-paso-15",
+        "title": "Escribe en «Folio del ticket de venta»",
+        "body": "Escribe en «Folio del ticket de venta».",
+        "route": "/internal/pos",
+        "route_kind": "heredada",
+        "anchor_attr": "pos-devolucion-folio",
+        "action_hint": "input",
+        "placement": "auto"
+      },
+      {
+        "order": 16,
+        "step_id": "pos-devolucion-lote-paso-16",
+        "title": "Haz clic en «Buscar»",
+        "body": "Haz clic en «Buscar».",
+        "route": "/internal/pos",
+        "route_kind": "heredada",
+        "anchor_attr": "pos-devolucion-buscar",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 17,
+        "step_id": "pos-devolucion-lote-paso-17",
+        "title": "Haz clic en «Devolver todo»",
+        "body": "Haz clic en «Devolver todo».",
+        "route": "/internal/pos",
+        "route_kind": "heredada",
+        "anchor_attr": "pos-devolucion-todo",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 18,
+        "step_id": "pos-devolucion-lote-paso-18",
+        "title": "Haz clic en «Registrar devolución»",
+        "body": "Haz clic en «Registrar devolución».",
+        "route": "/internal/pos",
+        "route_kind": "heredada",
+        "anchor_attr": "pos-devolucion-confirmar",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 19,
+        "step_id": "pos-devolucion-lote-paso-19",
+        "title": "Revisa «regresó al inventario»",
+        "body": "Revisa «regresó al inventario».",
+        "route": "/internal/pos",
+        "route_kind": "heredada",
+        "anchor_attr": "pos-devolucion-resultado",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 20,
+        "step_id": "pos-devolucion-lote-paso-20",
+        "title": "Espera a que cargue la pantalla",
+        "body": "La pieza volvió al mismo lote QAIA-L1 (otra vez 2) con su caducidad",
+        "route": "/internal/pos",
+        "route_kind": "heredada",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-pos-pos-venta",
+    "name": "Venta de mostrador en efectivo",
+    "description": "El cajero toma la caja de prueba, agrega un producto desde el catálogo, cobra en efectivo y ve el cambio.",
+    "icon": "fa-cash-register",
+    "module_model_id": "PosSession",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "pos-venta-paso-1",
+        "title": "Haz clic en el control señalado",
+        "body": "Elige la caja QA-IA de la lista; con varias sesiones abiertas la app preselecciona la primera, que puede ser de otro cajero",
+        "route": "/internal/pos",
+        "route_kind": "inicio",
+        "anchor_attr": "pos-sesion-opcion",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "pos-venta-paso-2",
+        "title": "Haz clic en «Usar sesión seleccionada»",
+        "body": "Toma la caja fija QA-IA (abierta y libre); el seed la deja lista",
+        "route": "/internal/pos",
+        "route_kind": "heredada",
+        "anchor_attr": "pos-sesion-usar",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "pos-venta-paso-3",
+        "title": "Escribe en «PIN»",
+        "body": "PIN de la caja (el seed lo fija en 2468)",
+        "route": "/internal/pos",
+        "route_kind": "heredada",
+        "anchor_attr": "pin-prompt-input",
+        "action_hint": "input",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "pos-venta-paso-4",
+        "title": "Haz clic en «Validar PIN»",
+        "body": "Haz clic en «Validar PIN».",
+        "route": "/internal/pos",
+        "route_kind": "heredada",
+        "anchor_attr": "pin-prompt-submit",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 5,
+        "step_id": "pos-venta-paso-5",
+        "title": "Revisa «Sesión asignada correctamente»",
+        "body": "La caja queda asignada (PUT /api/pos-session); antes de esto los atajos se pierden",
+        "route": "/internal/pos",
+        "route_kind": "heredada",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 6,
+        "step_id": "pos-venta-paso-6",
+        "title": "Haz clic en el control señalado",
+        "body": "Agrega el producto desde el catálogo en vivo",
+        "route": "/internal/pos",
+        "route_kind": "heredada",
+        "anchor_attr": "pos-catalogo-producto",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 7,
+        "step_id": "pos-venta-paso-7",
+        "title": "Haz clic en «Cobrar ahora»",
+        "body": "Haz clic en «Cobrar ahora».",
+        "route": "/internal/pos",
+        "route_kind": "heredada",
+        "anchor_attr": "pos-cobrar",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 8,
+        "step_id": "pos-venta-paso-8",
+        "title": "Escribe en el campo señalado",
+        "body": "Lo que entrega el cliente",
+        "route": "/internal/pos",
+        "route_kind": "heredada",
+        "anchor_attr": "pos-pago-efectivo",
+        "action_hint": "input",
+        "placement": "auto",
+        "expected_value": "500"
+      },
+      {
+        "order": 9,
+        "step_id": "pos-venta-paso-9",
+        "title": "Haz clic en el control señalado",
+        "body": "Haz clic en el control señalado.",
+        "route": "/internal/pos",
+        "route_kind": "heredada",
+        "anchor_attr": "pos-pago-finalizar",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 10,
+        "step_id": "pos-venta-paso-10",
+        "title": "Revisa «Su cambio»",
+        "body": "Revisa «Su cambio».",
+        "route": "/internal/pos",
+        "route_kind": "heredada",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-predial-predio-padron",
+    "name": "Padrón catastral y alta de predio",
+    "description": "Accede al padrón municipal de predios, despliega el menú de acciones y abre el formulario con clave catastral, propietario y avalúo fiscal.",
+    "icon": "fa-landmark",
+    "module_model_id": "Predio",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "predio-padron-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Carga la lista de predios registrados en el padrón catastral.",
+        "route": "/internal/subject/predial/predio",
+        "route_kind": "inicio",
+        "anchor_attr": "header-actions-menu",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "predio-padron-paso-2",
+        "title": "Haz clic en el control señalado",
+        "body": "Despliega el menú de acciones del listado.",
+        "route": "/internal/subject/predial/predio",
+        "route_kind": "confirmada",
+        "anchor_attr": "header-actions-menu",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "predio-padron-paso-3",
+        "title": "Haz clic en «Nuevo»",
+        "body": "Abre el formulario de alta de predio mostrando los campos catastrales.",
+        "route": "/internal/subject/predial/predio",
+        "route_kind": "heredada",
+        "anchor_attr": "view-list-new",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "predio-padron-paso-4",
+        "title": "Escribe en el campo señalado",
+        "body": "Captura la clave catastral del predio.",
+        "route": "/internal/subject/predial/predio",
+        "route_kind": "heredada",
+        "anchor_attr": "field-clave_catastral",
+        "action_hint": "input",
+        "placement": "auto",
+        "expected_value": "01-001-001-0001"
+      },
+      {
+        "order": 5,
+        "step_id": "predio-padron-paso-5",
+        "title": "Escribe en el campo señalado",
+        "body": "Registra la denominación o titular del predio.",
+        "route": "/internal/subject/predial/predio",
+        "route_kind": "heredada",
+        "anchor_attr": "field-name",
+        "action_hint": "input",
+        "placement": "auto",
+        "expected_value": "Predio prueba QA-IA"
+      },
+      {
+        "order": 6,
+        "step_id": "predio-padron-paso-6",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Confirma que los campos de avalúo fiscal y vigencia están disponibles para completar el alta.",
+        "route": "/internal/subject/predial/predio",
+        "route_kind": "heredada",
+        "anchor_attr": "field-avaluo_fiscal",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-reportes-disenador-reportes",
+    "name": "Diseñar un reporte imprimible",
+    "description": "El administrador abre el diseñador de reportes, recorre los campos, bloques y ajustes de hoja, y alterna entre diseño y vista previa.",
+    "icon": "fa-print",
+    "module_model_id": "Reports",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "disenador-reportes-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Pon el nombre del reporte; con él lo encuentras después en la lista de reportes",
+        "route": "/internal/reports/new",
+        "route_kind": "inicio",
+        "anchor_attr": "report-designer-name",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "disenador-reportes-paso-2",
+        "title": "Haz clic en «Campos»",
+        "body": "Campos del modelo que puedes insertar en el texto del reporte",
+        "route": "/internal/reports/new",
+        "route_kind": "confirmada",
+        "anchor_attr": "report-designer-tab-fields",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "disenador-reportes-paso-3",
+        "title": "Haz clic en «Bloques»",
+        "body": "Bloques listos (tablas, encabezados, firmas) para armar la hoja",
+        "route": "/internal/reports/new",
+        "route_kind": "heredada",
+        "anchor_attr": "report-designer-tab-blocks",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "disenador-reportes-paso-4",
+        "title": "Haz clic en «Hoja»",
+        "body": "Tamaño, orientación y márgenes de la hoja",
+        "route": "/internal/reports/new",
+        "route_kind": "heredada",
+        "anchor_attr": "report-designer-tab-page",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 5,
+        "step_id": "disenador-reportes-paso-5",
+        "title": "Haz clic en el control señalado",
+        "body": "La vista previa muestra el reporte con datos de ejemplo",
+        "route": "/internal/reports/new",
+        "route_kind": "heredada",
+        "anchor_attr": "report-designer-mode-preview",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 6,
+        "step_id": "disenador-reportes-paso-6",
+        "title": "Haz clic en el control señalado",
+        "body": "Regresa al modo diseño para seguir editando",
+        "route": "/internal/reports/new",
+        "route_kind": "heredada",
+        "anchor_attr": "report-designer-mode-design",
+        "action_hint": "click",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-reuniones-nueva-reunion",
+    "name": "Programar una reunión",
+    "description": "Entra al módulo de reuniones y abre el modal o formulario de nueva reunión con su campo de título.",
+    "icon": "fa-video",
+    "module_model_id": "Reuniones",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "nueva-reunion-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Carga la agenda de reuniones con la acción para crear una nueva.",
+        "route": "/internal/reuniones",
+        "route_kind": "inicio",
+        "anchor_attr": "reuniones-nueva",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "nueva-reunion-paso-2",
+        "title": "Haz clic en el control señalado",
+        "body": "Abre el formulario de programación de reunión mostrando el campo de título.",
+        "route": "/internal/reuniones",
+        "route_kind": "confirmada",
+        "anchor_attr": "reuniones-nueva",
+        "action_hint": "click",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-shell-badges-movil",
+    "name": "Badges de la barra inferior (Mensajes y Más)",
+    "description": "En el celular y el APK, «Mensajes» cuenta solo mensajes y las notificaciones se marcan en «Más» y en «Notificaciones» de su hoja; nunca se suman (#330).",
+    "icon": "fa-compass",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "badges-movil-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "La barra inferior aparece en el ancho de teléfono. El badge de «Mensajes» (mobile-nav-messages-badge) solo sale con mensajes sin leer.",
+        "route": "/internal/dashboard",
+        "route_kind": "inicio",
+        "anchor_attr": "mobile-nav-messages",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "badges-movil-paso-2",
+        "title": "Haz clic en el control señalado",
+        "body": "«Más» abre su hoja; con notificaciones sin leer, «Más» lleva su badge (mobile-nav-more-badge) y «Notificaciones» su recuadro rojo con el número (mobile-more-notifications-badge).",
+        "route": "/internal/dashboard",
+        "route_kind": "confirmada",
+        "anchor_attr": "mobile-nav-more",
+        "action_hint": "click",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-shell-navegacion-menu",
+    "name": "Navegación del menú lateral y acceso al manual",
+    "description": "Usuario autenticado abre el tablero de manuales desde el encabezado y utiliza el menú principal para buscar módulos.",
+    "icon": "fa-compass",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "navegacion-menu-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Al entrar verás el encabezado principal con el menú y tus accesos.",
+        "route": "/internal/dashboard",
+        "route_kind": "inicio",
+        "anchor_attr": "shell-header",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "navegacion-menu-paso-2",
+        "title": "Haz clic en el control señalado",
+        "body": "Abre el tablero de manuales interactivos desde el botón de ayuda del encabezado.",
+        "route": "/internal/dashboard",
+        "route_kind": "confirmada",
+        "anchor_attr": "header-manual-button",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "navegacion-menu-paso-3",
+        "title": "Haz clic en «Menú»",
+        "body": "Abre el menú principal (modal) y deja visible el buscador a todo el ancho, con la lupa en su slot.",
+        "route": "/internal/interactive-manual/board",
+        "route_kind": "confirmada",
+        "anchor_attr": "main-menu-toggle",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "navegacion-menu-paso-4",
+        "title": "Escribe en el campo señalado",
+        "body": "Filtra las rutas disponibles escribiendo «Usuarios».",
+        "route": "/internal/interactive-manual/board",
+        "route_kind": "heredada",
+        "anchor_attr": "main-menu-search",
+        "action_hint": "input",
+        "placement": "auto",
+        "expected_value": "Usuarios"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-tableros-tablero-ia",
+    "name": "Asistente de tableros dinámicos con IA",
+    "description": "Abre la pantalla de conversación con IA para consultar o generar reportes y tableros dinámicos.",
+    "icon": "fa-chart-pie",
+    "module_model_id": "DynamicDashboard",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "tablero-ia-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "En este panel le pides al chat que arme tableros dinámicos.",
+        "route": "/internal/dynamic-dashboard/ai-chat",
+        "route_kind": "inicio",
+        "anchor_attr": "dynamic-dashboard-ai-chat",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "tablero-ia-paso-2",
+        "title": "Escribe en el campo señalado",
+        "body": "Escribe una consulta de ejemplo en el campo de entrada del asistente.",
+        "route": "/internal/dynamic-dashboard/ai-chat",
+        "route_kind": "confirmada",
+        "anchor_attr": "dynamic-dashboard-ai-chat-input",
+        "action_hint": "input",
+        "placement": "auto",
+        "expected_value": "Resumen de ventas del mes"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-turnos-turnos-caja-usuario",
+    "name": "Caja de turnos",
+    "description": "El cajero abre su caja, toma el siguiente turno, lo notifica, lo termina y cierra la caja. Esta guía no pulsa esas acciones para no mover turnos reales.",
+    "icon": "fa-ticket",
+    "module_model_id": "TicketingSystemTurn",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "turnos-caja-usuario-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "«Tomar siguiente turno» atiende al siguiente de la fila que esta caja puede ver. Ábrela antes desde Turnos → Acciones → Abrir caja a turnos.",
+        "route": "/internal/subruta/ticketing-system-open-box",
+        "route_kind": "inicio",
+        "anchor_attr": "turn-open-box-take",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "turnos-caja-usuario-paso-2",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "«Cerrar caja» deja de atender en esta ventanilla. Si hay un turno abierto, la app te lo avisa.",
+        "route": "/internal/subruta/ticketing-system-open-box",
+        "route_kind": "confirmada",
+        "anchor_attr": "turn-open-box-close",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-turnos-turnos-kiosko",
+    "name": "Asistentes de turnos",
+    "description": "En el kiosko o ventanilla, el ciudadano elige su tipo de atención, sigue a los servicios con Siguiente y confirma para obtener su folio. Esta guía no pulsa Confirmar para no crear turnos de prueba.",
+    "icon": "fa-ticket",
+    "module_model_id": "TicketingSystemTurn",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "turnos-kiosko-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "El primer paso muestra los tipos de ciudadano (por ejemplo general o 3a edad). Elige uno para poder seguir.",
+        "route": "/internal/ticketing-system-turn/turn-wizard",
+        "route_kind": "inicio",
+        "anchor_attr": "turn-wizard-customer-type",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "turnos-kiosko-paso-2",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Con Siguiente pasas a elegir el servicio y luego a Confirmar, donde sale el folio. No pulses Confirmar en una corrida que no deba crear un turno.",
+        "route": "/internal/ticketing-system-turn/turn-wizard",
+        "route_kind": "confirmada",
+        "anchor_attr": "turn-wizard-next",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-turnos-turnos-tablero",
+    "name": "Tablero de turnos",
+    "description": "El tablero de la sala de espera muestra el reloj, los turnos en atención y los próximos, con voz y pantalla completa.",
+    "icon": "fa-ticket",
+    "module_model_id": "TicketingSystemTurn",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "turnos-tablero-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Esta pantalla se pone en el monitor de la sala de espera para que la gente vea su turno.",
+        "route": "/internal/turn-dashboard",
+        "route_kind": "inicio",
+        "anchor_attr": "turn-board",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "turnos-tablero-paso-2",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "El reloj del tablero corre en tiempo real.",
+        "route": "/internal/turn-dashboard",
+        "route_kind": "confirmada",
+        "anchor_attr": "turn-board-clock",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "turnos-tablero-paso-3",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Pantalla completa deja el tablero sin menús, listo para la sala.",
+        "route": "/internal/turn-dashboard",
+        "route_kind": "confirmada",
+        "anchor_attr": "turn-board-fullscreen",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-usuarios-crear-usuario",
+    "name": "Alta y listado de usuarios",
+    "description": "Entra al padrón de usuarios del sistema, despliega el menú de acciones y abre el formulario de creación de usuario.",
+    "icon": "fa-users-gear",
+    "module_model_id": "User",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "crear-usuario-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Carga la lista de usuarios activos con la barra de acciones.",
+        "route": "/internal/user",
+        "route_kind": "inicio",
+        "anchor_attr": "header-actions-menu",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "crear-usuario-paso-2",
+        "title": "Haz clic en el control señalado",
+        "body": "Despliega el menú de acciones para mostrar el botón Nuevo.",
+        "route": "/internal/user",
+        "route_kind": "confirmada",
+        "anchor_attr": "header-actions-menu",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "crear-usuario-paso-3",
+        "title": "Haz clic en «Nuevo»",
+        "body": "Navega al formulario de registro de un usuario nuevo.",
+        "route": "/internal/user",
+        "route_kind": "heredada",
+        "anchor_attr": "view-list-new",
+        "action_hint": "click",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-usuarios-editar-usuario-sin-autollenado",
+    "name": "Editar usuario sin autollenado del navegador",
+    "description": "En la ficha de un usuario, Email (type=email, autocomplete=off) y Contraseña (autocomplete=new-password) llegan bloqueados por manual-autofill; el navegador no les pone el acceso de quien edita y la persona escribe o pega al tocarlos. Ticket Odoo",
+    "icon": "fa-users-gear",
+    "module_model_id": "User",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "editar-usuario-sin-autollenado-paso-1",
+        "title": "Espera a que cargue la pantalla",
+        "body": "Email trae el correo guardado del usuario (no el de quien edita) y sigue bloqueado hasta que la persona lo toque.",
+        "route_kind": "dinamica",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "editar-usuario-sin-autollenado-paso-2",
+        "title": "Espera a que cargue la pantalla",
+        "body": "Contraseña llega vacía y bloqueada; Chrome no pone la contraseña guardada.",
+        "route_kind": "dinamica",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "editar-usuario-sin-autollenado-paso-3",
+        "title": "Escribe en «Contraseña»",
+        "body": "Al tocarla se libera (también Email, mismo formulario) y se escribe; el flujo no guarda.",
+        "route_kind": "dinamica",
+        "anchor_attr": "field-password",
+        "action_hint": "input",
+        "placement": "auto",
+        "expected_value": "Prueba-manual-252"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-usuarios-grupos-ficha-usuario",
+    "name": "Grupos en la ficha de usuario",
+    "description": "La pestaña «Grupos» de la ficha de un usuario lista los grupos cuyo user_ids lo contiene y abre el detalle del grupo al hacer clic.",
+    "icon": "fa-users-gear",
+    "module_model_id": "User",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "grupos-ficha-usuario-paso-1",
+        "title": "Espera a que cargue la pantalla",
+        "body": "El núcleo devuelve los grupos cuyo arreglo user_ids contiene al usuario (antes comparaba la celda completa y no traía ninguno).",
+        "route_kind": "dinamica",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "grupos-ficha-usuario-paso-2",
+        "title": "Haz clic en «Grupos»",
+        "body": "Abre la pestaña Grupos de la ficha; ya no dice «Este usuario no pertenece a ningún grupo».",
+        "route_kind": "dinamica",
+        "anchor_attr": "user-form-groups",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "grupos-ficha-usuario-paso-3",
+        "title": "Revisa «QA-IA Consulta»",
+        "body": "Aparece el grupo de prueba de ia.consulta que siembra cuentas-ia.",
+        "route_kind": "dinamica",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "grupos-ficha-usuario-paso-4",
+        "title": "Haz clic en «QA-IA Consulta»",
+        "body": "El clic en el grupo abre su detalle.",
+        "route_kind": "dinamica",
+        "anchor_attr": "user-form-group-item",
+        "filter_text": "QA-IA Consulta",
+        "action_hint": "click",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-vehiculos-padron-vehiculo",
+    "name": "Padrón de vehículos y chofer asignado",
+    "description": "Gerencia abre el padrón de vehículos, encuentra la unidad QA-IA con sus placas y entra a su ficha para ver el estado operativo y el chofer asignado.",
+    "icon": "fa-car",
+    "module_model_id": "Vehicle",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "padron-vehiculo-paso-1",
+        "title": "Espera a que cargue la pantalla",
+        "body": "La lista trae estado, nombre, chofer, placas y tipo de unidad",
+        "route": "/internal/vehicle",
+        "route_kind": "inicio",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "padron-vehiculo-paso-2",
+        "title": "Haz clic en el control señalado",
+        "body": "Haz clic en el control señalado.",
+        "route": "/internal/vehicle",
+        "route_kind": "confirmada",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "padron-vehiculo-paso-3",
+        "title": "Revisa «QA-IA IA Chofer»",
+        "body": "El chofer de la unidad es el empleado de ia.chofer; su cola de carga y entrega sale de aquí",
+        "route": "/internal/vehicle",
+        "route_kind": "heredada",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-buscador-lista-escritorio",
+    "name": "El buscador de la lista es imperium-sic-input y conserva lo que se escribe (escritorio)",
+    "description": "En Pedidos a 1440×900, el buscador de la barra superior es el componente de input de Imperium; lo tecleado llega al campo tal cual y Enter busca.",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "buscador-lista-escritorio-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "La barra superior de la lista trae el buscador.",
+        "route": "/internal/pedidos",
+        "route_kind": "inicio",
+        "anchor_attr": "header-actions-buscar-campo",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "buscador-lista-escritorio-paso-2",
+        "title": "Escribe en «Buscar...»",
+        "body": "Lo escrito queda en el campo sin invertirse ni perderse.",
+        "route": "/internal/pedidos",
+        "route_kind": "confirmada",
+        "anchor_attr": "header-actions-buscar-campo",
+        "action_hint": "input",
+        "placement": "auto",
+        "expected_value": "zz sin resultados 345"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-buscador-lista-movil",
+    "name": "El buscador de la lista es imperium-sic-input y conserva lo que se escribe (celular)",
+    "description": "En Pedidos a 360×740, el buscador de la barra móvil de la lista es el componente de input de Imperium; lo tecleado llega al campo tal cual.",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "buscador-lista-movil-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "En el celular el buscador vive en la barra de la lista.",
+        "route": "/internal/pedidos",
+        "route_kind": "inicio",
+        "anchor_attr": "view-list-buscar-movil",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "buscador-lista-movil-paso-2",
+        "title": "Escribe en «Buscar...»",
+        "body": "Lo escrito queda en el campo sin invertirse ni perderse.",
+        "route": "/internal/pedidos",
+        "route_kind": "confirmada",
+        "anchor_attr": "view-list-buscar-movil",
+        "action_hint": "input",
+        "placement": "auto",
+        "expected_value": "zz sin resultados 345"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-clientes-por-vendedor",
+    "name": "El vendedor solo ve sus clientes y los halla por nombre (#291)",
+    "description": "En Ventas en ruta el vendedor sincroniza y busca cliente por palabras del nombre, en otro orden y sin acentos; sale su cliente asignado y no sale el de otro vendedor.",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "clientes-por-vendedor-paso-1",
+        "title": "Haz clic en «Abrir opciones de usuario»",
+        "body": "Haz clic en «Abrir opciones de usuario».",
+        "route": "/offline/pedidos/mis-pedidos",
+        "route_kind": "inicio",
+        "anchor_attr": "cuenta-opciones",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "clientes-por-vendedor-paso-2",
+        "title": "Haz clic en «Sincronizar datos»",
+        "body": "Baja al teléfono solo los clientes asignados al vendedor; el núcleo filtra la lista",
+        "route": "/offline/pedidos/mis-pedidos",
+        "route_kind": "heredada",
+        "anchor_attr": "offline-sincronizar",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "clientes-por-vendedor-paso-3",
+        "title": "Haz clic en «Nuevo pedido»",
+        "body": "Haz clic en «Nuevo pedido».",
+        "route": "/offline/pedidos/mis-pedidos",
+        "route_kind": "heredada",
+        "anchor_attr": "offline-pedido-nuevo",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "clientes-por-vendedor-paso-4",
+        "title": "Escribe en «Buscar cliente»",
+        "body": "El cliente de otro vendedor no sale aunque se escriba su nombre",
+        "route": "/crear",
+        "route_kind": "confirmada",
+        "anchor_attr": "offline-cliente",
+        "action_hint": "input",
+        "placement": "auto",
+        "expected_value": "ajeno cliente"
+      },
+      {
+        "order": 5,
+        "step_id": "clientes-por-vendedor-paso-5",
+        "title": "Escribe en «Buscar cliente»",
+        "body": "Se busca por palabras del nombre, en otro orden y sin acento («Crédito»)",
+        "route": "/crear",
+        "route_kind": "confirmada",
+        "anchor_attr": "offline-cliente",
+        "action_hint": "input",
+        "placement": "auto",
+        "expected_value": "credito cliente"
+      },
+      {
+        "order": 6,
+        "step_id": "clientes-por-vendedor-paso-6",
+        "title": "Haz clic en el control señalado",
+        "body": "Sale su cliente asignado y se elige",
+        "route": "/crear",
+        "route_kind": "confirmada",
+        "action_hint": "click",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-detalle-paginador-breadcrumb",
+    "name": "Cambiar de documento con el paginador del detalle",
+    "description": "Ventas abre un pedido y se mueve con el paginador del detalle (siguiente y anterior). El breadcrumb, la posición del paginador y los datos del detalle siempre son del documento actual (#280).",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "detalle-paginador-breadcrumb-paso-1",
+        "title": "Espera a que cargue la pantalla",
+        "body": "La lista trae los dos pedidos de prueba, uno junto al otro",
+        "route": "/internal/pedidos",
+        "route_kind": "inicio",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "detalle-paginador-breadcrumb-paso-2",
+        "title": "Haz clic en el control señalado",
+        "body": "Se abre el primer pedido y el paginador del detalle muestra su posición en la lista",
+        "route": "/internal/pedidos",
+        "route_kind": "confirmada",
+        "anchor_attr": "view-list-row",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "detalle-paginador-breadcrumb-paso-3",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "El breadcrumb termina en el primer pedido",
+        "route": "/internal/pedidos",
+        "route_kind": "heredada",
+        "anchor_attr": "breadcrumb-actual",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "detalle-paginador-breadcrumb-paso-4",
+        "title": "Haz clic en «Registro siguiente»",
+        "body": "«Siguiente» abre el segundo pedido",
+        "route": "/internal/pedidos",
+        "route_kind": "heredada",
+        "anchor_attr": "record-pager-siguiente",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 5,
+        "step_id": "detalle-paginador-breadcrumb-paso-5",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "El breadcrumb cambia al segundo pedido",
+        "route": "/internal/pedidos",
+        "route_kind": "heredada",
+        "anchor_attr": "breadcrumb-actual",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 6,
+        "step_id": "detalle-paginador-breadcrumb-paso-6",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "El detalle también es del segundo pedido",
+        "route": "/internal/pedidos",
+        "route_kind": "heredada",
+        "anchor_attr": "pedidos-detalle-folio-interno",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 7,
+        "step_id": "detalle-paginador-breadcrumb-paso-7",
+        "title": "Haz clic en «Registro anterior»",
+        "body": "«Anterior» vuelve al primer pedido",
+        "route": "/internal/pedidos",
+        "route_kind": "heredada",
+        "anchor_attr": "record-pager-anterior",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 8,
+        "step_id": "detalle-paginador-breadcrumb-paso-8",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "El breadcrumb vuelve al primer pedido",
+        "route": "/internal/pedidos",
+        "route_kind": "heredada",
+        "anchor_attr": "breadcrumb-actual",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 9,
+        "step_id": "detalle-paginador-breadcrumb-paso-9",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "El detalle vuelve a ser del primer pedido",
+        "route": "/internal/pedidos",
+        "route_kind": "heredada",
+        "anchor_attr": "pedidos-detalle-folio-interno",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-flotante-filtro-columna",
+    "name": "La × del flotante queda en la esquina y el filtro llena el alto",
+    "description": "En Pedidos, el menú de la columna Descripción muestra la × dentro de la esquina del flotante (sin tapar el disparador del filtro ni montarse sobre la barra de scroll). En el filtro de Estado, con chips como Por surtir, la lista ocupa el alto disponible y «Limpiar filtro» queda fijo abajo.",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "flotante-filtro-columna-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "La lista de pedidos carga con al menos un pedido.",
+        "route": "/internal/pedidos",
+        "route_kind": "inicio",
+        "anchor_attr": "view-list-row",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "flotante-filtro-columna-paso-2",
+        "title": "Haz clic en «Descripción»",
+        "body": "Se abre el flotante de filtro de la columna Descripción.",
+        "route": "/internal/pedidos",
+        "route_kind": "confirmada",
+        "anchor_attr": "view-list-column-description",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "flotante-filtro-columna-paso-3",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "La × queda dentro del rect del flotante y no se encima con el ícono o disparador de filtro de Descripción.",
+        "route": "/internal/pedidos",
+        "route_kind": "heredada",
+        "anchor_attr": "flotante-cerrar",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "flotante-filtro-columna-paso-4",
+        "title": "Haz clic en «Cerrar modal»",
+        "body": "Al cerrar, la × desaparece con el flotante y no se queda sola (I+D 498).",
+        "route": "/internal/pedidos",
+        "route_kind": "heredada",
+        "anchor_attr": "flotante-cerrar",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 5,
+        "step_id": "flotante-filtro-columna-paso-5",
+        "title": "Haz clic en «Estado»",
+        "body": "El filtro de Estado muestra chips (Por surtir, Surtido, Surtiendo) y el pie «Limpiar filtro».",
+        "route": "/internal/pedidos",
+        "route_kind": "heredada",
+        "anchor_attr": "view-list-column-estado",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 6,
+        "step_id": "flotante-filtro-columna-paso-6",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "«Limpiar filtro» queda fijo al pie del flotante; la lista de valores ocupa el alto disponible entre el buscador y ese botón.",
+        "route": "/internal/pedidos",
+        "route_kind": "heredada",
+        "anchor_attr": "view-list-filtro-limpiar",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-flotante-filtro-estado-vibra",
+    "name": "El filtro de Estado no vibra al dejar el mouse en el fondo",
+    "description": "En Pedidos, se abre el filtro de la columna Estado, se hace scroll con la rueda hasta abajo del todo y se deja el mouse quieto en la frontera entre la lista y el footer. El scrollTop y el alto de la lista no deben cambiar.",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "flotante-filtro-estado-vibra-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "La lista de pedidos carga con al menos un pedido.",
+        "route": "/internal/pedidos",
+        "route_kind": "inicio",
+        "anchor_attr": "view-list-row",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "flotante-filtro-estado-vibra-paso-2",
+        "title": "Haz clic en «Estado»",
+        "body": "Se abre el flotante de filtro de la columna Estado con valores como Borrador, Cancelado, Confirmado.",
+        "route": "/internal/pedidos",
+        "route_kind": "confirmada",
+        "anchor_attr": "view-list-column-estado",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "flotante-filtro-estado-vibra-paso-3",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "La × queda dentro de la esquina del flotante.",
+        "route": "/internal/pedidos",
+        "route_kind": "heredada",
+        "anchor_attr": "flotante-cerrar",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "flotante-filtro-estado-vibra-paso-4",
+        "title": "Desplázate con la rueda del mouse",
+        "body": "Scroll con la rueda hasta abajo del todo de la lista de valores.",
+        "route": "/internal/pedidos",
+        "route_kind": "heredada",
+        "anchor_attr": "view-list-filtro-lista",
+        "action_hint": "input",
+        "placement": "auto"
+      },
+      {
+        "order": 5,
+        "step_id": "flotante-filtro-estado-vibra-paso-5",
+        "title": "Deja el mouse quieto",
+        "body": "Mouse quieto en la frontera entre la lista y el footer; se muestrean scrollTop y alto cada 50 ms durante 2 s y no deben cambiar.",
+        "route": "/internal/pedidos",
+        "route_kind": "heredada",
+        "anchor_attr": "view-list-filtro-lista",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 6,
+        "step_id": "flotante-filtro-estado-vibra-paso-6",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "El footer queda fijo abajo del flotante; la lista ocupa el alto disponible.",
+        "route": "/internal/pedidos",
+        "route_kind": "heredada",
+        "anchor_attr": "view-list-filtro-pie",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 7,
+        "step_id": "flotante-filtro-estado-vibra-paso-7",
+        "title": "Haz clic en «Cerrar modal»",
+        "body": "Al cerrar, la × desaparece con el flotante y no se queda sola (I+D 498).",
+        "route": "/internal/pedidos",
+        "route_kind": "heredada",
+        "anchor_attr": "flotante-cerrar",
+        "action_hint": "click",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-header-accion-archivar",
+    "name": "Archivar se ve como las otras opciones del menú de acciones",
+    "description": "En el detalle de un pedido, la opción Archivar del menú Acciones usa el mismo componente y las mismas clases que Editar. Coinciden el tamaño de letra, el peso, el padding y el fondo del icono (I+D 501).",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "header-accion-archivar-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "La lista de pedidos carga con al menos un pedido.",
+        "route": "/internal/pedidos",
+        "route_kind": "inicio",
+        "anchor_attr": "view-list-row",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "header-accion-archivar-paso-2",
+        "title": "Haz clic en el control señalado",
+        "body": "Se abre el detalle del pedido.",
+        "route": "/internal/pedidos",
+        "route_kind": "confirmada",
+        "anchor_attr": "view-list-row",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "header-accion-archivar-paso-3",
+        "title": "Haz clic en «Acciones»",
+        "body": "El menú Acciones muestra Editar y Archivar.",
+        "route": "/internal/pedidos",
+        "route_kind": "heredada",
+        "anchor_attr": "header-actions-menu",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "header-accion-archivar-paso-4",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Archivar coincide con Editar en font-size, font-weight, padding y el fondo del icono.",
+        "route": "/internal/pedidos",
+        "route_kind": "heredada",
+        "anchor_attr": "header-accion-archivar",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-imprimir-pedido-detalle-almacen",
+    "name": "Imprimir un pedido desde su detalle con usuario de Almacén (#259)",
+    "description": "En el detalle de un pedido, el usuario de Almacén (leer Pedidos y Reports) abre Acciones → Imprimir y ve los 2 formatos de pedido para descargar, ver o mandar directo a la impresora.",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "imprimir-pedido-detalle-almacen-paso-1",
+        "title": "Haz clic en «Acciones»",
+        "body": "El menú Acciones del detalle trae Imprimir también para Almacén.",
+        "route_kind": "dinamica",
+        "anchor_attr": "header-actions-menu",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "imprimir-pedido-detalle-almacen-paso-2",
+        "title": "Haz clic en «Imprimir»",
+        "body": "Aparecen reports-pedido-tablero-0 y reports-pedido-surtido-0.",
+        "route_kind": "dinamica",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "imprimir-pedido-detalle-almacen-paso-3",
+        "title": "Revisa «Pedido | Hoja de surtido»",
+        "body": "Revisa «Pedido | Hoja de surtido».",
+        "route_kind": "dinamica",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-imprimir-pedido-directo-detalle",
+    "name": "Impresión directa desde el detalle de un pedido (#277)",
+    "description": "Ventas abre el detalle de un pedido, entra a Acciones → Imprimir y ve los formatos con «Impresión directa». La hoja debe salir con el contenido del pedido y sin fondo gris (mismo envío plano que en la lista).",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "imprimir-pedido-directo-detalle-paso-1",
+        "title": "Haz clic en «Acciones»",
+        "body": "El menú Acciones del detalle también trae Imprimir (vista pedidos).",
+        "route_kind": "dinamica",
+        "anchor_attr": "header-actions-menu",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "imprimir-pedido-directo-detalle-paso-2",
+        "title": "Haz clic en «Imprimir»",
+        "body": "Aparecen los 2 formatos de pedido y «Impresión directa».",
+        "route_kind": "dinamica",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "imprimir-pedido-directo-detalle-paso-3",
+        "title": "Revisa «Pedido | Hoja de surtido»",
+        "body": "Revisa «Pedido | Hoja de surtido».",
+        "route_kind": "dinamica",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "imprimir-pedido-directo-detalle-paso-4",
+        "title": "Revisa «Impresión directa»",
+        "body": "No se pulsa «Impresión directa» en el runner (no hay impresora de red). El envío plano se prueba en form-printer.service.spec.ts y pdf-print-pages.spec.ts.",
+        "route_kind": "dinamica",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-imprimir-pedido-directo-lista",
+    "name": "Impresión directa desde la lista de Pedidos (no el tablero) (#277)",
+    "description": "Ventas abre la lista de Pedidos (no el tablero de Almacén), entra a Acciones → Imprimir y ve los formatos de pedido con «Impresión directa». En escritorio, a la impresora de red se manda un PDF plano (JPEG por hoja, fondo blanco) para que no salga una hoja carta gris/negra vacía.",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "imprimir-pedido-directo-lista-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "La lista de Pedidos carga (no el tablero de Almacén).",
+        "route": "/internal/pedidos",
+        "route_kind": "inicio",
+        "anchor_attr": "view-list-row",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "imprimir-pedido-directo-lista-paso-2",
+        "title": "Haz clic en «Acciones»",
+        "body": "En la lista, Acciones incluye Imprimir (vista pedidos, no almacen-tablero).",
+        "route": "/internal/pedidos",
+        "route_kind": "confirmada",
+        "anchor_attr": "header-actions-menu",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "imprimir-pedido-directo-lista-paso-3",
+        "title": "Haz clic en «Imprimir»",
+        "body": "El catálogo ofrece los 2 formatos de pedido y «Impresión directa».",
+        "route": "/internal/pedidos",
+        "route_kind": "heredada",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "imprimir-pedido-directo-lista-paso-4",
+        "title": "Revisa «Pedido | Hoja de surtido»",
+        "body": "Revisa «Pedido | Hoja de surtido».",
+        "route": "/internal/pedidos",
+        "route_kind": "heredada",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 5,
+        "step_id": "imprimir-pedido-directo-lista-paso-5",
+        "title": "Revisa «Impresión directa»",
+        "body": "No se pulsa «Impresión directa» en el runner (no hay impresora de red). El envío plano se prueba en form-printer.service.spec.ts y pdf-print-pages.spec.ts.",
+        "route": "/internal/pedidos",
+        "route_kind": "heredada",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-imprimir-pedido-ruta-partidas",
+    "name": "La hoja del pedido imprime la Ruta y la tabla de partidas (#292,",
+    "description": "Ventas abre un pedido de un cliente con ruta de entrega, entra a Acciones → Imprimir y abre la vista previa de «Pedido | Formato de impresión». La hoja trae «Ruta: QA-IA Ruta Centro», la tabla con la partida (QAIA-IMP, 2 piezas) y el estilo de #293 (No. angosto y gris, Cant. en negrita con fondo).",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "imprimir-pedido-ruta-partidas-paso-1",
+        "title": "Haz clic en «Acciones»",
+        "body": "El menú Acciones del detalle trae Imprimir.",
+        "route_kind": "dinamica",
+        "anchor_attr": "header-actions-menu",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "imprimir-pedido-ruta-partidas-paso-2",
+        "title": "Haz clic en «Imprimir»",
+        "body": "El catálogo ofrece los formatos oficiales del pedido.",
+        "route_kind": "dinamica",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "imprimir-pedido-ruta-partidas-paso-3",
+        "title": "Haz clic en «Vista previa»",
+        "body": "El núcleo arma el PDF del pedido: agrega la ruta del cliente (delivery-route.contacts) e imprime la tabla de partidas (articulos). En la captura se lee «Ruta: QA-IA Ruta Centro», la fila 1 con QAIA-IMP y cantidad 2 (No. angosto y gris, Cant. en negrita con fondo).",
+        "route_kind": "dinamica",
+        "anchor_attr": "report-item",
+        "filter_text": "Pedido | Formato de impresión",
+        "action_hint": "click",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-imprimir-pedido-vista-previa-varios",
+    "name": "Vista previa de varios pedidos seleccionados (#281)",
+    "description": "Ventas marca dos pedidos en la lista, entra a Acciones → Imprimir y abre «Vista previa». El visor anuncia los 2 registros y el documento tiene 2 hojas (no solo la primera).",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "imprimir-pedido-vista-previa-varios-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "La lista de Pedidos carga con al menos una fila.",
+        "route": "/internal/pedidos",
+        "route_kind": "inicio",
+        "anchor_attr": "view-list-row",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "imprimir-pedido-vista-previa-varios-paso-2",
+        "title": "Espera a que cargue la pantalla",
+        "body": "Está el pedido de reportes-pedido.",
+        "route": "/internal/pedidos",
+        "route_kind": "confirmada",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "imprimir-pedido-vista-previa-varios-paso-3",
+        "title": "Espera a que cargue la pantalla",
+        "body": "Está el segundo pedido del lote (#281).",
+        "route": "/internal/pedidos",
+        "route_kind": "confirmada",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "imprimir-pedido-vista-previa-varios-paso-4",
+        "title": "Haz clic en el control señalado",
+        "body": "Se marca el primer pedido.",
+        "route": "/internal/pedidos",
+        "route_kind": "confirmada",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 5,
+        "step_id": "imprimir-pedido-vista-previa-varios-paso-5",
+        "title": "Haz clic en el control señalado",
+        "body": "Se marca el segundo pedido.",
+        "route": "/internal/pedidos",
+        "route_kind": "heredada",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 6,
+        "step_id": "imprimir-pedido-vista-previa-varios-paso-6",
+        "title": "Haz clic en «Acciones»",
+        "body": "Acciones incluye Imprimir.",
+        "route": "/internal/pedidos",
+        "route_kind": "heredada",
+        "anchor_attr": "header-actions-menu",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 7,
+        "step_id": "imprimir-pedido-vista-previa-varios-paso-7",
+        "title": "Haz clic en «Imprimir»",
+        "body": "El catálogo ofrece los formatos de pedido.",
+        "route": "/internal/pedidos",
+        "route_kind": "heredada",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 8,
+        "step_id": "imprimir-pedido-vista-previa-varios-paso-8",
+        "title": "Haz clic en «Vista previa»",
+        "body": "«Vista previa» del formato Pedido (no la del primer formato del catálogo, que es la Ficha de Ventas). Anuncia los dos pedidos marcados, no solo el primero.",
+        "route": "/internal/pedidos",
+        "route_kind": "heredada",
+        "anchor_attr": "report-item",
+        "filter_text": "Pedido | Formato de impresión",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 9,
+        "step_id": "imprimir-pedido-vista-previa-varios-paso-9",
+        "title": "Revisa «de 2»",
+        "body": "El visor pagina las 2 hojas del lote. La interpolación de fichas sin delimitador es la de",
+        "route": "/internal/pedidos",
+        "route_kind": "heredada",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-imprimir-pedidos-almacen",
+    "name": "Imprimir pedidos desde el tablero de Almacén y desde el detalle (#259,",
+    "description": "El usuario de Almacén imprime «Pedido | Formato de impresión» y «Pedido | Hoja de surtido» desde Acciones → Imprimir del tablero (pedidos marcados, un solo PDF con una hoja por pedido) y desde el detalle de un pedido; la cabecera lleva el nombre del pedido (folio automático).",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "imprimir-pedidos-almacen-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "El tablero usa la barra superior de todas las listas (migas «Tablero de pedidos», «Acciones» y buscador); ya no lleva título ni buscador propios.",
+        "route": "/internal/pedidos",
+        "route_kind": "inicio",
+        "anchor_attr": "header-actions-buscar",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "imprimir-pedidos-almacen-paso-2",
+        "title": "Espera a que cargue la pantalla",
+        "body": "El pedido de prueba (seed:reportes-pedido) está en el tablero en «Por surtir», listo para marcarlo e imprimirlo.",
+        "route": "/internal/pedidos",
+        "route_kind": "confirmada",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "imprimir-pedidos-almacen-paso-3",
+        "title": "Haz clic en «Acciones»",
+        "body": "«Acciones» del tablero solo trae Imprimir (#259); lo había ocultado 45d7db42e.",
+        "route": "/internal/pedidos",
+        "route_kind": "confirmada",
+        "anchor_attr": "header-actions-menu",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "imprimir-pedidos-almacen-paso-4",
+        "title": "Haz clic en «Imprimir»",
+        "body": "El catálogo de impresión ofrece los 2 formatos de pedido.",
+        "route": "/internal/pedidos",
+        "route_kind": "heredada",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 5,
+        "step_id": "imprimir-pedidos-almacen-paso-5",
+        "title": "Revisa «Pedido | Hoja de surtido»",
+        "body": "Revisa «Pedido | Hoja de surtido».",
+        "route": "/internal/pedidos",
+        "route_kind": "heredada",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 6,
+        "step_id": "imprimir-pedidos-almacen-paso-6",
+        "title": "Espera a que cargue la pantalla",
+        "body": "El formato del seed (reports-pedido-tablero-0) trae name en la cabecera (#263).",
+        "route": "/internal/pedidos",
+        "route_kind": "heredada",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-imprimir-surtido-ruta-partidas",
+    "name": "La hoja de surtido imprime la Ruta y la tabla de partidas (#292,",
+    "description": "Ventas abre un pedido de un cliente con ruta de entrega, entra a Acciones → Imprimir y abre la vista previa de «Pedido | Hoja de surtido». La hoja trae «Ruta: QA-IA Ruta Centro», la tabla con la partida (QAIA-IMP, 2 piezas) y el estilo de #293 (No. angosto y gris, «Cant. por surtir» en negrita con fondo).",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "imprimir-surtido-ruta-partidas-paso-1",
+        "title": "Haz clic en «Acciones»",
+        "body": "El menú Acciones del detalle trae Imprimir.",
+        "route_kind": "dinamica",
+        "anchor_attr": "header-actions-menu",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "imprimir-surtido-ruta-partidas-paso-2",
+        "title": "Haz clic en «Imprimir»",
+        "body": "El catálogo ofrece los formatos oficiales del pedido.",
+        "route_kind": "dinamica",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "imprimir-surtido-ruta-partidas-paso-3",
+        "title": "Haz clic en «Vista previa»",
+        "body": "El núcleo arma el PDF del pedido: agrega la ruta del cliente (delivery-route.contacts) e imprime la tabla de partidas (articulos). En la captura se lee «Ruta: QA-IA Ruta Centro», la fila 1 con QAIA-IMP y cantidad 2 (No. angosto y gris, «Cant. por surtir» en negrita con fondo).",
+        "route_kind": "dinamica",
+        "anchor_attr": "report-item",
+        "filter_text": "Pedido | Hoja de surtido",
+        "action_hint": "click",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-lista-fecha-formato",
+    "name": "Las columnas de fecha permiten elegir formato y mostrar u ocultar la hora",
+    "description": "En Pedidos, el menú de la columna Fecha ofrece formatos (largo, corto, numérico, ISO) y un botón para mostrar u ocultar la hora. Al elegir numérico y mostrar la hora, la lista refleja ambas cosas (I+D 500).",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "lista-fecha-formato-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "La lista de pedidos carga con al menos un pedido y una columna Fecha.",
+        "route": "/internal/pedidos",
+        "route_kind": "inicio",
+        "anchor_attr": "view-list-row",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "lista-fecha-formato-paso-2",
+        "title": "Haz clic en «Fecha»",
+        "body": "El menú de la columna Fecha muestra los formatos y la opción de mostrar u ocultar la hora.",
+        "route": "/internal/pedidos",
+        "route_kind": "confirmada",
+        "anchor_attr": "view-list-column-fecha",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "lista-fecha-formato-paso-3",
+        "title": "Haz clic en «Numérico»",
+        "body": "Al elegir el formato numérico, las celdas muestran el día en dd/MM/aaaa.",
+        "route": "/internal/pedidos",
+        "route_kind": "heredada",
+        "anchor_attr": "view-list-fecha-formato-numerico",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "lista-fecha-formato-paso-4",
+        "title": "Haz clic en «Mostrar hora»",
+        "body": "«Mostrar hora» deja visible la hora junto a la fecha.",
+        "route": "/internal/pedidos",
+        "route_kind": "heredada",
+        "anchor_attr": "view-list-fecha-hora",
+        "action_hint": "click",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-pedido-por-surtir",
+    "name": "Pasar un pedido confirmado a Por surtir (aparta existencia)",
+    "description": "Ventas abre un pedido confirmado y lo pasa a «Por surtir» desde la barra de estatus; el núcleo aparta la existencia en el almacén del pedido y el pedido entra a la cola de surtido.",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "pedido-por-surtir-paso-1",
+        "title": "Espera a que cargue la pantalla",
+        "body": "Espera a que cargue la pantalla.",
+        "route_kind": "dinamica",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "pedido-por-surtir-paso-2",
+        "title": "Haz clic en «Por surtir»",
+        "body": "La barra de estatus guarda la etapa al momento",
+        "route_kind": "dinamica",
+        "anchor_attr": "estatus-por_surtir",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "pedido-por-surtir-paso-3",
+        "title": "Espera a que cargue la pantalla",
+        "body": "El pedido quedó en Por surtir (y con la pieza apartada en el almacén QA-IA)",
+        "route_kind": "dinamica",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-pedido-sin-existencia",
+    "name": "Un pedido sin existencia no pasa a Por surtir",
+    "description": "Ventas intenta pasar a «Por surtir» un pedido cuyo producto no tiene existencia en el almacén; el núcleo no puede apartar, la barra de estatus muestra el motivo y el pedido se queda en Confirmado.",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "pedido-sin-existencia-paso-1",
+        "title": "Espera a que cargue la pantalla",
+        "body": "Espera a que cargue la pantalla.",
+        "route_kind": "dinamica",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "pedido-sin-existencia-paso-2",
+        "title": "Haz clic en «Por surtir»",
+        "body": "El aviso trae el motivo del núcleo (cuánto falta y de qué producto)",
+        "route_kind": "dinamica",
+        "anchor_attr": "estatus-por_surtir",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "pedido-sin-existencia-paso-3",
+        "title": "Espera a que cargue la pantalla",
+        "body": "La etapa no cambió",
+        "route_kind": "dinamica",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-pedidos-columna-vendedor",
+    "name": "Ver y filtrar el vendedor en la lista de pedidos",
+    "description": "Ventas abre Pedidos y ve la columna Vendedor en el view-list; filtra por un vendedor y la lista pide solo los pedidos de ese vendedor.",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "pedidos-columna-vendedor-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "La lista de pedidos carga con al menos un pedido",
+        "route": "/internal/pedidos",
+        "route_kind": "inicio",
+        "anchor_attr": "view-list-row",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "pedidos-columna-vendedor-paso-2",
+        "title": "Revisa «Vendedor»",
+        "body": "La columna Vendedor aparece en el view-list",
+        "route": "/internal/pedidos",
+        "route_kind": "confirmada",
+        "anchor_attr": "view-list-column-usuario",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "pedidos-columna-vendedor-paso-3",
+        "title": "Haz clic en «Vendedor»",
+        "body": "El menú de la columna lista los vendedores para filtrar",
+        "route": "/internal/pedidos",
+        "route_kind": "confirmada",
+        "anchor_attr": "view-list-column-usuario",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "pedidos-columna-vendedor-paso-4",
+        "title": "Haz clic en el control señalado",
+        "body": "Al elegir un vendedor, la lista se filtra a sus pedidos",
+        "route": "/internal/pedidos",
+        "route_kind": "heredada",
+        "anchor_attr": "view-list-filter-option",
+        "action_hint": "click",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-pedidos-filtro-ruta",
+    "name": "En Pedidos se puede filtrar por ruta automáticamente",
+    "description": "Ventas abre Pedidos, abre el filtro de la columna Ruta y ve «QA-IA Ruta Centro» por nombre. Al elegirla, la lista se queda con el pedido de esa ruta (#358).",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "pedidos-filtro-ruta-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "La lista trae el pedido del cliente con su ruta por nombre.",
+        "route": "/internal/pedidos",
+        "route_kind": "inicio",
+        "anchor_attr": "view-list-row",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "pedidos-filtro-ruta-paso-2",
+        "title": "Haz clic en «Ruta»",
+        "body": "El menú de la columna Ruta lista el nombre de la ruta, no un id ni un campo vacío.",
+        "route": "/internal/pedidos",
+        "route_kind": "confirmada",
+        "anchor_attr": "view-list-column-ruta",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "pedidos-filtro-ruta-paso-3",
+        "title": "Haz clic en el control señalado",
+        "body": "Al elegir la ruta, la lista se queda con los pedidos de esa ruta.",
+        "route": "/internal/pedidos",
+        "route_kind": "heredada",
+        "anchor_attr": "view-list-filter-option",
+        "action_hint": "click",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-pedidos-folio-interno-detalle",
+    "name": "Ver el folio interno en el detalle del pedido",
+    "description": "Ventas abre un pedido desde la lista de Pedidos (fuera del tablero) y el detalle muestra su folio interno, el mismo que sale en la impresión (#279).",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "pedidos-folio-interno-detalle-paso-1",
+        "title": "Espera a que cargue la pantalla",
+        "body": "La lista trae el pedido de prueba",
+        "route": "/internal/pedidos",
+        "route_kind": "inicio",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "pedidos-folio-interno-detalle-paso-2",
+        "title": "Haz clic en el control señalado",
+        "body": "Al abrir el pedido (fuera del tablero), el detalle trae el campo Folio interno",
+        "route": "/internal/pedidos",
+        "route_kind": "confirmada",
+        "anchor_attr": "view-list-row",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "pedidos-folio-interno-detalle-paso-3",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "El campo «Folio interno» muestra el folio interno del pedido",
+        "route": "/internal/pedidos",
+        "route_kind": "heredada",
+        "anchor_attr": "pedidos-detalle-folio-interno",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-pedidos-vendedor-ruta",
+    "name": "Ver vendedor y ruta del pedido en la lista y en el detalle",
+    "description": "Ventas abre Pedidos y ve las columnas Vendedor y Ruta del view-list con nombres; al abrir el pedido, el detalle muestra el mismo vendedor y la misma ruta (#275).",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "pedidos-vendedor-ruta-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "La lista trae el pedido del cliente con su ruta por nombre",
+        "route": "/internal/pedidos",
+        "route_kind": "inicio",
+        "anchor_attr": "view-list-row",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "pedidos-vendedor-ruta-paso-2",
+        "title": "Revisa «Vendedor»",
+        "body": "La columna Vendedor aparece en el view-list",
+        "route": "/internal/pedidos",
+        "route_kind": "confirmada",
+        "anchor_attr": "view-list-column-usuario",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "pedidos-vendedor-ruta-paso-3",
+        "title": "Revisa «Ruta»",
+        "body": "La columna Ruta aparece en el view-list",
+        "route": "/internal/pedidos",
+        "route_kind": "confirmada",
+        "anchor_attr": "view-list-column-ruta",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "pedidos-vendedor-ruta-paso-4",
+        "title": "Haz clic en el control señalado",
+        "body": "Al abrir el pedido, el detalle muestra el nombre del vendedor",
+        "route": "/internal/pedidos",
+        "route_kind": "confirmada",
+        "anchor_attr": "view-list-row",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 5,
+        "step_id": "pedidos-vendedor-ruta-paso-5",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "El detalle muestra la ruta del cliente por nombre",
+        "route": "/internal/pedidos",
+        "route_kind": "heredada",
+        "anchor_attr": "pedidos-detalle-ruta",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-tablero-pedidos-vendedor-ruta",
+    "name": "Ver vendedor y ruta en el tablero de pedidos",
+    "description": "Almacén abre Pedidos en modo tablero y ve las columnas Vendedor y Ruta con nombres en el pedido por surtir (#275).",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "tablero-pedidos-vendedor-ruta-paso-1",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "Almacén entra a la lista en modo tablero (buscador en la barra superior)",
+        "route": "/internal/pedidos",
+        "route_kind": "inicio",
+        "anchor_attr": "header-actions-buscar",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "tablero-pedidos-vendedor-ruta-paso-2",
+        "title": "Revisa esta parte de la pantalla",
+        "body": "El pedido por surtir del cliente muestra su ruta por nombre",
+        "route": "/internal/pedidos",
+        "route_kind": "confirmada",
+        "anchor_attr": "view-list-row",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "tablero-pedidos-vendedor-ruta-paso-3",
+        "title": "Revisa «Vendedor»",
+        "body": "La columna Vendedor aparece en el tablero",
+        "route": "/internal/pedidos",
+        "route_kind": "confirmada",
+        "anchor_attr": "view-list-column-usuario",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "tablero-pedidos-vendedor-ruta-paso-4",
+        "title": "Revisa «Ruta»",
+        "body": "La columna Ruta aparece en el tablero",
+        "route": "/internal/pedidos",
+        "route_kind": "confirmada",
+        "anchor_attr": "view-list-column-ruta",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-tablero-surtido",
+    "name": "Tablero de surtido de pedidos (almacén)",
+    "description": "Almacén entra a Pedidos y ve el tablero de surtido en lugar de la lista normal, con la barra superior de las demás listas; busca un pedido desde el buscador de esa barra y lo asigna a quien lo va a surtir.",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "tablero-surtido-paso-1",
+        "title": "Haz clic en «Buscar»",
+        "body": "Para el grupo Almacén la lista de pedidos se abre como tablero de surtido (migas «Tablero de pedidos»); el buscador está en la barra superior, junto a «Acciones», como en las demás listas (#276)",
+        "route": "/internal/pedidos",
+        "route_kind": "inicio",
+        "anchor_attr": "header-actions-buscar",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "tablero-surtido-paso-2",
+        "title": "Escribe en el campo señalado",
+        "body": "Escribe en el campo señalado.",
+        "route": "/internal/pedidos",
+        "route_kind": "heredada",
+        "anchor_attr": "header-actions-buscar-campo",
+        "action_hint": "input",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "tablero-surtido-paso-3",
+        "title": "Presiona Enter",
+        "body": "La búsqueda filtra el tablero por folio, cliente o producto",
+        "route": "/internal/pedidos",
+        "route_kind": "heredada",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-ventas-ruta-enviar-pendientes",
+    "name": "Ventas en ruta, enviar pendientes (llega Confirmado con aviso)",
+    "description": "El vendedor sincroniza, captura sin red un pedido con un artículo sin precio, lo guarda en el teléfono y, ya con red, pulsa «Enviar pendientes»: el núcleo lo crea Confirmado (parámetro «Pedidos offline · Estado al sincronizar», Odoo #262) y avisa que se confirmó sin precio.",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "ventas-ruta-enviar-pendientes-paso-1",
+        "title": "Haz clic en «Abrir opciones de usuario»",
+        "body": "Haz clic en «Abrir opciones de usuario».",
+        "route": "/offline/pedidos/mis-pedidos",
+        "route_kind": "inicio",
+        "anchor_attr": "cuenta-opciones",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "ventas-ruta-enviar-pendientes-paso-2",
+        "title": "Haz clic en «Sincronizar datos»",
+        "body": "Baja al teléfono el catálogo vendible, los clientes y la existencia del almacén del vendedor",
+        "route": "/offline/pedidos/mis-pedidos",
+        "route_kind": "heredada",
+        "anchor_attr": "offline-sincronizar",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "ventas-ruta-enviar-pendientes-paso-3",
+        "title": "Haz clic en «Nuevo pedido»",
+        "body": "Haz clic en «Nuevo pedido».",
+        "route": "/offline/pedidos/mis-pedidos",
+        "route_kind": "heredada",
+        "anchor_attr": "offline-pedido-nuevo",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "ventas-ruta-enviar-pendientes-paso-4",
+        "title": "Simula modo sin conexión «Sin conexión»",
+        "body": "El pedido se captura sin red con lo guardado en el teléfono",
+        "route": "/crear",
+        "route_kind": "confirmada",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 5,
+        "step_id": "ventas-ruta-enviar-pendientes-paso-5",
+        "title": "Escribe en «Buscar cliente»",
+        "body": "Escribe en «Buscar cliente».",
+        "route": "/crear",
+        "route_kind": "confirmada",
+        "anchor_attr": "offline-cliente",
+        "action_hint": "input",
+        "placement": "auto"
+      },
+      {
+        "order": 6,
+        "step_id": "ventas-ruta-enviar-pendientes-paso-6",
+        "title": "Haz clic en el control señalado",
+        "body": "Haz clic en el control señalado.",
+        "route": "/crear",
+        "route_kind": "confirmada",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 7,
+        "step_id": "ventas-ruta-enviar-pendientes-paso-7",
+        "title": "Escribe en «Buscar artículos»",
+        "body": "Escribe en «Buscar artículos».",
+        "route": "/crear",
+        "route_kind": "heredada",
+        "anchor_attr": "offline-catalogo-buscar",
+        "action_hint": "input",
+        "placement": "auto"
+      },
+      {
+        "order": 8,
+        "step_id": "ventas-ruta-enviar-pendientes-paso-8",
+        "title": "Haz clic en el control señalado",
+        "body": "Tiene existencia en el almacén del vendedor, así que entra al pedido aunque su precio sea $0",
+        "route": "/crear",
+        "route_kind": "heredada",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 9,
+        "step_id": "ventas-ruta-enviar-pendientes-paso-9",
+        "title": "Haz clic en «Guardar»",
+        "body": "Haz clic en «Guardar».",
+        "route": "/crear",
+        "route_kind": "heredada",
+        "anchor_attr": "offline-pedido-guardar",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 10,
+        "step_id": "ventas-ruta-enviar-pendientes-paso-10",
+        "title": "Haz clic en «No ahora»",
+        "body": "Haz clic en «No ahora».",
+        "route": "/crear",
+        "route_kind": "heredada",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 11,
+        "step_id": "ventas-ruta-enviar-pendientes-paso-11",
+        "title": "Restablece la conexión",
+        "body": "Vuelve la señal",
+        "route": "/crear",
+        "route_kind": "heredada",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 12,
+        "step_id": "ventas-ruta-enviar-pendientes-paso-12",
+        "title": "Haz clic en «Enviar (1)»",
+        "body": "El núcleo crea el pedido en el estado del parámetro (Confirmado por omisión) y, como no tiene precio, lo confirma con aviso en vez de bajarlo a borrador",
+        "route": "/crear",
+        "route_kind": "heredada",
+        "anchor_attr": "offline-enviar-pendientes",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 13,
+        "step_id": "ventas-ruta-enviar-pendientes-paso-13",
+        "title": "Espera a que cargue la pantalla",
+        "body": "En Ventas → Pedidos el pedido aparece Confirmado",
+        "route": "/crear",
+        "route_kind": "heredada",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-ventas-ruta-observaciones-partida",
+    "name": "Observaciones de partida se teclean en orden, no al revés",
+    "description": "En Ventas en ruta, al escribir letra por letra una observación de partida («Ejemplo») el campo conserva el texto en el mismo orden. Antes cada tecla podía dejar el cursor en 0 y se guardaba «olpmejE» (PROFESA,",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "ventas-ruta-observaciones-partida-paso-1",
+        "title": "Haz clic en «Abrir opciones de usuario»",
+        "body": "Haz clic en «Abrir opciones de usuario».",
+        "route": "/offline/pedidos/mis-pedidos",
+        "route_kind": "inicio",
+        "anchor_attr": "cuenta-opciones",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "ventas-ruta-observaciones-partida-paso-2",
+        "title": "Haz clic en «Sincronizar datos»",
+        "body": "Haz clic en «Sincronizar datos».",
+        "route": "/offline/pedidos/mis-pedidos",
+        "route_kind": "heredada",
+        "anchor_attr": "offline-sincronizar",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "ventas-ruta-observaciones-partida-paso-3",
+        "title": "Haz clic en «Nuevo pedido»",
+        "body": "Haz clic en «Nuevo pedido».",
+        "route": "/offline/pedidos/mis-pedidos",
+        "route_kind": "heredada",
+        "anchor_attr": "offline-pedido-nuevo",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "ventas-ruta-observaciones-partida-paso-4",
+        "title": "Escribe en «Buscar cliente»",
+        "body": "Escribe en «Buscar cliente».",
+        "route": "/crear",
+        "route_kind": "confirmada",
+        "anchor_attr": "offline-cliente",
+        "action_hint": "input",
+        "placement": "auto"
+      },
+      {
+        "order": 5,
+        "step_id": "ventas-ruta-observaciones-partida-paso-5",
+        "title": "Haz clic en el control señalado",
+        "body": "Haz clic en el control señalado.",
+        "route": "/crear",
+        "route_kind": "confirmada",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 6,
+        "step_id": "ventas-ruta-observaciones-partida-paso-6",
+        "title": "Escribe en «Buscar artículos»",
+        "body": "Escribe en «Buscar artículos».",
+        "route": "/crear",
+        "route_kind": "heredada",
+        "anchor_attr": "offline-catalogo-buscar",
+        "action_hint": "input",
+        "placement": "auto"
+      },
+      {
+        "order": 7,
+        "step_id": "ventas-ruta-observaciones-partida-paso-7",
+        "title": "Haz clic en el control señalado",
+        "body": "Haz clic en el control señalado.",
+        "route": "/crear",
+        "route_kind": "heredada",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 8,
+        "step_id": "ventas-ruta-observaciones-partida-paso-8",
+        "title": "Haz clic en «Notas por línea»",
+        "body": "Abre el campo de observación de cada partida",
+        "route": "/crear",
+        "route_kind": "heredada",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 9,
+        "step_id": "ventas-ruta-observaciones-partida-paso-9",
+        "title": "Escribe en «Observaciones de la línea»",
+        "body": "Teclea «Ejemplo» letra por letra; no debe quedar «olpmejE»",
+        "route": "/crear",
+        "route_kind": "heredada",
+        "action_hint": "input",
+        "placement": "auto",
+        "expected_value": "Ejemplo"
+      }
+    ]
+  },
+  {
+    "_ref": "interactive-manual-flow-ventas-ventas-ruta-sin-conexion",
+    "name": "Ventas en ruta sin conexión (catálogo en caché y bloqueos)",
+    "description": "El vendedor sincroniza el catálogo con red, abre un pedido, se queda sin conexión y captura un pedido con lo guardado en el teléfono; lo que no tiene existencia en su almacén no entra y «Enviar pendientes» queda bloqueado hasta que vuelva la red.",
+    "icon": "fa-cart-shopping",
+    "module_model_id": "Pedidos",
+    "is_default_for_module": true,
+    "is_active": true,
+    "steps": [
+      {
+        "order": 1,
+        "step_id": "ventas-ruta-sin-conexion-paso-1",
+        "title": "Haz clic en «Abrir opciones de usuario»",
+        "body": "Haz clic en «Abrir opciones de usuario».",
+        "route": "/offline/pedidos/mis-pedidos",
+        "route_kind": "inicio",
+        "anchor_attr": "cuenta-opciones",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 2,
+        "step_id": "ventas-ruta-sin-conexion-paso-2",
+        "title": "Haz clic en «Sincronizar datos»",
+        "body": "Baja catálogo, clientes, listas de precio y la existencia del almacén del vendedor al teléfono",
+        "route": "/offline/pedidos/mis-pedidos",
+        "route_kind": "heredada",
+        "anchor_attr": "offline-sincronizar",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 3,
+        "step_id": "ventas-ruta-sin-conexion-paso-3",
+        "title": "Haz clic en «Nuevo pedido»",
+        "body": "Haz clic en «Nuevo pedido».",
+        "route": "/offline/pedidos/mis-pedidos",
+        "route_kind": "heredada",
+        "anchor_attr": "offline-pedido-nuevo",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 4,
+        "step_id": "ventas-ruta-sin-conexion-paso-4",
+        "title": "Simula modo sin conexión «Sin conexión»",
+        "body": "Ya en ruta se va la señal; el pedido se sigue capturando con lo guardado",
+        "route": "/crear",
+        "route_kind": "confirmada",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 5,
+        "step_id": "ventas-ruta-sin-conexion-paso-5",
+        "title": "Escribe en «Buscar cliente»",
+        "body": "Los clientes salen de la caché del teléfono",
+        "route": "/crear",
+        "route_kind": "confirmada",
+        "anchor_attr": "offline-cliente",
+        "action_hint": "input",
+        "placement": "auto"
+      },
+      {
+        "order": 6,
+        "step_id": "ventas-ruta-sin-conexion-paso-6",
+        "title": "Haz clic en el control señalado",
+        "body": "Elige el cliente de la lista (con teclado, flechas y Enter)",
+        "route": "/crear",
+        "route_kind": "confirmada",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 7,
+        "step_id": "ventas-ruta-sin-conexion-paso-7",
+        "title": "Escribe en «Buscar artículos»",
+        "body": "Escribe en «Buscar artículos».",
+        "route": "/crear",
+        "route_kind": "heredada",
+        "anchor_attr": "offline-catalogo-buscar",
+        "action_hint": "input",
+        "placement": "auto"
+      },
+      {
+        "order": 8,
+        "step_id": "ventas-ruta-sin-conexion-paso-8",
+        "title": "Haz clic en el control señalado",
+        "body": "Bloqueo; sin existencia en el almacén del vendedor el artículo no entra al pedido",
+        "route": "/crear",
+        "route_kind": "heredada",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 9,
+        "step_id": "ventas-ruta-sin-conexion-paso-9",
+        "title": "Haz clic en «Borrar texto»",
+        "body": "Al escribir aparece la X del buscador; tocarla borra lo escrito y reinicia la búsqueda del catálogo (#258)",
+        "route": "/crear",
+        "route_kind": "heredada",
+        "anchor_attr": "input-clear",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 10,
+        "step_id": "ventas-ruta-sin-conexion-paso-10",
+        "title": "Escribe en «Buscar artículos»",
+        "body": "Escribe en «Buscar artículos».",
+        "route": "/crear",
+        "route_kind": "heredada",
+        "anchor_attr": "offline-catalogo-buscar",
+        "action_hint": "input",
+        "placement": "auto"
+      },
+      {
+        "order": 11,
+        "step_id": "ventas-ruta-sin-conexion-paso-11",
+        "title": "Haz clic en el control señalado",
+        "body": "Haz clic en el control señalado.",
+        "route": "/crear",
+        "route_kind": "heredada",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 12,
+        "step_id": "ventas-ruta-sin-conexion-paso-12",
+        "title": "Haz clic en «Guardar»",
+        "body": "Se guarda en el teléfono como pendiente de enviar",
+        "route": "/crear",
+        "route_kind": "heredada",
+        "anchor_attr": "offline-pedido-guardar",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 13,
+        "step_id": "ventas-ruta-sin-conexion-paso-13",
+        "title": "Haz clic en «No ahora»",
+        "body": "Sin impresora Zebra no se imprime; vuelve a la lista con 1 pedido por enviar",
+        "route": "/crear",
+        "route_kind": "heredada",
+        "action_hint": "click",
+        "placement": "auto"
+      },
+      {
+        "order": 14,
+        "step_id": "ventas-ruta-sin-conexion-paso-14",
+        "title": "Espera a que cargue la pantalla",
+        "body": "Bloqueo; con pedidos pendientes y sin red, «Enviar» no se puede usar",
+        "route": "/crear",
+        "route_kind": "heredada",
+        "action_hint": "observe",
+        "placement": "auto"
+      },
+      {
+        "order": 15,
+        "step_id": "ventas-ruta-sin-conexion-paso-15",
+        "title": "Restablece la conexión",
+        "body": "Restablece la conexión.",
+        "route": "/crear",
+        "route_kind": "heredada",
+        "action_hint": "observe",
+        "placement": "auto"
+      }
+    ]
+  }
+]

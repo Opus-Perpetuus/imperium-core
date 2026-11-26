@@ -190,31 +190,43 @@ function list_columns_of(
 		.map((name) => ({ name, label: label_of(name, name.replace(/_/g, ' ')) }));
 }
 
+const META_CONCURRENCY = 16;
+
 export async function build_meta(
 	store: ImperiumStore,
 	user: ImperiumDoc,
 ): Promise<{ resources: MetaResource[] }> {
 	const access = await build_access(store, user);
-	const resources: MetaResource[] = [];
-	for (const loc of catalog_locs(store)) {
-		if (!(await allows(store, user, loc.resource, 'GET', access))) continue;
-		const schema = (await schema_validation_for(store, loc.resource)) as SchemaShape;
-		resources.push({
-			resource: loc.resource,
-			table: loc.table,
-			path: resource_path(store, loc),
-			name: loc.name,
-			subject: loc.slug || null,
-			permissions: {
-				read: true,
-				create: await allows(store, user, loc.resource, 'POST', access),
-				update: await allows(store, user, loc.resource, 'PUT', access),
-				delete: await allows(store, user, loc.resource, 'DELETE', access),
-			},
-			fields: fields_of(loc.columns, loc.resource, schema),
-			list_columns: list_columns_of(loc, loc.resource),
-		});
-	}
+	// Cada recurso pide su esquema (4 lecturas) y sus permisos: en serie eran
+	// ~4×N consultas una tras otra (7 s en el G85). En paralelo acotado, mismo orden.
+	const locs = catalog_locs(store);
+	const slots: Array<MetaResource | null> = new Array(locs.length).fill(null);
+	let next = 0;
+	const worker = async () => {
+		while (next < locs.length) {
+			const index = next++;
+			const loc = locs[index]!;
+			if (!(await allows(store, user, loc.resource, 'GET', access))) continue;
+			const [schema, create, update, remove] = await Promise.all([
+				schema_validation_for(store, loc.resource) as Promise<SchemaShape>,
+				allows(store, user, loc.resource, 'POST', access),
+				allows(store, user, loc.resource, 'PUT', access),
+				allows(store, user, loc.resource, 'DELETE', access),
+			]);
+			slots[index] = {
+				resource: loc.resource,
+				table: loc.table,
+				path: resource_path(store, loc),
+				name: loc.name,
+				subject: loc.slug || null,
+				permissions: { read: true, create, update, delete: remove },
+				fields: fields_of(loc.columns, loc.resource, schema),
+				list_columns: list_columns_of(loc, loc.resource),
+			};
+		}
+	};
+	await Promise.all(Array.from({ length: Math.min(META_CONCURRENCY, locs.length) }, worker));
+	const resources = slots.filter((slot): slot is MetaResource => slot !== null);
 	return { resources };
 }
 

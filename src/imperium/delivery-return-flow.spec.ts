@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import type { ImperiumDoc } from './envelope.ts';
 import type { ImperiumStore } from './store.ts';
 import {
@@ -217,7 +217,9 @@ describe('GPS de recolección', () => {
 });
 
 describe('ticket de devolución', () => {
-	test('el slug ticket-devolucion está escrito en un solo archivo', () => {
+	// Fuente del front: dentro del contenedor del núcleo no hay `frontend/` y se salta.
+	const front = new URL('../../../../frontend/src/app/', import.meta.url);
+	test.skipIf(!existsSync(front))('el slug ticket-devolucion está escrito en un solo archivo', () => {
 		const slug_file = readFileSync(
 			new URL(
 				'../../../../frontend/src/app/components/delivery-return/delivery-return-ticket.ts',

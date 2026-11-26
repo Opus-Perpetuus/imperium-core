@@ -1,0 +1,32 @@
+[
+  {
+    "model": "Reports",
+    "override": true,
+    "doc": {
+      "_ref": "reports-physical-device-inventario-0",
+      "name": "Dispositivos | Inventario",
+      "description": "Inventario de dispositivos (varios registros): nombre, tipo, modelo, serie, sistema, CPU, RAM, discos, GPU, último usuario y última revisión. Imprime la selección o el filtro de la lista (#337).",
+      "related_model": "physical-device",
+      "page_size": "Letter",
+      "html_content": "<style>\n  .report-root { font-size: 8.5pt; line-height: 1.3; color: #23344d; }\n  .report-root table { width: 100%; border-collapse: collapse; table-layout: fixed; }\n  .report-root th, .report-root td { border-bottom: 1px solid #d5dce6; padding: 0.2rem 0.25rem; text-align: left; vertical-align: top; word-break: break-word; overflow-wrap: anywhere; }\n  .report-root th { background: #eef2f7; font-weight: 700; }\n  .report-title { font-size: 13pt; font-weight: 700; margin: 0.1rem 0; }\n  .report-muted { color: #63748f; font-size: 7.5pt; }\n  .report-section-title { font-weight: 700; margin: 0.5rem 0 0.2rem; }\n  @page { size: Letter; margin: 12mm; }\n</style>\n<div class=\"report-root\">\n  <div class=\"report-muted\">INVENTARIO DE DISPOSITIVOS</div>\n  <div class=\"report-title\">Inventario de dispositivos</div>\n  <div class=\"report-muted\">{{fecha_actual}} {{hora_actual}} · Generó: {{usuario_genera}} · Total: {{total_registros}}</div>\n  <table style=\"margin-top: 0.5rem;\">\n    <thead>\n      <tr>\n        <th style=\"width: 4%;\">#</th>\n        <th style=\"width: 14%;\">Nombre</th>\n        <th style=\"width: 8%;\">Tipo</th>\n        <th style=\"width: 14%;\">Fabricante / modelo</th>\n        <th style=\"width: 9%;\">Serie</th>\n        <th style=\"width: 12%;\">Sistema</th>\n        <th style=\"width: 12%;\">Procesador</th>\n        <th style=\"width: 6%;\">RAM</th>\n        <th style=\"width: 8%;\">Discos</th>\n        <th style=\"width: 10%;\">GPU</th>\n        <th style=\"width: 9%;\">Último usuario</th>\n        <th style=\"width: 9%;\">Última revisión</th>\n      </tr>\n    </thead>\n    <tbody>\n      {{#each registros}}\n      <tr>\n        <td>{{@number}}</td>\n        <td>{{name}}{{#if is_active == false}} <span class=\"report-muted\">(inactivo)</span>{{/if}}</td>\n        <td>{{device_kind}}</td>\n        <td>{{manufacturer}} {{model}}</td>\n        <td>{{serial}}</td>\n        <td>{{os_distro}} {{os_release}}</td>\n        <td>{{cpu_brand}}</td>\n        <td>{{ram_gb}}</td>\n        <td>{{disk_count}} · {{disk_total_gb}}</td>\n        <td>{{gpu_primary}}{{#if vram_gb}} · {{vram_gb}}{{/if}}</td>\n        <td>{{last_user_name}}</td>\n        <td>{{ultima_revision}}</td>\n      </tr>\n      {{/each}}\n    </tbody>\n  </table>\n  <div class=\"report-section-title\">Total de dispositivos: {{total_registros}}</div>\n</div>\n",
+      "generated_report_name": "INVENTARIO_DISPOSITIVOS_{{timestamp_actual}}",
+      "is_active": true
+    },
+    "refs": {}
+  },
+  {
+    "model": "Reports",
+    "override": true,
+    "doc": {
+      "_ref": "reports-physical-device-kardex-0",
+      "name": "Dispositivos | Kárdex",
+      "description": "Kárdex de un dispositivo: ficha del equipo y sus movimientos (alta, cambios de hardware, bajas) en orden, sin revisiones vacías (#337).",
+      "related_model": "physical-device",
+      "page_size": "Letter",
+      "html_content": "<style>\n  .report-root { font-size: 8.5pt; line-height: 1.3; color: #23344d; }\n  .report-root table { width: 100%; border-collapse: collapse; table-layout: fixed; }\n  .report-root th, .report-root td { border-bottom: 1px solid #d5dce6; padding: 0.2rem 0.25rem; text-align: left; vertical-align: top; word-break: break-word; overflow-wrap: anywhere; }\n  .report-root th { background: #eef2f7; font-weight: 700; }\n  .report-title { font-size: 13pt; font-weight: 700; margin: 0.1rem 0; }\n  .report-muted { color: #63748f; font-size: 7.5pt; }\n  .report-section-title { font-weight: 700; margin: 0.5rem 0 0.2rem; }\n  @page { size: Letter; margin: 12mm; }\n</style>\n<div class=\"report-root\">\n  <div class=\"report-muted\">KÁRDEX DE DISPOSITIVO</div>\n  <div class=\"report-title\">{{name}}</div>\n  <div class=\"report-muted\">{{fecha_actual}} {{hora_actual}} · Generó: {{usuario_genera}}</div>\n  <div class=\"report-section-title\">Equipo</div>\n  <table>\n    <tbody>\n      <tr><th style=\"width: 22%;\">Tipo</th><td>{{device_kind}}</td><th style=\"width: 22%;\">Serie</th><td>{{serial}}</td></tr>\n      <tr><th>Fabricante / modelo</th><td>{{manufacturer}} {{model}}</td><th>Sistema</th><td>{{os_distro}} {{os_release}}</td></tr>\n      <tr><th>Procesador</th><td>{{cpu_brand}}</td><th>RAM</th><td>{{ram_gb}}</td></tr>\n      <tr><th>Discos</th><td>{{disk_count}} · {{disk_total_gb}}</td><th>GPU</th><td>{{gpu_primary}}{{#if vram_gb}} · {{vram_gb}}{{/if}}</td></tr>\n      <tr><th>Último usuario</th><td>{{last_user_name}}</td><th>Última revisión</th><td>{{ultima_revision}}</td></tr>\n    </tbody>\n  </table>\n  <div class=\"report-section-title\">Movimientos</div>\n  <table>\n    <thead>\n      <tr>\n        <th style=\"width: 5%;\">#</th>\n        <th style=\"width: 16%;\">Fecha</th>\n        <th style=\"width: 17%;\">Movimiento</th>\n        <th style=\"width: 45%;\">Detalle</th>\n        <th style=\"width: 17%;\">Usuario</th>\n      </tr>\n    </thead>\n    <tbody>\n      {{#each kardex}}\n      <tr>\n        <td>{{@number}}</td>\n        <td>{{fecha}}</td>\n        <td>{{movimiento}}</td>\n        <td>{{detalle}}</td>\n        <td>{{usuario}}</td>\n      </tr>\n      {{else}}\n      <tr><td colspan=\"5\" class=\"report-muted\">Sin movimientos registrados.</td></tr>\n      {{/each}}\n    </tbody>\n  </table>\n  <div class=\"report-section-title\">Estado actual: {{#if is_active == false}}inactivo{{else}}activo{{/if}}</div>\n</div>\n",
+      "generated_report_name": "KARDEX_{{name}}_{{timestamp_actual}}",
+      "is_active": true
+    },
+    "refs": {}
+  }
+]

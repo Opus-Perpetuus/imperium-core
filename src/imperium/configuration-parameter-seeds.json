@@ -9,6 +9,24 @@
 		"value": "inventory-internal-location-receptions"
 	},
 	{
+		"_ref": "configuration-inventory-allow-negative-stock",
+		"name": "Inventario · Permitir existencia negativa",
+		"description": "Si está en SÍ (por defecto), las salidas de inventario (surtir pedidos, ventas de caja, salidas manuales, entregas de bultos y cancelar devoluciones de caja) se registran aunque la existencia del producto y del almacén quede negativa. Si está en NO, ninguna salida puede dejar existencia negativa y se bloquea; un pedido offline que se sincroniza sin existencia lleva un aviso.",
+		"is_system": true,
+		"module_id": "NA",
+		"type": "switch",
+		"value": true
+	},
+	{
+		"_ref": "configuration-pedidos-offline-sync-estado",
+		"name": "Pedidos offline · Estado al sincronizar",
+		"description": "Estado con el que llegan los pedidos que se sincronizan desde el modo offline: confirmado (por defecto) o borrador. En confirmado se confirman aunque les falte existencia o precio y el aviso lo dice.",
+		"is_system": true,
+		"module_id": "NA",
+		"type": "select",
+		"value": "confirmado"
+	},
+	{
 		"_ref": "configuration-inventory-transito-entrada-location",
 		"name": "Inventario · Ubicación de tránsito de entrada",
 		"description": "Ubicación informativa que etiqueta la mercancía en camino (comprada, aún no recibida).",
@@ -70,6 +88,15 @@
 		"name": "Posicion del texto del logo",
 		"type": "select",
 		"value": ""
+	},
+	{
+		"_ref": "configuration-branding-logo-color",
+		"description": "Color del logo de la empresa: original (colores del archivo), theme (color de texto del tema activo) o primary (color primario del tema). Con theme o primary el logo se pinta como silueta y cambia de color con cada tema; conviene un SVG/PNG de un solo color con fondo transparente.",
+		"is_system": true,
+		"module_id": "NA",
+		"name": "Color del logo",
+		"type": "select",
+		"value": "original"
 	},
 	{
 		"_ref": "configuration-login-background",

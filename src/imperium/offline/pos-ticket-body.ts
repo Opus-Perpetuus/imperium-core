@@ -25,5 +25,7 @@ export function pos_ticket_online_body(ticket: PosTicketSource): Record<string, 
 	delete body._rev;
 	delete body._attachments;
 	delete body.search_field;
+	// Desbloqueos del PIN guardados para el reintento: vuelven al caché del PIN, nunca al cuerpo.
+	delete body.offline_unlock_tokens;
 	return body;
 }

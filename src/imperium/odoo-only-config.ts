@@ -1,18 +1,27 @@
 /**
- * Parámetros de configuración que solo Odoo crea, borra o renombra. Hoy es uno:
- * las fuentes de imágenes de apps, que existen mientras Odoo tenga encendido el
- * autoescaneo de repos de imágenes. Su valor sí se puede ver y editar (Odoo lo
- * vuelve a fijar en cada «Aplicar súbditos»).
+ * Parámetros de configuración que no se crean, borran ni renombran desde
+ * «Parámetros». Hoy es uno: las fuentes de apps, que existen mientras el
+ * autoescaneo esté encendido. Lo enciende Odoo (modo odoo, lo vuelve a fijar
+ * en cada «Aplicar súbditos») o Módulos › Autodetección de apps (modo self).
+ * Su valor sí se puede ver y editar.
  */
 import type { ImperiumDoc } from './envelope.ts';
 import type { ImperiumStore } from './store.ts';
 import { read_imperium_body } from './body.ts';
 import { IMAGE_SOURCES_CONFIG_REF } from './subject-image-sources.ts';
+import { management_mode } from './management-mode.ts';
 
 export const ODOO_ONLY_CONFIG_REFS: ReadonlySet<string> = new Set([IMAGE_SOURCES_CONFIG_REF]);
 
 export const ODOO_ONLY_CONFIG_MESSAGE =
 	'Este parámetro solo lo habilita Odoo (autoescaneo de repos de imágenes del servidor)';
+
+export const SELF_MANAGED_CONFIG_MESSAGE =
+	'Este parámetro aparece y se quita con la autodetección de apps (Módulos › Autodetección de apps)';
+
+function denied_message(): string {
+	return management_mode() === 'self' ? SELF_MANAGED_CONFIG_MESSAGE : ODOO_ONLY_CONFIG_MESSAGE;
+}
 
 function guarded(ref: unknown): boolean {
 	return typeof ref === 'string' && ODOO_ONLY_CONFIG_REFS.has(ref.trim());
@@ -42,7 +51,7 @@ export async function odoo_only_config_denied(
 ): Promise<string | null> {
 	if (method === 'DELETE' && segs[0] === 'id' && segs[1]) {
 		const previous = await store.find_id('configuration', segs[1]);
-		return previous && guarded(previous._ref) ? ODOO_ONLY_CONFIG_MESSAGE : null;
+		return previous && guarded(previous._ref) ? denied_message() : null;
 	}
 	const writes =
 		(method === 'POST' && segs.length === 0) ||
@@ -68,7 +77,7 @@ export async function odoo_only_config_denied(
 		if (!item || typeof item !== 'object') continue;
 		const row = { ...(item as Record<string, unknown>) };
 		if (method === 'PATCH') row._id = segs[0];
-		if (await touches_guarded(store, row)) return ODOO_ONLY_CONFIG_MESSAGE;
+		if (await touches_guarded(store, row)) return denied_message();
 	}
 	return null;
 }

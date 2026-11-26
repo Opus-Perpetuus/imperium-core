@@ -15,12 +15,17 @@ export type MenuPathSubject = {
 
 /**
  * El gestor vive en `/db-admin`. El menú sigue diciendo `/database-manager/…`.
- * La consola no entra: no hay GET, solo `POST /db-admin/query`.
+ * La consola no tiene GET propio (solo `POST /db-admin/query`): su GET cae en
+ * los esquemas que lista. Restaurar lee el historial `/db-admin/restores`. La
+ * raíz va al índice del motor (#338: las tres daban 404).
  */
 const GESTOR_ALIASES: ReadonlyArray<readonly [string, string]> = [
+	['/database-manager', '/db-admin'],
 	['/database-manager/audit', '/db-admin/audit'],
 	['/database-manager/backups', '/db-admin/backups'],
 	['/database-manager/health', '/db-admin/health'],
+	['/database-manager/console', '/db-admin/schemas'],
+	['/database-manager/restore', '/db-admin/restores'],
 ];
 
 /**

@@ -161,3 +161,33 @@ describe('enganche router + seed', () => {
 		).toBe(true);
 	});
 });
+
+describe('nombre de la hoja en el lanzador', () => {
+	test('sin label de menú: permiso de lectura y luego id humanizado, nunca el id crudo', async () => {
+		const { wire_leaf, humanize_leaf_id } = await import('./app-registry-bootstrap.ts');
+		const leaf = {
+			segment: 'pos-credit',
+			pageId: 'pos.pos-credit',
+			permission: 'subject.pos.pos-credit.read',
+			kind: 'crud' as const,
+			listOnly: false,
+		};
+		const base = {
+			manifestVersion: 1 as const,
+			slug: 'pos',
+			technicalId: 'subject-pos',
+			name: 'POS',
+			version: '0.0.0',
+			image: 'x',
+			menu: [],
+			leaves: [leaf],
+			widgets: [],
+		};
+		const with_perm = { ...base, permissions: [{ id: 'subject.pos.pos-credit.read', label: 'Ver crédito' }] };
+		expect(wire_leaf(with_perm as never, leaf, ['es']).name).toBe('Crédito');
+		expect(wire_leaf({ ...base, permissions: [] } as never, leaf, ['es']).name).toBe('Pos credit');
+		const with_menu = { ...with_perm, menu: [{ id: 'm', label: 'Créditos', pageId: 'pos.pos-credit' }] };
+		expect(wire_leaf(with_menu as never, leaf, ['es']).name).toBe('Créditos');
+		expect(humanize_leaf_id({ pageId: 'pos.posPromotion', segment: 'x' })).toBe('Pos promotion');
+	});
+});

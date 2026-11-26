@@ -7,7 +7,7 @@ import { CREDIT_METHOD, TICKET_ABONO, prepare_credit_rules } from './pos-credit.
 import { TICKET_ABONO_APARTADO, TICKET_APARTADO, prepare_layaway_rules } from './pos-layaway.ts';
 import { TICKET_COTIZACION, prepare_quote_rules } from './pos-quote.ts';
 import { STORE_CREDIT_METHOD, prepare_store_credit_sale } from './pos-store-credit.ts';
-import { non_cash_amount, payments_by_method, prepare_pos_payments } from './pos-payments.ts';
+import { CARD_REFUNDS_KEY, card_refunds_total, non_cash_amount, payments_by_method, prepare_pos_payments } from './pos-payments.ts';
 import type { ImperiumStore } from './store.ts';
 
 const TICKET_VENTA = 'VENTA';
@@ -531,6 +531,7 @@ export async function prepare_pos_ticket_create(
 		Object.assign(out, await prepare_credit_rules(store, out));
 	}
 	if (ticket_type === TICKET_APARTADO || ticket_type === TICKET_ABONO_APARTADO) {
+		if (!text(out.created_by)) out.created_by = current_user_id;
 		Object.assign(out, await prepare_layaway_rules(store, out));
 	}
 	if (ticket_type === TICKET_ENTRADA) {
@@ -740,6 +741,11 @@ function total_credit_payments_of(summaries: ImperiumDoc[]): number {
 	);
 }
 
+function with_card_refunds(totals: Record<string, number>, returns: ImperiumDoc[]): Record<string, number> {
+	const card_refunds = card_refunds_total(returns);
+	return card_refunds > 0 ? { ...totals, [CARD_REFUNDS_KEY]: card_refunds } : totals;
+}
+
 export function expected_cash_of(opening_money: number, summaries: ImperiumDoc[]): number {
 	const movements = summaries.reduce((sum, ticket) => sum + Number(ticket.cash_effect ?? 0), 0);
 	return round_money(opening_money + movements);
@@ -802,8 +808,9 @@ export async function build_pos_session_report(
 		total_cash_in: total_cash_in_of(summaries),
 		total_credit_payments: total_credit_payments_of(summaries),
 		total_layaway_payments: total_layaway_payments_of(summaries),
-		payments_by_method: payments_by_method(
-			summaries.filter((t) => text(t.ticket_type) === TICKET_VENTA),
+		payments_by_method: with_card_refunds(
+			payments_by_method(summaries.filter((t) => text(t.ticket_type) === TICKET_VENTA)),
+			summaries.filter((t) => text(t.ticket_type) === TICKET_DEVOLUCION),
 		),
 		expected_cash: expected_cash_of(opening_money, summaries),
 		cash_register_opening_money: opening_money,

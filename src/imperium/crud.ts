@@ -1,6 +1,9 @@
 /**
  * CRUD Imperium: mismas rutas que `crud_routes()` del backend Express.
  */
+import { refund_return_to_card } from './pos-card-refund.ts';
+import type { TerminalDeps } from './pos-card-terminal-flow.ts';
+import { principal_type_of } from './subject-identity.ts';
 import { is_master_request } from './subject-secret.ts';
 import { odoo_only_config_denied } from './odoo-only-config.ts';
 import { decorate_list_instance_type } from './list-headers.ts';
@@ -32,6 +35,7 @@ import {
 	prepare_pedido_create,
 	prepare_pedido_update,
 } from './pedidos-flow.ts';
+import { computed_distinct_counts, resolve_list_filters } from './list-computed-fields.ts';
 import {
 	after_delivery_package_mutate,
 	prepare_delivery_package_create,
@@ -49,6 +53,7 @@ import {
 	prepare_delivery_route_write,
 } from './delivery-route-flow.ts';
 import { list_instance_type, project_list_docs } from './list-projection.ts';
+import { decorate_contacto_rutas, strip_contacto_rutas } from './contacto-rutas.ts';
 import {
 	access_right_group_for_form,
 	link_access_right_to_group,
@@ -62,7 +67,7 @@ import {
 	decorate_inventory_reception_list,
 	ensure_pending_reception_from_purchase_order,
 } from './inventory-reception-flow.ts';
-import { register_pos_ticket_exit } from './inventory-exit.ts';
+import { assert_pos_ticket_stock, register_pos_ticket_exit } from './inventory-exit.ts';
 import { register_layaway_effects, release_layaway_on_cancel } from './pos-layaway.ts';
 import { register_quote_conversion } from './pos-quote.ts';
 import {
@@ -76,6 +81,11 @@ import {
 	notify_ticketing_rooms,
 	prepare_ticketing_turn_create,
 } from './ticketing-turn-flow.ts';
+import {
+	claim_turn_confirm,
+	schedule_ticketing_room_notice,
+	type TurnCreateClaim,
+} from './ticketing-turn-create-guard.ts';
 import {
 	actor_can_restore_pos_session,
 	prepare_pos_session_create,
@@ -167,11 +177,16 @@ import { assign_document_increments } from './custom-pattern-render.ts';
 import { prepare_increment_create } from './increment-normalize.ts';
 import { prepare_api_key_create, prepare_api_key_update } from './api-keys-flow.ts';
 import { build_access } from './auth.ts';
+import { and_match, con_vendedor_asignado, contacto_vendedor_match } from './contacto-vendedor-scope.ts';
 import { is_chat_private_resource, is_chat_row, without_chat_rows } from './chat-access.ts';
 import { can_manage_user_groups, is_seed_admin } from './group-access.ts';
 import {
 	apply_related_labels,
 	field_value_ids_needing_label,
+	FIELD_VALUES_ALLOW,
+	field_values_denied,
+	FIELD_VALUES_DENIED_MESSAGE,
+	field_values_from_counts,
 	field_values_from_distinct,
 	field_values_message,
 	field_values_missing_field_error,
@@ -249,8 +264,18 @@ async function label_ref_field_values(
 	return apply_related_labels(options, names);
 }
 
+export async function prepare_user_pin_batch_update(
+	store: ImperiumStore,
+	id: string,
+	doc: ImperiumDoc,
+): Promise<ImperiumDoc> {
+	const previous = await store.find_id('user-pin', id);
+	if (!previous) throw new Error('No se encontro el PIN a actualizar');
+	return (await prepare_user_pin_write(store, doc, previous)).persisted;
+}
+
 /** Alcance de toda ruta del CRUD: las reglas de registro del actor y, para cualquiera, sin las filas del chat. */
-async function record_rule_scope(
+export async function record_rule_scope(
 	store: ImperiumStore,
 	actor: ImperiumDoc | null,
 	resource: string,
@@ -271,12 +296,15 @@ async function actor_record_rule_scope(
 	if (resource === 'menu-management' && can_manage_user_groups(access)) {
 		return { match: null, applicable_rules: [] };
 	}
-	return record_rule_scope_from_access(
+	const scope = record_rule_scope_from_access(
 		access,
 		actor,
 		record_rule_lookup_keys(resource),
 		operation_flag(method),
 	);
+	// #291: el vendedor solo ve sus clientes, además de sus reglas de registro.
+	const vendedor = contacto_vendedor_match(resource, access, actor);
+	return vendedor ? { ...scope, match: and_match(scope.match, vendedor) } : scope;
 }
 
 async function assert_no_incoming_references(
@@ -324,7 +352,7 @@ const INVENTORY_LEDGER_WRITE_ERRORS: Record<
 	{ create: string; update: string; delete: string; batch: string }
 > = {
 	'inventory-movement': {
-		create: 'Los movimientos de inventario se generan automáticamente desde compras y logística',
+		create: 'Los movimientos de inventario se generan automáticamente. Para una entrada o salida manual usa «Entrada / salida» en Movimientos',
 		update: 'Los movimientos de inventario no se pueden editar manualmente',
 		delete: 'Los movimientos de inventario no se pueden eliminar manualmente',
 		batch: 'Los movimientos de inventario no soportan operaciones batch',
@@ -369,6 +397,42 @@ async function assert_id_in_scope(
 	await assert_record_in_scope(store, resource, id, scope, method);
 }
 
+export function field_value_columns(store: ImperiumStore, resource: string): ReadonlyArray<{ name: string; pg?: string }> {
+	if (typeof store.loc !== 'function' || !store.has?.(resource)) return [];
+	return store.loc(resource)?.columns ?? [];
+}
+
+/**
+ * Columnas de la lista que no admiten field-values (misma regla que el
+ * endpoint): el filtro de columna del front cae a texto libre en vez de pedir
+ * valores y pintar el error.
+ */
+/** Refs del schema (FK reales) del recurso; vacío si el store no las conoce. */
+export function field_value_refs(store: ImperiumStore, resource: string): Readonly<Record<string, string>> {
+	if (typeof store.field_refs !== 'function') return {};
+	return store.field_refs(resource) ?? {};
+}
+
+/** PII en field-values: solo con sesión de usuario interno (no anónimo, no externo, no la app sembrando). */
+export function field_values_session(actor: ImperiumDoc | null | undefined): boolean {
+	return Boolean(actor) && principal_type_of(actor ?? null) === 'internal';
+}
+
+export function list_fv_denied(
+	store: ImperiumStore,
+	resource: string,
+	keys: Iterable<string>,
+	has_session = false,
+): string[] {
+	const columns = field_value_columns(store, resource);
+	const names = new Set<string>(keys);
+	for (const column of columns) names.add(column.name);
+	const refs = field_value_refs(store, resource);
+	return [...names].filter(
+		(name) => name !== '_id' && field_values_denied(resource, name, columns, FIELD_VALUES_ALLOW, refs, has_session),
+	);
+}
+
 export async function handle_crud(
 	store: ImperiumStore,
 	req: Request,
@@ -376,6 +440,7 @@ export async function handle_crud(
 	resource: string,
 	rest: string,
 	actor: ImperiumDoc | null = null,
+	terminal: TerminalDeps | null = null,
 ): Promise<Response | null> {
 	if (is_chat_private_resource(resource)) return null;
 	const method = req.method.toUpperCase();
@@ -440,9 +505,49 @@ export async function handle_crud(
 	if (method === 'GET' && segs[0] === 'field-values' && segs[1]) {
 		const field_path = decodeURIComponent(segs[1] ?? '').trim();
 		if (!field_path) throw new Error(field_values_missing_field_error());
+		const columns = field_value_columns(store, resource);
+		if (
+			field_values_denied(
+				resource,
+				field_path,
+				columns,
+				FIELD_VALUES_ALLOW,
+				field_value_refs(store, resource),
+				field_values_session(actor),
+			)
+		) {
+			return json(
+				resource,
+				fail(FIELD_VALUES_DENIED_MESSAGE, 400, { code: 'validation_error', field: field_path })
+					.body,
+				400,
+			);
+		}
 		const termino = String(url.searchParams.get('termino') ?? '').trim();
 		const scope = await record_rule_scope(store, actor, resource, method);
-		const values = await store.distinct(resource, field_path, termino, scope.match);
+		// #327/#329: valores y conteos de la MISMA vista de la lista (filtros de
+		// las otras columnas y contexto de la ruta, p. ej. el padre de la subtabla).
+		const view_where = await field_values_view_where(store, resource, url, actor, field_path);
+		const include_inactive = query_list(url).include_inactive;
+		const computed = await computed_distinct_counts(store, resource, field_path, {
+			q: termino,
+			mongo_match: scope.match,
+			where: view_where,
+			include_inactive,
+		});
+		const counted =
+			computed ??
+			(typeof store.distinct_counts === 'function'
+				? await store.distinct_counts(resource, field_path, {
+						q: termino,
+						mongo_match: scope.match,
+						where: view_where,
+						include_inactive,
+					})
+				: null);
+		const values = counted
+			? counted.map((row) => row.v)
+			: await store.distinct(resource, field_path, termino, scope.match);
 		const metadata = await load_state_fields_metadata(store, resource);
 		if (!state_field_for(metadata, field_path)) {
 			const bound = store.has(resource)
@@ -455,7 +560,15 @@ export async function handle_crud(
 				bound,
 			);
 			if (listed) {
-				return json(resource, ok(listed, field_values_message(field_path), listed.length));
+				const listed_counts = counted
+					? new Map(
+							field_values_from_counts(counted, field_path, null).map((o) => [o.value, o.count]),
+						)
+					: null;
+				const with_counts = listed_counts
+					? listed.map((o) => ({ ...o, count: listed_counts.get(String(o.value)) ?? 0 }))
+					: listed;
+				return json(resource, ok(with_counts, field_values_message(field_path), with_counts.length));
 			}
 		}
 		const options = await filter_pedido_estado_options(
@@ -467,7 +580,9 @@ export async function handle_crud(
 				store,
 				resource,
 				field_path,
-				field_values_from_distinct(values, field_path, state_field_for(metadata, field_path)),
+				counted
+					? field_values_from_counts(counted, field_path, state_field_for(metadata, field_path))
+					: field_values_from_distinct(values, field_path, state_field_for(metadata, field_path)),
 			),
 		);
 		return json(resource, ok(options, field_values_message(field_path), options.length));
@@ -475,10 +590,11 @@ export async function handle_crud(
 	if (method === 'GET' && segs[0] === 'export.csv' && segs.length === 1) {
 		const { q, include_inactive, where, ids } = query_list(url);
 		const scope = await record_rule_scope(store, actor, resource, method);
+		const list_where = await resolve_list_filters(store, resource, where);
 		return stream_export_csv(store, resource, {
 			q,
 			include_inactive,
-			where,
+			where: list_where,
 			ids,
 			mongo_match: scope.match,
 		});
@@ -517,7 +633,9 @@ export async function handle_crud(
 		if (resource === 'delivery-return') {
 			throw new Error('Las devoluciones no soportan operaciones batch');
 		}
+		const dry_run = ['1', 'true'].includes(String(url.searchParams.get('dry_run') ?? '').trim());
 		if (is_location_resource(resource)) {
+			if (dry_run) throw new Error('La simulación no aplica al árbol de ubicaciones');
 			const raw = await body();
 			const payload = Array.isArray(raw)
 				? { lineas: raw }
@@ -534,18 +652,28 @@ export async function handle_crud(
 				resource,
 				rows: items,
 				match_field: match || null,
+				dry_run,
 				persist_create: async (doc) =>
 					store.insert(
 						resource,
 						await before_create(
 							store,
 							resource,
-							await prepare_user_write(resource, doc, true),
+							resource === 'user-pin'
+								? (await prepare_user_pin_write(store, doc, null)).persisted
+								: await prepare_user_write(resource, doc, true),
 							actor,
 						),
 					),
+				// El lote de PIN debe hashear igual que el PATCH: nunca guardar plain_pin.
 				persist_update: async (id, doc) =>
-					store.update(resource, id, await prepare_user_write(resource, doc, false)),
+					store.update(
+						resource,
+						id,
+						resource === 'user-pin'
+							? await prepare_user_pin_batch_update(store, id, doc)
+							: await prepare_user_write(resource, doc, false),
+					),
 			}),
 		);
 	}
@@ -666,10 +794,12 @@ export async function handle_crud(
 			instance_type(store, resource, listed.rows),
 			list_fields,
 		);
+		const fv_denied = list_fv_denied(store, resource, Object.keys(tipo), field_values_session(actor));
 		if (listed.empty_project) {
 			return json(resource, await with_module_info(store, resource, {
 				...ok([], 'Sin proyecto especificado', 0),
 				tipo_de_instancia: tipo,
+				fv_denied,
 				schema_validation,
 			}));
 		}
@@ -680,6 +810,7 @@ export async function handle_crud(
 				listed.total,
 			),
 			tipo_de_instancia: tipo,
+			fv_denied,
 			schema_validation,
 		}));
 	}
@@ -735,6 +866,7 @@ export async function handle_crud(
 	}
 	if (method === 'POST' && segs.length === 0) {
 		assert_inventory_ledger_write(resource, 'create');
+		let turn_claim: TurnCreateClaim<ImperiumDoc> | null = null;
 		let confirmar_inventario_inconsistente = false;
 		let incoming = await prepare_user_write(
 			resource,
@@ -745,6 +877,12 @@ export async function handle_crud(
 		);
 		if (resource === 'pedidos') {
 			incoming = await prepare_pedido_create(store, incoming, actor);
+		}
+		if (resource === 'contacto') {
+			incoming = strip_contacto_rutas(incoming);
+			if (actor && !is_seed_admin(actor)) {
+				incoming = con_vendedor_asignado(incoming, await build_access(store, actor), actor);
+			}
 		}
 		if (resource === 'delivery-package') {
 			const raw_flag = incoming.confirmar_inventario_inconsistente;
@@ -797,7 +935,18 @@ export async function handle_crud(
 			incoming = await prepare_supplier_invoice_create(store, incoming);
 		}
 		if (resource === 'ticketing-system-turn') {
-			incoming = await prepare_ticketing_turn_create(store, incoming);
+			turn_claim = claim_turn_confirm(incoming.client_request_id);
+			delete incoming.client_request_id;
+			if (turn_claim.status === 'replay') {
+				const turn = await turn_claim.turn;
+				return json(resource, ok([turn], 'Turno ya registrado'), 200);
+			}
+			try {
+				incoming = await prepare_ticketing_turn_create(store, incoming);
+			} catch (error) {
+				if (turn_claim.status === 'new') turn_claim.fail(error);
+				throw error;
+			}
 		}
 		if (resource === 'pos-session') {
 			incoming = await prepare_pos_session_create(store, incoming, actor);
@@ -815,7 +964,7 @@ export async function handle_crud(
 				String(incoming.pos_session ?? ''),
 				{ method: 'POST', path: '/pos-tickets', label: 'Crear ticket POS' },
 				actor,
-			);
+			);	incoming = await refund_return_to_card(terminal, incoming);
 		}
 		if (resource === 'products') {
 			incoming = await prepare_product_write(store, incoming);
@@ -889,8 +1038,21 @@ export async function handle_crud(
 		if (resource === 'lectura') {
 			incoming = await prepare_lectura_write(store, incoming);
 		}
-		const doc = await before_create(store, resource, incoming, actor);
-		const created = await store.insert(resource, doc);
+		let doc: ImperiumDoc;
+		try {
+			doc = await before_create(store, resource, incoming, actor);
+		} catch (error) {
+			if (turn_claim?.status === 'new') turn_claim.fail(error);
+			throw error;
+		}
+		let created: ImperiumDoc;
+		try {
+			created = await store.insert(resource, doc);
+		} catch (error) {
+			if (turn_claim?.status === 'new') turn_claim.fail(error);
+			throw error;
+		}
+		if (turn_claim?.status === 'new') turn_claim.settle(created);
 		if (resource === 'attachment-management') bind_deferred_image_optimize(store, created);
 		await link_attachments_to_record(store, resource, created);
 		const notice = user_pin_notice
@@ -902,7 +1064,9 @@ export async function handle_crud(
 		}
 		if (resource === 'pedidos') await after_pedido_mutate(store, 'create', created);
 		if (resource === 'access-rights') await link_access_right_to_group(store, created);
-		if (resource === 'ticketing-system-turn') await notify_ticketing_rooms(store);
+		if (resource === 'ticketing-system-turn') {
+			schedule_ticketing_room_notice(() => notify_ticketing_rooms(store));
+		}
 		if (resource === 'purchase-order') {
 			await sync_inbound_supplier_invoice(store, created);
 			await ensure_pending_reception_from_purchase_order(store, created);
@@ -1047,6 +1211,7 @@ export async function handle_crud(
 		if (resource === 'pedidos') {
 			b = await prepare_pedido_update(store, b, actor, previous);
 		}
+		if (resource === 'contacto') b = strip_contacto_rutas(b);
 		if (resource === 'delivery-package') {
 			b = await prepare_delivery_package_update(store, b, previous);
 		}
@@ -1258,6 +1423,7 @@ export async function handle_crud(
 		if (resource === 'pedidos') {
 			patched = await prepare_pedido_update(store, patched, actor, previous);
 		}
+		if (resource === 'contacto') patched = strip_contacto_rutas(patched);
 		if (resource === 'delivery-package') {
 			patched = await prepare_delivery_package_update(store, patched, previous);
 		}
@@ -1422,6 +1588,34 @@ function is_excel_export(url: URL) {
 	return raw === '1' || raw === 'true';
 }
 
+/**
+ * #327/#329: el `where` que usaría la lista para este recurso, sin la columna
+ * cuyos valores se piden (su propio filtro no debe esconder sus opciones).
+ */
+async function field_values_view_where(
+	store: ImperiumStore,
+	resource: string,
+	url: URL,
+	actor: ImperiumDoc | null,
+	field_path: string,
+): Promise<Record<string, unknown>> {
+	const q = query_list(url);
+	let where = { ...q.where };
+	for (const key of Object.keys(where)) {
+		if (key === field_path) delete where[key];
+	}
+	if (is_personal_task_resource(resource)) {
+		const uid = String(actor?._id ?? '');
+		if (uid) where.owner_user = uid;
+	}
+	if (is_incidencia_resource(resource)) where = apply_incidencia_list_where(where);
+	if (is_registro_asistencia_resource(resource)) where = apply_registro_asistencia_list_where(where);
+	if (is_lista_asistencia_resource(resource)) where = apply_lista_asistencia_list_where(where);
+	if (resource === 'reports') where = apply_report_list_where(store, where);
+	where = await resolve_list_filters(store, resource, where);
+	return strip_root_parent_where(where);
+}
+
 async function read_list_docs(
 	store: ImperiumStore,
 	resource: string,
@@ -1449,6 +1643,7 @@ async function read_list_docs(
 	if (resource === 'reports') {
 		q.where = apply_report_list_where(store, q.where);
 	}
+	q.where = await resolve_list_filters(store, resource, q.where);
 	const where = strip_root_parent_where(q.where);
 	const scope = await record_rule_scope(store, actor, resource, 'GET');
 	const excel = is_excel_export(url);
@@ -1552,6 +1747,12 @@ async function finalize_rows(
 	const project = mode === 'list';
 	if (is_pedido_resource(resource) && mode !== 'detail') {
 		const flat = store.flatten_list_docs(resource, await enrich_pedidos_list(store, rows));
+		return project ? project_list_docs(resource, flat) : flat;
+	}
+	if (resource === 'contacto') {
+		const decorated = await decorate_contacto_rutas(store, rows);
+		if (mode === 'detail') return populate_shared_tags(store, decorated);
+		const flat = store.flatten_list_docs(resource, decorated);
 		return project ? project_list_docs(resource, flat) : flat;
 	}
 	if (is_delivery_route_resource(resource)) {
@@ -1926,6 +2127,7 @@ async function before_create(
 	if (actor?._id && incoming.created_by === undefined) {
 		incoming.created_by = String(actor._id);
 	}
+	if (resource === 'pos-tickets') await assert_pos_ticket_stock(store, incoming);
 	return assign_document_increments(store, resource, incoming);
 }
 

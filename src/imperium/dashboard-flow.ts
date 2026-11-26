@@ -15,10 +15,9 @@ import {
 	substitute_placeholders,
 } from './record-rules.ts';
 import type { ImperiumStore } from './store.ts';
+import { get_widget_kind, is_blocked_path } from './widget-kinds.ts';
 
-const WIDGET_TABLE_MAX_LIMIT = 100;
 const WIDGET_CHART_MAX_GROUPS = 50;
-const BLOCKED_PATH_SEGMENTS = new Set(['password', 'permissions']);
 
 function ref_id(value: unknown): string {
 	if (value == null || value === '') return '';
@@ -102,15 +101,6 @@ export function prepare_view_preset_create(incoming: ImperiumDoc, actor: Imperiu
 	const doc = { ...incoming };
 	if (actor?._id && !doc.created_by) doc.created_by = String(actor._id);
 	return doc;
-}
-
-function is_blocked_path(path: string) {
-	return String(path ?? '')
-		.split('.')
-		.some(
-			(segment) =>
-				BLOCKED_PATH_SEGMENTS.has(segment.toLowerCase()) || segment.startsWith('__'),
-		);
 }
 
 function widget_resource_candidates(raw: string): string[] {
@@ -395,16 +385,18 @@ export async function resolve_widget_data(
 		domain_match,
 		without_chat_rows(resource, scope.match),
 	]);
+	const kind = get_widget_kind(widget_type);
+	const for_table = kind?.family === 'table';
+	const max_rows = kind?.max_rows ?? 1;
 	const take = Math.min(
-		WIDGET_TABLE_MAX_LIMIT,
-		Math.max(1, Number(pagination.limite ?? (widget_type === 'table' ? 20 : 5000)) || 20),
+		max_rows,
+		Math.max(1, Number(pagination.limite ?? (for_table ? 20 : 5000)) || 20),
 	);
 	const skip = Math.max(0, Number(pagination.desde ?? 0) || 0);
-	const for_table = widget_type === 'table';
 	const sort_field = String(pagination.campoSort ?? '').trim() || 'createdAt';
 	const sort_dir = Number(pagination.sort) === 1 ? 'asc' : 'desc';
 	const { rows, total } = await store.find_many(resource, {
-		take: for_table ? take : 20000,
+		take: for_table ? take : max_rows,
 		skip: for_table ? skip : 0,
 		mongo_match,
 		include_inactive: true,
@@ -431,10 +423,10 @@ export async function resolve_widget_data(
 		}
 		return total;
 	};
-	if (widget_type === 'kpi') {
+	if (kind?.family === 'kpi') {
 		return ok([{ widget_type, denied: false, kpi: { value: scalar() } }], 'Datos del widget obtenidos');
 	}
-	if (widget_type === 'progress') {
+	if (kind?.family === 'progress') {
 		const progress = as_object(spec.progress);
 		return ok(
 			[{
@@ -449,7 +441,7 @@ export async function resolve_widget_data(
 			'Datos del widget obtenidos',
 		);
 	}
-	if (widget_type.startsWith('chart-')) {
+	if (kind?.family === 'chart') {
 		const group_by = String(spec.group_by ?? '');
 		if (!group_by) throw new Error("Los widgets de gráfica requieren 'group_by'.");
 		if (is_blocked_path(group_by)) {
@@ -481,7 +473,7 @@ export async function resolve_widget_data(
 			'Datos del widget obtenidos',
 		);
 	}
-	if (widget_type !== 'table') {
+	if (!for_table) {
 		throw new Error(`Tipo de widget no soportado: '${widget_type}'.`);
 	}
 	const requested = as_array(spec.fields).map(String).filter(Boolean);

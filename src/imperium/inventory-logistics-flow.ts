@@ -4,8 +4,17 @@
  * Empaque post-surtido: no-op (el stock ya salió al pasar a «surtido»).
  * Empaque pre-surtido: aparta existencia y la descuenta al confirmar entrega.
  */
+import { allow_negative_stock, mensaje_negativos } from './negative-stock.ts';
 import { as_array, as_object, type ImperiumDoc } from './envelope.ts';
+import { product_has_quants } from './delivery-return-flow.ts';
 import { consume_exit_quants } from './inventory-exit.ts';
+import {
+	is_general_warehouse,
+	pedido_warehouse_id,
+	scope_stock,
+	warehouse_scope,
+	type WarehouseScope,
+} from './warehouse-scope.ts';
 import type { ImperiumStore } from './store.ts';
 
 const WAREHOUSE_REF = 'inventory-internal-location-warehouse';
@@ -155,6 +164,10 @@ async function plan_order_logistics_reservation(
 	if (!pedido) throw new Error('No se encontró el pedido para sincronizar inventario');
 	const estado = text(pedido.estado);
 	if (estado === 'surtido' || estado === 'enviado') return null;
+	const scope = await warehouse_scope(store, pedido.almacen);
+	const apartado_en_scope = scope
+		? await apartado_logistica_por_almacen(store, String(scope.almacen._id))
+		: null;
 
 	const steps: Array<{
 		product: ImperiumDoc;
@@ -178,7 +191,14 @@ async function plan_order_logistics_reservation(
 		const stock_total_previo = round_qty(Number(product.existencia ?? 0));
 		const stock_apartado_previo = round_qty(Number(product.existenciaApartada ?? 0));
 		if (difference > 0) {
-			const available = round_qty(stock_total_previo - stock_apartado_previo);
+			const available = await disponible_para_apartar(
+				store,
+				product,
+				scope,
+				apartado_en_scope,
+				stock_total_previo,
+				stock_apartado_previo,
+			);
 			if (difference > available) {
 				const item: InventoryInconsistency = {
 					product: product_id,
@@ -302,6 +322,116 @@ export async function sync_order_logistics_reservation(
 	}
 }
 
+export async function sync_pedido_status_reservation(
+	store: ImperiumStore,
+	pedido: ImperiumDoc,
+	opts?: { deleted?: boolean; dry_run?: boolean },
+): Promise<void> {
+	const pedido_id = text(pedido._id);
+	const dry_run = opts?.dry_run === true;
+	if (!store.has('products')) return;
+	if (!dry_run && (!pedido_id || !is_id(pedido_id))) return;
+
+	const estado = opts?.deleted ? '' : text(pedido.estado);
+	const should_hold = estado === 'por_surtir' || estado === 'surtiendo';
+	const desired = new Map<string, number>();
+	if (should_hold) {
+		for (const raw of as_array(pedido.articulos)) {
+			const articulo = as_object(raw);
+			const product_id = ref_id(articulo.product) || text(articulo.product);
+			const quantity = round_qty(Number(articulo.cantidad ?? 0));
+			if (!product_id || !is_id(product_id) || quantity <= 0) continue;
+			desired.set(product_id, round_qty((desired.get(product_id) ?? 0) + quantity));
+		}
+	}
+
+	const current = is_id(pedido_id)
+		? await get_order_reserved_quantities(store, pedido_id)
+		: new Map<string, number>();
+	const affected = [...new Set([...desired.keys(), ...current.keys()])];
+	if (!affected.length) return;
+
+	const scope = await warehouse_scope(store, await pedido_warehouse_id(store, pedido));
+	const apartado_en_scope = scope
+		? await apartado_logistica_por_almacen(store, String(scope.almacen._id))
+		: null;
+	const warehouse = await location_by_ref(store, WAREHOUSE_REF);
+	const logistics = await location_by_ref(store, LOGISTICS_REF);
+	const folio_referencia = text(pedido.folio_interno ?? pedido.folio);
+	const permitir_negativos = await allow_negative_stock(store);
+
+	for (const product_id of affected) {
+		const product = await store.find_id('products', product_id);
+		if (!product || product.is_active === false) {
+			if (should_hold) {
+				throw new Error('Uno de los productos del pedido ya no existe o está inactivo');
+			}
+			continue;
+		}
+		const desired_quantity = desired.get(product_id) ?? 0;
+		const current_quantity = current.get(product_id) ?? 0;
+		const difference = round_qty(desired_quantity - current_quantity);
+		if (difference === 0) continue;
+
+		const stock_total_previo = round_qty(Number(product.existencia ?? 0));
+		const stock_apartado_previo = round_qty(Number(product.existenciaApartada ?? 0));
+		if (difference > 0) {
+			const available = await disponible_para_apartar(
+				store,
+				product,
+				scope,
+				apartado_en_scope,
+				stock_total_previo,
+				stock_apartado_previo,
+			);
+			if (difference > available && !permitir_negativos) {
+				throw new Error(
+					`No hay inventario suficiente para apartar ${difference} de ${product.name}` +
+						(await detalle_faltante(store, product, scope, pedido_id)),
+				);
+			}
+		}
+		const stock_apartado_resultante = round_qty(stock_apartado_previo + difference);
+		if (stock_apartado_resultante < 0) {
+			throw new Error(
+				`El apartado de ${product.name} quedaría negativo al sincronizar el pedido`,
+			);
+		}
+		if (dry_run) continue;
+		await store.update('products', product_id, {
+			existenciaApartada: stock_apartado_resultante,
+		});
+		await insert_movement(store, {
+			producto: product_id,
+			producto_id: product_id,
+			producto_nombre: product.name,
+			producto_codigo: product.codigo,
+			tipo_movimiento: difference > 0 ? RESERVATION : RELEASE,
+			ubicacion_origen: warehouse?._id,
+			ubicacion_origen_id: warehouse?._id,
+			ubicacion_origen_nombre: warehouse?.name,
+			ubicacion_destino: logistics?._id,
+			ubicacion_destino_id: logistics?._id,
+			ubicacion_destino_nombre: logistics?.name,
+			documento_tipo: 'pedido',
+			documento_id: pedido_id,
+			documento_modelo: 'Pedidos',
+			documento_nombre: text(pedido.name),
+			documento_referencia: folio_referencia,
+			description:
+				difference > 0
+					? 'Apartado automático al pasar a Por surtir'
+					: 'Liberación automática al salir de Por surtir',
+			cantidad: Math.abs(difference),
+			stock_total_previo,
+			stock_total_resultante: stock_total_previo,
+			stock_apartado_previo,
+			stock_apartado_resultante,
+			fecha_movimiento: new Date().toISOString(),
+		});
+	}
+}
+
 export async function register_package_delivery_exit(
 	store: ImperiumStore,
 	package_record: ImperiumDoc,
@@ -335,12 +465,15 @@ export async function register_package_delivery_exit(
 	if (!grouped.size) return;
 
 	const pedido_id = ref_id(package_record.pedido) || text(package_record.pedido);
+	let almacen_pedido: unknown;
 	if (pedido_id && is_id(pedido_id) && store.has('pedidos')) {
 		const pedido = await store.find_id('pedidos', pedido_id);
 		const estado = text(pedido?.estado);
 		if (estado === 'surtido' || estado === 'enviado') return;
+		if (pedido) almacen_pedido = await pedido_warehouse_id(store, pedido);
 	}
 	if (!store.has('products')) return;
+	const scope = await warehouse_scope(store, almacen_pedido);
 
 	const logistics = await location_by_ref(store, LOGISTICS_REF);
 	const customer = await location_by_ref(store, CUSTOMER_REF);
@@ -357,9 +490,15 @@ export async function register_package_delivery_exit(
 		const quantity = grouped_item.quantity;
 		const stock_total_previo = round_qty(Number(product.existencia ?? 0));
 		const stock_apartado_previo = round_qty(Number(product.existenciaApartada ?? 0));
-		if (quantity > stock_total_previo) {
+		if (quantity > stock_total_previo && !(await allow_negative_stock(store))) {
 			throw new Error(
-				`No hay existencia suficiente para entregar ${quantity} de ${product.name}`,
+				mensaje_negativos('entregar', [
+					{
+						nombre: String(product.name ?? product_id),
+						requerido: quantity,
+						disponible: Math.max(stock_total_previo, 0),
+					},
+				]),
 			);
 		}
 		if (quantity > stock_apartado_previo) {
@@ -373,7 +512,7 @@ export async function register_package_delivery_exit(
 			existencia: stock_total_resultante,
 			existenciaApartada: stock_apartado_resultante,
 		});
-		await consume_exit_quants(store, product, quantity);
+		await consume_exit_quants(store, product, quantity, scope);
 		await insert_movement(store, {
 			producto: product_id,
 			producto_id: product_id,
@@ -405,6 +544,158 @@ export async function register_package_delivery_exit(
 
 function round_qty(value: unknown): number {
 	return Number(Number(value ?? 0).toFixed(4));
+}
+
+async function disponible_para_apartar(
+	store: ImperiumStore,
+	product: ImperiumDoc,
+	scope: WarehouseScope | null,
+	apartado_en_scope: Map<string, number> | null,
+	stock_total_previo: number,
+	stock_apartado_previo: number,
+): Promise<number> {
+	const global_libre = round_qty(stock_total_previo - stock_apartado_previo);
+	if (!scope) return global_libre;
+	const product_id = String(product._id ?? '');
+	if (!(await product_has_quants(store, product_id))) {
+		return is_general_warehouse(scope.almacen) ? global_libre : 0;
+	}
+	const libre = await scope_stock(store, product, scope, { libre: true });
+	const ya = apartado_en_scope?.get(product_id) ?? 0;
+	return Math.min(global_libre, round_qty(libre - ya));
+}
+
+/**
+ * Explica por qué no alcanza en el almacén del pedido: cuánto hay, cuánto ya
+ * apartaron otros pedidos (con folio) y que las demás ubicaciones no cuentan.
+ * La existencia por lote no lleva lo apartado por pedidos, así que la pantalla
+ * de existencias puede mostrar como libre lo que otro pedido ya tiene.
+ */
+async function detalle_faltante(
+	store: ImperiumStore,
+	product: ImperiumDoc,
+	scope: WarehouseScope | null,
+	pedido_id: string,
+): Promise<string> {
+	if (!scope) return '';
+	const product_id = String(product._id ?? '');
+	if (!(await product_has_quants(store, product_id))) return '';
+	const almacen_id = String(scope.almacen._id);
+	const nombre = text(scope.almacen.name) || 'el almacén del pedido';
+	const libre = await scope_stock(store, product, scope, { libre: true });
+	const otros = ((await apartados_de_pedidos_por_almacen(store, almacen_id)).get(product_id) ?? []).filter(
+		(a) => a.pedido !== pedido_id,
+	);
+	const folios = otros.map((a) => a.folio);
+	const apartado = round_qty(otros.reduce((s, a) => s + a.cantidad, 0));
+	const partes = [`en ${nombre} hay ${round_qty(libre)}`];
+	if (apartado > 0) {
+		partes.push(
+			`${apartado} ya ${apartado === 1 ? 'está apartada' : 'están apartadas'} por ${
+				folios.length === 1 ? 'el pedido' : 'los pedidos'
+			} ${folios.join(', ')}`,
+		);
+	}
+	return `: ${partes.join(' y ')}. Solo cuenta la existencia de ese almacén y sus sububicaciones.`;
+}
+
+export type ApartadoDePedido = { pedido: string; folio: string; cantidad: number };
+
+/**
+ * Neto apartado (apartados menos liberaciones del kardex) de cada pedido de ese
+ * almacén, por producto. El estado del pedido no cuenta: solo libera su movimiento.
+ */
+export async function apartados_de_pedidos_por_almacen(
+	store: ImperiumStore,
+	almacen_id: string,
+): Promise<Map<string, ApartadoDePedido[]>> {
+	const out = new Map<string, ApartadoDePedido[]>();
+	if (!almacen_id || !store.has('inventory-movement') || !store.has('pedidos')) return out;
+	const nets = new Map<string, Map<string, number>>();
+	for await (const page of store.scan('inventory-movement', {
+		where: {
+			documento_tipo: 'pedido',
+			tipo_movimiento: { in: [RESERVATION, RELEASE] },
+		},
+		include_inactive: true,
+	})) {
+		for (const row of page) {
+			const tipo = text(row.tipo_movimiento);
+			if (tipo !== RESERVATION && tipo !== RELEASE) continue;
+			if (text(row.documento_tipo) !== 'pedido') continue;
+			const pedido_id = text(row.documento_id);
+			const product_id = ref_id(row.producto) || text(row.producto_id);
+			if (!pedido_id || !product_id) continue;
+			const signed = tipo === RESERVATION ? Number(row.cantidad ?? 0) : -Number(row.cantidad ?? 0);
+			const by_product = nets.get(pedido_id) ?? new Map<string, number>();
+			by_product.set(product_id, round_qty((by_product.get(product_id) ?? 0) + signed));
+			nets.set(pedido_id, by_product);
+		}
+	}
+	for (const [pedido_id, by_product] of nets) {
+		const doc = await store.find_id('pedidos', pedido_id);
+		if (ref_id(doc?.almacen) !== almacen_id) continue;
+		const folio = text(doc?.folio_interno ?? doc?.folio) || pedido_id;
+		for (const [product_id, cantidad] of by_product) {
+			if (!(cantidad > 0)) continue;
+			const lista = out.get(product_id) ?? [];
+			lista.push({ pedido: pedido_id, folio, cantidad });
+			out.set(product_id, lista);
+		}
+	}
+	return out;
+}
+
+/** Neto apartado por apartados POS en esas ubicaciones, por producto. */
+export async function apartados_pos_en_ubicaciones(
+	store: ImperiumStore,
+	ubicaciones: Set<string>,
+): Promise<Map<string, ApartadoDePedido[]>> {
+	const out = new Map<string, ApartadoDePedido[]>();
+	if (!ubicaciones.size || !store.has('inventory-movement')) return out;
+	const nets = new Map<string, { folio: string; by_product: Map<string, number> }>();
+	for await (const page of store.scan('inventory-movement', {
+		where: { documento_tipo: 'pos-ticket', tipo_movimiento: { in: [RESERVATION, RELEASE] } },
+		include_inactive: true,
+	})) {
+		for (const row of page) {
+			const tipo = text(row.tipo_movimiento);
+			if (tipo !== RESERVATION && tipo !== RELEASE) continue;
+			if (text(row.documento_tipo) !== 'pos-ticket') continue;
+			if (!ubicaciones.has(ref_id(row.ubicacion_origen) || text(row.ubicacion_origen_id))) continue;
+			const doc_id = text(row.documento_id);
+			const product_id = ref_id(row.producto) || text(row.producto_id);
+			if (!doc_id || !product_id) continue;
+			const entry = nets.get(doc_id) ?? {
+				folio: text(row.documento_referencia ?? row.documento_nombre) || doc_id,
+				by_product: new Map<string, number>(),
+			};
+			const signed = tipo === RESERVATION ? Number(row.cantidad ?? 0) : -Number(row.cantidad ?? 0);
+			entry.by_product.set(product_id, round_qty((entry.by_product.get(product_id) ?? 0) + signed));
+			nets.set(doc_id, entry);
+		}
+	}
+	for (const [doc_id, { folio, by_product }] of nets) {
+		for (const [product_id, cantidad] of by_product) {
+			if (!(cantidad > 0)) continue;
+			const lista = out.get(product_id) ?? [];
+			lista.push({ pedido: doc_id, folio: `apartado POS ${folio}`, cantidad });
+			out.set(product_id, lista);
+		}
+	}
+	return out;
+}
+
+/** Neto apartado por pedidos de ese almacén, por producto. */
+export async function apartado_logistica_por_almacen(
+	store: ImperiumStore,
+	almacen_id: string,
+): Promise<Map<string, number>> {
+	const out = new Map<string, number>();
+	for (const [product_id, lista] of await apartados_de_pedidos_por_almacen(store, almacen_id)) {
+		out.set(product_id, round_qty(lista.reduce((s, a) => s + a.cantidad, 0)));
+	}
+	return out;
 }
 
 /** `__get_statistics` de existencias: cantidad total y ubicaciones con stock. */

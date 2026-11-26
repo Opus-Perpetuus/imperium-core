@@ -193,3 +193,35 @@ export function pending_queue_ids(storage: Storage): string[] {
 		String(mutation.payload.id ?? ""),
 	);
 }
+
+/** Lo que falta enviar, con el recurso de cada cambio (`pos-tickets`, `pedidos`…). */
+export function pending_queue_entries(storage: Storage): { resource: string; id: string }[] {
+	const device = read_sync_device(storage);
+	return pending_for_server(device, device.server_id).map((mutation) => ({
+		resource: String(mutation.payload.resource ?? ""),
+		id: String(mutation.payload.id ?? ""),
+	}));
+}
+
+/**
+ * Saca de la cola del dispositivo el alta de un documento que ya se envió por
+ * su propia vía (o se descartó). Sin esto, un ticket del POS sincronizado se
+ * queda como «1 cambio por enviar» y bloquea la actualización para siempre.
+ */
+export function forget_pouch_doc(storage: Storage, module_name: string, id: string): number {
+	const queue = pouch_queue_name(module_name);
+	const target = String(id ?? "").trim();
+	if (!queue || !target) return 0;
+	const device = read_sync_device(storage);
+	const before = device.pending.length;
+	device.pending = device.pending.filter(
+		(mutation) =>
+			mutation.server_id !== device.server_id ||
+			mutation.name !== "record.create" ||
+			String(mutation.payload.resource ?? "") !== module_name ||
+			String(mutation.payload.id ?? "") !== target,
+	);
+	const removed = before - device.pending.length;
+	if (removed) storage.setItem(DEVICE_KEY, JSON.stringify(save_device(device)));
+	return removed;
+}

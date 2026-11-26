@@ -902,6 +902,22 @@ describe('auto-actualización con versiones descubiertas en el registro', () => 
 		await settled(db);
 	});
 
+	test('con «Actualizar apps automáticamente» apagado no se actualiza nada', async () => {
+		// Regla de producto: detectar sí (la pantalla la enseña pendiente),
+		// aplicar solo con la opción activa. Incluye el valor envuelto que
+		// guarda Postgres ('"false"', como en imperium-v13).
+		for (const enabled of [false, 'false', '"false"', 'no', undefined]) {
+			const config: Record<string, unknown> = { ...ON };
+			if (enabled === undefined) delete config['configuration-subject-auto-update-enabled'];
+			else config['configuration-subject-auto-update-enabled'] = enabled;
+			const db = db_with(found(30));
+			const pass = await run_subject_auto_update_pass(store_with(config), db.sql);
+			expect(pass.enabled).toBe(false);
+			expect(pass.updated).toEqual([]);
+			expect(db.rows.get('subject-pos')!.installed_image).toBe(IMAGE_OLD);
+		}
+	});
+
 	test('sin la espera cumplida, o con su interruptor apagado, va al pin', async () => {
 		for (const [config, hours] of [
 			[ON, 2],
@@ -988,6 +1004,7 @@ describe('actualizar a una versión descubierta pasa por el operador con esa ima
 		'CORE_SUBJECT_GATEWAY_SECRET',
 		'SUBJECT_URL_pos',
 		'SUBJECT_REGISTRY_URL',
+		'IMPERIUM_APP_REGISTRY',
 	] as const;
 	const saved: Partial<Record<(typeof KEYS)[number], string | undefined>> = {};
 	const IMAGE_FOUND = 'ghcr.io/opus-perpetuus/subject-pos:0.3.0';
@@ -1038,6 +1055,9 @@ describe('actualizar a una versión descubierta pasa por el operador con esa ima
 			CORE_SUBJECT_GATEWAY_SECRET: 'maestro',
 			SUBJECT_URL_pos: base,
 			SUBJECT_REGISTRY_URL: base,
+			// Aquí se prueba la elección de imagen; el registro de menús tras instalar
+			// (sync_registry_after_lifecycle) reintenta /manifest ~8 s y tiene su propia spec.
+			IMPERIUM_APP_REGISTRY: 'off',
 		});
 	});
 	afterAll(() => {

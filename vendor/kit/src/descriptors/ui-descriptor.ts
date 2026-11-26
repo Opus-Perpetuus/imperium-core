@@ -45,6 +45,7 @@ export type NoxUiComponentId =
   | "nox.input-number"
   | "nox.input-operacion"
   | "nox.input-scanner"
+  | "nox.input-subtable"
   | "nox.input-date"
   | "nox.input-checkbox"
   | "nox.input-hidden"
@@ -108,6 +109,7 @@ export type NoxUiComponentId =
   | "nox.toolbar"
   | "nox.topbar"
   | "nox.validation"
+  | "nox.view-list"
   | "nox.week"
   | "nox.wizard"
   | "nox.year";
@@ -156,6 +158,7 @@ export const NOX_UI_COMPONENT_ALLOWLIST: readonly NoxUiComponentId[] = [
   "nox.input-number",
   "nox.input-operacion",
   "nox.input-scanner",
+  "nox.input-subtable",
   "nox.input-date",
   "nox.input-checkbox",
   "nox.input-hidden",
@@ -219,6 +222,7 @@ export const NOX_UI_COMPONENT_ALLOWLIST: readonly NoxUiComponentId[] = [
   "nox.toolbar",
   "nox.topbar",
   "nox.validation",
+  "nox.view-list",
   "nox.week",
   "nox.wizard",
   "nox.year",
@@ -250,6 +254,7 @@ export const NOX_UI_MVP_RENDER_IDS: readonly NoxUiComponentId[] = [
   "nox.input-number",
   "nox.input-operacion",
   "nox.input-scanner",
+  "nox.input-subtable",
   "nox.input-textarea",
   "nox.input-json",
   "nox.input-checkbox",
@@ -312,6 +317,11 @@ export const NOX_UI_MVP_RENDER_IDS: readonly NoxUiComponentId[] = [
   "nox.input-object",
   "nox.input-timer",
   "nox.input-status",
+  /**
+   * Lista de una app con el view-list de Imperium: celdas compuestas
+   * (imagen, código, enlaces…), buscador, escáner y paginación en servidor.
+   */
+  "nox.view-list",
 ] as const;
 
 /** Single node in a declarative UI tree (no raw HTML). */

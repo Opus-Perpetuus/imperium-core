@@ -3,17 +3,33 @@
  * (`folio`, `folio_interno`, totales, transiciones, salida de inventario).
  */
 import { assign_capture_gps, resolve_capture_gps } from './delivery-gps.ts';
+import { routes_by_contact, ruta_names } from './contacto-rutas.ts';
 import { as_array, as_object, type ImperiumDoc } from './envelope.ts';
 import {
 	assert_pedido_create_estado,
 	assert_state_transition_allowed,
 } from './group-access.ts';
+import { product_has_quants } from './delivery-return-flow.ts';
 import { consume_exit_quants } from './inventory-exit.ts';
+import {
+	apartado_logistica_por_almacen,
+	sync_pedido_status_reservation,
+} from './inventory-logistics-flow.ts';
+import { pedido_warehouse_id, scope_stock, user_warehouse_id, warehouse_scope } from './warehouse-scope.ts';
+import {
+	ALLOW_NEGATIVE_STOCK_REF,
+	allow_negative_stock,
+	mensaje_negativos,
+} from './negative-stock.ts';
+
+export { ALLOW_NEGATIVE_STOCK_REF, allow_negative_stock };
+import { read_config_value } from './subject-versions.ts';
 import { broadcast_event } from './socket-stub.ts';
 import type { ImperiumStore } from './store.ts';
 
 const WAREHOUSE_REF = 'inventory-internal-location-warehouse';
 const CUSTOMER_REF = 'inventory-internal-location-customer';
+const ESTADOS_ANTES_DE_CONFIRMAR = new Set(['', 'borrador']);
 
 export function emit_pedidos_updated() {
 	broadcast_event('update', { action: 'pedidos_updated', data: [] });
@@ -99,6 +115,7 @@ export async function prepare_pedido_create(
 	store: ImperiumStore,
 	doc: ImperiumDoc,
 	actor: ImperiumDoc | null,
+	opciones: { validar_confirmacion?: boolean } = {},
 ): Promise<ImperiumDoc> {
 	const out: ImperiumDoc = { ...doc };
 	delete out._id;
@@ -108,12 +125,27 @@ export async function prepare_pedido_create(
 	await recompute_totals(store, out);
 	await assert_pedido_create_estado(store, actor, out.estado ? String(out.estado) : undefined);
 	out.usuario = actor?._id ? String(actor._id) : out.usuario;
-	out.folio = build_folio(actor);
+	if (!ref_id(out.almacen) && actor?._id) {
+		const almacen = await user_warehouse_id(store, actor);
+		if (almacen) out.almacen = almacen;
+	}
+	if (text(out.estado) === 'confirmado' && opciones.validar_confirmacion !== false) {
+		await assert_pedido_confirmable(store, out);
+	}
+	await sync_pedido_status_reservation(store, out, { dry_run: true });
+	const folio_base = build_folio(actor);
+	out.folio = folio_base;
 	out.folio_interno = await store.next_auto_increment('Pedidos', 'folio_interno', {
 		resource: 'pedidos',
 		context: out,
 	});
+	// Usuario y hora no bastan: dos altas del mismo usuario en el mismo segundo
+	// (lote offline, doble clic, semillas) compartían folio (Odoo #267). El
+	// folio interno sale de un contador atómico, así que el sufijo lo hace único.
+	out.folio = `${folio_base}-${out.folio_interno}`;
 	out.name = `PEDIDO-${out.folio}`;
+	if (!text(out.fecha)) out.fecha = new Date().toISOString();
+	out.search_field = await pedido_search_field(store, out);
 	assign_capture_gps(out, 'order', resolve_capture_gps(out, 'order', 'toma del pedido'));
 	return out;
 }
@@ -129,6 +161,8 @@ export async function prepare_pedido_update(
 	delete out.createdAt;
 	delete out.updatedAt;
 	delete out.folio_interno;
+	// La ruta se deriva de delivery-route.contacts al leer (#275): no se guarda.
+	delete out.ruta;
 	normalize_articulos_product(out, previous?.articulos);
 	normalize_lista_de_precios_id(out);
 	await recompute_totals(store, out);
@@ -138,13 +172,66 @@ export async function prepare_pedido_update(
 		previous?.estado != null ? String(previous.estado) : undefined,
 		out.estado != null ? String(out.estado) : undefined,
 	);
+	if (previous) {
+		const pedido = {
+			...previous,
+			...out,
+			_id: previous._id,
+			articulos: out.articulos ?? previous.articulos,
+			almacen: out.almacen ?? previous.almacen,
+			usuario: out.usuario ?? previous.usuario,
+		};
+		if (
+			text(out.estado) === 'confirmado' &&
+			ESTADOS_ANTES_DE_CONFIRMAR.has(text(previous.estado))
+		) {
+			await assert_pedido_confirmable(store, pedido);
+		}
+		// Validar el apartado antes de guardar: si no alcanza, el pedido no
+		// cambia de etapa (antes quedaba en Por surtir sin apartar nada).
+		await sync_pedido_status_reservation(store, pedido, { dry_run: true });
+	}
+	if (
+		previous &&
+		String(previous.estado ?? '') !== 'surtido' &&
+		String(out.estado ?? '') === 'surtido'
+	) {
+		const almacen = await pedido_warehouse_id(store, {
+			almacen: out.almacen ?? previous.almacen,
+			usuario: out.usuario ?? previous.usuario,
+		});
+		if (almacen && !ref_id(out.almacen ?? previous.almacen)) out.almacen = almacen;
+		await assert_surtido_sin_negativos(
+			store,
+			out.articulos ?? previous.articulos,
+			almacen || undefined,
+		);
+	}
 	if (previous?.folio_interno != null && previous.folio_interno !== '') {
 		out.folio_interno = previous.folio_interno;
 	}
 	if (String(out.order_gps_status ?? '').trim()) {
 		assign_capture_gps(out, 'order', resolve_capture_gps(out, 'order', 'toma del pedido'));
 	}
+	if (!text(out.fecha) && text(previous?.fecha)) out.fecha = previous?.fecha;
+	out.search_field = await pedido_search_field(store, { ...(previous ?? {}), ...out });
 	return out;
+}
+
+async function pedido_search_field(store: ImperiumStore, doc: ImperiumDoc): Promise<string> {
+	const contacto_id = ref_id(doc.contacto_id) || ref_id(doc.contacto);
+	let nombre = '';
+	if (contacto_id && store.has('contacto')) {
+		const contacto = await store.find_id('contacto', contacto_id);
+		nombre = text(contacto?.name);
+	}
+	if (!nombre && doc.contacto && typeof doc.contacto === 'object') {
+		nombre = text(as_object(doc.contacto).name);
+	}
+	const lineas = as_array(doc.articulos)
+		.map((raw) => text(as_object(raw).observaciones))
+		.filter(Boolean);
+	return [nombre, text(doc.observaciones), ...lineas].filter(Boolean).join('\n');
 }
 
 async function location_by_ref(store: ImperiumStore, ref: string) {
@@ -187,7 +274,8 @@ export async function register_order_fulfillment_exit(
 		}
 	}
 	if (!grouped.size) return;
-	const warehouse = await location_by_ref(store, WAREHOUSE_REF);
+	const scope = await warehouse_scope(store, await pedido_warehouse_id(store, pedido));
+	const warehouse = scope?.almacen ?? (await location_by_ref(store, WAREHOUSE_REF));
 	const customer = await location_by_ref(store, CUSTOMER_REF);
 	const folio_referencia = String(pedido.folio_interno ?? pedido.folio ?? '');
 	const documento_nombre = pedido.folio ? `PEDIDO-${pedido.folio}` : '';
@@ -198,7 +286,7 @@ export async function register_order_fulfillment_exit(
 		const stock_apartado_previo = round_qty(Number(product.existenciaApartada ?? 0));
 		const stock_total_resultante = round_qty(stock_total_previo - quantity);
 		await store.update('products', product_id, { existencia: stock_total_resultante });
-		await consume_exit_quants(store, product, quantity);
+		await consume_exit_quants(store, product, quantity, scope);
 		if (!store.has('inventory-movement')) continue;
 		await store.insert('inventory-movement', {
 			name: `Salida ${product.name ?? product_id}`,
@@ -236,6 +324,20 @@ export async function after_pedido_mutate(
 	current: ImperiumDoc | null,
 	previous?: ImperiumDoc | null,
 ): Promise<void> {
+	const pedido = kind === 'delete' ? previous : current;
+	if (pedido) {
+		const con_lineas = {
+			...pedido,
+			articulos: pedido.articulos ?? previous?.articulos,
+			almacen: pedido.almacen ?? previous?.almacen,
+			usuario: pedido.usuario ?? previous?.usuario,
+		};
+		// Liberar el apartado antes de la salida: si sigue apartado, no hay
+		// disponible para descontar al pasar a surtido.
+		await sync_pedido_status_reservation(store, con_lineas, {
+			deleted: kind === 'delete',
+		});
+	}
 	if (
 		kind === 'update' &&
 		current &&
@@ -244,7 +346,12 @@ export async function after_pedido_mutate(
 		String(current.estado ?? '') === 'surtido'
 	) {
 		const articulos = current.articulos ?? previous.articulos;
-		await register_order_fulfillment_exit(store, { ...current, articulos });
+		await register_order_fulfillment_exit(store, {
+			...current,
+			articulos,
+			almacen: current.almacen ?? previous.almacen,
+			usuario: current.usuario ?? previous.usuario,
+		});
 	}
 	emit_pedidos_updated();
 }
@@ -276,6 +383,10 @@ export function decorate_pedido(doc: ImperiumDoc, mode: 'list' | 'detail'): Impe
 		if (employee._id) {
 			out.assigned_employee = text(employee.name) || ref_id(employee);
 		}
+		const user_id = ref_id(out.usuario_id) || ref_id(out.usuario);
+		if (user_id && looks_like_record_id(user_id)) out.usuario_id = user_id;
+		const user = as_object(out.usuario);
+		if (user._id) out.usuario = text(user.name) || user_id;
 	}
 	return out;
 }
@@ -305,6 +416,16 @@ export async function hydrate_pedido_detail(
 			out.contacto = picked;
 		}
 	}
+	// #275: el detalle muestra vendedor y ruta por nombre, igual que la lista.
+	const by_contact = contact_id ? await routes_by_contact(store) : new Map();
+	out.ruta = ruta_names(by_contact.get(contact_id));
+	const uid = usuario_id_of(out);
+	if (uid) {
+		out.usuario_id = uid;
+		const name =
+			usuario_name_of(out) || ((await load_name_map(store, 'user', [uid])).get(uid) ?? '');
+		out.usuario = { _id: uid, name };
+	}
 	const lista_id = ref_id(out.listaDePreciosId);
 	if (lista_id && store.has('lista-de-precios')) {
 		const lista = await store.find_id('lista-de-precios', lista_id);
@@ -324,45 +445,92 @@ export async function enrich_pedidos_list(
 	rows: ImperiumDoc[],
 ): Promise<ImperiumDoc[]> {
 	const decorated = rows.map((row) => decorate_pedido(row, 'list'));
-	if (!decorated.length || !store.has('contacto')) {
-		return decorated.map((row) => ({ ...row, ruta: text(row.ruta) }));
-	}
-	const contact_ids = [
-		...new Set(decorated.map((row) => ref_id(row.contacto_id)).filter(Boolean)),
-	];
-	if (!contact_ids.length) {
-		return decorated.map((row) => ({ ...row, ruta: text(row.ruta) }));
-	}
-	const contacts = await store.find_many('contacto', {
-		ids: contact_ids,
-		take: contact_ids.length,
-		include_inactive: true,
-		populate: false,
-	});
-	const route_ids = new Set<string>();
-	const routes_by_contact = new Map<string, string[]>();
-	for (const contact of contacts.rows) {
-		const rutas = as_array(contact.rutas).map(ref_id).filter(Boolean);
-		routes_by_contact.set(String(contact._id), rutas);
-		for (const id of rutas) route_ids.add(id);
-	}
-	const names = new Map<string, string>();
-	if (route_ids.size && store.has('delivery-route') && store.is_resource_installed('delivery-route')) {
-		const routes = await store.find_many('delivery-route', {
-			ids: [...route_ids],
-			take: route_ids.size,
-			include_inactive: true,
-			populate: false,
-		});
-		for (const route of routes.rows) names.set(String(route._id), text(route.name));
-	}
+	const by_contact = decorated.length ? await routes_by_contact(store) : new Map();
+	const missing_ids = decorated
+		.map((row) => ({ id: usuario_id_of(row), name: usuario_name_of(row) }))
+		.filter((row) => row.id && !row.name)
+		.map((row) => row.id);
+	const user_names = missing_ids.length
+		? await load_name_map(store, 'user', missing_ids)
+		: new Map();
 	return decorated.map((row) => {
-		const ids = routes_by_contact.get(ref_id(row.contacto_id)) ?? [];
+		const uid = usuario_id_of(row);
+		const name = usuario_name_of(row) || (uid ? (user_names.get(uid) ?? '') : '');
 		return {
 			...row,
-			ruta: ids.map((id) => names.get(id)).filter(Boolean).join(', '),
+			ruta: ruta_names(by_contact.get(ref_id(row.contacto_id))),
+			usuario: name,
+			...(uid ? { usuario_id: uid } : {}),
 		};
 	});
+}
+
+function usuario_id_of(row: ImperiumDoc): string {
+	const from_id = ref_id(row.usuario_id);
+	if (from_id && looks_like_record_id(from_id)) return from_id;
+	const from_user = ref_id(row.usuario);
+	return looks_like_record_id(from_user) ? from_user : '';
+}
+
+function usuario_name_of(row: ImperiumDoc): string {
+	const user = as_object(row.usuario);
+	const from_object = text(user.name);
+	if (from_object) return from_object;
+	const raw = text(row.usuario);
+	return raw && !looks_like_record_id(raw) ? raw : '';
+}
+
+/** Id de documento (ObjectId de 24 hex o UUID). Un nombre de vendedor no aplica. */
+export function looks_like_record_id(value: string): boolean {
+	const text_value = String(value ?? '').trim();
+	return (
+		/^[a-f0-9]{24}$/i.test(text_value) ||
+		/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+			text_value,
+		)
+	);
+}
+
+const NO_MATCH_USUARIO = '__no_match__';
+
+/**
+ * El filtro de columna Vendedor manda el `name` del usuario (`?usuario=IA Vendedor`).
+ * En la tabla `usuario` es el id: se resuelve a `{ in: ids }` antes del WHERE.
+ */
+export async function resolve_pedidos_usuario_filter(
+	store: ImperiumStore,
+	where: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+	if (!where || (where.usuario == null && where.usuario_id == null)) return where;
+	const raw = where.usuario ?? where.usuario_id;
+	const values = Array.isArray((raw as { in?: unknown[] })?.in)
+		? (raw as { in: unknown[] }).in.map((item) => String(item ?? '').trim())
+		: [String(raw ?? '').trim()];
+	const ids: string[] = [];
+	const names: string[] = [];
+	for (const value of values.filter(Boolean)) {
+		if (looks_like_record_id(value)) ids.push(value);
+		else names.push(value);
+	}
+	if (names.length && store.has('user')) {
+		const found = await store.find_many('user', {
+			where: names.length === 1 ? { name: names[0] } : { name: { in: names } },
+			take: 200,
+			include_inactive: true,
+			populate: false,
+			skip_total: true,
+		});
+		const wanted = new Set(names);
+		for (const row of found.rows) {
+			const id = String(row._id ?? '').trim();
+			const name = text(row.name);
+			if (id && wanted.has(name)) ids.push(id);
+		}
+	}
+	const next = { ...where };
+	delete next.usuario_id;
+	next.usuario = ids.length ? { in: [...new Set(ids)] } : NO_MATCH_USUARIO;
+	return next;
 }
 
 function created_ms(doc: ImperiumDoc): number {
@@ -548,4 +716,164 @@ export async function pedidos_sales_stats(
 			sales_by_state,
 		},
 	};
+}
+
+export type FaltanteExistencia = {
+	product_id: string;
+	nombre: string;
+	requerido: number;
+	disponible: number;
+};
+
+/**
+ * Renglones de un pedido que no alcanzan con la existencia libre
+ * (`existencia - existenciaApartada`) del producto. Un producto inexistente
+ * cuenta como disponible 0. Se agrupa por producto para no aprobar dos renglones
+ * del mismo artículo que juntos rebasan la existencia. Con `almacen` cuenta
+ * solo la existencia de ese almacén (el del vendedor). `comprometido` resta
+ * lo ya aceptado en el mismo lote, con clave almacén resuelto y producto.
+ */
+function clave_comprometido(scope_id: string, product_id: string): string {
+	return `${scope_id}|${product_id}`;
+}
+
+export function acumular_comprometido(
+	comprometido: Map<string, number>,
+	scope_id: string,
+	articulos_raw: unknown,
+): void {
+	for (const articulo of as_array(articulos_raw).map(as_object)) {
+		const product_id = ref_id(articulo.product);
+		const quantity = round_qty(Number(articulo.cantidad ?? 0));
+		if (!product_id || !(quantity > 0)) continue;
+		const key = clave_comprometido(scope_id, product_id);
+		comprometido.set(key, round_qty((comprometido.get(key) ?? 0) + quantity));
+	}
+}
+
+export async function faltantes_de_existencia(
+	store: ImperiumStore,
+	articulos_raw: unknown,
+	opts: {
+		modo?: 'pedido' | 'surtido';
+		almacen?: unknown;
+		comprometido?: Map<string, number>;
+	} = {},
+): Promise<FaltanteExistencia[]> {
+	if (!store.has('products')) return [];
+	const surtido = opts.modo === 'surtido';
+	const articulos = as_array(articulos_raw).map(as_object);
+	// Al surtir se descuenta lo capturado (`cantidad_surtida`) si hay captura,
+	// igual que `register_order_fulfillment_exit`; y del total, no de lo libre.
+	const hay_captura =
+		surtido && articulos.some((a) => round_qty(Number(a.cantidad_surtida ?? 0)) > 0);
+	const grouped = new Map<string, number>();
+	for (const articulo of articulos) {
+		const product_id = ref_id(articulo.product);
+		const quantity = round_qty(
+			Number(hay_captura ? articulo.cantidad_surtida ?? 0 : articulo.cantidad ?? 0),
+		);
+		if (!product_id || !(quantity > 0)) continue;
+		grouped.set(product_id, round_qty((grouped.get(product_id) ?? 0) + quantity));
+	}
+	const faltantes: FaltanteExistencia[] = [];
+	const scope = grouped.size ? await warehouse_scope(store, opts.almacen) : null;
+	const scope_id = scope ? String(scope.almacen._id) : '';
+	const apartado_pedidos =
+		scope && !surtido ? await apartado_logistica_por_almacen(store, scope_id) : null;
+	for (const [product_id, requerido] of grouped) {
+		const product = await store.find_id('products', product_id);
+		const apartado_aqui =
+			apartado_pedidos && (await product_has_quants(store, product_id))
+				? apartado_pedidos.get(product_id) ?? 0
+				: 0;
+		const disponible = !product
+			? 0
+			: scope
+				? round_qty((await scope_stock(store, product, scope, { libre: !surtido })) - apartado_aqui)
+				: round_qty(
+					Number(product.existencia ?? 0) -
+						(surtido ? 0 : Math.max(Number(product.existenciaApartada ?? 0), 0)),
+				);
+		const ya = opts.comprometido?.get(clave_comprometido(scope_id, product_id)) ?? 0;
+		const neto = round_qty(disponible - ya);
+		if (requerido > neto) {
+			faltantes.push({
+				product_id,
+				nombre: String(product?.name ?? product_id),
+				requerido,
+				disponible: Math.max(neto, 0),
+			});
+		}
+	}
+	return faltantes;
+}
+
+function detalle_faltantes(faltantes: FaltanteExistencia[]): string {
+	return faltantes.map((f) => `${f.nombre} (pide ${f.requerido}, hay ${f.disponible})`).join(', ');
+}
+
+export const PEDIDOS_OFFLINE_ESTADO_REF = 'configuration-pedidos-offline-sync-estado';
+export const PEDIDOS_OFFLINE_ESTADOS = ['confirmado', 'borrador'] as const;
+export type EstadoPedidoOffline = (typeof PEDIDOS_OFFLINE_ESTADOS)[number];
+
+/** Estado con el que llegan los pedidos sincronizados del offline (parámetro; por omisión confirmado). */
+export async function estado_pedidos_offline(store: ImperiumStore): Promise<EstadoPedidoOffline> {
+	const valor = text(await read_config_value(store, PEDIDOS_OFFLINE_ESTADO_REF)).toLowerCase();
+	return (PEDIDOS_OFFLINE_ESTADOS as readonly string[]).includes(valor)
+		? (valor as EstadoPedidoOffline)
+		: 'confirmado';
+}
+
+export function aviso_faltantes(folio: string, faltantes: FaltanteExistencia[]): string {
+	const nombre = folio ? `El pedido ${folio}` : 'El pedido';
+	return `${nombre} se confirmó sin existencia suficiente: ${detalle_faltantes(faltantes)}.`;
+}
+
+export function aviso_sin_precio(folio: string, productos: string[]): string {
+	const nombre = folio ? `El pedido ${folio}` : 'El pedido';
+	return `${nombre} se confirmó sin precio en: ${productos.join(', ')}.`;
+}
+
+export async function articulos_sin_precio(
+	store: ImperiumStore,
+	articulos_raw: unknown,
+): Promise<string[]> {
+	const nombres: string[] = [];
+	for (const articulo of as_array(articulos_raw).map(as_object)) {
+		const product_id = ref_id(articulo.product);
+		if (!product_id || Number(articulo.precio) > 0) continue;
+		const product = store.has('products') ? await store.find_id('products', product_id) : null;
+		nombres.push(String(product?.name ?? product_id));
+	}
+	return nombres;
+}
+
+async function assert_pedido_confirmable(store: ImperiumStore, pedido: ImperiumDoc): Promise<void> {
+	const sin_precio = await articulos_sin_precio(store, pedido.articulos);
+	if (sin_precio.length) {
+		throw new Error(
+			`No se puede confirmar el pedido: el precio debe ser mayor a 0 en ${sin_precio.join(', ')}.`,
+		);
+	}
+	if (await allow_negative_stock(store)) return;
+	const faltantes = await faltantes_de_existencia(store, pedido.articulos, {
+		almacen: await pedido_warehouse_id(store, pedido),
+	});
+	if (!faltantes.length) return;
+	throw new Error(
+		`No se puede confirmar el pedido: no hay existencia disponible en el almacén para ${detalle_faltantes(faltantes)}.`,
+	);
+}
+
+/** Bloquea el paso a `surtido` si la salida dejaría existencia negativa. */
+export async function assert_surtido_sin_negativos(
+	store: ImperiumStore,
+	articulos: unknown,
+	almacen?: unknown,
+): Promise<void> {
+	if (await allow_negative_stock(store)) return;
+	const faltantes = await faltantes_de_existencia(store, articulos, { modo: 'surtido', almacen });
+	if (!faltantes.length) return;
+	throw new Error(mensaje_negativos('surtir', faltantes));
 }

@@ -25,15 +25,32 @@ export function browser_has_opfs(): boolean {
 	return typeof navigator !== "undefined" && typeof navigator.storage?.getDirectory === "function";
 }
 
+/** Carpeta del front donde angular.json copia `sqlite3.wasm` (grupo `assets` del SW). */
+export const SQLITE_WASM_ASSET_DIR = "assets/sqlite/";
+
+/**
+ * En el navegador el wasm sale de `assets/sqlite/`: el bundle del front no
+ * copia el `new URL("sqlite3.wasm", import.meta.url)` del paquete y nginx
+ * contestaba index.html (G85: «expected magic word 00 61 73 6d»).
+ * En Node no hay `document` y el paquete resuelve su propio archivo.
+ */
+export function sqlite_wasm_init_options(
+	base_uri: string | undefined = typeof document === "undefined" ? undefined : document.baseURI,
+): { locateFile?: (file: string) => string } {
+	if (!base_uri) return {};
+	return { locateFile: (file: string) => new URL(`${SQLITE_WASM_ASSET_DIR}${file}`, base_uri).href };
+}
+
 let loading: Promise<WasmApi> | null = null;
 
 async function load_sqlite(): Promise<WasmApi> {
 	loading ??= (async () => {
-		const from_package = (await sqlite3InitModule()) as WasmApi;
+		const init = sqlite3InitModule as unknown as (options?: object) => Promise<unknown>;
+		const from_package = (await init(sqlite_wasm_init_options())) as WasmApi;
 		if (typeof from_package.installOpfsSAHPoolVfs === "function") return from_package;
 		// El build de Node no incluye OPFS. La PWA usa el build de navegador, que sí.
-		const mod = (await import(BROWSER_BUILD.href)) as { default: () => Promise<WasmApi> };
-		return mod.default();
+		const mod = (await import(BROWSER_BUILD.href)) as { default: (options?: object) => Promise<WasmApi> };
+		return mod.default(sqlite_wasm_init_options());
 	})();
 	return loading;
 }

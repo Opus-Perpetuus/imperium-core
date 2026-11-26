@@ -1,5 +1,6 @@
 //   #region SERVE KIRLET (runtime shell)
 
+import { feature_map_test_requested, run_with_feature_map_test } from "./feature-map-test.ts";
 import type { KirletDefinition } from "./define-kirlet.js";
 import { qualify_history_resource } from "./define-kirlet.js";
 import {
@@ -333,7 +334,7 @@ export function serve_kirlet(
     timers.push(t);
   }
 
-  const fetch_handler = async (req: Request): Promise<Response> => {
+  const handle_request = async (req: Request): Promise<Response> => {
     const started = Date.now();
     const url = new URL(req.url);
     const path = url.pathname.replace(/\/+$/, "") || "/";
@@ -491,6 +492,10 @@ export function serve_kirlet(
       );
     }
   };
+
+  // Corrida de feature map: lo que la app inserte en el plano de datos sale marcado.
+  const fetch_handler = (req: Request): Promise<Response> =>
+    run_with_feature_map_test(feature_map_test_requested(req.headers), () => handle_request(req));
 
   let port: number | undefined;
   let stop_listen: (() => void) | undefined;

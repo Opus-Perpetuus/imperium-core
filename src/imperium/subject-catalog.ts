@@ -9,11 +9,13 @@
  * externa. Una app externa se lista, pero este núcleo no la corre mientras su
  * definición no esté en el catálogo del servidor.
  */
+import { once_per_client } from './schema-once.ts';
 import type { SubjectInfo } from './store.ts';
 import {
 	is_base_subject_slug,
 	normalize_subject_slug,
 } from './subject-runtime.ts';
+import { FEATURE_MAP_TEST_COLUMN_DDL } from './feature-map-test.ts';
 
 /** `image-source`: la dejó el autoescaneo que enciende Odoo; autoriza como Odoo. */
 export type CatalogSource = 'odoo' | 'manual' | 'registry' | 'image-source';
@@ -42,7 +44,11 @@ export class SubjectCatalogError extends Error {
 const MAX_NAME = 120;
 const MAX_TEXT = 300;
 
-export async function ensure_catalog_table(sql: Bun.SQL): Promise<void> {
+export function ensure_catalog_table(sql: Bun.SQL): Promise<void> {
+	return once_per_client(sql, 'subject_catalog', () => create_catalog_table(sql));
+}
+
+async function create_catalog_table(sql: Bun.SQL): Promise<void> {
 	await sql.unsafe(`
     CREATE TABLE IF NOT EXISTS public.subject_catalog (
       technical_id TEXT PRIMARY KEY,
@@ -52,7 +58,8 @@ export async function ensure_catalog_table(sql: Bun.SQL): Promise<void> {
       repo TEXT,
       source TEXT NOT NULL DEFAULT 'manual',
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      ${FEATURE_MAP_TEST_COLUMN_DDL}
     )
   `);
 }
@@ -283,6 +290,8 @@ export async function remember_scanned_subjects(
 export async function remove_manual_entry(
 	sql: Bun.SQL,
 	technical_id: string,
+	/** `self`: no hay Odoo; lo que autorizó antes se puede quitar aquí. */
+	mode: 'odoo' | 'self' = 'odoo',
 ): Promise<boolean> {
 	await ensure_catalog_table(sql);
 	const rows = (await sql.unsafe(
@@ -290,7 +299,7 @@ export async function remove_manual_entry(
 		[technical_id],
 	)) as Array<{ source: string }>;
 	if (!rows.length) return false;
-	if (rows[0]!.source === 'odoo') {
+	if (rows[0]!.source === 'odoo' && mode !== 'self') {
 		throw new SubjectCatalogError(
 			'La autorizó Odoo: se retira desde la ficha del servidor en Odoo',
 			409,
@@ -299,7 +308,9 @@ export async function remove_manual_entry(
 	}
 	if (rows[0]!.source === 'image-source') {
 		throw new SubjectCatalogError(
-			'La agregó el autoescaneo de repos de imágenes: se quita desde Odoo (fuentes del servidor)',
+			mode === 'self'
+				? 'La agregó la autodetección de apps: quita su fuente o apaga la autodetección en Módulos'
+				: 'La agregó el autoescaneo de repos de imágenes: se quita desde Odoo (fuentes del servidor)',
 			409,
 			'added_by_image_autoscan',
 		);

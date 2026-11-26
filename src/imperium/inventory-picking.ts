@@ -6,6 +6,7 @@
 import { as_array, as_object, type ImperiumDoc } from './envelope.ts';
 import { is_record_id } from './record-id.ts';
 import type { ImperiumStore } from './store.ts';
+import { warehouse_scope } from './warehouse-scope.ts';
 
 export function round_quantity(value: number): number {
 	return Number(Number(value ?? 0).toFixed(4));
@@ -15,6 +16,9 @@ export type PickingSourceQuant = {
 	ubicacion: string;
 	ubicacion_codigo: string;
 	cantidad_disponible: number;
+	lote?: string;
+	lote_codigo?: string;
+	fecha_caducidad?: string;
 };
 
 export type PickingRenglon = {
@@ -22,6 +26,10 @@ export type PickingRenglon = {
 	ubicacion_codigo: string;
 	disponible: number;
 	tomar: number;
+	/** Vacío si la fila de existencia no tiene lote. */
+	lote: string;
+	lote_codigo: string;
+	fecha_caducidad: string;
 };
 
 export type PickingRoute = {
@@ -50,6 +58,9 @@ export function build_picking_renglones(
 			ubicacion_codigo: quant.ubicacion_codigo,
 			disponible,
 			tomar,
+			lote: quant.lote ?? '',
+			lote_codigo: quant.lote_codigo ?? '',
+			fecha_caducidad: quant.fecha_caducidad ?? '',
 		});
 		restante = round_quantity(restante - tomar);
 	}
@@ -81,10 +92,32 @@ export function weighted_moving_average(values: number[]): number {
 	return weight_total > 0 ? round_quantity(weighted_sum / weight_total) : 0;
 }
 
+/**
+ * Misma ubicación: primero la fila sin lote, luego caducidad y código de lote.
+ * Es el orden de `apply_quant_delta` al descontar.
+ */
+function compare_picking_sources(
+	a: PickingSourceQuant & { secuencia: number },
+	b: PickingSourceQuant & { secuencia: number },
+): number {
+	if (a.secuencia !== b.secuencia) return a.secuencia - b.secuencia;
+	const by_code = String(a.ubicacion_codigo).localeCompare(String(b.ubicacion_codigo), 'es');
+	if (by_code !== 0) return by_code;
+	if (a.ubicacion !== b.ubicacion) return String(a.ubicacion).localeCompare(String(b.ubicacion));
+	const a_lot = a.lote ? 1 : 0;
+	const b_lot = b.lote ? 1 : 0;
+	if (a_lot !== b_lot) return a_lot - b_lot;
+	const by_exp = (a.fecha_caducidad || '9999').localeCompare(b.fecha_caducidad || '9999');
+	if (by_exp !== 0) return by_exp;
+	return String(a.lote_codigo ?? '').localeCompare(String(b.lote_codigo ?? ''));
+}
+
+/** `ubicaciones` limita la ruta a esas ubicaciones (el alcance de un almacén). */
 export async function compute_picking_route(
 	store: ImperiumStore,
 	producto: string,
 	cantidad_requerida: number,
+	opts: { ubicaciones?: Set<string> } = {},
 ): Promise<PickingRoute> {
 	const requerido = round_quantity(cantidad_requerida);
 	const sources: Array<PickingSourceQuant & { secuencia: number }> = [];
@@ -100,11 +133,15 @@ export async function compute_picking_route(
 				const disponible = quant_disponible(row);
 				if (!(disponible > 0)) continue;
 				const loc_id = ref_id(row.ubicacion) || String(row.ubicacion_id ?? '');
+				if (opts.ubicaciones && !opts.ubicaciones.has(loc_id)) continue;
 				if (loc_id) loc_ids.add(loc_id);
 				sources.push({
 					ubicacion: loc_id,
 					ubicacion_codigo: String(row.ubicacion_codigo ?? ''),
 					cantidad_disponible: disponible,
+					lote: String(row.lote ?? ''),
+					lote_codigo: String(row.lote_codigo ?? ''),
+					fecha_caducidad: String(row.fecha_caducidad ?? ''),
 					secuencia: 0,
 				});
 			}
@@ -133,10 +170,7 @@ export async function compute_picking_route(
 			}
 		}
 	}
-	sources.sort((a, b) => {
-		if (a.secuencia !== b.secuencia) return a.secuencia - b.secuencia;
-		return String(a.ubicacion_codigo).localeCompare(String(b.ubicacion_codigo), 'es');
-	});
+	sources.sort((a, b) => compare_picking_sources(a, b));
 	const { renglones, faltante } = build_picking_renglones(sources, requerido);
 	return {
 		producto,
@@ -293,6 +327,7 @@ export async function generate_replenishment_for_order(
 	const pedido = await store.find_id('pedidos', pedido_id);
 	if (!pedido) throw new Error('No se encontró el pedido indicado');
 	const pedido_folio = String(pedido.folio_interno ?? pedido.folio ?? pedido_id);
+	const scope = await warehouse_scope(store, pedido.almacen);
 	const faltantes: Array<{
 		producto: string;
 		producto_nombre: string;
@@ -304,7 +339,9 @@ export async function generate_replenishment_for_order(
 		const producto_id = ref_id(articulo.product);
 		const cantidad = round_quantity(Number(articulo.cantidad ?? 0));
 		if (!producto_id || !is_record_id(producto_id) || !(cantidad > 0)) continue;
-		const ruta = await compute_picking_route(store, producto_id, cantidad);
+		const ruta = await compute_picking_route(store, producto_id, cantidad, {
+			ubicaciones: scope?.ids,
+		});
 		if (ruta.faltante <= 0) continue;
 		const product = await store.find_id('products', producto_id);
 		if (!product) continue;

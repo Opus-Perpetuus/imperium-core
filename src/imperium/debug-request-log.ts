@@ -307,6 +307,7 @@ export async function persist_request_log(
 		origin: req.headers.get('origin') || undefined,
 		ip: req.headers.get('x-forwarded-for') || undefined,
 		user_agent: req.headers.get('user-agent') || undefined,
+		client: req.headers.get('x-imperium-client') || undefined,
 		compartido: shared?.share_id,
 		user: actor
 			? {

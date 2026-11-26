@@ -64,3 +64,69 @@ describe('tablero: la consulta pinta con el permiso del usuario', () => {
 		expect((err as Error).message).toContain('note');
 	});
 });
+
+const AI_CONFIG: Record<string, string> = {
+	'configuration-ai-extraction-provider': 'opencode',
+	'configuration-ai-extraction-opencode-endpoint': 'http://ia.simulada',
+	'configuration-ai-extraction-opencode-api-key': 'simulada',
+};
+
+async function ask_board(steps: unknown[]) {
+	const { handle_action } = await import('./actions.ts');
+	const { store } = board_store();
+	store.find_where = async (_resource: string, where: Record<string, unknown>) => ({
+		_id: 'cfg',
+		value: AI_CONFIG[String(where.ref)] ?? '',
+	});
+	const prompts: string[] = [];
+	const real_fetch = globalThis.fetch;
+	globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+		prompts.push(String(init?.body ?? ''));
+		const content = JSON.stringify({ answer: 'Listo.', steps });
+		return Response.json({ choices: [{ message: { content } }] });
+	}) as typeof fetch;
+	try {
+		const url = new URL('http://nucleo/api/dynamic-dashboard/ai-query');
+		const req = new Request(url, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ question: '¿cuántos productos hay?' }),
+		});
+		const res = await handle_action(store, null as unknown as Bun.SQL, req, url, 'dynamic-dashboard', 'ai_query', {}, {
+			_id: 'a',
+			_ref: 'user-menu-management-0',
+		});
+		const body = (await res.json()) as {
+			data: Array<{ answer: string; widgets: Array<{ spec: Record<string, unknown>; result?: { kpi?: { value: number } }; error?: string }> }>;
+		};
+		return { board: body.data[0]!, prompts };
+	} finally {
+		globalThis.fetch = real_fetch;
+	}
+}
+
+describe('tablero: la IA solo arma widgets de la lista blanca', () => {
+	test('el widget válido se resuelve y los rechazados se reportan sin tumbar la respuesta', async () => {
+		const { board } = await ask_board([
+			{ model_id: 'Products', title: 'Productos', widget_type: 'kpi' },
+			{ model_id: 'Secretos', title: 'Fuera' },
+			{ model_id: 'Products', title: 'Suma', aggregation: { op: 'sum', field: 'campo_inexistente' } },
+		]);
+		expect(board.widgets).toHaveLength(3);
+		const [valid, outside, unknown_field] = board.widgets;
+		expect(valid!.result?.kpi?.value).toBe(4);
+		expect(valid!.error).toBeUndefined();
+		expect(outside!.result).toBeUndefined();
+		expect(outside!.error).toContain('Secretos');
+		expect(unknown_field!.result).toBeUndefined();
+		expect(unknown_field!.error).toContain('campo_inexistente');
+	});
+
+	test('registrar un tipo nuevo lo agrega al enum del schema que ve el modelo', async () => {
+		const { register_widget_kind } = await import('./widget-kinds.ts');
+		register_widget_kind({ widget_type: 'gauge-tablero', family: 'kpi', aggregations: ['count'], max_rows: 10 });
+		const { prompts } = await ask_board([]);
+		expect(prompts[0]).toContain('gauge-tablero');
+		expect(prompts[0]).toContain('chart-pie');
+	});
+});

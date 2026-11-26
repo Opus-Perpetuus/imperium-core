@@ -2,6 +2,12 @@
  * Acciones custom de Imperium, portadas a documentos SQL.
  * Cada handler replica la transición / efecto del service original.
  */
+import {
+	physical_device_fingerprint,
+	physical_device_promoted,
+	physical_device_touch,
+} from './physical-device-report.ts';
+import { register_manual_movement } from './inventory-manual-movement.ts';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -20,13 +26,15 @@ import { cancel_layaway, layaway_lookup } from './pos-layaway.ts';
 import { quote_lookup } from './pos-quote.ts';
 import { pos_ticket_by_folio, register_pos_reprint } from './pos-reprint.ts';
 import { store_credit_lookup } from './pos-store-credit.ts';
-import { pos_return_lookup } from './pos-return.ts';
+import { pos_return_lookup, returns_of } from './pos-return.ts';
+import { card_refundable } from './pos-card-refund.ts';
 import { products_to_replenish } from './inventory-replenishment.ts';
 import { supplier_aging } from './supplier-aging.ts';
 import { expiring_stock } from './inventory-expiry.ts';
 import { stock_valuation } from './inventory-valuation.ts';
-import { is_unique_violation, type ImperiumStore } from './store.ts';
-import { SearchEngine, search_text_from_doc } from './search-engine.ts';
+import { get_task, is_running, list_tasks, start_task, type Task } from './db-admin-tasks.ts';
+import { is_undefined_table, is_unique_violation, type ImperiumStore } from './store.ts';
+import { SearchEngine, search_field_for_reindex, search_index_text } from './search-engine.ts';
 import { assert_pos_pin, verify_user_pin } from './user-pin.ts';
 import { CHOFER_SIN_EMPLEADO_MESSAGE } from './chofer-messages.ts';
 import { pac_provider, stamp_with_pac } from './pac.ts';
@@ -73,7 +81,20 @@ import {
 	messaging_settings,
 	validate_interinstance_api_key,
 } from './interinstance.ts';
-import { mitec_create_link, mitec_decrypt_payload, mitec_parse_callback } from './mitec.ts';
+import { mitec_create_link, mitec_parse_callback } from './mitec.ts';
+import { assert_stripe_webhook, mitec_callback_xml } from './webhook-guards.ts';
+import {
+	cancel_terminal_charge,
+	card_terminal_view,
+	charge_on_terminal,
+	handle_mp_orders_webhook,
+	normalize_card_terminal,
+	read_card_terminal,
+	read_terminal_charge,
+	sql_terminal_deps,
+	terminal_external_reference,
+	type TerminalDeps,
+} from './pos-card-terminal-flow.ts';
 import {
 	email_is_configured,
 	resolve_email_settings,
@@ -263,8 +284,30 @@ import {
 	assert_state_transition_allowed,
 	is_seed_admin,
 } from './group-access.ts';
-import { emit_pedidos_updated, prepare_pedido_create } from './pedidos-flow.ts';
-import { decidir_sync_offline } from './pedidos-sync-offline.ts';
+import {
+	acumular_comprometido,
+	allow_negative_stock,
+	articulos_sin_precio,
+	aviso_faltantes,
+	aviso_sin_precio,
+	emit_pedidos_updated,
+	estado_pedidos_offline,
+	faltantes_de_existencia,
+	prepare_pedido_create,
+	type FaltanteExistencia,
+} from './pedidos-flow.ts';
+import {
+	pedido_warehouse_id,
+	scope_stock_snapshot,
+	user_warehouse_id,
+	warehouse_scope,
+} from './warehouse-scope.ts';
+import {
+	decidir_sync_offline,
+	es_mismo_pedido_offline,
+	folio_offline_desambiguado,
+	huella_pedido_offline,
+} from './pedidos-sync-offline.ts';
 import {
 	compute_picking_route,
 	generate_replenishment_for_order,
@@ -298,7 +341,11 @@ import {
 	revalidate_supplier_invoice,
 } from './supplier-invoice-flow.ts';
 import { cancel_supplier_payment } from './supplier-payment-flow.ts';
-import { register_package_delivery_exit } from './inventory-logistics-flow.ts';
+import {
+	apartado_logistica_por_almacen,
+	register_package_delivery_exit,
+	sync_pedido_status_reservation,
+} from './inventory-logistics-flow.ts';
 import {
 	append_return_pickup_gps_line,
 	apply_quant_delta,
@@ -317,6 +364,7 @@ import {
 	ensure_pending_reception_from_purchase_order,
 	in_transit_for_product,
 	list_pending_for_product,
+	register_full_warehouse_transfer,
 	register_internal_transfer,
 	reservar_reception,
 } from './inventory-reception-flow.ts';
@@ -345,6 +393,7 @@ import {
 	type DocumentoComercial,
 } from './comercial-envio-flow.ts';
 import { detail_fields, plan_from_model, widgets_from_plan } from './ai-query-harness.ts';
+import { validate_widget_spec, widget_kinds } from './widget-kinds.ts';
 import {
 	resolve_dashboard_catalog,
 	resolve_saved_widget_data,
@@ -358,6 +407,7 @@ import {
 import {
 	attending_turn_for_box as ticketing_attending_turn_for_box,
 	box_turns_summary_for_box as ticketing_box_turns_summary,
+	boxes_attending_turns as ticketing_boxes_attending_turns,
 	end_attending_turn as end_ticketing_turn,
 	notify_turn as notify_ticketing_turn,
 	take_next_turn as take_ticketing_turn,
@@ -750,6 +800,8 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return import_location_tree(ctx);
 		case 'inventory-movement:register_transfer':
 			return register_transfer(ctx);
+		case 'inventory-movement:register_manual':
+			return register_manual(ctx);
 		case 'inventory-movement:read_kardex':
 			return ok(
 				[
@@ -927,6 +979,8 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return asignar_empleado(ctx);
 		case 'pedidos:sync_offline':
 			return pedidos_sync_offline(ctx);
+		case 'pedidos:read_offline_stock':
+			return read_offline_stock(ctx);
 		case 'lista-de-precios:sync_offline':
 			return lista_de_precios_sync_offline(ctx);
 		case 'sku:sync_offline':
@@ -974,10 +1028,13 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 		case 'pos-tickets:read_return_availability':
 			return ok(
 				[
-					await pos_return_lookup(ctx.store, {
-						id: ctx.url.searchParams.get('id'),
-						folio: ctx.url.searchParams.get('folio'),
-					}),
+					await with_card_refundable(
+						ctx,
+						await pos_return_lookup(ctx.store, {
+							id: ctx.url.searchParams.get('id'),
+							folio: ctx.url.searchParams.get('folio'),
+						}),
+					),
 				],
 				'Disponible para devolución',
 			);
@@ -1008,6 +1065,18 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return pos_cancel(ctx);
 		case 'pos-session:bulk_close_sessions':
 			return bulk_close_pos_sessions(ctx.store, ctx.actor, ctx.body ?? {});
+		case 'pos-session:read_card_terminal':
+			return pos_card_terminal_read(ctx);
+		case 'pos-session:save_card_terminal':
+			return pos_card_terminal_save(ctx);
+		case 'pos-session:charge_card_terminal':
+			return pos_card_terminal_charge(ctx);
+		case 'pos-session:read_card_terminal_charge':
+			return pos_card_terminal_status(ctx);
+		case 'pos-session:cancel_card_terminal_charge':
+			return pos_card_terminal_cancel(ctx);
+		case 'pos-session:mercadopago_orders_webhook':
+			return pos_card_terminal_webhook(ctx);
 		case 'purchase-order:approve':
 			return po_approve(ctx);
 		case 'purchase-order:register_receipt':
@@ -1157,6 +1226,8 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return end_attending_turn(ctx);
 		case 'ticketing-system-turn:attending_turn_for_box':
 			return attending_turn_for_box(ctx);
+		case 'ticketing-system-turn:boxes_attending_turns':
+			return boxes_attending_turns(ctx);
 		case 'ticketing-system-turn:box_turns_summary':
 			return box_turns_summary(ctx);
 		case 'citizen-report:reverse_geocode':
@@ -1211,6 +1282,8 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return postgres_table_tracker_field_values(ctx);
 		case 'postgres-table-tracker:trigger_reindex':
 			return postgres_table_tracker_reindex(ctx);
+		case 'postgres-table-tracker:get_reindex_status':
+			return postgres_table_tracker_reindex_status(ctx);
 		default:
 			return generic_action(ctx);
 	}
@@ -3113,14 +3186,21 @@ async function dashboard_catalog(ctx: Ctx) {
 	return resolve_dashboard_catalog(ctx.store, ctx.actor);
 }
 
-const AI_QUERY_JSON_SCHEMA: Record<string, unknown> = {
-	type: 'object',
-	required: [],
-	properties: {
-		answer: { type: 'string' },
-		widgets: { type: 'array' },
-	},
-};
+function ai_query_json_schema(): Record<string, unknown> {
+	const items = {
+		type: 'object',
+		properties: { widget_type: { type: 'string', enum: widget_kinds().map((kind) => kind.widget_type) } },
+	};
+	return {
+		type: 'object',
+		required: [],
+		properties: {
+			answer: { type: 'string' },
+			steps: { type: 'array', items },
+			widgets: { type: 'array', items },
+		},
+	};
+}
 
 function coerce_ai_query(raw: Record<string, unknown>) {
 	const nested = as_object(raw.result ?? raw.data);
@@ -3145,7 +3225,7 @@ const AI_QUERY_INSTRUCTIONS = [
 	'Eres el asistente de reportes de un ERP.',
 	'Responde con `answer` en español y `steps`. Cada step abre una lista existente: { "model_id", "title", "search"?, "limit"?, "sort"?, "filters"?, "widget_type"?, "aggregation"? }.',
 	'filters es una lista corta { "field", "op", "value" }. op es eq, lt, lte, gt o gte. search es texto libre (descripcion de un producto, nombre o correo de un usuario), nunca un estado. Un estado va en filters sobre el campo estado, con el valor guardado: confirmado, cancelado, borrador, surtido, surtiendo, por_surtir. No uses confirmada ni cancelada.',
-	'Una lista es widget_type table. La fila más reciente es limit 1 y sort updated_at:desc. Una suma es widget_type kpi y aggregation { "op": "sum", "field": "total" }, o el campo numérico del modelo si no es el total. No uses chart salvo que pidan una gráfica.',
+	'Una lista es widget_type table. La fila más reciente es limit 1 y sort updatedAt:desc. Una suma es widget_type kpi y aggregation { "op": "sum", "field": "total" }, o el campo numérico del modelo si no es el total. No uses chart salvo que pidan una gráfica.',
 	'Puedes devolver de 1 a 3 steps. No pidas el nombre del campo. Si te falta un campo numérico, devuelve steps vacío y `detail` con hasta 4 id.',
 	'Si lo pedido no está en la lista de modelos, explícalo en answer y devuelve steps vacío. No inventes un model_id.',
 ].join('\n\n');
@@ -3168,7 +3248,7 @@ async function dashboard_ai_query(ctx: Ctx) {
 		coerce_ai_query(
 			await extract_structured(ctx.store, {
 				instructions,
-				json_schema: AI_QUERY_JSON_SCHEMA,
+				json_schema: ai_query_json_schema(),
 				text: [...history, `Usuario: ${question}`].join('\n\n'),
 			}),
 		);
@@ -3187,12 +3267,17 @@ async function dashboard_ai_query(ctx: Ctx) {
 	for (const raw_widget of raw_widgets) {
 		const spec = { ...as_object(raw_widget) };
 		if (!spec.widget_type && spec.model_id) spec.widget_type = 'table';
+		const checked = validate_widget_spec(spec, entries);
+		if (!checked.ok) {
+			widgets.push({ spec, error: checked.errors.join(' ') });
+			continue;
+		}
 		try {
-			const inner: Ctx = { ...ctx, body: { spec } };
+			const inner: Ctx = { ...ctx, body: { spec: checked.spec } };
 			const result = await widget_data(inner);
 			const payload = (result as { data?: unknown }).data;
 			const data = Array.isArray(payload) ? payload[0] : payload ?? result;
-			widgets.push({ spec, result: data });
+			widgets.push({ spec: checked.spec, result: data });
 		} catch (error) {
 			widgets.push({
 				spec,
@@ -3401,13 +3486,46 @@ export async function import_location_tree_from_body(
 	return import_location_tree({ store, body } as Ctx);
 }
 
+async function register_manual(ctx: Ctx) {
+	const doc = await register_manual_movement(ctx.store, {
+		tipo: String(ctx.body.tipo ?? ctx.body.tipo_movimiento ?? ''),
+		producto: String(ctx.body.producto ?? ''),
+		ubicacion: String(ctx.body.ubicacion ?? '') || undefined,
+		cantidad: Number(ctx.body.cantidad ?? 0),
+		motivo: String(ctx.body.motivo ?? ''),
+		costo_unitario: ctx.body.costo_unitario == null ? undefined : Number(ctx.body.costo_unitario),
+	});
+	return {
+		data: [doc],
+		total_elementos: 1,
+		message:
+			doc.tipo_movimiento === 'salida_manual'
+				? 'Salida registrada correctamente'
+				: 'Entrada registrada correctamente',
+	};
+}
+
 async function register_transfer(ctx: Ctx) {
+	const desde_almacen = ctx.body.desde_almacen === true || ctx.body.desde_almacen === 'true';
+	const producto = String(ctx.body.producto ?? ctx.body.product_id ?? '').trim();
+	if (desde_almacen && !producto) {
+		const { productos } = await register_full_warehouse_transfer(ctx.store, {
+			ubicacion_origen: String(ctx.body.ubicacion_origen ?? ctx.body.origen ?? ''),
+			ubicacion_destino: String(ctx.body.ubicacion_destino ?? ctx.body.destino ?? ''),
+		});
+		return {
+			data: null,
+			total_elementos: productos,
+			message: `Traslado registrado correctamente (${productos} producto${productos === 1 ? '' : 's'})`,
+		};
+	}
 	await register_internal_transfer(ctx.store, {
 		producto: String(ctx.body.producto ?? ctx.body.product_id ?? ''),
 		ubicacion_origen: String(ctx.body.ubicacion_origen ?? ctx.body.origen ?? ''),
 		ubicacion_destino: String(ctx.body.ubicacion_destino ?? ctx.body.destino ?? ''),
 		cantidad: Number(ctx.body.cantidad ?? 0),
 		lote: String(ctx.body.lote ?? '') || undefined,
+		desde_almacen: ctx.body.desde_almacen === true || ctx.body.desde_almacen === 'true',
 	});
 	return {
 		data: null,
@@ -3788,7 +3906,19 @@ async function picking_route(ctx: Ctx) {
 	if (!(cantidad > 0)) {
 		throw new Error('Debes indicar una cantidad mayor a cero');
 	}
-	const ruta = await compute_picking_route(ctx.store, producto, cantidad);
+	let almacen = String(ctx.url.searchParams.get('almacen') ?? ctx.body.almacen ?? '').trim();
+	const pedido_id = String(ctx.url.searchParams.get('pedido') ?? ctx.body.pedido ?? '').trim();
+	if (pedido_id) {
+		if (!is_record_id(pedido_id)) throw new Error('Debes indicar un pedido válido');
+		const pedido = await ctx.store.find_id('pedidos', pedido_id);
+		if (!pedido || pedido.is_active === false) throw new Error('No se encontró el pedido');
+		almacen = await pedido_warehouse_id(ctx.store, pedido);
+	}
+	const scope = almacen ? await warehouse_scope(ctx.store, almacen) : null;
+	if (almacen && !scope) throw new Error('No se encontró el almacén indicado');
+	const ruta = await compute_picking_route(ctx.store, producto, cantidad, {
+		ubicaciones: scope?.ids,
+	});
 	return ok([ruta], 'Ruta de surtimiento calculada');
 }
 
@@ -4384,22 +4514,21 @@ async function payroll_export_payload(ctx: Ctx) {
 }
 
 
-const PEDIDO_ESTADOS = new Set([
-	'borrador',
-	'confirmado',
-	'por_surtir',
-	'surtiendo',
-	'surtido',
-	'enviado',
-	'cancelado',
-]);
-
 /**
  * Sync-back de pedidos capturados offline. Mismo contrato que
  * `POST /pedidos/offline/sincronizar` del backend original: `{ ok, total, resultados }`
- * con dedupe por `offline_uuid` y por el folio local (`folio_offline`).
+ * con dedupe por `offline_uuid`; un folio local repetido solo es duplicado si
+ * es el mismo vendedor con el mismo cliente y artículos (Odoo #272). Lo
+ * rechazado responde 422 con `message`, no 200.
  */
-async function pedidos_sync_offline(ctx: Ctx) {
+/** Índice único de BD o el chequeo previo del store sobre las llaves offline. */
+function choca_llave_offline(error: unknown): boolean {
+	if (is_unique_violation(error)) return true;
+	const message = error instanceof Error ? error.message : String(error ?? '');
+	return /Ya existe un registro con el campo (offline_uuid|folio_offline)/.test(message);
+}
+
+export async function pedidos_sync_offline(ctx: Ctx) {
 	const incoming = as_array(ctx.body.pedidos);
 	const resultados: Array<{
 		offline_uuid: string;
@@ -4408,8 +4537,30 @@ async function pedidos_sync_offline(ctx: Ctx) {
 		status: 'creado' | 'duplicado' | 'error';
 		motivo?: 'uuid' | 'folio';
 		error?: string;
+		estado?: string;
+		aviso?: string;
+		faltantes?: FaltanteExistencia[];
 	}> = [];
-	const folios_del_lote = new Set<string>();
+	const avisos: string[] = [];
+	// Folio local → pedido creado en este lote, para distinguir el reenvío del
+	// mismo pedido de otro pedido con el mismo folio (Odoo #272).
+	const folios_del_lote = new Map<string, ImperiumDoc>();
+	const usuario = ctx.actor?._id ? String(ctx.actor._id) : '';
+	const negativos = await allow_negative_stock(ctx.store);
+	const estado = await estado_pedidos_offline(ctx.store);
+	const almacen_vendedor = await user_warehouse_id(ctx.store, ctx.actor);
+	const scope_vendedor = await warehouse_scope(ctx.store, almacen_vendedor);
+	const scope_id = scope_vendedor ? String(scope_vendedor.almacen._id) : '';
+	const comprometido = new Map<string, number>();
+	const duplicado_de = (offline_uuid: string, motivo: 'uuid' | 'folio', fila: ImperiumDoc) =>
+		resultados.push({
+			offline_uuid,
+			_id: String(fila._id),
+			folio_interno: fila.folio_interno,
+			status: 'duplicado',
+			motivo,
+			...(fila.estado ? { estado: String(fila.estado) } : {}),
+		});
 	for (const raw of incoming) {
 		const pedido = as_object(raw);
 		const offline_uuid = String(pedido.offline_uuid ?? pedido._id ?? '').trim();
@@ -4422,45 +4573,57 @@ async function pedidos_sync_offline(ctx: Ctx) {
 			continue;
 		}
 		const folio_cliente = String(pedido.folio ?? '').trim();
+		const huella = huella_pedido_offline({
+			contacto: ref_id(pedido.contacto) || pedido.contacto,
+			articulos: pedido.articulos,
+		});
+		const mismo = (fila: ImperiumDoc | null | undefined) =>
+			Boolean(fila) && es_mismo_pedido_offline(fila as ImperiumDoc, usuario, huella);
 		try {
 			const existing = await ctx.store.find_where('pedidos', { offline_uuid });
-			const por_folio = folio_cliente
-				? await ctx.store.find_where('pedidos', { folio_offline: folio_cliente })
-				: null;
+			const en_lote = folio_cliente ? folios_del_lote.get(folio_cliente) : undefined;
+			const por_folio =
+				en_lote ??
+				(folio_cliente ? await ctx.store.find_where('pedidos', { folio_offline: folio_cliente }) : null);
 			const decision = decidir_sync_offline({
 				ya_existe_uuid: Boolean(existing),
-				ya_existe_folio: Boolean(por_folio),
-				folio_visto_en_lote: folio_cliente ? folios_del_lote.has(folio_cliente) : false,
 				folio: folio_cliente,
+				offline_uuid,
+				coincidencia_folio: !por_folio ? 'ninguna' : mismo(por_folio) ? 'mismo_pedido' : 'otro_pedido',
 			});
 			if (decision.decision === 'duplicado') {
-				if (decision.motivo === 'uuid') {
-					resultados.push({
-						offline_uuid,
-						_id: existing?._id ? String(existing._id) : undefined,
-						folio_interno: existing?.folio_interno,
-						status: 'duplicado',
-						motivo: 'uuid',
-					});
-				} else {
-					resultados.push({
-						offline_uuid,
-						status: 'duplicado',
-						motivo: 'folio',
-					});
-				}
-				if (folio_cliente) folios_del_lote.add(folio_cliente);
+				// Con `_id` el teléfono lo marca sincronizado: el pedido ya está en
+				// el servidor y no queda retenido sin enviarse.
+				duplicado_de(offline_uuid, decision.motivo, (decision.motivo === 'uuid' ? existing : por_folio)!);
 				continue;
 			}
-			const estado = PEDIDO_ESTADOS.has(String(pedido.estado))
-				? String(pedido.estado)
-				: 'confirmado';
+			const faltantes =
+				estado === 'confirmado' && !negativos
+					? await faltantes_de_existencia(ctx.store, pedido.articulos, {
+							almacen: almacen_vendedor,
+							comprometido,
+						})
+					: [];
+			const sin_precio =
+				estado === 'confirmado' ? await articulos_sin_precio(ctx.store, pedido.articulos) : [];
+			const otro_folio =
+				decision.folio_offline && decision.folio_offline !== folio_cliente
+					? `El folio ${folio_cliente} ya lo tenía otro pedido (otro teléfono o navegador); este se guardó aparte.`
+					: '';
+			const aviso =
+				[
+					faltantes.length ? aviso_faltantes(folio_cliente, faltantes) : '',
+					sin_precio.length ? aviso_sin_precio(folio_cliente, sin_precio) : '',
+					otro_folio,
+				]
+					.filter(Boolean)
+					.join(' ') || undefined;
 			const prepared = await prepare_pedido_create(
 				ctx.store,
 				{
 					name: String(pedido.name ?? pedido.folio ?? `Pedido ${offline_uuid.slice(0, 8)}`),
 					articulos: Array.isArray(pedido.articulos) ? pedido.articulos : [],
-					contacto: pedido.contacto,
+					contacto: ref_id(pedido.contacto) || pedido.contacto,
 					observaciones: pedido.observaciones ?? '',
 					listaDePreciosId: pedido.listaDePreciosId,
 					folio: pedido.folio ?? '',
@@ -4472,31 +4635,52 @@ async function pedidos_sync_offline(ctx: Ctx) {
 					order_gps_accuracy_m: pedido.order_gps_accuracy_m,
 				},
 				ctx.actor,
+				{ validar_confirmacion: false },
 			);
-			try {
-				const created = await ctx.store.insert('pedidos', {
+			const insertar = (folio_offline: string | undefined) =>
+				ctx.store.insert('pedidos', {
 					...prepared,
 					sincronizado: true,
 					offline_uuid,
-					folio_offline: folio_cliente || undefined,
+					folio_offline,
+					huella_offline: huella,
 					is_active: true,
 				});
-				if (folio_cliente) folios_del_lote.add(folio_cliente);
-				resultados.push({
-					offline_uuid,
-					_id: String(created._id),
-					folio_interno: created.folio_interno,
-					status: 'creado',
-				});
+			let created: ImperiumDoc;
+			try {
+				created = await insertar(decision.folio_offline);
 			} catch (insert_error) {
-				if (!is_unique_violation(insert_error)) throw insert_error;
-				if (folio_cliente) folios_del_lote.add(folio_cliente);
-				resultados.push({
-					offline_uuid,
-					status: 'duplicado',
-					motivo: 'folio',
-				});
+				if (!choca_llave_offline(insert_error)) throw insert_error;
+				// Carrera con otra petición: el mismo uuid es reenvío; el mismo
+				// folio puede ser el mismo pedido u otro distinto.
+				const ya = await ctx.store.find_where('pedidos', { offline_uuid });
+				if (ya) {
+					duplicado_de(offline_uuid, 'uuid', ya);
+					continue;
+				}
+				const choca = folio_cliente
+					? await ctx.store.find_where('pedidos', { folio_offline: folio_cliente })
+					: null;
+				if (choca && mismo(choca)) {
+					duplicado_de(offline_uuid, 'folio', choca);
+					continue;
+				}
+				if (!folio_cliente) throw insert_error;
+				created = await insertar(folio_offline_desambiguado(folio_cliente, offline_uuid));
 			}
+			if (folio_cliente) folios_del_lote.set(folio_cliente, created);
+			if (estado === 'confirmado' && !negativos) {
+				acumular_comprometido(comprometido, scope_id, pedido.articulos);
+			}
+			resultados.push({
+				offline_uuid,
+				_id: String(created._id),
+				folio_interno: created.folio_interno,
+				status: 'creado',
+				estado,
+				...(aviso ? { aviso, ...(faltantes.length ? { faltantes } : {}) } : {}),
+			});
+			if (aviso) avisos.push(aviso);
 		} catch (item_error) {
 			resultados.push({
 				offline_uuid,
@@ -4511,7 +4695,25 @@ async function pedidos_sync_offline(ctx: Ctx) {
 	if (resultados.some((item) => item.status === 'creado')) {
 		emit_pedidos_updated();
 	}
-	return Response.json({ ok: true, total: resultados.length, resultados });
+	// Lo rechazado no se responde con 200: el teléfono lo deja pendiente y
+	// muestra el motivo (Odoo #272). Lo creado en el mismo lote sí queda.
+	const rechazados = resultados.filter((item) => item.status === 'error');
+	return Response.json(
+		{
+			ok: rechazados.length === 0,
+			total: resultados.length,
+			resultados,
+			...(avisos.length ? { avisos } : {}),
+			...(rechazados.length
+				? {
+						message: `No se pudo sincronizar ${rechazados.length === 1 ? 'un pedido' : `${rechazados.length} pedidos`}: ${rechazados
+							.map((item) => item.error)
+							.join('; ')}`,
+					}
+				: {}),
+		},
+		{ status: rechazados.length ? 422 : 200 },
+	);
 }
 
 /**
@@ -4553,6 +4755,30 @@ const SKU_OFFLINE_OMIT = new Set([
  * `GET|USE /sku/offline/sincronizar` del original: `{ skus }` sin
  * producción, almacenes, lotes ni proveedores.
  */
+/**
+ * Existencia del almacén del vendedor para vender offline: libre, apartada
+ * y disponible de ese almacén. Sin almacén asignado `existencias` es null
+ * y el modo offline usa la existencia global.
+ */
+export async function read_offline_stock(ctx: Ctx) {
+	const permitir_negativos = await allow_negative_stock(ctx.store);
+	const scope = await warehouse_scope(ctx.store, await user_warehouse_id(ctx.store, ctx.actor));
+	if (!scope) return Response.json({ almacen: null, permitir_negativos, existencias: null });
+	return Response.json({
+		almacen: {
+			_id: String(scope.almacen._id),
+			name: scope.almacen.name ?? '',
+			codigo: scope.almacen.codigo ?? '',
+		},
+		permitir_negativos,
+		existencias: await scope_stock_snapshot(
+			ctx.store,
+			scope,
+			await apartado_logistica_por_almacen(ctx.store, String(scope.almacen._id)),
+		),
+	});
+}
+
 async function sku_sync_offline(ctx: Ctx) {
 	if (!ctx.store.has('sku')) return Response.json({ skus: [] });
 	const rows = await collect_scan(ctx.store, 'sku', {
@@ -4604,6 +4830,7 @@ async function reclamar_surtir(ctx: Ctx) {
 		if (assigned && assigned !== employee_id) {
 			throw new Error('Este pedido ya lo está surtiendo otro empleado.');
 		}
+		await sync_pedido_status_reservation(ctx.store, pedido);
 		if (!assigned) {
 			const updated = await ctx.store.update('pedidos', id, {
 				assigned_employee: employee_id,
@@ -4628,6 +4855,7 @@ async function reclamar_surtir(ctx: Ctx) {
 			);
 		}
 	}
+	await sync_pedido_status_reservation(ctx.store, { ...pedido, estado: 'surtiendo' });
 	const updated = await ctx.store.update('pedidos', id, {
 		estado: 'surtiendo',
 		assigned_employee: employee_id,
@@ -4689,6 +4917,7 @@ async function asignar_empleado(ctx: Ctx) {
 		if (assigned && assigned !== employee_id) {
 			throw new Error('Este pedido ya lo está surtiendo otro empleado.');
 		}
+		await sync_pedido_status_reservation(ctx.store, pedido);
 		if (!assigned) {
 			const updated = await ctx.store.update('pedidos', id, {
 				assigned_employee: employee_id,
@@ -4709,6 +4938,7 @@ async function asignar_empleado(ctx: Ctx) {
 		throw new Error('Este pedido ya está asignado a otro empleado.');
 	}
 	await assert_state_transition_allowed(ctx.store, ctx.actor, estado, 'surtiendo');
+	await sync_pedido_status_reservation(ctx.store, { ...pedido, estado: 'surtiendo' });
 	const updated = await ctx.store.update('pedidos', id, {
 		estado: 'surtiendo',
 		assigned_employee: employee_id,
@@ -4744,6 +4974,74 @@ async function pos_runtime(ctx: Ctx) {
 	const runtime_state = normalize_pos_runtime_state(ctx.body.runtime_state ?? ctx.body);
 	await ctx.store.update('pos-session', session_id, { runtime_state });
 	return ok([runtime_state], 'Estado operativo del POS guardado correctamente');
+}
+
+function card_terminal_deps(ctx: Ctx): TerminalDeps {
+	return sql_terminal_deps(ctx.sql, ctx.store.has('payment-gateways') ? ctx.store.qt('payment-gateways') : null);
+}
+
+async function with_card_refundable(ctx: Ctx, lookup: ImperiumDoc): Promise<ImperiumDoc> {
+	const original = await ctx.store.find_id('pos-tickets', String(lookup._id));
+	if (!original) return lookup;
+	const prior = await returns_of(ctx.store, String(lookup._id));
+	return { ...lookup, tarjeta_reembolsable: await card_refundable(card_terminal_deps(ctx), original, prior) };
+}
+
+async function pos_card_terminal_read(ctx: Ctx) {
+	const session = await pos_session_for_report(ctx);
+	return ok([await card_terminal_view(session, card_terminal_deps(ctx).gateways)], 'Terminal de la caja');
+}
+
+async function pos_card_terminal_save(ctx: Ctx) {
+	const session = await pos_session_for_report(ctx);
+	const card_terminal = normalize_card_terminal(ctx.body);
+	await ctx.store.update('pos-session', String(session._id), { card_terminal });
+	return ok([await card_terminal_view({ card_terminal }, card_terminal_deps(ctx).gateways)], 'Terminal de la caja guardada');
+}
+
+async function pos_card_terminal_charge(ctx: Ctx) {
+	const session = await pos_session_for_report(ctx);
+	if (!is_pos_session_open(session)) throw new Error('Solo se cobra en una sesión abierta');
+	const external_reference = String(ctx.body.external_reference ?? '').trim()
+		|| terminal_external_reference(ctx.body.folio ?? ctx.body.ticket, ctx.body.attempt);
+	const view = await charge_on_terminal(card_terminal_deps(ctx), {
+		session_id: String(session._id),
+		terminal: read_card_terminal(session),
+		amount: Number(ctx.body.amount),
+		external_reference,
+		idempotency_key: String(ctx.body.idempotency_key ?? ''),
+	});
+	return ok([view], 'Cobro en terminal');
+}
+
+async function pos_card_terminal_status(ctx: Ctx) {
+	const session = await pos_session_for_report(ctx);
+	const view = await read_terminal_charge(card_terminal_deps(ctx), {
+		session_id: String(session._id),
+		terminal: read_card_terminal(session),
+		id: String(ctx.url.searchParams.get('order') ?? ctx.body.order ?? ''),
+	});
+	return ok([view], 'Cobro en terminal');
+}
+
+async function pos_card_terminal_cancel(ctx: Ctx) {
+	const session = await pos_session_for_report(ctx);
+	const view = await cancel_terminal_charge(card_terminal_deps(ctx), {
+		session_id: String(session._id),
+		terminal: read_card_terminal(session),
+		id: String(ctx.body.order ?? ''),
+		idempotency_key: String(ctx.body.idempotency_key ?? ''),
+	});
+	return ok([view], 'Cobro en terminal cancelado');
+}
+
+async function pos_card_terminal_webhook(ctx: Ctx) {
+	const reply = await handle_mp_orders_webhook(card_terminal_deps(ctx), {
+		headers: ctx.req.headers,
+		query: ctx.url.searchParams,
+		body: ctx.body ?? {},
+	});
+	return Response.json(reply.body, { status: reply.status });
 }
 
 async function pos_session_for_report(ctx: Ctx) {
@@ -6297,7 +6595,7 @@ async function cobranza_mitec_webhook(ctx: Ctx) {
 	const encoded = String(ctx.body.strResponse ?? ctx.body.xml ?? '');
 	if (!encoded) throw new Error('Falta la respuesta de Mitec.');
 	const key = await cobranza_config_text(ctx, 'configuration-payments-mitec-key', 'MITEC_KEY');
-	const xml = encoded.trim().startsWith('<') ? encoded : mitec_decrypt_payload(encoded, key);
+	const xml = mitec_callback_xml(encoded, key);
 	const parsed = mitec_parse_callback(xml);
 	if (!parsed.approved) return { received: true };
 	const charge = await ctx.store.find_where('cobranza', { reference: parsed.reference });
@@ -6318,9 +6616,9 @@ async function cobranza_stripe_webhook(ctx: Ctx) {
 		'STRIPE_WEBHOOK_SECRET',
 	);
 	const raw = JSON.stringify(ctx.body ?? {});
-	if (secret && !stripe_verify_webhook(raw, ctx.req.headers.get('stripe-signature'), secret)) {
-		throw new Error('Firma de webhook Stripe inválida.');
-	}
+	assert_stripe_webhook(secret, () =>
+		stripe_verify_webhook(raw, ctx.req.headers.get('stripe-signature'), secret),
+	);
 	const event = ctx.body as {
 		type?: string;
 		data?: { object?: { id?: string; amount_total?: number; metadata?: { charge_id?: string } } };
@@ -6363,6 +6661,9 @@ async function take_next_turn(ctx: Ctx) {
 		ctx.store,
 		String(ctx.body.box_config_id ?? ctx.body.box ?? ctx.body.caja ?? ''),
 	);
+	if (!taken.turn) {
+		return ok([], 'Sin turnos a la espera', 0);
+	}
 	return ok([taken.turn], 'Turno tomado', taken.waiting);
 }
 
@@ -6377,6 +6678,11 @@ async function attending_turn_for_box(ctx: Ctx) {
 		String(ctx.body.box_config_id ?? ctx.body.box ?? ctx.body.caja ?? ''),
 	);
 	return ok(turn ? [turn] : [], turn ? 'Turno en atención' : 'Sin turno en atención');
+}
+
+async function boxes_attending_turns(ctx: Ctx) {
+	const rows = await ticketing_boxes_attending_turns(ctx.store);
+	return ok(rows, rows.length ? 'Cajas con turno en atención' : 'Sin cajas con turno en atención');
 }
 
 async function box_turns_summary(ctx: Ctx) {
@@ -6704,9 +7010,9 @@ async function payments_webhook(ctx: Ctx) {
 		'STRIPE_WEBHOOK_SECRET',
 	);
 	const raw = JSON.stringify(ctx.body ?? {});
-	if (secret && !stripe_verify_webhook(raw, ctx.req.headers.get('stripe-signature'), secret)) {
-		throw new Error('Firma de webhook Stripe inválida.');
-	}
+	assert_stripe_webhook(secret, () =>
+		stripe_verify_webhook(raw, ctx.req.headers.get('stripe-signature'), secret),
+	);
 	const event = ctx.body as {
 		id?: string;
 		type?: string;
@@ -7131,9 +7437,19 @@ async function physical_device_report(ctx: Ctx) {
 		last_user_name: actor_name(ctx),
 		last_seen: now(),
 		raw_snapshot: payload.raw_snapshot ?? {},
+		...physical_device_promoted(payload.raw_snapshot),
 		is_active: true,
 	};
 	const existing = await ctx.store.find_where('physical-device', { install_uuid });
+	// #336: sin cambio de hardware solo se toca la última revisión y lo volátil,
+	// sin historial ni notificaciones; con cambio real, una sola entrada legible.
+	const fingerprint = physical_device_fingerprint(doc);
+	doc.hardware_fingerprint = fingerprint;
+	if (existing && physical_device_fingerprint(existing) === fingerprint) {
+		const id = String(existing._id);
+		await ctx.store.touch_fields('physical-device', id, physical_device_touch(doc, fingerprint));
+		return ok([{ ...existing, ...doc, _id: id }], 'Dispositivo registrado (sin cambios de hardware)');
+	}
 	const saved = existing
 		? await ctx.store.update('physical-device', String(existing._id), doc)
 		: await ctx.store.insert('physical-device', doc);
@@ -7157,9 +7473,116 @@ async function postgres_table_tracker_search_status() {
 	);
 }
 
+/**
+ * Por qué un modelo procesado no se reindexó (#268). Todo modelo procesado
+ * termina en `reindexados` o en `omitidos` con uno de estos motivos:
+ * - `sin_model_id`: el registro de module-management no trae model_id;
+ * - `sin_recurso`: el catálogo no tiene recurso (tabla) para ese modelo;
+ * - `chat_privado`: recurso del chat, que nunca entra al buscador;
+ * - `app_no_instalada`: la app dueña no está instalada;
+ * - `sin_tabla`: la tabla no existe en la BD (42P01).
+ */
+export type ReindexMotivo = 'sin_model_id' | 'sin_recurso' | 'chat_privado' | 'app_no_instalada' | 'sin_tabla';
+type ReindexOmitido = { model: string; motivo: ReindexMotivo };
+
+const REINDEX_MOTIVO_TEXTO: Record<ReindexMotivo, string> = {
+	sin_model_id: 'sin model_id',
+	sin_recurso: 'sin tabla en el catálogo',
+	chat_privado: 'privado del chat',
+	app_no_instalada: 'app no instalada',
+	sin_tabla: 'sin tabla en la BD',
+};
+
+/** Qué recurso reindexar para `model_id`, o por qué se omite (sin tocar la BD). */
+export function reindex_target(
+	store: Pick<ImperiumStore, 'resource_for_model' | 'has'> & Partial<Pick<ImperiumStore, 'is_model_installed'>>,
+	model_id: string,
+): { resource: string } | { motivo: ReindexMotivo } {
+	if (!model_id) return { motivo: 'sin_model_id' };
+	const resource = store.resource_for_model(model_id);
+	if (!resource || !store.has(resource)) return { motivo: 'sin_recurso' };
+	if (is_chat_private_resource(resource)) return { motivo: 'chat_privado' };
+	if (typeof store.is_model_installed === 'function' && !store.is_model_installed(model_id)) {
+		return { motivo: 'app_no_instalada' };
+	}
+	return { resource };
+}
+
+/** Lo que el modal consulta mientras corre el reindexado (y al terminar). */
+export type ReindexTrabajo = {
+	id: string;
+	estado: 'en_curso' | 'terminado' | 'fallido';
+	modelo: string | null;
+	forzado: boolean;
+	iniciado: string;
+	terminado: string | null;
+	total: number;
+	procesados: number;
+	actual: string | null;
+	reindexados: string[];
+	omitidos: ReindexOmitido[];
+	/** Filas cuyo `search_field` cambió (#268): una segunda corrida sin cambios deja 0. */
+	filas_actualizadas: number;
+	error: string | null;
+};
+
+const REINDEX_TASK_KIND = 'search-reindex';
+/** Progreso vivo por id de trabajo; el registro en memoria es db-admin-tasks. */
+const reindex_progress = new Map<string, Omit<ReindexTrabajo, 'estado' | 'terminado' | 'error'>>();
+
+function reindex_view(task: Task | null): ReindexTrabajo | null {
+	const progress = task ? reindex_progress.get(task.id) : undefined;
+	if (!task || !progress) return null;
+	return {
+		...progress,
+		reindexados: [...progress.reindexados],
+		omitidos: [...progress.omitidos],
+		estado: task.status === 'running' ? 'en_curso' : task.status === 'success' ? 'terminado' : 'fallido',
+		terminado: task.finished_at,
+		error: task.error,
+	};
+}
+
+function latest_reindex_task(): Task | null {
+	return list_tasks().find((task) => task.kind === REINDEX_TASK_KIND) ?? null;
+}
+
+function reindex_message(job: ReindexTrabajo): string {
+	const target = job.modelo ? `"${job.modelo}"` : 'todos los modelos';
+	const forced = job.forzado ? ' (forzado)' : '';
+	if (job.estado === 'en_curso') {
+		return `Reindexado de ${target} en curso${forced}: ${job.procesados} de ${job.total}.`;
+	}
+	if (job.estado === 'fallido') return `Reindexado de ${target} falló: ${job.error ?? 'error desconocido'}.`;
+	const por_motivo = new Map<ReindexMotivo, number>();
+	for (const o of job.omitidos) por_motivo.set(o.motivo, (por_motivo.get(o.motivo) ?? 0) + 1);
+	const saltados = job.omitidos.length
+		? `; ${job.omitidos.length} omitido(s): ${[...por_motivo].map(([m, n]) => `${n} ${REINDEX_MOTIVO_TEXTO[m]}`).join(', ')}`
+		: '';
+	const filas = `; ${job.filas_actualizadas} fila(s) actualizada(s)`;
+	return `Reindexado de ${target} terminado${forced}: ${job.reindexados.length} reindexado(s)${saltados}${filas}.`;
+}
+
+/**
+ * «Reindexar todo» (#268). Reindexar 200+ modelos no cabe en el plazo HTTP del
+ * núcleo (30 + 5 s): la ruta arranca el trabajo en segundo plano y contesta 202
+ * con su ficha; `GET /reindex/estado` da el progreso, lo reindexado, lo omitido
+ * y si terminó o falló. Solo corre uno a la vez (409 con el que ya corre).
+ * Cada modelo procesado termina en `reindexados` o en `omitidos` con su
+ * motivo (ver ReindexMotivo): reindexados + omitidos = procesados. Otros
+ * errores dejan el trabajo «fallido».
+ */
 async function postgres_table_tracker_reindex(ctx: Ctx) {
 	const only_model = String(ctx.params.model_name ?? '').trim();
 	const force = ctx.url.searchParams.get('force') === 'true';
+	if (is_running(REINDEX_TASK_KIND)) {
+		const current = reindex_view(latest_reindex_task());
+		return Response.json(
+			{ ...ok(current ? [current] : [], 'Ya hay un reindexado en curso; espera a que termine.'), error: 'reindex_en_curso' },
+			{ status: 409 },
+		);
+	}
+	const models: string[] = [];
 	for await (const modules of ctx.store.scan('module-management', {
 		include_inactive: true,
 	})) {
@@ -7172,40 +7595,117 @@ async function postgres_table_tracker_reindex(ctx: Ctx) {
 			) {
 				continue;
 			}
-			const resource = ctx.store.resource_for_model(model_id);
-			if (!resource || !ctx.store.has(resource) || is_chat_private_resource(resource)) continue;
-			const collection = ctx.store.loc(resource).collection;
-			const meili = await SearchEngine.ensure_available();
-			if (meili) await SearchEngine.clear_index(collection);
-			for await (const page of ctx.store.scan(resource, { include_inactive: true })) {
-				if (meili) {
-					const search_docs = page
-						.filter((doc) => doc.is_active !== false)
-						.map((doc) => ({
-							id: String(doc._id),
-							search_text: search_text_from_doc(doc),
-						}))
-						.filter((doc) => doc.search_text);
-					if (search_docs.length) await SearchEngine.index_documents(collection, search_docs);
-				}
-				if (!meili || force) {
-					for (const doc of page) {
-						const search = search_text_from_doc(doc);
-						if (search && (force || String(doc.search_field ?? '') !== search)) {
-							await ctx.store.update(resource, String(doc._id), { search_field: search });
-						}
-					}
-				}
-			}
+			models.push(model_id);
 		}
 	}
-	const forced = force ? ' (forzado)' : '';
-	return ok(
-		[],
-		only_model
-			? `Reindexado de "${only_model}" iniciado${forced}. El progreso se emite por sockets.`
-			: `Reindexado de todos los modelos iniciado${forced}. El progreso se emite por sockets.`,
-	);
+	// Dos POST simultáneos pudieron pasar el primer chequeo mientras se leía la lista.
+	if (is_running(REINDEX_TASK_KIND)) {
+		const current = reindex_view(latest_reindex_task());
+		return Response.json(
+			{ ...ok(current ? [current] : [], 'Ya hay un reindexado en curso; espera a que termine.'), error: 'reindex_en_curso' },
+			{ status: 409 },
+		);
+	}
+	const progress = {
+		id: '',
+		modelo: only_model || null,
+		forzado: force,
+		iniciado: new Date().toISOString(),
+		total: models.length,
+		procesados: 0,
+		actual: null as string | null,
+		reindexados: [] as string[],
+		omitidos: [] as ReindexOmitido[],
+		filas_actualizadas: 0,
+	};
+	const task = start_task(REINDEX_TASK_KIND, only_model ? `Reindexar ${only_model}` : 'Reindexar todo', async () => {
+		// Ceder primero: la ruta contesta antes de tocar la primera tabla.
+		await Promise.resolve();
+		for (const model_id of models) {
+			progress.actual = model_id;
+			const target = reindex_target(ctx.store, model_id);
+			if ('motivo' in target) {
+				progress.omitidos.push({ model: model_id || '(sin model_id)', motivo: target.motivo });
+			} else {
+				try {
+					progress.filas_actualizadas += await reindex_resource(ctx, target.resource, force);
+					progress.reindexados.push(model_id);
+				} catch (err) {
+					if (!is_undefined_table(err)) throw err;
+					progress.omitidos.push({ model: model_id, motivo: 'sin_tabla' });
+				}
+			}
+			progress.procesados += 1;
+			// Invariante: cada modelo procesado queda en una de las dos listas.
+			if (progress.reindexados.length + progress.omitidos.length !== progress.procesados) {
+				throw new Error(
+					`Reindexado inconsistente: ${progress.reindexados.length} reindexados + ${progress.omitidos.length} omitidos ≠ ${progress.procesados} procesados`,
+				);
+			}
+		}
+		progress.actual = null;
+		return null;
+	});
+	progress.id = task.id;
+	reindex_progress.set(task.id, progress);
+	for (const id of reindex_progress.keys()) {
+		if (!get_task(id)) reindex_progress.delete(id);
+	}
+	const job = reindex_view(task)!;
+	return Response.json(ok([job], reindex_message(job)), { status: 202 });
+}
+
+/** `GET /reindex/estado[?id=]`: el trabajo pedido o el último. */
+function postgres_table_tracker_reindex_status(ctx: Ctx) {
+	const id = String(ctx.url.searchParams.get('id') ?? '').trim();
+	const task = id ? get_task(id) : latest_reindex_task();
+	const job = task?.kind === REINDEX_TASK_KIND ? reindex_view(task) : null;
+	if (!job) {
+		if (id) {
+			const message = 'Ese reindexado ya no existe (¿se reinició el núcleo?).';
+			return Response.json(fail(message, 404).body, { status: 404 });
+		}
+		return ok([], 'No hay reindexados recientes.');
+	}
+	return ok([job], reindex_message(job));
+}
+
+/**
+ * Reindexa un recurso (#268). Idempotente: el `search_field` nuevo sale de
+ * `search_field_for_reindex` (no se alimenta de sí mismo) y solo se escriben las filas donde
+ * cambia, sin tocar `updated_at`. Regresa cuántas filas cambiaron.
+ */
+async function reindex_resource(ctx: Ctx, resource: string, force: boolean) {
+	const collection = ctx.store.loc(resource).collection;
+	const meili = await SearchEngine.ensure_available();
+	let cleared = false;
+	let changed = 0;
+	for await (const page of ctx.store.scan(resource, { include_inactive: true })) {
+		// Limpiar el índice solo cuando la tabla respondió: si falta, no se borra nada.
+		if (meili && !cleared) {
+			await SearchEngine.clear_index(collection);
+			cleared = true;
+		}
+		if (meili) {
+			// Meilisearch usa `id` como llave primaria: volver a mandar un documento lo reemplaza.
+			const search_docs = page
+				.filter((doc) => doc.is_active !== false)
+				.map((doc) => ({
+					id: String(doc._id),
+					search_text: search_index_text(doc),
+				}))
+				.filter((doc) => doc.search_text);
+			if (search_docs.length) await SearchEngine.index_documents(collection, search_docs);
+		}
+		if (!meili || force) {
+			const rows = page
+				.map((doc) => ({ id: String(doc._id), search_field: search_field_for_reindex(doc) }))
+				.filter((row) => row.search_field);
+			if (rows.length) changed += await ctx.store.set_search_fields(resource, rows);
+		}
+	}
+	if (meili && !cleared) await SearchEngine.clear_index(collection);
+	return changed;
 }
 
 function cfg_text(value: unknown, fallback = '') {

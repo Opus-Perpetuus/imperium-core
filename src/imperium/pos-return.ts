@@ -8,7 +8,9 @@
  *   importe sale de los precios de la venta y el subtotal queda negativo
  *   (la caja esperada baja lo reembolsado).
  * - Reingreso: solo lo que la venta realmente restó (sus movimientos
- *   `salida_entrega`) menos lo ya reingresado. `restock_mode: 'none'` no
+ *   `salida_entrega`) menos lo ya reingresado, a la misma ubicación. Si la
+ *   salida registró lote, la pieza vuelve a ese lote y a su caducidad; si
+ *   salió de varios, cada pieza vuelve al suyo. `restock_mode: 'none'` no
  *   reingresa nada; sin modo explícito, un ajuste manual positivo del producto
  *   posterior a la venta se toma como reingreso ya hecho y ese producto se omite.
  * - Kits: se reingresan sus componentes (la venta sacó componentes, no el kit).
@@ -16,9 +18,12 @@
  * - Dos devoluciones simultáneas de la misma venta: la posterior que exceda lo
  *   vendido se cancela sola (`assert_return_within_sale`).
  */
+import { allow_negative_stock, assert_salida_sin_negativos } from './negative-stock.ts';
 import { apply_quant_delta, find_warehouse_location } from './delivery-return-flow.ts';
+import { ref_id } from './warehouse-scope.ts';
 import { as_array, as_object, type ImperiumDoc } from './envelope.ts';
 import { round_quantity } from './inventory-picking.ts';
+import { CARD_METHOD, card_refund_lines } from './pos-card-refund.ts';
 import { CREDIT_METHOD, credit_refund_for_return } from './pos-credit.ts';
 import { expand_kit_quantities } from './pos-product-rules.ts';
 import { STORE_CREDIT_METHOD } from './pos-store-credit.ts';
@@ -72,7 +77,7 @@ export function is_linked_return(ticket: ImperiumDoc): boolean {
 }
 
 /** Devoluciones vivas ligadas a la venta, opcionalmente sin contar una. */
-async function returns_of(store: ImperiumStore, original_id: string, except = ''): Promise<ImperiumDoc[]> {
+export async function returns_of(store: ImperiumStore, original_id: string, except = ''): Promise<ImperiumDoc[]> {
 	const out: ImperiumDoc[] = [];
 	for await (const page of store.scan('pos-tickets', { where: { original_ticket: original_id } })) {
 		for (const row of page) {
@@ -189,6 +194,10 @@ export async function prepare_pos_return(store: ImperiumStore, doc: ImperiumDoc)
 		throw new Error('El saldo a favor requiere un cliente en la venta o en la devolución');
 	}
 	if (store_credit > 0) refund_lines.push({ method: STORE_CREDIT_METHOD, amount: store_credit });
+	if (text(doc.refund_method).toLowerCase() === CARD_METHOD) {
+		const prior = await returns_of(store, original_id, String(doc._id ?? ''));
+		refund_lines.push(...card_refund_lines(original, prior, money(refund - credit_refund)));
+	}
 	const methods = [...new Set(refund_lines.map((p) => String(p.method)))];
 	const credit = refund_lines.length
 		? { payments: refund_lines, payment_method: methods.length === 1 ? methods[0] : 'mixto' }
@@ -260,16 +269,13 @@ export async function register_pos_return_entry(
 				(m) => text(m.tipo_movimiento) === 'recepcion_devolucion',
 			)
 		: [];
-	const warehouse = await find_warehouse_location(store);
+	const general = await find_warehouse_location(store);
 	const results: RestockResult[] = [];
 	for (const [producto, devuelto] of requested) {
 		const mine = sale_moves.filter((m) => text(m.producto ?? m.producto_id) === producto);
 		const subtracted = round_quantity(mine.reduce((s, m) => s + Math.max(-delta_of(m), 0), 0));
-		const already = round_quantity(
-			prior_moves
-				.filter((m) => text(m.producto ?? m.producto_id) === producto)
-				.reduce((s, m) => s + Math.max(delta_of(m), 0), 0),
-		);
+		const prior_of_product = prior_moves.filter((m) => text(m.producto ?? m.producto_id) === producto);
+		const already = round_quantity(prior_of_product.reduce((s, m) => s + Math.max(delta_of(m), 0), 0));
 		if (subtracted <= 0) {
 			results.push({ producto, devuelto, reingresado: 0, motivo: 'sin_salida_registrada' });
 			continue;
@@ -291,43 +297,242 @@ export async function register_pos_return_entry(
 		const previa = Number(product.existencia ?? 0);
 		const next = round_quantity(previa + amount);
 		await store.update('products', producto, { existencia: next });
-		if (warehouse?._id) {
-			await apply_quant_delta(store, {
-				producto,
-				producto_nombre: text(product.name),
-				producto_codigo: text(product.codigo),
-				ubicacion: String(warehouse._id),
-				ubicacion_codigo: text(warehouse.codigo ?? warehouse.name),
-				delta: amount,
-			});
+		const slots = sale_slots(mine);
+		await hydrate_slot_lots(store, producto, slots);
+		for (const prior of prior_of_product) {
+			const back = round_quantity(Math.max(delta_of(prior), 0));
+			const dest = move_location_id(prior, 'ubicacion_destino');
+			const lote = ref_id(prior.lote);
+			const codigo = text(prior.lote_codigo);
+			const unmatched = consume_slots(slots, back, dest, lote, codigo);
+			if (unmatched > 0) consume_slots(slots, unmatched, '', lote, codigo);
 		}
+		const plan = plan_restock(slots, amount, general);
 		const apartado = round_quantity(Number(product.existenciaApartada ?? 0));
-		await store.insert('inventory-movement', {
-			name: `Devolución POS ${text(product.name) || producto}`,
-			producto,
-			producto_id: producto,
-			producto_nombre: product.name,
-			producto_codigo: product.codigo,
-			tipo_movimiento: 'recepcion_devolucion',
-			ubicacion_destino: warehouse?._id,
-			ubicacion_destino_id: warehouse?._id,
-			ubicacion_destino_nombre: warehouse?.name,
-			documento_tipo: 'pos-ticket',
-			documento_id: return_id,
-			documento_modelo: 'PosTickets',
-			documento_nombre: text(ticket.name ?? ticket.ticket_sequence),
-			documento_referencia: text(ticket.ticket_sequence),
-			description: 'Reingreso por devolución en punto de venta',
-			cantidad: amount,
-			stock_total_previo: round_quantity(previa),
-			stock_total_resultante: next,
-			stock_apartado_previo: apartado,
-			stock_apartado_resultante: apartado,
-			fecha_movimiento: new Date().toISOString(),
-		});
+		let running = round_quantity(previa);
+		for (const [i, parte] of plan.entries()) {
+			const resultante = i === plan.length - 1 ? next : round_quantity(running + parte.cantidad);
+			const lot = lot_patch(parte.lote, parte.lote_codigo, parte.fecha_caducidad);
+			if (parte.ubicacion) {
+				const loc = store.has('inventory-internal-location')
+					? await store.find_id('inventory-internal-location', parte.ubicacion)
+					: null;
+				await apply_quant_delta(store, {
+					producto,
+					producto_nombre: text(product.name),
+					producto_codigo: text(product.codigo),
+					ubicacion: parte.ubicacion,
+					ubicacion_codigo: text(loc?.codigo ?? loc?.name) || parte.codigo,
+					delta: parte.cantidad,
+					...lot,
+				});
+			}
+			await store.insert('inventory-movement', {
+				name: `Devolución POS ${text(product.name) || producto}`,
+				producto,
+				producto_id: producto,
+				producto_nombre: product.name,
+				producto_codigo: product.codigo,
+				tipo_movimiento: 'recepcion_devolucion',
+				ubicacion_destino: parte.ubicacion || undefined,
+				ubicacion_destino_id: parte.ubicacion || undefined,
+				ubicacion_destino_nombre: parte.nombre,
+				...lot,
+				documento_tipo: 'pos-ticket',
+				documento_id: return_id,
+				documento_modelo: 'PosTickets',
+				documento_nombre: text(ticket.name ?? ticket.ticket_sequence),
+				documento_referencia: text(ticket.ticket_sequence),
+				description: 'Reingreso por devolución en punto de venta',
+				cantidad: parte.cantidad,
+				stock_total_previo: running,
+				stock_total_resultante: resultante,
+				stock_apartado_previo: apartado,
+				stock_apartado_resultante: apartado,
+				fecha_movimiento: new Date().toISOString(),
+			});
+			running = resultante;
+		}
 		results.push({ producto, devuelto, reingresado: amount, motivo: 'reingresado' });
 	}
 	return results;
+}
+
+type LotSlice = { lote: string; lote_codigo: string; fecha_caducidad: string; left: number };
+
+type RestockSlot = { ubicacion: string; left: number; codigo: string; nombre: string; lots: LotSlice[] };
+
+type RestockPart = {
+	ubicacion: string;
+	cantidad: number;
+	codigo: string;
+	nombre: string;
+	lote: string;
+	lote_codigo: string;
+	fecha_caducidad: string;
+};
+
+function lot_patch(lote: string, lote_codigo: string, fecha_caducidad: string): ImperiumDoc {
+	const fecha = fecha_caducidad.slice(0, 10);
+	if (!lote) return {};
+	return {
+		lote,
+		...(lote_codigo ? { lote_codigo } : {}),
+		...(fecha ? { fecha_caducidad: fecha } : {}),
+	};
+}
+
+const LOTE_PARTE = /([^,()]+?)\s*\(\s*(\d+(?:\.\d+)?)\s*\)/g;
+
+function lot_slices(move: ImperiumDoc, taken: number): LotSlice[] {
+	const lote = ref_id(move.lote);
+	const fecha = text(move.fecha_caducidad).slice(0, 10);
+	if (lote) return [{ lote, lote_codigo: text(move.lote_codigo), fecha_caducidad: fecha, left: taken }];
+	const source = text(move.description);
+	const mark = source.toLowerCase().lastIndexOf('lotes:');
+	const parts: LotSlice[] = [];
+	if (mark >= 0) {
+		LOTE_PARTE.lastIndex = 0;
+		for (const match of source.slice(mark + 'lotes:'.length).matchAll(LOTE_PARTE)) {
+			const qty = round_quantity(Number(match[2]));
+			const code = match[1].trim();
+			if (!code || qty <= 0) continue;
+			parts.push({ lote: '', lote_codigo: code, fecha_caducidad: '', left: qty });
+		}
+	}
+	const sum = round_quantity(parts.reduce((total, part) => total + part.left, 0));
+	if (parts.length && sum <= taken + 0.0001) {
+		if (taken - sum > 0.0001) {
+			parts.push({ lote: '', lote_codigo: '', fecha_caducidad: '', left: round_quantity(taken - sum) });
+		}
+		return parts;
+	}
+	return [{ lote: '', lote_codigo: '', fecha_caducidad: '', left: taken }];
+}
+
+function move_location_id(move: ImperiumDoc, field: 'ubicacion_origen' | 'ubicacion_destino'): string {
+	return ref_id(move[`${field}_id`]) || ref_id(move[field]);
+}
+
+function sale_slots(moves: ImperiumDoc[]): RestockSlot[] {
+	const slots: RestockSlot[] = [];
+	for (const move of moves) {
+		const taken = round_quantity(Math.max(-delta_of(move), 0));
+		if (taken <= 0) continue;
+		slots.push({
+			ubicacion: move_location_id(move, 'ubicacion_origen'),
+			left: taken,
+			codigo: text(move.ubicacion_origen_nombre),
+			nombre: text(move.ubicacion_origen_nombre),
+			lots: lot_slices(move, taken),
+		});
+	}
+	return slots;
+}
+
+async function hydrate_slot_lots(store: ImperiumStore, producto: string, slots: RestockSlot[]): Promise<void> {
+	const pending = slots.some((slot) =>
+		slot.lots.some((slice) => slice.lote_codigo && (!slice.lote || !slice.fecha_caducidad)),
+	);
+	if (!pending || !store.has('inventory-stock-quant')) return;
+	const { rows } = await store.find_many('inventory-stock-quant', { where: { producto }, take: 500 });
+	for (const slot of slots) {
+		for (const slice of slot.lots) {
+			if ((slice.lote && slice.fecha_caducidad) || !slice.lote_codigo) continue;
+			const want = slice.lote_codigo.toUpperCase();
+			const row = rows.find((candidate) => {
+				const here = ref_id(candidate.ubicacion_id) || ref_id(candidate.ubicacion);
+				if (slot.ubicacion && here && here !== slot.ubicacion) return false;
+				return text(candidate.lote_codigo).toUpperCase() === want && !!text(candidate.lote);
+			});
+			if (!row) continue;
+			if (!slice.lote) slice.lote = text(row.lote);
+			if (!slice.fecha_caducidad) slice.fecha_caducidad = text(row.fecha_caducidad).slice(0, 10);
+		}
+	}
+}
+
+function lot_hit(slice: LotSlice, lote: string, codigo: string): boolean {
+	if (lote && slice.lote === lote) return true;
+	return !!codigo && slice.lote_codigo.toUpperCase() === codigo.toUpperCase();
+}
+
+function take_lots(lots: LotSlice[], qty: number, lote = '', codigo = ''): Array<LotSlice & { cantidad: number }> {
+	let rest = round_quantity(qty);
+	const ranked = [...lots].reverse();
+	if (lote || codigo) {
+		ranked.sort((a, b) => Number(lot_hit(b, lote, codigo)) - Number(lot_hit(a, lote, codigo)));
+	}
+	const out: Array<LotSlice & { cantidad: number }> = [];
+	for (const slice of ranked) {
+		if (rest <= 0) break;
+		const use = round_quantity(Math.min(slice.left, rest));
+		if (use <= 0) continue;
+		slice.left = round_quantity(slice.left - use);
+		rest = round_quantity(rest - use);
+		out.push({ ...slice, cantidad: use });
+	}
+	return out;
+}
+
+function consume_slots(slots: RestockSlot[], qty: number, ubicacion = '', lote = '', codigo = ''): number {
+	let rest = round_quantity(qty);
+	for (const slot of [...slots].reverse()) {
+		if (rest <= 0) break;
+		if (ubicacion && slot.ubicacion !== ubicacion) continue;
+		const use = round_quantity(Math.min(slot.left, rest));
+		if (use <= 0) continue;
+		take_lots(slot.lots, use, lote, codigo);
+		slot.left = round_quantity(slot.left - use);
+		rest = round_quantity(rest - use);
+	}
+	return rest;
+}
+
+function plan_restock(slots: RestockSlot[], amount: number, general: ImperiumDoc | null): RestockPart[] {
+	const plan: RestockPart[] = [];
+	let rest = round_quantity(amount);
+	for (const slot of [...slots].reverse()) {
+		if (rest <= 0) break;
+		const use = round_quantity(Math.min(slot.left, rest));
+		if (use <= 0) continue;
+		for (const part of take_lots(slot.lots, use)) {
+			plan.push({
+				ubicacion: slot.ubicacion,
+				cantidad: part.cantidad,
+				codigo: slot.codigo,
+				nombre: slot.nombre,
+				lote: part.lote,
+				lote_codigo: part.lote_codigo,
+				fecha_caducidad: part.fecha_caducidad,
+			});
+		}
+		slot.left = round_quantity(slot.left - use);
+		rest = round_quantity(rest - use);
+	}
+	if (rest > 0) {
+		plan.push({
+			ubicacion: general?._id ? String(general._id) : '',
+			cantidad: rest,
+			codigo: text(general?.codigo ?? general?.name),
+			nombre: text(general?.name),
+			lote: '',
+			lote_codigo: '',
+			fecha_caducidad: '',
+		});
+	}
+	return plan;
+}
+
+/** Ubicación registrada en un movimiento (la venta salió de ahí; ahí reingresa). */
+async function movement_location(
+	store: ImperiumStore,
+	move: ImperiumDoc | undefined,
+	field: 'ubicacion_origen' | 'ubicacion_destino',
+): Promise<ImperiumDoc | null> {
+	const id = ref_id(move?.[`${field}_id`]) || ref_id(move?.[field]);
+	if (!id || !store.has('inventory-internal-location')) return null;
+	return (await store.find_id('inventory-internal-location', id)) ?? null;
 }
 
 function moment_of(row: ImperiumDoc): number {
@@ -392,49 +597,68 @@ export async function revert_pos_return_entry(store: ImperiumStore, ticket: Impe
 		const q = Math.max(delta_of(m), 0);
 		if (pid && q > 0) by_product.set(pid, round_quantity((by_product.get(pid) ?? 0) + q));
 	}
-	const warehouse = by_product.size ? await find_warehouse_location(store) : null;
+	// Revertir el reingreso es una salida: misma regla de negativos.
+	await assert_salida_sin_negativos(store, 'cancelar la devolución', by_product);
+	const negativos = await allow_negative_stock(store);
+	const general = by_product.size ? await find_warehouse_location(store) : null;
 	let count = 0;
 	for (const [producto, amount] of by_product) {
+		const entries = moves.filter(
+			(m) => text(m.tipo_movimiento) === 'recepcion_devolucion' && text(m.producto ?? m.producto_id) === producto,
+		);
 		const product = await store.find_id('products', producto);
 		if (!product) continue;
 		const previa = round_quantity(Number(product.existencia ?? 0));
-		const next = round_quantity(Math.max(previa - amount, 0));
+		const next = round_quantity(negativos ? previa - amount : Math.max(previa - amount, 0));
 		await store.update('products', producto, { existencia: next });
-		if (warehouse?._id && previa - next > 0) {
-			await apply_quant_delta(store, {
-				producto,
-				producto_nombre: text(product.name),
-				producto_codigo: text(product.codigo),
-				ubicacion: String(warehouse._id),
-				ubicacion_codigo: text(warehouse.codigo ?? warehouse.name),
-				delta: -round_quantity(previa - next),
-			});
-		}
+		let removal_left = round_quantity(previa - next);
+		let running = previa;
 		const apartado = round_quantity(Number(product.existenciaApartada ?? 0));
-		await store.insert('inventory-movement', {
-			name: `Cancelación de devolución POS ${text(product.name) || producto}`,
-			producto,
-			producto_id: producto,
-			producto_nombre: product.name,
-			producto_codigo: product.codigo,
-			tipo_movimiento: 'ajuste_manual',
-			ubicacion_origen: warehouse?._id,
-			ubicacion_origen_id: warehouse?._id,
-			ubicacion_origen_nombre: warehouse?.name,
-			documento_tipo: 'pos-ticket',
-			documento_id: return_id,
-			documento_modelo: 'PosTickets',
-			documento_nombre: text(ticket.name ?? ticket.ticket_sequence),
-			documento_referencia: text(ticket.ticket_sequence),
-			description: 'Devolución POS cancelada: se revierte su reingreso',
-			cantidad: amount,
-			stock_total_previo: previa,
-			stock_total_resultante: next,
-			stock_apartado_previo: apartado,
-			stock_apartado_resultante: apartado,
-			fecha_movimiento: new Date().toISOString(),
-			dedupe_key: `pos-return-revert:${return_id}:${producto}`,
-		});
+		for (const [index, entry] of entries.entries()) {
+			const want = round_quantity(Math.min(Math.max(delta_of(entry), 0), removal_left));
+			if (want <= 0) continue;
+			const resultante = round_quantity(running - want);
+			const warehouse = (await movement_location(store, entry, 'ubicacion_destino')) ?? general;
+			const lot = lot_patch(ref_id(entry.lote), text(entry.lote_codigo), text(entry.fecha_caducidad));
+			if (warehouse?._id) {
+				await apply_quant_delta(store, {
+					producto,
+					producto_nombre: text(product.name),
+					producto_codigo: text(product.codigo),
+					ubicacion: String(warehouse._id),
+					ubicacion_codigo: text(warehouse.codigo ?? warehouse.name),
+					delta: -want,
+					...lot,
+				});
+			}
+			await store.insert('inventory-movement', {
+				name: `Cancelación de devolución POS ${text(product.name) || producto}`,
+				producto,
+				producto_id: producto,
+				producto_nombre: product.name,
+				producto_codigo: product.codigo,
+				tipo_movimiento: 'ajuste_manual',
+				ubicacion_origen: warehouse?._id,
+				ubicacion_origen_id: warehouse?._id,
+				ubicacion_origen_nombre: warehouse?.name,
+				...lot,
+				documento_tipo: 'pos-ticket',
+				documento_id: return_id,
+				documento_modelo: 'PosTickets',
+				documento_nombre: text(ticket.name ?? ticket.ticket_sequence),
+				documento_referencia: text(ticket.ticket_sequence),
+				description: 'Devolución POS cancelada: se revierte su reingreso',
+				cantidad: want,
+				stock_total_previo: running,
+				stock_total_resultante: resultante,
+				stock_apartado_previo: apartado,
+				stock_apartado_resultante: apartado,
+				fecha_movimiento: new Date().toISOString(),
+				dedupe_key: `pos-return-revert:${return_id}:${producto}@${text(warehouse?._id) || 'global'}:${index}`,
+			});
+			running = resultante;
+			removal_left = round_quantity(removal_left - want);
+		}
 		count++;
 	}
 	return count;

@@ -2,6 +2,7 @@
  * `GET /:resource/field-values/:field` — mismo contrato que
  * `$Controller.controller_read_field_values`.
  */
+import { field_name_access, JSON_BLOB_FIELDS, snake_field_name } from '@opus-perpetuus/imperium-core-kit';
 import { as_object, type ImperiumDoc } from './envelope.ts';
 import {
 	GROUP_REF_ALMACEN,
@@ -26,6 +27,71 @@ export type FieldValueOption = {
 
 export function field_values_message(field_path: string) {
 	return `Valores del campo "${field_path}" obtenidos correctamente.`;
+}
+
+/** `clientSecret` → `client_secret` (misma regla que el kit). */
+export function snake_field_segment(segment: string): string {
+	return snake_field_name(segment);
+}
+
+/** Blobs que no se abren ni por subcampo (`config_json.secret_key`). */
+const CLOSED_JSON_BLOBS = new Set(['config_json', 'spec_json']);
+
+/**
+ * `recurso:campo` que sí pueden listar sus valores aunque la regla los niegue.
+ * Agregar aquí solo si los valores distintos se pueden mostrar a cualquiera con
+ * lectura del recurso.
+ */
+export const FIELD_VALUES_ALLOW: ReadonlySet<string> = new Set<string>();
+
+export const FIELD_VALUES_DENIED_MESSAGE = 'Ese campo no admite valores (field-values).';
+
+/**
+ * `field-values` devuelve los valores distintos de una columna a quien tenga
+ * lectura del recurso. Credenciales, firmas y blobs json enteros no salen nunca;
+ * la PII (contacto, domicilio, nombres, datos clínicos, ciudad, placas) solo sale
+ * con sesión interna (`has_session`), sin sesión ni para externos
+ * (regla del kit: `field_name_access`).
+ * Un subcampo de `payload`/`custom_data` sí, salvo que se llame como credencial.
+ */
+export function field_values_denied(
+	resource: string,
+	field_path: string,
+	columns: ReadonlyArray<{ name: string; pg?: string }> = [],
+	allow: ReadonlySet<string> = FIELD_VALUES_ALLOW,
+	/** `store.field_refs(resource)`: un `_id`/`_ref` sensible solo pasa si es FK real. */
+	refs: Readonly<Record<string, string>> = {},
+	/** Sesión interna válida: la PII sí lista valores; credenciales y blobs no. */
+	has_session = false,
+): boolean {
+	if (allow.has(`${resource}:${field_path}`)) return false;
+	const raw_segments = field_path.split('.');
+	const segments = raw_segments.map(snake_field_segment);
+	const is_reference = (i: number) => Boolean(refs[raw_segments.slice(0, i + 1).join('.')]);
+	// `payload.estado` sí: la raíz blob con subcampo se decide abajo.
+	const opens_blob = segments.length > 1 && JSON_BLOB_FIELDS.has(segments[0] ?? '');
+	const root = segments[0] ?? '';
+	const pg = columns.find((column) => column.name.toLowerCase() === root)?.pg ?? '';
+	// Una columna booleana (`home`, `has_pin`) solo enseña true/false.
+	const is_boolean = segments.length === 1 && /^bool/i.test(pg);
+	if (
+		segments.some(
+			(segment, i) =>
+				!(i === 0 && opens_blob) &&
+				denied_for(field_name_access(segment, { is_reference: is_reference(i), is_boolean, resource }), has_session),
+		)
+	) {
+		return true;
+	}
+	if (CLOSED_JSON_BLOBS.has(root)) return true;
+	if (segments.length > 1) return false;
+	if (JSON_BLOB_FIELDS.has(root)) return true;
+	return /json/i.test(pg);
+}
+
+function denied_for(access: 'open' | 'session' | 'denied', has_session: boolean): boolean {
+	if (access === 'denied') return true;
+	return access === 'session' && !has_session;
 }
 
 export function field_values_missing_field_error() {
@@ -187,6 +253,8 @@ export function field_values_from_distinct(
 	values: unknown[],
 	field_path: string,
 	configured: StateField | null,
+	/** #327: conteo real por valor (mismo índice que `values`); sin él cuenta 1. */
+	counts?: number[],
 ): FieldValueOption[] {
 	const records = values.map((value) => {
 		const doc: ImperiumDoc = {};
@@ -200,28 +268,60 @@ export function field_values_from_distinct(
 		cursor[parts[parts.length - 1] ?? field_path] = value;
 		return doc;
 	});
-	return build_field_values(records, field_path, configured);
+	return build_field_values(records, field_path, configured, counts);
+}
+
+/** #327: filas `{v, n}` de `store.distinct_counts` → opciones con su conteo real. */
+export function field_values_from_counts(
+	rows: ReadonlyArray<{ v: unknown; n: number }>,
+	field_path: string,
+	configured: StateField | null,
+): FieldValueOption[] {
+	return field_values_from_distinct(
+		rows.map((row) => parse_distinct_value(row.v)),
+		field_path,
+		configured,
+		rows.map((row) => row.n),
+	);
+}
+
+/** `payload ->> 'tags'` llega como texto JSON: se abre para contar cada elemento. */
+function parse_distinct_value(value: unknown): unknown {
+	if (typeof value !== 'string') return value;
+	const trimmed = value.trim();
+	if (!(trimmed.startsWith('[') || trimmed.startsWith('{'))) return value;
+	try {
+		return JSON.parse(trimmed);
+	} catch {
+		return value;
+	}
 }
 
 export function build_field_values(
 	records: ImperiumDoc[],
 	field_path: string,
 	configured: StateField | null,
+	weights?: number[],
 ): FieldValueOption[] {
 	const value_map = new Map<string, FieldValueOption>();
-	for (const record of records) {
+	records.forEach((record, index) => {
+		const weight = weights ? Math.max(0, Number(weights[index] ?? 0) || 0) : 1;
+		// Un registro cuenta una vez por valor aunque el arreglo lo repita.
+		const seen = new Set<string>();
 		for (const option of extract_state_values(
 			resolve_value_by_path(record, field_path),
 			configured,
 		)) {
+			if (seen.has(option.value)) continue;
+			seen.add(option.value);
 			const existing = value_map.get(option.value);
 			if (existing) {
-				existing.count += 1;
+				existing.count += weight;
 				continue;
 			}
-			value_map.set(option.value, { ...option });
+			value_map.set(option.value, { ...option, count: weight });
 		}
-	}
+	});
 	for (const state_value of configured?.values ?? []) {
 		const value = state_value.value.trim();
 		if (!value) continue;

@@ -2,6 +2,12 @@
  * Almacén de documentos Imperium sobre los schemas SQL de las apps.
  * Un recurso canónico (products, pedidos) aunque el menú lo repita.
  */
+import {
+	ensure_feature_map_test_columns,
+	FEATURE_MAP_TEST_COLUMN,
+	FEATURE_MAP_TEST_COLUMN_DDL,
+	in_feature_map_test,
+} from './feature-map-test.ts';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
@@ -18,7 +24,7 @@ import {
 } from './envelope.ts';
 import { is_record_id } from './record-id.ts';
 import { GEO_LEGACY_SCHEMA, relocate_geo_tables, seed_geo_catalog, type GeoSeedResult } from './geo-catalog.ts';
-import { SearchEngine, search_text_from_doc } from './search-engine.ts';
+import { SearchEngine, search_index_text } from './search-engine.ts';
 import {
 	ACTIVITY_CONTEXTS,
 	CHAT_ATTACHMENT_MODELS,
@@ -34,7 +40,8 @@ import { products_inventory_cost } from './products-flow.ts';
 import { vehicle_by_status } from './vehicle-flow.ts';
 import { delivery_package_by_status } from './delivery-package-flow.ts';
 import { pedidos_sales_stats } from './pedidos-flow.ts';
-import { pedido_order_sql } from './pedidos-list-order.ts';
+import { ensure_pedido_fecha, is_pedido_resource } from './pedidos-fecha.ts';
+import { pedido_fecha_order_sql, pedido_order_sql, pedido_search_predicates } from './pedidos-list-order.ts';
 import {
 	purchase_order_stats,
 	with_purchase_order_supplier_name,
@@ -54,7 +61,7 @@ import {
 	advance_increment_sequence,
 	type PatternContext,
 } from './custom-pattern-render.ts';
-import { list_search_columns } from './list-search.ts';
+import { list_search_columns, uses_word_search, word_search_sql } from './list-search.ts';
 import {
 	apply_schema_setters,
 	assert_required_fields,
@@ -117,6 +124,12 @@ export type SubjectInfo = {
 		/** Recursos de la app que habilita (`recurso` o `recurso:read`). */
 		resources?: string[];
 	}>;
+	/** Rutas que la app retiró: el arranque apaga su fila (`is_active=false`). */
+	retired_menu_paths?: string[];
+	/** Ruta vieja → ruta buena: el arranque corrige el `path` de su fila (mismo id). */
+	renamed_menu_paths?: Record<string, string>;
+	/** Carpetas (`_ref`) que el arranque apaga mientras no tengan hijos activos. */
+	hidden_empty_menu_refs?: string[];
 };
 
 export const PREFER_OWNER: Record<string, string> = {
@@ -203,6 +216,8 @@ const UNIQUE_FIELDS: Record<string, string[]> = {
 	violation: ['code'],
 	'module-management-reference': ['reference'],
 	'mcp-user-token': ['token_hash'],
+	'cli-user-token': ['token_hash'],
+	'user-badge': ['token_hash'],
 	'epson-ticket-template': ['template_key'],
 	'chat-conversations': ['conversation_key', 'join_code'],
 	'chat-meetings': ['code'],
@@ -1545,6 +1560,11 @@ export type ChatDueJob = keyof typeof CHAT_DUE_JOBS;
 
 function due_state(state: string | null): string {
 	return state === null ? 'state IS NULL' : `state = '${state}'`;
+}
+
+/** El UPDATE no pisa la fila si otro ya le cambió el estatus. */
+export function status_guard_clause(status_param: string): string {
+	return `status = ${status_param} AND is_active IS DISTINCT FROM false`;
 }
 
 /**
@@ -3241,6 +3261,66 @@ const ORPHAN_COLUMNS: Record<string, ExtraCol[]> = {
 	'chat-meeting-transcripts': physical_cols({ call_id: 'text', meeting_id: 'text', seq: 'real' }),
 };
 
+/** Una app tal como la declara `catalog.json`. */
+export type CatalogSubject = {
+	slug: string;
+	name?: string;
+	path?: string;
+	menu_ref?: string;
+	technical_id: string;
+	image?: string;
+	depends_on?: string[];
+	modules?: Array<{
+		resource: string;
+		table: string;
+		collection: string;
+		name: string;
+		path?: string;
+		menu_ref?: string;
+		icon?: string;
+		columns?: ExtraCol[];
+	}>;
+	menus?: Array<{
+		menu_ref: string;
+		name: string;
+		path?: string;
+		icon: string;
+		parent_ref?: string;
+		resources?: string[];
+	}>;
+	retired_menu_paths?: string[];
+	renamed_menu_paths?: Record<string, string>;
+	hidden_empty_menu_refs?: string[];
+};
+
+/**
+ * `SubjectInfo` de una entrada del catálogo. Todo campo que lean la siembra
+ * de menús o el overlay pasa por aquí (antes `retired_menu_paths` se perdía y
+ * `/model-tracker` nunca se apagaba).
+ */
+export function subject_info_from_catalog(s: CatalogSubject): SubjectInfo {
+	return {
+		slug: s.slug,
+		name: s.name ?? s.slug,
+		path: s.path ?? '',
+		menu_ref: s.menu_ref ?? `${s.slug}-menu-root`,
+		technical_id: s.technical_id ?? `subject-${s.slug}`,
+		image: s.image ?? '',
+		depends_on: [...(s.depends_on ?? [])],
+		modules: (s.modules ?? []).map((m) => ({
+			resource: m.resource,
+			path: m.path ?? `/${m.resource}`,
+			menu_ref: m.menu_ref ?? '',
+			name: m.name,
+			icon: m.icon,
+		})),
+		menus: s.menus,
+		retired_menu_paths: [...(s.retired_menu_paths ?? [])],
+		renamed_menu_paths: { ...(s.renamed_menu_paths ?? {}) },
+		hidden_empty_menu_refs: [...(s.hidden_empty_menu_refs ?? [])],
+	};
+}
+
 export class ImperiumStore {
 	readonly locs = new Map<string, ModuleLoc>();
 	readonly all_locs: ModuleLoc[] = [];
@@ -3256,52 +3336,10 @@ export class ImperiumStore {
 		catalog_path: string,
 	) {
 		const catalog = JSON.parse(readFileSync(catalog_path, 'utf8')) as {
-			subjects: Array<{
-				slug: string;
-				name?: string;
-				path?: string;
-				menu_ref?: string;
-				technical_id: string;
-				image?: string;
-				depends_on?: string[];
-				modules?: Array<{
-					resource: string;
-					table: string;
-					collection: string;
-					name: string;
-					path?: string;
-					menu_ref?: string;
-					icon?: string;
-					columns?: ExtraCol[];
-				}>;
-				menus?: Array<{
-					menu_ref: string;
-					name: string;
-					path?: string;
-					icon: string;
-					parent_ref?: string;
-					resources?: string[];
-				}>;
-			}>;
+			subjects: CatalogSubject[];
 		};
 		for (const s of catalog.subjects) {
-			this.subjects.push({
-				slug: s.slug,
-				name: s.name ?? s.slug,
-				path: s.path ?? '',
-				menu_ref: s.menu_ref ?? `${s.slug}-menu-root`,
-				technical_id: s.technical_id ?? `subject-${s.slug}`,
-				image: s.image ?? '',
-				depends_on: [...(s.depends_on ?? [])],
-				modules: (s.modules ?? []).map((m) => ({
-					resource: m.resource,
-					path: m.path ?? `/${m.resource}`,
-					menu_ref: m.menu_ref ?? '',
-					name: m.name,
-					icon: m.icon,
-				})),
-				menus: s.menus,
-			});
+			this.subjects.push(subject_info_from_catalog(s));
 			for (const m of s.modules ?? []) {
 				const loc: ModuleLoc = {
 					slug: s.slug,
@@ -3340,6 +3378,8 @@ export class ImperiumStore {
 				'module-management-reference',
 				'font-awesome-icon-catalog',
 				'mcp-user-token',
+				'cli-user-token',
+				'user-badge',
 				'proyectos-time-log',
 				'user-print-template',
 				'time-sheets',
@@ -3377,6 +3417,8 @@ export class ImperiumStore {
 			if (time_sheets) time_sheets.collection = '__time_sheets';
 			const tokens = this.locs.get('mcp-user-token');
 			if (tokens) tokens.collection = 'mcp_user_tokens';
+			const cli_tokens = this.locs.get('cli-user-token');
+			if (cli_tokens) cli_tokens.collection = 'cli_user_tokens';
 			for (const [alias, resource] of Object.entries(RESOURCE_ALIASES)) {
 				const loc = this.locs.get(resource);
 				if (loc && !this.locs.has(alias)) this.locs.set(alias, loc);
@@ -5194,6 +5236,8 @@ export class ImperiumStore {
 		await this.ensure_orphan_tables();
 		await this.ensure_geo_tables_location();
 		await this.ensure_catalog_columns();
+		// Toda tabla (núcleo y apps) lleva `feature_map_test` para el borrado de pruebas.
+		await ensure_feature_map_test_columns(this.sql).catch(() => 0);
 		try {
 			await this.ensure_postgres_table_tracker_table();
 			const { sync_postgres_table_tracker, ensure_postgres_table_tracker_access } =
@@ -5230,6 +5274,14 @@ export class ImperiumStore {
 			}
 		}
 		await this.seed_default_employee();
+		try {
+			const { seed_interactive_manuals } = await import('./interactive-manual-seed.ts');
+			await seed_interactive_manuals(this);
+		} catch (err) {
+			console.warn(
+				`[manuales] Siembra de guías incompleta, sigue en el próximo arranque: ${err instanceof Error ? err.message : String(err)}`,
+			);
+		}
 		if (this.has('configuration')) {
 			try {
 				const { apply_missing_configuration_seeds } = await import(
@@ -5350,7 +5402,7 @@ export class ImperiumStore {
 						.filter((doc) => loc.resource !== 'attachment-management' || !is_chat_attachment(doc))
 						.map((doc) => ({
 							id: String(doc._id),
-							search_text: search_text_from_doc(doc),
+							search_text: search_index_text(doc),
 						}))
 						.filter((doc) => doc.search_text),
 				);
@@ -5438,7 +5490,7 @@ export class ImperiumStore {
 				const docs = page
 					.map((doc) => ({
 						id: String(doc._id),
-						search_text: search_text_from_doc(doc),
+						search_text: search_index_text(doc),
 					}))
 					.filter((doc) => doc.search_text);
 				if (docs.length) {
@@ -5468,7 +5520,8 @@ export class ImperiumStore {
           custom_data JSONB DEFAULT '{}'::jsonb,
           payload JSONB DEFAULT '{}'::jsonb,
           created_at TEXT,
-          updated_at TEXT
+          updated_at TEXT,
+          ${FEATURE_MAP_TEST_COLUMN_DDL}
         )
       `);
 		await this.ensure_loc_columns('postgres-table-tracker');
@@ -5524,7 +5577,8 @@ export class ImperiumStore {
           custom_data JSONB DEFAULT '{}'::jsonb,
           payload JSONB DEFAULT '{}'::jsonb,
           created_at TEXT,
-          updated_at TEXT
+          updated_at TEXT,
+          ${FEATURE_MAP_TEST_COLUMN_DDL}
         )
       `);
 			} catch {
@@ -5615,6 +5669,8 @@ export class ImperiumStore {
 			'module-management-reference',
 			'font-awesome-icon-catalog',
 			'mcp-user-token',
+			'cli-user-token',
+			'user-badge',
 			'proyectos-time-log',
 			'user-print-template',
 			'time-sheets',
@@ -5636,7 +5692,8 @@ export class ImperiumStore {
           custom_data JSONB DEFAULT '{}'::jsonb,
           payload JSONB DEFAULT '{}'::jsonb,
           created_at TEXT,
-          updated_at TEXT
+          updated_at TEXT,
+          ${FEATURE_MAP_TEST_COLUMN_DDL}
         )
       `);
 			await this.ensure_loc_columns(resource);
@@ -5645,6 +5702,20 @@ export class ImperiumStore {
 
 	has(resource: string): boolean {
 		return this.locs.has(resource);
+	}
+
+	private readonly feature_map_test_ready = new Set<string>();
+
+	/** La tabla del recurso tiene `feature_map_test` (una sola vez por tabla y proceso). */
+	private async ensure_feature_map_test_column(resource: string): Promise<void> {
+		const qt = this.qt(resource);
+		if (this.feature_map_test_ready.has(qt)) return;
+		try {
+			await this.sql.unsafe(`ALTER TABLE ${qt} ADD COLUMN IF NOT EXISTS ${FEATURE_MAP_TEST_COLUMN_DDL}`);
+		} catch {
+			/* sin permiso o tabla aún sin crear: el INSERT dirá el error real */
+		}
+		this.feature_map_test_ready.add(qt);
 	}
 
 	/**
@@ -5674,6 +5745,13 @@ export class ImperiumStore {
 			const table = this.loc(resource).table;
 			await this.sql
 				.unsafe(`CREATE INDEX IF NOT EXISTS ${qident(`idx_${table}_ref_geo`)} ON ${this.qt(resource)} (ref)`)
+				.catch(() => undefined);
+			// La lista ordena por nombre: sin este índice, cada página de las 145 mil
+			// colonias era seq scan + sort (≈50 ms, 290 ms con carga en el G85).
+			await this.sql
+				.unsafe(
+					`CREATE INDEX IF NOT EXISTS ${qident(`idx_${table}_active_name`)} ON ${this.qt(resource)} (name, id) WHERE is_active IS DISTINCT FROM false`,
+				)
 				.catch(() => undefined);
 		}
 		return seed_geo_catalog({ sql: this.sql, has: (r) => this.has(r), qt: (r) => this.qt(r) });
@@ -5876,6 +5954,8 @@ export class ImperiumStore {
 	flatten(row: Record<string, unknown> | null, resource?: string): ImperiumDoc | null {
 		if (!row) return null;
 		const parsed = { ...row };
+		// Marca interna de las corridas de prueba: no sale en los documentos.
+		delete parsed[FEATURE_MAP_TEST_COLUMN];
 		const jsons = resource
 			? this.json_cols(resource)
 			: new Set(['payload', 'custom_data']);
@@ -5947,7 +6027,12 @@ export class ImperiumStore {
 			opts.q &&
 			!opts.sql_search_only &&
 			SearchEngine.is_enabled() &&
-			resource !== 'font-awesome-icon-catalog'
+			resource !== 'font-awesome-icon-catalog' &&
+			resource !== 'pedidos' &&
+			resource !== 'pedidos-surtir' &&
+			// #291: en contactos Meili (con tolerancia a errores) devolvía otros
+			// clientes que sí existen y el listado se quedaba con ellos.
+			!uses_word_search(resource)
 		) {
 			const ids = await SearchEngine.search_ids(loc.collection, opts.q);
 			if (ids !== null && ids.length) {
@@ -5966,57 +6051,45 @@ export class ImperiumStore {
 			const marks = opts.ids.map((_, i) => `$${start + i}`).join(', ');
 			clauses.push(`id IN (${marks})`);
 		}
-		if (opts.where) {
-			for (const [raw_key, v] of Object.entries(opts.where)) {
-				if (v === undefined) continue;
-				const k = physical_filter_field(cols, raw_key);
-				if (v && typeof v === 'object' && !Array.isArray(v) && 'in' in v && Array.isArray((v as { in: unknown[] }).in)) {
-					const values = (v as { in: unknown[] }).in.map(String);
-					if (!values.length) continue;
-					const marks = values.map((item) => {
-						params.push(item);
-						return `$${params.length}`;
-					});
-					if (cols.has(k)) clauses.push(`${qident(k)} IN (${marks.join(', ')})`);
-					else clauses.push(payload_field_in_sql(k, marks));
-					continue;
-				}
-				if (is_range_filter(v)) {
-					const range = v as { gte?: unknown; lte?: unknown; gt?: unknown; lt?: unknown };
-					if (range.gte !== undefined && range.gte !== '') {
-						params.push(range_bound(String(range.gte), 'gte'));
-						clauses.push(range_compare_sql(cols, k, '>=', params.length));
-					}
-					if (range.lte !== undefined && range.lte !== '') {
-						params.push(range_bound(String(range.lte), 'lte'));
-						clauses.push(range_compare_sql(cols, k, '<=', params.length));
-					}
-					if (range.gt !== undefined && range.gt !== '') {
-						params.push(range_bound(String(range.gt), 'gte'));
-						clauses.push(range_compare_sql(cols, k, '>', params.length));
-					}
-					if (range.lt !== undefined && range.lt !== '') {
-						params.push(range_bound(String(range.lt), 'lte'));
-						clauses.push(range_compare_sql(cols, k, '<', params.length));
-					}
-					continue;
-				}
-				params.push(v);
-				if (cols.has(k)) clauses.push(`${qident(k)} = $${params.length}`);
-				else clauses.push(payload_field_eq_sql(k, `$${params.length}`));
-			}
-		}
+		if (opts.where) push_where_clauses(cols, opts.where, params, clauses);
 		if (opts.mongo_match) {
 			const extra = mongo_match_to_sql(opts.mongo_match, cols, params);
 			if (extra) clauses.push(extra);
 		}
-		if (opts.q) {
+		if (opts.q && uses_word_search(resource)) {
+			const words = word_search_sql(
+				list_search_columns(resource, cols),
+				String(opts.q),
+				(value) => {
+					params.push(value);
+					return `$${params.length}`;
+				},
+				qident,
+			);
+			if (words) clauses.push(words);
+		} else if (opts.q) {
 			const like = `%${opts.q}%`;
 			const search_cols = list_search_columns(resource, cols);
 			const parts = search_cols.map((c) => {
 				params.push(like);
 				return `${qident(c)} ILIKE $${params.length}`;
 			});
+			if (resource === 'pedidos' || resource === 'pedidos-surtir') {
+				params.push(like);
+				const contacto_columns = ['contacto', 'contacto_id'].filter((column) => cols.has(column));
+				const contacto_table =
+					contacto_columns.length &&
+					this.has('contacto') &&
+					this.is_resource_installed('contacto')
+						? this.qt('contacto')
+						: null;
+				parts.push(
+					...pedido_search_predicates(`$${params.length}`, {
+						contacto_table,
+						contacto_columns,
+					}),
+				);
+			}
 			if (parts.length) clauses.push(`(${parts.join(' OR ')})`);
 		}
 		if (opts.after_created?.at && opts.after_created.id && cols.has('created_at')) {
@@ -6080,8 +6153,18 @@ export class ImperiumStore {
 			const dir = (m?.[2] ?? 'asc').toLowerCase() === 'desc' ? 'DESC' : 'ASC';
 			if (campo && cols.has(campo === 'ref' ? 'ref' : campo)) {
 				const col = campo === '_ref' ? 'ref' : campo;
-				if (resource === 'pedidos' && (col === 'folio' || col === 'folio_interno')) {
+				if (
+					(resource === 'pedidos' || resource === 'pedidos-surtir') &&
+					(col === 'folio' || col === 'folio_interno')
+				) {
 					order = pedido_order_sql(qident(col), dir, col);
+				} else if (
+					(resource === 'pedidos' || resource === 'pedidos-surtir') &&
+					col === 'fecha' &&
+					cols.has('created_at')
+				) {
+					order = pedido_fecha_order_sql(qident(col), qident('created_at'), dir);
+					order += `, ${qident('id')} ${dir}`;
 				} else {
 					order = ` ORDER BY ${qident(col)} ${dir} NULLS LAST`;
 				}
@@ -6372,6 +6455,7 @@ export class ImperiumStore {
 
 	async insert(resource: string, doc: ImperiumDoc): Promise<ImperiumDoc> {
 		guard_store_insert(resource, doc);
+		if (is_pedido_resource(resource)) ensure_pedido_fecha(doc);
 		apply_inventory_movement_ledger(resource, doc);
 		ensure_sql_name(resource, doc);
 		await this.assert_unique_business_keys(resource, doc);
@@ -6384,8 +6468,17 @@ export class ImperiumStore {
 		row.created_at ??= ts;
 		row.updated_at ??= ts;
 		if (row.is_active === undefined) row.is_active = true;
+		const test_run = in_feature_map_test();
+		if (test_run) await this.ensure_feature_map_test_column(resource);
 		const keys = Object.keys(row).filter((k) => cols.has(k));
-		const values = keys.map((k) => cell(row[k], jsons.has(k), bools.has(k)));
+		// Corrida de feature map: la fila queda marcada para el borrado en masa.
+		if (test_run && !keys.includes(FEATURE_MAP_TEST_COLUMN)) {
+			keys.push(FEATURE_MAP_TEST_COLUMN);
+			row[FEATURE_MAP_TEST_COLUMN] = true;
+		}
+		const values = keys.map((k) =>
+			k === FEATURE_MAP_TEST_COLUMN ? row[k] === true : cell(row[k], jsons.has(k), bools.has(k)),
+		);
 		const qt = this.qt(resource);
 		const inserted = await this.sql.unsafe(
 			`INSERT INTO ${qt} (${keys.map(qident).join(', ')}) VALUES (${keys.map((k, i) => json_placeholder(i + 1, jsons.has(k))).join(', ')}) RETURNING *`,
@@ -6401,6 +6494,7 @@ export class ImperiumStore {
 		resource: string,
 		id: string,
 		patch: ImperiumDoc,
+		guard?: { only_if_status: string },
 	): Promise<ImperiumDoc | null> {
 		const existing = await this.find_id(resource, id);
 		if (!existing) return null;
@@ -6414,6 +6508,7 @@ export class ImperiumStore {
 			payload: { ...as_object(existing), ...as_object(patch) },
 		};
 		apply_schema_setters(resource, merged, { apply_defaults: false });
+		if (is_pedido_resource(resource)) ensure_pedido_fecha(merged, existing);
 		assert_required_fields(resource, merged, Object.keys(patch));
 		assert_objectid_refs(resource, merged, Object.keys(patch));
 		await this.assert_unique_business_keys(resource, merged, id);
@@ -6423,15 +6518,54 @@ export class ImperiumStore {
 		const keys = Object.keys(row).filter((k) => cols.has(k) && k !== 'id');
 		const values = keys.map((k) => cell(row[k], jsons.has(k), bools.has(k)));
 		values.push(id);
+		let where = `id = $${values.length}`;
+		if (guard?.only_if_status != null) {
+			values.push(guard.only_if_status);
+			where += ` AND ${status_guard_clause(`$${values.length}`)}`;
+		}
 		const set = keys.map((k, i) => `${qident(k)} = ${json_placeholder(i + 1, jsons.has(k))}`).join(', ');
 		const updated = await this.sql.unsafe(
-			`UPDATE ${this.qt(resource)} SET ${set} WHERE id = $${keys.length + 1} RETURNING *`,
+			`UPDATE ${this.qt(resource)} SET ${set} WHERE ${where} RETURNING *`,
 			values,
 		);
 		const saved = this.flatten((updated[0] as Record<string, unknown>) ?? null, resource);
 		if (saved) await this.sync_search(resource, saved);
 		if (saved) await record_document_history(this, resource, existing, saved).catch(() => undefined);
 		return saved;
+	}
+
+	/**
+	 * Toque sin historial (#336): escribe solo `fields` (columnas y su copia en
+	 * `payload`) y solo si algo cambia. No toca `updated_at`, ni el historial,
+	 * ni las notificaciones, ni el buscador. Para datos volátiles que no son un
+	 * cambio del registro (p. ej. la última revisión de un dispositivo).
+	 */
+	async touch_fields(resource: string, id: string, fields: ImperiumDoc): Promise<number> {
+		const keys = Object.keys(fields).filter((k) => /^[a-z_][a-z0-9_]*$/i.test(k));
+		if (!keys.length || !this.has(resource)) return 0;
+		const cols = this.column_names(resource);
+		const jsons = this.json_cols(resource);
+		const bools = this.bool_cols(resource);
+		const col_keys = keys.filter((k) => cols.has(k) && k !== 'id' && k !== 'payload');
+		const values: unknown[] = col_keys.map((k) => cell(fields[k], jsons.has(k), bools.has(k)));
+		const sets = col_keys.map((k, i) => `${qident(k)} = ${json_placeholder(i + 1, jsons.has(k))}`);
+		const distinct = col_keys.map((k, i) => `${qident(k)} IS DISTINCT FROM ${json_placeholder(i + 1, jsons.has(k))}`);
+		if (cols.has('payload')) {
+			const patch: Record<string, unknown> = {};
+			for (const k of keys) patch[k] = fields[k] ?? null;
+			values.push(JSON.stringify(patch));
+			const n = values.length;
+			const base = `(CASE WHEN jsonb_typeof(payload) = 'object' THEN payload WHEN jsonb_typeof(payload) = 'string' THEN COALESCE((payload #>> '{}')::jsonb, '{}'::jsonb) ELSE '{}'::jsonb END)`;
+			sets.push(`payload = ${base} || $${n}::jsonb`);
+			distinct.push(`NOT (${base} @> $${n}::jsonb)`);
+		}
+		if (!sets.length) return 0;
+		values.push(id);
+		const rows = await this.sql.unsafe(
+			`UPDATE ${this.qt(resource)} SET ${sets.join(', ')} WHERE id = $${values.length} AND (${distinct.join(' OR ')}) RETURNING id`,
+			values,
+		);
+		return rows.length;
 	}
 
 	/** Como `updateMany({ _id: { $in } }, { is_active: false })` del original. */
@@ -6468,6 +6602,27 @@ export class ImperiumStore {
 		return rows.length;
 	}
 
+	/**
+	 * Reindexado (#268): escribe solo `search_field` y solo en las filas donde cambia. No toca
+	 * `updated_at`, ni el historial, ni Meilisearch (el reindexado los maneja aparte). Regresa
+	 * cuántas filas cambiaron.
+	 */
+	async set_search_fields(
+		resource: string,
+		rows: Array<{ id: string; search_field: string }>,
+	): Promise<number> {
+		if (!rows.length) return 0;
+		const changed = await this.sql.unsafe(
+			`UPDATE ${this.qt(resource)} AS t
+			 SET search_field = v.search_field
+			 FROM jsonb_to_recordset($1::jsonb) AS v(id text, search_field text)
+			 WHERE t.id::text = v.id AND t.search_field IS DISTINCT FROM v.search_field
+			 RETURNING t.id`,
+			[rows],
+		);
+		return changed.length;
+	}
+
 	async sync_search(resource: string, doc: ImperiumDoc) {
 		if (is_chat_private_resource(resource)) return;
 		const collection = this.loc(resource).collection;
@@ -6477,9 +6632,9 @@ export class ImperiumStore {
 			await SearchEngine.delete_documents(collection, [id]);
 			return;
 		}
-		const search_text = search_text_from_doc(doc);
+		const search_text = search_index_text(doc);
 		if (!search_text) return;
-		await SearchEngine.index_documents(collection, [{ id, search_text }]);
+		await SearchEngine.index_documents(collection, [{ id, search_text }], { wait: false });
 	}
 
 	async remove(resource: string, id: string): Promise<ImperiumDoc | null> {
@@ -6616,6 +6771,46 @@ export class ImperiumStore {
 			params,
 		);
 		return rows.map((r) => (r as { v: unknown }).v).filter((v) => v != null && v !== '');
+	}
+
+	/**
+	 * #327/#329: valores distintos CON su conteo, dentro de la misma vista que
+	 * la lista (búsqueda, filtros de las otras columnas, contexto de la ruta
+	 * —p. ej. el documento padre de una subtabla— y la regla de registros).
+	 * Sin archivados salvo `include_inactive`.
+	 */
+	async distinct_counts(
+		resource: string,
+		field: string,
+		opts: {
+			q?: string;
+			mongo_match?: Record<string, unknown> | null;
+			where?: Record<string, unknown>;
+			include_inactive?: boolean;
+		} = {},
+	): Promise<Array<{ v: unknown; n: number }>> {
+		const cols = this.column_names(resource);
+		const qt = this.qt(resource);
+		const expr = cols.has(field) ? qident(field) : payload_distinct_expr(field);
+		const params: unknown[] = [];
+		const clauses: string[] = [];
+		if (!opts.include_inactive && cols.has('is_active')) clauses.push('is_active IS DISTINCT FROM false');
+		if (opts.q) {
+			params.push(`%${opts.q}%`);
+			clauses.push(`${expr}::text ILIKE $${params.length}`);
+		}
+		if (opts.where && Object.keys(opts.where).length) push_where_clauses(cols, opts.where, params, clauses);
+		const scoped = mongo_match_to_sql(opts.mongo_match ?? null, cols, params);
+		if (scoped) clauses.push(scoped);
+		const where = clauses.length ? ` WHERE ${clauses.join(' AND ')}` : '';
+		const rows = await this.sql.unsafe(
+			`SELECT ${expr} AS v, COUNT(*)::int AS n FROM ${qt}${where} GROUP BY 1 ORDER BY 2 DESC LIMIT 500`,
+			params,
+		);
+		return rows
+			.map((r) => r as { v: unknown; n: unknown })
+			.filter((r) => r.v != null && r.v !== '')
+			.map((r) => ({ v: r.v, n: Number(r.n ?? 0) || 0 }));
 	}
 
 	/**
@@ -7802,9 +7997,81 @@ export function payload_field_eq_sql(field: string, param: string): string {
 	return `payload ->> ${key} = ${param}::text`;
 }
 
+/** `user_ids`, `menus_ids`…: arreglo de ids guardado como texto JSON, jsonb o en `payload`. */
+function is_id_list_field(field: string): boolean {
+	return field.endsWith('_ids');
+}
+
+function filter_text_expr(cols: Set<string>, field: string): string {
+	return cols.has(field) ? `${qident(field)}::text` : `payload ->> ${literal(field)}`;
+}
+
+/**
+ * Pertenencia a la lista: el id entrecomillado como JSON aparece en el texto
+ * (`["a","b"]`, `[{"_id":"a"}]`) o la celda es el id suelto. Sin cast a jsonb:
+ * una celda legada que no es JSON no tumba la consulta. NULL no coincide.
+ */
+export function id_list_member_sql(expr: string, param: string): string {
+	return `(${expr} = ${param}::text OR strpos(${expr}, to_json(${param}::text)::text) > 0)`;
+}
+
 export function payload_field_in_sql(field: string, marks: string[]): string {
 	const key = literal(field);
 	return `payload ->> ${key} IN (${marks.join(', ')})`;
+}
+
+/**
+ * `where` de la lista → cláusulas SQL. La comparten `find_many` y
+ * `distinct_counts` (#327/#329): los valores del filtro salen de la misma vista.
+ */
+export function push_where_clauses(
+	cols: Set<string>,
+	where: Record<string, unknown>,
+	params: unknown[],
+	clauses: string[],
+): void {
+	for (const [raw_key, v] of Object.entries(where)) {
+		if (v === undefined) continue;
+		const k = physical_filter_field(cols, raw_key);
+		if (v && typeof v === 'object' && !Array.isArray(v) && 'in' in v && Array.isArray((v as { in: unknown[] }).in)) {
+			const values = (v as { in: unknown[] }).in.map(String);
+			if (!values.length) continue;
+			const marks = values.map((item) => {
+				params.push(item);
+				return `$${params.length}`;
+			});
+			if (is_id_list_field(k)) {
+				const expr = filter_text_expr(cols, k);
+				clauses.push(`(${marks.map((mark) => id_list_member_sql(expr, mark)).join(' OR ')})`);
+			} else if (cols.has(k)) clauses.push(`${qident(k)} IN (${marks.join(', ')})`);
+			else clauses.push(payload_field_in_sql(k, marks));
+			continue;
+		}
+		if (is_range_filter(v)) {
+			const range = v as { gte?: unknown; lte?: unknown; gt?: unknown; lt?: unknown };
+			if (range.gte !== undefined && range.gte !== '') {
+				params.push(range_bound(String(range.gte), 'gte'));
+				clauses.push(range_compare_sql(cols, k, '>=', params.length));
+			}
+			if (range.lte !== undefined && range.lte !== '') {
+				params.push(range_bound(String(range.lte), 'lte'));
+				clauses.push(range_compare_sql(cols, k, '<=', params.length));
+			}
+			if (range.gt !== undefined && range.gt !== '') {
+				params.push(range_bound(String(range.gt), 'gte'));
+				clauses.push(range_compare_sql(cols, k, '>', params.length));
+			}
+			if (range.lt !== undefined && range.lt !== '') {
+				params.push(range_bound(String(range.lt), 'lte'));
+				clauses.push(range_compare_sql(cols, k, '<', params.length));
+			}
+			continue;
+		}
+		params.push(v);
+		if (is_id_list_field(k)) clauses.push(id_list_member_sql(filter_text_expr(cols, k), `$${params.length}`));
+		else if (cols.has(k)) clauses.push(`${qident(k)} = $${params.length}`);
+		else clauses.push(payload_field_eq_sql(k, `$${params.length}`));
+	}
 }
 
 function payload_distinct_expr(field: string): string {

@@ -1,3 +1,8 @@
+/** Marca de datos de prueba de los feature maps (igual que `feature-map-test.ts`, sin importar node:async_hooks). */
+const FEATURE_MAP_TEST_COLUMN = "feature_map_test";
+/** Igual que el núcleo: false salvo en una transacción de corrida de feature map. */
+const FEATURE_MAP_TEST_DEFAULT_SQL = "COALESCE(current_setting('imperium.feature_map_test', true) = 'on', false)";
+
 //   #region KIRLET DOMAIN SCHEMA (declarative, NOX-applied)
 
 /**
@@ -196,6 +201,10 @@ export class SchemaDdlBuilder {
         // FKs deferred to the last phase so CREATE does not require parents yet
         return line;
       });
+      // Toda tabla de app lleva la marca de datos de prueba de los feature maps.
+      if (!table.columns.some((c) => c.name === FEATURE_MAP_TEST_COLUMN)) {
+        cols.push(`${quote_ident(FEATURE_MAP_TEST_COLUMN)} BOOLEAN NOT NULL DEFAULT ${FEATURE_MAP_TEST_DEFAULT_SQL}`);
+      }
       for (const chk of table.checks ?? []) {
         cols.push(`CHECK (${chk})`);
       }
@@ -224,6 +233,12 @@ export class SchemaDdlBuilder {
         }
         stmts.push(
           `ALTER TABLE ${qschema}.${qtable} ADD COLUMN IF NOT EXISTS ${line}`,
+        );
+      }
+
+      if (!table.columns.some((c) => c.name === FEATURE_MAP_TEST_COLUMN)) {
+        stmts.push(
+          `ALTER TABLE ${qschema}.${qtable} ADD COLUMN IF NOT EXISTS ${quote_ident(FEATURE_MAP_TEST_COLUMN)} BOOLEAN NOT NULL DEFAULT ${FEATURE_MAP_TEST_DEFAULT_SQL}`,
         );
       }
 

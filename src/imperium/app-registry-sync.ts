@@ -18,7 +18,11 @@ export type ManifestRead =
 	| { ok: false; skipped: true }
 	| { ok: false; error: string };
 
-export type ManifestReader = (slug: string, row: RegistryRow | null) => Promise<ManifestRead>;
+export type ManifestReader = (
+	slug: string,
+	row: RegistryRow | null,
+	installed_image?: string | null,
+) => Promise<ManifestRead>;
 
 export type SyncOutcome = {
 	status: number;
@@ -38,12 +42,19 @@ export function segment_owners(snapshots: readonly SnapshotRow[]): SegmentOwner[
 	return [...by.entries()].map(([slug, segments]) => ({ slug, segments: [...segments] }));
 }
 
+/**
+ * Lee el manifiesto de la imagen instalada. `installed_image` es la de
+ * `subject_installs`: sin ella, una app sin `installed_tag` en el registro caía
+ * al `IMPERIUM_SUBJECT_TAG` global (0.1.0, sin arm64 en el G85) o a `latest`.
+ */
 export async function read_installed_image_manifest(
 	slug: string,
 	row: RegistryRow | null,
+	installed_image: string | null = null,
 ): Promise<ManifestRead> {
 	const image = subject_image_ref({
 		slug,
+		image: installed_image,
 		registry_installed_tag: row?.installed_tag,
 	});
 	const result = await read_subject_image_manifest(slug, image);
@@ -143,7 +154,7 @@ export async function sync_installed_manifests(sql: RegistrySql, read: ManifestR
 	let installed: Array<Record<string, unknown>> = [];
 	try {
 		const result = await sql.unsafe(
-			`SELECT technical_id FROM public.subject_installs WHERE installed IS TRUE`,
+			`SELECT technical_id, installed_image FROM public.subject_installs WHERE installed IS TRUE`,
 		);
 		installed = Array.isArray(result) ? (result as Array<Record<string, unknown>>) : [];
 	} catch {
@@ -154,10 +165,48 @@ export async function sync_installed_manifests(sql: RegistrySql, read: ManifestR
 		const technical_id = String(row.technical_id ?? '');
 		const slug = technical_id.replace(/^subject-/, '');
 		if (!/^[a-z][a-z0-9-]*$/.test(slug)) continue;
+		const installed_image = String(row.installed_image ?? '').trim() || null;
 		try {
-			await sync_slug_manifest(repo, slug, read, null);
+			await sync_slug_manifest(repo, slug, (s, r) => read(s, r, installed_image), null);
 		} catch {
 			// Una app ilegible no detiene al resto.
 		}
 	}
+}
+
+export type LiveManifestDeps = {
+	fetch?: typeof fetch;
+	/** Intentos contra `/manifest` mientras el contenedor termina de arrancar. */
+	attempts?: number;
+	delay_ms?: number;
+	/** Respaldo cuando `/manifest` no contesta (por defecto, la imagen aplicada). */
+	fallback?: ManifestReader;
+};
+
+/**
+ * Lector para justo después de instalar o actualizar: el contenedor ya está
+ * sano, así que su `/manifest` es la fuente (no hace falta `docker` ni que la
+ * imagen tenga la arquitectura del lector). Si no contesta, cae a la imagen
+ * que se acaba de aplicar.
+ */
+export function live_manifest_reader(
+	base_url: string,
+	image: string | null,
+	deps: LiveManifestDeps = {},
+): ManifestReader {
+	const do_fetch = deps.fetch ?? fetch;
+	const attempts = Math.max(1, deps.attempts ?? 5);
+	const delay_ms = deps.delay_ms ?? 2000;
+	return async (slug, row) => {
+		for (let i = 0; i < attempts; i++) {
+			try {
+				const res = await do_fetch(`${base_url}/manifest`, { signal: AbortSignal.timeout(10_000) });
+				if (res.ok) return { ok: true, manifest: await res.json(), digest: null };
+			} catch {
+				/* aún arrancando */
+			}
+			if (i + 1 < attempts && delay_ms > 0) await new Promise((r) => setTimeout(r, delay_ms));
+		}
+		return (deps.fallback ?? read_installed_image_manifest)(slug, row, image);
+	};
 }

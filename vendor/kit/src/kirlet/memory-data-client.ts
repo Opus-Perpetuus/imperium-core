@@ -173,11 +173,12 @@ export class MemoryKirletDataClient extends KirletDataClient {
     ).length;
   }
 
-  override async distinct(table: string, field: string, q = ""): Promise<unknown[]> {
+  override async distinct(table: string, field: string, q = "", where?: WhereClause): Promise<unknown[]> {
     const needle = q.trim().toLowerCase();
     const seen = new Set<string>();
     const out: unknown[] = [];
     for (const row of this.ensure_table(table)) {
+      if (!match_where(row, where)) continue;
       const value = row[field];
       if (value == null || value === "") continue;
       const key = String(value);

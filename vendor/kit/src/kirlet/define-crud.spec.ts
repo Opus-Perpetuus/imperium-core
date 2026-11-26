@@ -146,6 +146,12 @@ describe("define_crud e2e (memory)", () => {
     const listed = (await values.json()) as { data: Array<{ value: string }> };
     expect(listed.data.map((row) => row.value).sort()).toEqual(["Alpha", "Beta"]);
 
+    // Campo que la tabla no tiene: 400 de validación, no 500 del SQL.
+    const unknown = await server.fetch(new Request("http://t/notes/field-values/no_existe"));
+    expect(unknown.status).toBe(400);
+    const by_id = await server.fetch(new Request("http://t/notes/field-values/id"));
+    expect(by_id.status).toBe(200);
+
     const mass = await server.fetch(
       new Request("http://t/notes/mass-query", {
         method: "POST",

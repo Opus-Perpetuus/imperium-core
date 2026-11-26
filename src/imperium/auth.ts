@@ -28,6 +28,8 @@ import {
 	send_subject_notification_email,
 } from './email.ts';
 import { read_public_registration } from './public-registration.ts';
+import { ensure_auth_attempts_table } from './auth-attempts.ts';
+import { BADGE_SESSION, authenticate_badge } from './badge.ts';
 import { share_binding_of } from './share-binding.ts';
 import {
 	find_user_by_define_token,
@@ -66,6 +68,7 @@ import {
 import { is_base_subject_slug } from './subject-runtime.ts';
 import { disconnect_sockets_for_auth_sid } from './socket-stub.ts';
 import { is_chat_private_resource } from './chat-access.ts';
+import { FEATURE_MAP_TEST_COLUMN_DDL } from './feature-map-test.ts';
 
 const COOKIE = 'connect.sid';
 const SECRET = process.env.SESSION_SECRET ?? 'imperium-modular-dev-session';
@@ -87,7 +90,11 @@ type Session = {
 	id: string;
 	user: ImperiumDoc;
 	expires: number;
+	checked_at?: number;
 };
+
+const SESSION_RECHECK_MS = 60 * 1000;
+const LAST_SEEN_WRITE_MS = 60 * 1000;
 
 const memory = new Map<string, Session>();
 
@@ -107,10 +114,15 @@ export function ensure_session_table(sql: Bun.SQL): Promise<void> {
     CREATE TABLE IF NOT EXISTS public.imperium_sessions (
       id TEXT PRIMARY KEY,
       payload JSONB NOT NULL,
-      expires_at TIMESTAMPTZ NOT NULL
+      expires_at TIMESTAMPTZ NOT NULL,
+      ${FEATURE_MAP_TEST_COLUMN_DDL}
     )
   `);
 		await ensure_auth_rate_limit_table(sql);
+		await sql.unsafe(
+			`CREATE INDEX IF NOT EXISTS imperium_sessions_user_id_idx ON public.imperium_sessions ((payload->>'_id'))`,
+		);
+		await ensure_auth_attempts_table(sql);
 	})().catch((err) => {
 		session_tables_ready = null;
 		throw err;
@@ -150,7 +162,9 @@ export function is_auth_login_post(req: Request): boolean {
 		path === '/auth/login' ||
 		path === '/auth/login/' ||
 		path === '/auth/public/login' ||
-		path === '/auth/public/login/'
+		path === '/auth/public/login/' ||
+		path === '/auth/badge/login' ||
+		path === '/auth/badge/login/'
 	);
 }
 
@@ -185,6 +199,9 @@ export async function handle_auth(
 		(rest === '/public/login' || rest === '/public/login/')
 	) {
 		return login_on_surface(store, sql, req, 'public');
+	}
+	if (method === 'POST' && (rest === '/badge/login' || rest === '/badge/login/')) {
+		return login_with_badge(store, sql, req);
 	}
 
 	if (
@@ -351,7 +368,8 @@ export async function handle_auth(
 	}
 
 	const session = await load_session(sql, req);
-	if (!session) {
+	const actor = session?.user ?? (cli_user_lookup ? await cli_user_lookup(req) : null);
+	if (!actor) {
 		return Response.json(
 			{ error: 'No estás autenticado', message: 'No estás autenticado' },
 			{ status: 401 },
@@ -359,14 +377,26 @@ export async function handle_auth(
 	}
 
 	if (method === 'GET' && (rest === '/' || rest === '')) {
-		return Response.json(session.user);
+		return Response.json(actor);
 	}
 	if (method === 'GET' && rest.startsWith('/menus')) {
-		const access_rights = await build_access(store, session.user);
+		const access_rights = await build_access(store, actor);
 		const menus = await build_menus(store, sql, access_rights);
 		return Response.json({ menus, access_rights });
 	}
-	return Response.json(session.user);
+	return Response.json(actor);
+}
+
+/**
+ * Busca primero la cookie de la GUI; si no hay sesión, un Bearer `icli_…`
+ * (la CLI). El usuario es el mismo de la GUI, con el mismo `build_access`.
+ * Los tokens MCP (`isic_`) no autentican aquí: siguen en `/api/mcp-agent/v1`.
+ */
+type CliUserLookup = (req: Request) => Promise<ImperiumDoc | null>;
+let cli_user_lookup: CliUserLookup | null = null;
+
+export function bind_cli_user_lookup(fn: CliUserLookup | null): void {
+	cli_user_lookup = fn;
 }
 
 export async function current_user(
@@ -374,7 +404,11 @@ export async function current_user(
 	req: Request,
 ): Promise<ImperiumDoc | null> {
 	const s = await load_session(sql, req);
-	return s?.user ?? null;
+	if (s?.user) return s.user;
+	// El token CLI nace del mismo login de la GUI: un usuario legado sin `type`
+	// es del personal igual que en su sesión, o las apps lo verían externo.
+	const cli_user = cli_user_lookup ? await cli_user_lookup(req) : null;
+	return cli_user ? with_session_principal_type(cli_user) : null;
 }
 
 const DEFINE_PASSWORD_INVALID =
@@ -435,7 +469,7 @@ async function verify_password(plain: string, hash: string): Promise<boolean> {
 	}
 }
 
-async function dummy_verify(): Promise<boolean> {
+export async function dummy_verify(): Promise<boolean> {
 	try {
 		const dummy = await Bun.password.hash(
 			'imperium-dummy-login',
@@ -648,13 +682,55 @@ async function login_on_surface(
 	);
 }
 
+async function login_with_badge(
+	store: ImperiumStore,
+	sql: Bun.SQL,
+	req: Request,
+): Promise<Response> {
+	const auth = await authenticate_badge(store, sql, req, await read_imperium_body(req));
+	if (!auth.ok) return Response.json(auth.body, { status: auth.status });
+	const safe: ImperiumDoc = {
+		...public_user(auth.user),
+		auth_method: 'badge',
+		badge_id: String(auth.badge._id),
+		badge_serie: auth.badge.serie,
+		idle_ms: BADGE_SESSION.idle_unregistered_ms,
+		last_seen: Date.now(),
+	};
+	const session = await create_session(sql, safe, BADGE_SESSION.ttl_ms);
+	const access_rights = await build_access(store, safe);
+	const menus = await build_menus(store, sql, access_rights);
+	return with_cookie(
+		Response.json({ user: safe, menus, access_rights, destination: auth.destination }),
+		session.id,
+		false,
+		req,
+		BADGE_SESSION.ttl_ms / 1000,
+	);
+}
+
+/**
+ * Tipo explícito del principal de una sesión. Las sesiones solo nacen del login:
+ * el público y el registro graban `type: 'external'`, así que una sesión (o el
+ * dueño de un enlace compartido) sin tipo es del personal —los usuarios legados
+ * no tienen `type`, igual que en `principal_kind` del kit—. Solo en esta
+ * frontera se completa `internal`; fuera de ella `principal_type_of` niega.
+ */
+export function with_session_principal_type(user: ImperiumDoc): ImperiumDoc {
+	const type = user.type;
+	if (type !== undefined && type !== null && String(type) !== '') return user;
+	return { ...user, type: 'internal' };
+}
+
 async function create_session(
 	sql: Bun.SQL,
-	user: ImperiumDoc,
+	raw_user: ImperiumDoc,
+	ttl_ms = 7 * 24 * 3600 * 1000,
 ): Promise<Session> {
+	const user = with_session_principal_type(raw_user);
 	const id = crypto.randomUUID();
-	const expires = Date.now() + 7 * 24 * 3600 * 1000;
-	const session: Session = { id, user, expires };
+	const expires = Date.now() + ttl_ms;
+	const session: Session = { id, user, expires, checked_at: Date.now() };
 	memory.set(id, session);
 	await sql.unsafe(
 		`INSERT INTO public.imperium_sessions (id, payload, expires_at)
@@ -716,6 +792,30 @@ async function destroy_session(sql: Bun.SQL, id: string): Promise<void> {
 	]);
 }
 
+export async function destroy_sessions_for_user(
+	sql: Bun.SQL,
+	user_id: string,
+	badge_id?: string,
+): Promise<number> {
+	const rows = (await sql.unsafe(
+		badge_id
+			? `DELETE FROM public.imperium_sessions WHERE payload->>'_id' = $1 AND payload->>'badge_id' = $2 RETURNING id`
+			: `DELETE FROM public.imperium_sessions WHERE payload->>'_id' = $1 RETURNING id`,
+		badge_id ? [user_id, badge_id] : [user_id],
+	)) as { id: string }[];
+	const ids = new Set(rows.map((row) => String(row.id)));
+	for (const [id, session] of memory) {
+		if (String(session.user._id ?? '') !== user_id) continue;
+		if (badge_id && String(session.user.badge_id ?? '') !== badge_id) continue;
+		ids.add(id);
+	}
+	for (const id of ids) {
+		memory.delete(id);
+		disconnect_sockets_for_auth_sid(id);
+	}
+	return ids.size;
+}
+
 async function load_session(
 	sql: Bun.SQL,
 	req: Request,
@@ -724,10 +824,27 @@ async function load_session(
 	// traiga su propia cookie.
 	const shared = share_binding_of(req);
 	if (shared) {
-		return { id: `share:${shared.share_id}`, user: shared.owner, expires: Number.MAX_SAFE_INTEGER };
+		return {
+			id: `share:${shared.share_id}`,
+			user: with_session_principal_type(shared.owner),
+			expires: Number.MAX_SAFE_INTEGER,
+		};
 	}
 	const id = read_sid(req);
 	return id ? stored_session(sql, id) : null;
+}
+
+/**
+ * Usuario de la cookie de la GUI, sin enlaces públicos ni tokens `icli_`.
+ * Aprobar un código de dispositivo exige una sesión real del navegador.
+ */
+export async function gui_session_user(
+	sql: Bun.SQL,
+	req: Request,
+): Promise<ImperiumDoc | null> {
+	if (share_binding_of(req)) return null;
+	const id = read_sid(req);
+	return id ? ((await stored_session(sql, id))?.user ?? null) : null;
 }
 
 /** El socket solo trae el id de sesión de su handshake, no la petición HTTP. */
@@ -739,17 +856,43 @@ export async function user_for_session_id(
 }
 
 async function stored_session(sql: Bun.SQL, id: string): Promise<Session | null> {
+	const now = Date.now();
 	const mem = memory.get(id);
-	if (mem && mem.expires > Date.now()) return mem;
+	const fresh =
+		mem !== undefined &&
+		mem.expires > now &&
+		(mem.user.auth_method !== 'badge' || now - (mem.checked_at ?? 0) <= SESSION_RECHECK_MS);
+	if (mem && fresh) return enforce_idle(sql, mem, now);
 	const rows = await sql.unsafe(
 		`SELECT payload, extract(epoch from expires_at) * 1000 AS exp FROM public.imperium_sessions WHERE id = $1`,
 		[id],
 	);
 	const row = rows[0] as { payload: unknown; exp: number } | undefined;
-	if (!row || Number(row.exp) < Date.now()) return null;
-	const user = as_object(row.payload) as ImperiumDoc;
-	const session: Session = { id, user, expires: Number(row.exp) };
+	if (!row || Number(row.exp) < now) {
+		memory.delete(id);
+		return null;
+	}
+	const user = with_session_principal_type(as_object(row.payload) as ImperiumDoc);
+	const session: Session = { id, user, expires: Number(row.exp), checked_at: now };
 	memory.set(id, session);
+	return enforce_idle(sql, session, now);
+}
+
+async function enforce_idle(sql: Bun.SQL, session: Session, now: number): Promise<Session | null> {
+	const idle_ms = Number(session.user.idle_ms ?? 0);
+	if (!idle_ms) return session;
+	const last_seen = Number(session.user.last_seen ?? 0);
+	if (now - last_seen > idle_ms) {
+		await destroy_session(sql, session.id);
+		return null;
+	}
+	if (now - last_seen >= LAST_SEEN_WRITE_MS) {
+		session.user = { ...session.user, last_seen: now };
+		await sql.unsafe(
+			`UPDATE public.imperium_sessions SET payload = jsonb_set(payload, '{last_seen}', to_jsonb($2::bigint)) WHERE id = $1`,
+			[session.id, now],
+		);
+	}
 	return session;
 }
 
@@ -773,13 +916,13 @@ export function request_is_https(req: Request): boolean {
 
 export function session_set_cookie(
 	sid: string,
-	opts: { https: boolean; clear?: boolean },
+	opts: { https: boolean; clear?: boolean; max_age_s?: number },
 ): string {
 	const secure = opts.https ? '; Secure' : '';
 	if (opts.clear || !sid) {
 		return `${COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`;
 	}
-	return `${COOKIE}=${encodeURIComponent(sid)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${7 * 24 * 3600}${secure}`;
+	return `${COOKIE}=${encodeURIComponent(sid)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${opts.max_age_s ?? 7 * 24 * 3600}${secure}`;
 }
 
 function with_cookie(
@@ -787,6 +930,7 @@ function with_cookie(
 	sid: string,
 	clear = false,
 	req?: Request,
+	max_age_s?: number,
 ): Response {
 	const headers = new Headers(res.headers);
 	headers.append(
@@ -794,6 +938,7 @@ function with_cookie(
 		session_set_cookie(sid, {
 			https: req ? request_is_https(req) : false,
 			clear,
+			max_age_s,
 		}),
 	);
 	return new Response(res.body, { status: res.status, headers });
@@ -813,6 +958,7 @@ export async function build_access(store: ImperiumStore, user: ImperiumDoc) {
 					.filter((model) => store.is_model_installed(model)),
 				'Auth',
 				'McpAgent',
+				'ImperiumCli',
 			]),
 		];
 		return {
@@ -941,6 +1087,8 @@ const PUBLIC_EXTRA_ACTIONS = new Set([
 	'payments:stripe_webhook',
 	'cobranza:stripe_webhook',
 	'cobranza:mitec_webhook',
+	// Aviso de Mercado Pago (órdenes de terminal); el handler exige x-signature con el secreto de la pasarela.
+	'pos-session:mercadopago_orders_webhook',
 	'agua:public_contrato',
 	'agua:public_url',
 	'messages:receive_interinstance_message',
@@ -1132,6 +1280,7 @@ const SESSION_SCOPED_EXTRAS = new Set([
 	'delivery-package:apply_logistics_event',
 	'delivery-package:cancel_package',
 	'pedidos:sync_offline',
+	'pedidos:read_offline_stock',
 	'pedidos:reclamar_surtir',
 	'pedidos:asignar_empleado',
 	'physical-device:report',
@@ -1147,6 +1296,7 @@ const SESSION_SCOPED_EXTRAS = new Set([
 	'ticketing-system-turn:notify_turn',
 	'ticketing-system-turn:end_attending_turn',
 	'ticketing-system-turn:attending_turn_for_box',
+	'ticketing-system-turn:boxes_attending_turns',
 	'ticketing-system-turn:box_turns_summary',
 	'citizen-report:reverse_geocode',
 	'purchase-order:replenish_from_order',
@@ -1285,9 +1435,17 @@ function flag_http_method(flag: RecordRuleOperationFlag): string {
 	return 'GET';
 }
 
-function permissions_for_resource(
-	access: Awaited<ReturnType<typeof build_access>>,
+/**
+ * Permisos del modelo de un recurso. El `model_id` de un permiso puede no ser
+ * el PascalCase del recurso (`postgres-table-tracker` ↔ `PostGressTableTracker`,
+ * con doble s): además de las claves derivadas se acepta cualquier modelo que el
+ * catálogo (`resource_for_model`) resuelva a este recurso. Sin eso el
+ * Administrador recibía 403 en «Indexar búsqueda» aunque tuviera el permiso (#264).
+ */
+export function permissions_for_resource(
+	access: Pick<Awaited<ReturnType<typeof build_access>>, 'permissions_by_model'>,
 	resource: string,
+	store?: Pick<ImperiumStore, 'resource_for_model'>,
 ): { perms?: Record<string, boolean>; model: string } {
 	const keys = record_rule_lookup_keys(resource);
 	for (const key of keys) {
@@ -1295,11 +1453,15 @@ function permissions_for_resource(
 		if (hit) return { perms: hit, model: key };
 	}
 	const collapsed = resource.replace(/-/g, '').toLowerCase();
-	for (const [model, perms] of Object.entries(
-		access.permissions_by_model ?? {},
-	)) {
+	const entries = Object.entries(access.permissions_by_model ?? {});
+	for (const [model, perms] of entries) {
 		if (model.replace(/[^A-Za-z0-9]/g, '').toLowerCase() === collapsed) {
 			return { perms, model };
+		}
+	}
+	if (typeof store?.resource_for_model === 'function') {
+		for (const [model, perms] of entries) {
+			if (store.resource_for_model(model) === resource) return { perms, model };
 		}
 	}
 	return { model: keys[1] ?? resource };
@@ -1332,7 +1494,7 @@ function target_model_read(
 		);
 	}
 	if (access.has_full_access) return canonical;
-	const { perms, model } = permissions_for_resource(access, canonical);
+	const { perms, model } = permissions_for_resource(access, canonical, store);
 	if (perms?.allow_read) return model;
 	throw new HttpAccessDeniedError(
 		build_model_denied_message('GET', model, access.user_group_names ?? []),
@@ -1415,7 +1577,7 @@ export async function assert_http_access(
 		: opts.extra && opts.action
 			? extra_flag(method, opts.action)
 			: crud_flag(method, opts.rest);
-	const { perms, model } = permissions_for_resource(access, canonical);
+	const { perms, model } = permissions_for_resource(access, canonical, store);
 	if (perms?.[flag]) return;
 	throw new HttpAccessDeniedError(
 		build_model_denied_message(
@@ -1689,6 +1851,15 @@ export function reshape_subject_menus(
 			menus.find((m) => !m.parent_id && String(m.name) === sub.name);
 		if (root) disabled_ids.add(String(root._id));
 	}
+	// Un path que también declara una app instalada no se oculta: logística
+	// sin instalar comparte `/pedidos` con Ventas y Almacén.
+	for (const sub of store.subjects) {
+		if (disabled_subjects.has(sub.slug)) continue;
+		if (sub.path) disabled_paths.delete(norm(sub.path));
+		for (const mod of sub.modules) {
+			if (mod.path) disabled_paths.delete(norm(mod.path));
+		}
+	}
 	let grew = true;
 	while (grew) {
 		grew = false;
@@ -1754,6 +1925,7 @@ const BRANDING_REFS = [
 	'configuration-branding-logo-width',
 	'configuration-branding-logo-height',
 	'configuration-branding-logo-text-position',
+	'configuration-branding-logo-color',
 	'configuration-default-theme',
 ] as const;
 
@@ -1796,6 +1968,11 @@ async function branding_json(store: ImperiumStore): Promise<Response> {
 			unwrap_config(
 				docs.get('configuration-branding-logo-text-position')?.value,
 			) ?? null,
+		logo_color:
+			String(
+				unwrap_config(docs.get('configuration-branding-logo-color')?.value) ??
+					'original',
+			).trim() || 'original',
 		default_theme:
 			String(
 				unwrap_config(docs.get('configuration-default-theme')?.value) ??

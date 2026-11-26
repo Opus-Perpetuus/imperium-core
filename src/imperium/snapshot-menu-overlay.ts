@@ -14,6 +14,7 @@ export type SnapshotMenuHost = {
 	menu_ref: string;
 	technical_id?: string;
 	modules?: ReadonlyArray<{
+		resource?: string;
 		path?: string;
 		menu_ref?: string;
 	}>;
@@ -25,6 +26,13 @@ export type SnapshotMenuHost = {
 		parent_ref?: string;
 		resources?: string[];
 	}>;
+	/**
+	 * Paths que no van en el menú interno aunque el manifest los nombre: los
+	 * declara el catálogo (`/model-tracker`, que ya no enruta) y el overlay suma
+	 * las páginas `public.pages` que el menú no cuelga. La siembra apaga las filas
+	 * que un overlay viejo dejó ahí.
+	 */
+	retired_menu_paths?: string[];
 };
 
 type DeclaredMenu = NonNullable<SnapshotMenuHost['menus']>[number];
@@ -61,10 +69,16 @@ export function overlay_snapshot_menus<T extends SnapshotMenuHost>(
 		) {
 			return sub;
 		}
-		const extra = menus_from_snapshot(sub, snap);
-		if (!extra.length) return sub;
+		const { extra, retired } = menus_from_snapshot(sub, snap);
+		const declared = sub.retired_menu_paths ?? [];
+		const fresh = retired.filter((path) => !declared.includes(path));
+		if (!extra.length && !fresh.length) return sub;
 		changed = true;
-		return { ...sub, menus: [...(sub.menus ?? []), ...extra] } as T;
+		return {
+			...sub,
+			menus: [...(sub.menus ?? []), ...extra],
+			retired_menu_paths: [...declared, ...fresh],
+		} as T;
 	});
 	return changed ? out : (subjects as T[]);
 }
@@ -72,7 +86,7 @@ export function overlay_snapshot_menus<T extends SnapshotMenuHost>(
 function menus_from_snapshot(
 	sub: SnapshotMenuHost,
 	snap: AppManifestSnapshotBody,
-): DeclaredMenu[] {
+): { extra: DeclaredMenu[]; retired: string[] } {
 	const known = new Map<string, string>();
 	const seen = new Set<string>();
 	const remember = (path: unknown, ref: unknown) => {
@@ -84,6 +98,33 @@ function menus_from_snapshot(
 	remember(sub.path, sub.menu_ref);
 	for (const mod of sub.modules ?? []) remember(mod.path, mod.menu_ref);
 	for (const menu of sub.menus ?? []) remember(menu.path, menu.menu_ref);
+	// El manifest nombra la hoja por recurso (`/planeacion-proyectos`, `/policies`)
+	// y el catálogo la monta en otro path (`/planeacion/proyectos`, `/dbm-policies`).
+	// Es la misma fila: sin esto sale una 2.ª entrada que el front no enruta.
+	for (const mod of sub.modules ?? []) {
+		const alias = slash_path(mod.resource);
+		if (alias && !known.has(alias) && mod.menu_ref) known.set(alias, mod.menu_ref);
+	}
+
+	// Carpetas (sin path) que el catálogo ya declara. Una carpeta del manifest
+	// que es la misma (por id o porque sus hijos ya cuelgan de ella) se reutiliza;
+	// si no, sale `tienda-nav-admin-2` con la hoja que el catálogo no trae.
+	const catalog_folders = new Set<string>();
+	const parent_of = new Map<string, string>();
+	for (const menu of sub.menus ?? []) {
+		if (!slash_path(menu.path)) catalog_folders.add(menu.menu_ref);
+		if (menu.parent_ref) parent_of.set(menu.menu_ref, menu.parent_ref);
+	}
+	const existing_folder = (item: KirletManifestMenuItem): string | null => {
+		const by_id = folder_ref_from_id(sub.slug, String(item.id ?? ''));
+		if (by_id && catalog_folders.has(by_id)) return by_id;
+		for (const child of item.children ?? []) {
+			const child_ref = known.get(slash_path(child.path));
+			const parent = child_ref ? parent_of.get(child_ref) : undefined;
+			if (parent && catalog_folders.has(parent)) return parent;
+		}
+		return null;
+	};
 
 	const leaves = new Map<string, RegistryLeafSnapshot>();
 	const owned = new Set<string>();
@@ -100,6 +141,11 @@ function menus_from_snapshot(
 	}
 
 	const hidden = new Set<string>();
+	for (const path of sub.retired_menu_paths ?? []) {
+		const norm = slash_path(path);
+		if (norm && !known.has(norm)) hidden.add(norm);
+	}
+	const retired = new Set<string>(hidden);
 	const extra: DeclaredMenu[] = [];
 	const menu = Array.isArray(snap.menu) ? snap.menu : [];
 
@@ -148,6 +194,11 @@ function menus_from_snapshot(
 				continue;
 			}
 			if (!path && !item.children?.length) continue;
+			const folder = path ? null : existing_folder(item);
+			if (folder) {
+				walk(item.children, folder, false);
+				continue;
+			}
 			const leaf = path ? leaves.get(path.slice(1)) : undefined;
 			const ref = unique_ref(sub.slug, path, item.id, seen);
 			const placed = add({
@@ -176,6 +227,12 @@ function menus_from_snapshot(
 		const path = safe_path(leaf.segment, owned);
 		if (!path || known.has(path) || hidden.has(path)) continue;
 		if (path === slash_path(sub.path)) continue;
+		// Página del escaparate que el menú no cuelga: no es del sidebar interno.
+		if (leaf.public) {
+			hidden.add(path);
+			retired.add(path);
+			continue;
+		}
 		const ref = unique_ref(sub.slug, path, leaf.pageId, seen);
 		add({
 			menu_ref: ref,
@@ -190,7 +247,9 @@ function menus_from_snapshot(
 		});
 	}
 
-	return prune(extra);
+	// Lo que el manifest marca realm public tampoco es del sidebar interno.
+	for (const path of hidden) retired.add(path);
+	return { extra: prune(extra), retired: [...retired] };
 }
 
 function resources_for(
@@ -254,6 +313,15 @@ function safe_path(raw: string, owned: ReadonlySet<string>): string | null {
 	const head = cleaned.slice(1).split('/')[0] ?? '';
 	if (leaf_segment_is_reserved(head) && !owned.has(head)) return null;
 	return cleaned;
+}
+
+function folder_ref_from_id(slug: string, id: string): string {
+	const clean = id
+		.toLowerCase()
+		.replace(/[^a-z0-9-]+/g, '-')
+		.replace(/^-|-$/g, '');
+	if (!clean) return '';
+	return clean.startsWith(`${slug}-`) ? clean : `${slug}-${clean}`;
 }
 
 function unique_ref(slug: string, path: string, id: string, seen: ReadonlySet<string>): string {

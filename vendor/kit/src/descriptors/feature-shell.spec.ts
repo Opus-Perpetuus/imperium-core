@@ -259,6 +259,7 @@ describe("feature-shell", () => {
             date_range_initial_selection_unit: "decade",
           },
           { name: "f", component: "input-menu", options: [{ value: "x" }] },
+          { name: "g", component: "input-password", autofill: "siempre" },
         ],
       },
     });
@@ -273,7 +274,21 @@ describe("feature-shell", () => {
         "$.form.fields[4].date_range_initial_selection_unit",
       );
       expect(paths).toContain("$.form.fields[5].options[0].label");
+      expect(paths).toContain("$.form.fields[6].autofill");
     }
+  });
+
+  test("correo y contraseña aceptan autocomplete y autofill manual|browser", () => {
+    const result = validate_feature_shell_props({
+      ...sample_props,
+      form: {
+        fields: [
+          { name: "correo", component: "input-text", type: "email", autofill: "manual" },
+          { name: "clave", component: "input-password", autocomplete: "new-password", autofill: "browser" },
+        ],
+      },
+    });
+    expect(result.ok).toBe(true);
   });
 
   test("rechaza data.list no-api://", () => {

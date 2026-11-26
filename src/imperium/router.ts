@@ -1,17 +1,21 @@
 /**
  * Enruta el contrato HTTP original de Imperium sobre SQL.
  */
+import { sql_terminal_deps } from './pos-card-terminal-flow.ts';
 import {
 	apply_odoo_autoscan,
+	apply_self_autoscan,
 	read_autoscan_state,
 	trigger_image_autoscan,
 } from './subject-image-autoscan.ts';
+import { management_mode } from './management-mode.ts';
 import extra from './extra-routes.json';
 import type { BootState } from './health.ts';
 import {
 	assert_http_access,
 	current_user,
 	ensure_session_table,
+	bind_cli_user_lookup,
 	handle_auth,
 	is_auth_login_post,
 	is_password_define_post,
@@ -28,6 +32,7 @@ import { handle_sync_http } from './offline/http.ts';
 import { meta_http_response } from './meta.ts';
 import { handle_action } from './actions.ts';
 import { handle_db_admin, is_db_admin_path } from './db-admin.ts';
+import { handle_feature_map_test, is_feature_map_test_path } from './feature-map-test-http.ts';
 import {
 	ensure_app_registry_schema,
 	handle_app_registry_http,
@@ -35,12 +40,14 @@ import {
 } from './app-registry.ts';
 import { start_registry_cold_sync } from './app-registry-boot.ts';
 import { handle_mcp_agent, seed_mcp_access } from './mcp-agent.ts';
+import { handle_cli_token, seed_cli_access, authenticate_cli_user, is_cli_token_resource } from './cli-token.ts';
+import { BADGE_RESOURCE } from './badge.ts';
 import { ChatError, media_token_actor } from './chat-access.ts';
 import { serve_media } from './media.ts';
 import { guest_media_reader } from './meetings-flow.ts';
 import { recover_orphan_processing_uploads } from './uploads.ts';
 import { ImperiumStore, load_catalog_path } from './store.ts';
-import { caught_http_error, fail } from './envelope.ts';
+import { caught_http_error, fail, humanize_caught_error } from './envelope.ts';
 import { PinChallengeError } from './user-pin.ts';
 import {
 	bind_debug_store,
@@ -138,6 +145,7 @@ export function create_imperium_layer(sql: Bun.SQL) {
 			const started = Date.now();
 			// El logger no escribe hasta tener el store enlazado.
 			bind_debug_store(store);
+			bind_cli_user_lookup((req) => authenticate_cli_user(store, req));
 			debug_info('imperium-core: preparando el arranque…');
 			await ensure_session_table(sql);
 			// Antes de ensure_defaults: la siembra de RH mira qué está instalado.
@@ -151,6 +159,13 @@ export function create_imperium_layer(sql: Bun.SQL) {
 			}
 			try {
 				await seed_mcp_access(store);
+			} catch (err) {
+				debug_error(
+					err instanceof Error ? err.message : String(err),
+				);
+			}
+			try {
+				await seed_cli_access(store);
 			} catch (err) {
 				debug_error(
 					err instanceof Error ? err.message : String(err),
@@ -343,6 +358,9 @@ async function dispatch(
 			if (path === '/subjects' || path.startsWith('/subjects/')) {
 				return add_cors(req, await handle_subjects(store, sql, req, path));
 			}
+			if (is_feature_map_test_path(path)) {
+				return add_cors(req, await handle_feature_map_test(store, sql, req, path));
+			}
 			if (is_db_admin_path(path)) {
 				return add_cors(
 					req,
@@ -359,6 +377,23 @@ async function dispatch(
 				const auth_url = new URL(req.url);
 				auth_url.pathname = path;
 				return add_cors(req, await handle_auth(store, sql, req, auth_url));
+			}
+			if (path === '/cli' || path.startsWith('/cli/')) {
+				const cli_url = new URL(req.url);
+				cli_url.pathname = path;
+				try {
+					return add_cors(req, await handle_cli_token(store, sql, req, cli_url));
+				} catch (err) {
+					const mapped = caught_http_error(err);
+					debug_error(err instanceof Error ? err.message : String(err));
+					return add_cors(
+						req,
+						Response.json(
+							{ ok: false, error: mapped.code ?? 'error', message: mapped.message },
+							{ status: mapped.status },
+						),
+					);
+				}
 			}
 			if (path === '/mcp-agent' || path.startsWith('/mcp-agent/')) {
 				const mcp_url = new URL(req.url);
@@ -400,6 +435,15 @@ async function dispatch(
 			}
 			const hit = split_resource(path, store);
 			if (!hit) return null;
+			if (is_cli_token_resource(hit.resource) || hit.resource === BADGE_RESOURCE) {
+				return add_cors(
+					req,
+					Response.json(
+						{ error: 'not_found', message: 'Ruta no encontrada' },
+						{ status: 404 },
+					),
+				);
+			}
 			try {
 				const actor = await current_user(sql, req);
 				return await run_with_history_context(
@@ -446,7 +490,7 @@ async function dispatch(
 					);
 					return add_cors(req, res);
 				}
-				const crud = await handle_crud(store, req, url, hit.resource, hit.rest, actor);
+				const crud = await handle_crud(store, req, url, hit.resource, hit.rest, actor, sql_terminal_deps(sql, store.has('payment-gateways') ? store.qt('payment-gateways') : null));
 				if (crud) return add_cors(req, crud);
 				return add_cors(
 					req,
@@ -751,7 +795,10 @@ async function install_refused(
 		{
 			error: 'subject_not_authorized',
 			code: 'subject_not_authorized',
-			message: `${sub.name} no está autorizada para este servidor: se autoriza desde Odoo o se agrega al catálogo`,
+			message:
+				management_mode() === 'self'
+					? `${sub.name} no está en el catálogo de este servidor: agrégala al catálogo o enciende la autodetección de apps con su repo como fuente`
+					: `${sub.name} no está autorizada para este servidor: se autoriza desde Odoo o se agrega al catálogo`,
 		},
 		{ status: 403 },
 	);
@@ -761,6 +808,12 @@ async function install_refused(
  * `GET` lista las filas del catálogo; `POST` da de alta una app a mano y
  * `DELETE /<technical_id>` la quita (solo el superadministrador: lo exige el
  * candado de `/subjects`). `PUT /authorized` lo usa Odoo, solo con el maestro.
+ *
+ * Autoescaneo (`image-sources`): en modo odoo solo el maestro lo cambia; en
+ * modo self lo cambia un administrador desde Módulos y el maestro (el
+ * `subjects-sync` del deploy) solo siembra lo del `.env` mientras nadie lo
+ * haya editado en Módulos. Un solo administrador: en self, Odoo ya no
+ * autoriza apps.
  */
 async function handle_subject_catalog(
 	store: ImperiumStore,
@@ -785,7 +838,19 @@ async function handle_subject_catalog(
 		const data = await list_catalog_subjects(store, sql, live_catalog_scan());
 		return Response.json({ data, total_elementos: data.length, message: 'Apps' });
 	}
+	const self_managed = management_mode() === 'self';
 	if (rest === 'authorized' && (req.method === 'PUT' || req.method === 'POST')) {
+		if (self_managed) {
+			return Response.json(
+				{
+					error: 'self_managed',
+					code: 'self_managed',
+					message:
+						'Servidor autoadministrado (IMPERIUM_MANAGEMENT_MODE=self): las apps se autorizan en Módulos (catálogo y autodetección), no desde Odoo',
+				},
+				{ status: 409 },
+			);
+		}
 		if (!is_master_request(req)) {
 			return Response.json(
 				{
@@ -805,6 +870,19 @@ async function handle_subject_catalog(
 		return Response.json({ data, message: 'Autoescaneo de repos de imágenes' });
 	}
 	if (rest === 'image-sources' && (req.method === 'PUT' || req.method === 'POST')) {
+		if (self_managed) {
+			const body = (await req.json().catch(() => ({}))) as { enabled?: unknown; sources?: unknown };
+			// El maestro es el deploy (`subjects-sync --image-sources`): siembra del `.env`.
+			const origin = is_master_request(req) ? 'env' : 'gui';
+			const data = await apply_self_autoscan(store, sql, body, origin);
+			if (data.enabled && !data.seed_ignored) void trigger_image_autoscan(store, sql).catch(() => {});
+			return Response.json({
+				data,
+				message: data.seed_ignored
+					? 'Autodetección de apps: se conserva lo editado en Módulos (el .env solo siembra)'
+					: 'Autodetección de apps',
+			});
+		}
 		if (!is_master_request(req)) {
 			return Response.json(
 				{
@@ -828,7 +906,9 @@ async function handle_subject_catalog(
 				{
 					error: 'autoscan_disabled',
 					code: 'autoscan_disabled',
-					message: 'El autoescaneo de repos de imágenes no está habilitado desde Odoo',
+					message: self_managed
+						? 'La autodetección de apps está apagada: enciéndela en Módulos'
+						: 'El autoescaneo de repos de imágenes no está habilitado desde Odoo',
 				},
 				{ status: 409 },
 			);
@@ -838,7 +918,7 @@ async function handle_subject_catalog(
 	}
 	const one = rest.match(/^(subject-[a-z0-9-]+)$/);
 	if (one && req.method === 'DELETE') {
-		const removed = await remove_manual_entry(sql, one[1]!);
+		const removed = await remove_manual_entry(sql, one[1]!, management_mode());
 		if (!removed) {
 			return Response.json({ error: `unknown entry ${one[1]}` }, { status: 404 });
 		}
@@ -872,6 +952,7 @@ function looks_imperium(path: string, store: ImperiumStore): boolean {
 	if (p === '/auth' || p.startsWith('/auth/')) return true;
 	if (p === '/media' || p.startsWith('/media/')) return true;
 	if (p === '/mcp-agent' || p.startsWith('/mcp-agent/')) return true;
+	if (p === '/cli' || p.startsWith('/cli/')) return true;
 	if (p === '/subjects' || p.startsWith('/subjects/')) return true;
 	if (is_app_registry_path(p)) return true;
 	if (p === '/compartir' || p.startsWith('/compartir/')) return true;
@@ -963,7 +1044,7 @@ export function add_cors(req: Request, res: Response | null): Response | null {
 	headers.set(
 		'access-control-allow-headers',
 		req.headers.get('access-control-request-headers') ??
-			'content-type,authorization,x-user-pin-token',
+			'content-type,authorization,x-user-pin-token,x-imperium-client',
 	);
 	headers.set('access-control-allow-methods', 'GET,POST,PUT,PATCH,DELETE,HEAD,OPTIONS');
 	return new Response(res.body, { status: res.status, headers });

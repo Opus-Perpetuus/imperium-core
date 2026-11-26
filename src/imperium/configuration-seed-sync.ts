@@ -17,6 +17,7 @@ import { plan_escritorio_menu } from './escritorio-menu-seed.ts';
 import { plan_portal_menus } from './portal-menu-seed.ts';
 import { plan_reuniones_menu } from './reuniones-menu-seed.ts';
 import { ensure_devoluciones_access } from './devoluciones-acceso-seed.ts';
+import { ensure_almacen_traslado_access } from './inventario-traslado-acceso-seed.ts';
 import { ensure_installed_subject_menus } from './subject-menu-seed.ts';
 
 function backend_src_root(): string {
@@ -156,6 +157,13 @@ export async function apply_missing_configuration_seeds(
 	} catch (err) {
 		console.warn(
 			`No se pudieron sembrar los permisos de Devoluciones: ${err instanceof Error ? err.message : String(err)}`,
+		);
+	}
+	try {
+		await ensure_almacen_traslado_access(store);
+	} catch (err) {
+		console.warn(
+			`No se pudieron sembrar los permisos de traslados de Almacén: ${err instanceof Error ? err.message : String(err)}`,
 		);
 	}
 	await ensure_installed_subject_menus(

@@ -6,6 +6,7 @@ import {
 	pg_schema_name,
 	type KirletSchemaBundle,
 } from '@opus-perpetuus/imperium-core-kit';
+import { FEATURE_MAP_TEST_COLUMN_DDL } from './feature-map-test.ts';
 
 const ddl = new SchemaDdlBuilder();
 
@@ -15,7 +16,8 @@ async function ensure_tracking(sql: Bun.SQL): Promise<void> {
       technical_id TEXT PRIMARY KEY,
       version INTEGER NOT NULL,
       applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      tables JSONB NOT NULL DEFAULT '[]'::jsonb
+      tables JSONB NOT NULL DEFAULT '[]'::jsonb,
+      ${FEATURE_MAP_TEST_COLUMN_DDL}
     )
   `);
 }

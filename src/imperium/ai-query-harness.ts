@@ -1,3 +1,5 @@
+import { get_widget_kind } from './widget-kinds.ts';
+
 export type QueryFilter = {
 	field: string;
 	op: 'eq' | 'lt' | 'lte' | 'gt' | 'gte';
@@ -96,8 +98,7 @@ function pull_status(search: string): { search: string; status: string | null } 
 function widget_type_of(raw: string, aggregation_op: string): string {
 	if (aggregation_op === 'sum') return 'kpi';
 	const text = raw.trim().toLowerCase();
-	if (text === 'kpi' || text === 'progress') return text;
-	if (text.startsWith('chart-')) return text;
+	if (get_widget_kind(text)) return text;
 	if (text === 'chart') return 'chart-bar';
 	return 'table';
 }

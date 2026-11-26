@@ -904,12 +904,21 @@ export async function format_increment_real_value(
 	);
 }
 
+type SchemaIncrement = {
+	model_name: string;
+	increment_field: string;
+	index_name: string;
+	custom_pattern: string;
+	/** Prefijo legado a realinear. No se persiste en la fila nueva. */
+	legacy_pattern_prefix?: string;
+};
+
 /**
  * Folios "automáticos" que el original creaba en el primer alta
  * (`auto_increment_options` del esquema o el folio del service). Sin su fila
  * global el campo llega vacío y el `required` de `name` rechaza el alta.
  */
-const SCHEMA_INCREMENTS = [
+const SCHEMA_INCREMENTS: SchemaIncrement[] = [
 	{
 		model_name: 'RegistroEmergencias',
 		increment_field: 'name',
@@ -928,6 +937,14 @@ const SCHEMA_INCREMENTS = [
 		index_name: 'servicios_realizados_name',
 		custom_pattern: 'SRV-[seq;ceros=6]',
 	},
+	{
+		model_name: 'Patient',
+		// Folio de consultante (persona), no del expediente clínico.
+		increment_field: 'numero_expediente',
+		index_name: 'patient_numero_expediente',
+		custom_pattern: 'CON-[seq;ceros=6]',
+		legacy_pattern_prefix: 'EXP-',
+	},
 ];
 
 /**
@@ -942,14 +959,35 @@ async function ensure_schema_increments(
 ): Promise<void> {
 	for (const declared of SCHEMA_INCREMENTS) {
 		if (store.resource_for_model(declared.model_name) !== resource) continue;
-		const exists = rows.some(
+		const { legacy_pattern_prefix, ...control_fields } = declared;
+		const existing = rows.find(
 			(row) =>
 				String(row.model_name ?? '') === declared.model_name &&
 				field_matches(row, declared.increment_field) &&
 				is_global_ref(row.ref_value),
 		);
-		if (exists) continue;
-		const control = { ...declared, collection: resource, type: 'custom' };
+		if (existing) {
+			// Solo el patrón legado EXP- de Patient.numero_expediente pasa al
+			// declarado (CON-), sin resetear la secuencia. Cualquier otro patrón
+			// existente (incluido uno del admin en Patient) se deja.
+			const pattern = String(existing.custom_pattern ?? '');
+			if (
+				declared.model_name === 'Patient' &&
+				declared.increment_field === 'numero_expediente' &&
+				legacy_pattern_prefix &&
+				pattern.startsWith(legacy_pattern_prefix) &&
+				pattern !== declared.custom_pattern &&
+				typeof store.update === 'function' &&
+				existing._id
+			) {
+				const updated = await store.update('auto-increment-control', String(existing._id), {
+					custom_pattern: declared.custom_pattern,
+				});
+				Object.assign(existing, updated ?? { custom_pattern: declared.custom_pattern });
+			}
+			continue;
+		}
+		const control = { ...control_fields, collection: resource, type: 'custom' };
 		const unique = tracker_unique_ref(control, null);
 		try {
 			rows.push(

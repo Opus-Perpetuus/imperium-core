@@ -244,6 +244,206 @@ describe('bultos: el apartado se valida antes de guardar', () => {
 		expect(store.data['inventory-movement']).toHaveLength(1);
 	});
 
+	test('con almacén del pedido aparta lo que sí hay en ese alcance', async () => {
+		const ALM_RUTA = '507f1f77bcf86cd799439021';
+		const ALM_GENERAL = '507f1f77bcf86cd799439022';
+		const store = memory_store({
+			pedidos: [{ ...pedido('confirmado'), almacen: ALM_RUTA }],
+			products: [{ _id: TORNILLO, name: 'Tornillo', existencia: 43, existenciaApartada: 0 }],
+			'inventory-internal-location': [
+				{ _id: ALM_RUTA, name: 'Ruta', tipo: 'almacen' },
+				{ _id: ALM_GENERAL, name: 'General', tipo: 'almacen' },
+			],
+			'inventory-stock-quant': [
+				{
+					_id: 'q-ruta',
+					producto: TORNILLO,
+					ubicacion: ALM_RUTA,
+					cantidad: 3,
+					cantidad_apartada: 0,
+					cantidad_disponible: 3,
+				},
+				{
+					_id: 'q-gen',
+					producto: TORNILLO,
+					ubicacion: ALM_GENERAL,
+					cantidad: 40,
+					cantidad_apartada: 0,
+					cantidad_disponible: 40,
+				},
+			],
+			'delivery-package': [
+				{
+					_id: BULTO,
+					pedido: PEDIDO,
+					estado: 'pendiente',
+					contenido: [{ product: TORNILLO, quantity: 3 }],
+				},
+			],
+			'inventory-movement': [],
+		});
+		await sync_order_logistics_reservation(store, PEDIDO);
+		expect(store.data.products[0].existenciaApartada).toBe(3);
+		expect(store.data['inventory-movement']).toHaveLength(1);
+	});
+
+	test('con almacén del pedido no aparta existencia de otro almacén', async () => {
+		const ALM_RUTA = '507f1f77bcf86cd799439021';
+		const ALM_GENERAL = '507f1f77bcf86cd799439022';
+		const ANAQUEL = '507f1f77bcf86cd799439023';
+		const store = memory_store({
+			pedidos: [{ ...pedido('confirmado'), almacen: ALM_RUTA }],
+			products: [{ _id: TORNILLO, name: 'Tornillo', existencia: 43, existenciaApartada: 0 }],
+			'inventory-internal-location': [
+				{ _id: ALM_RUTA, name: 'Ruta', tipo: 'almacen' },
+				{
+					_id: ALM_GENERAL,
+					name: 'General',
+					tipo: 'almacen',
+					_ref: 'inventory-internal-location-warehouse',
+				},
+				{ _id: ANAQUEL, parent: ALM_RUTA, tipo: 'almacen' },
+			],
+			'inventory-stock-quant': [
+				{
+					_id: 'q-anaquel',
+					producto: TORNILLO,
+					ubicacion: ANAQUEL,
+					cantidad: 3,
+					cantidad_apartada: 0,
+					cantidad_disponible: 3,
+				},
+				{
+					_id: 'q-gen',
+					producto: TORNILLO,
+					ubicacion: ALM_GENERAL,
+					cantidad: 40,
+					cantidad_apartada: 0,
+					cantidad_disponible: 40,
+				},
+			],
+			'delivery-package': [
+				{
+					_id: BULTO,
+					pedido: PEDIDO,
+					estado: 'pendiente',
+					contenido: [{ product: TORNILLO, quantity: 5 }],
+				},
+			],
+			'inventory-movement': [],
+		});
+		await expect(sync_order_logistics_reservation(store, PEDIDO)).rejects.toThrow(
+			'No hay inventario suficiente para apartar 5 de Tornillo',
+		);
+		expect(store.data.products[0].existenciaApartada).toBe(0);
+		expect(store.data['inventory-movement']).toEqual([]);
+	});
+
+	test('un segundo pedido del mismo almacén no reusa lo ya apartado ahí', async () => {
+		const ALM_RUTA = '507f1f77bcf86cd799439021';
+		const ALM_GENERAL = '507f1f77bcf86cd799439022';
+		const PEDIDO_2 = '507f1f77bcf86cd799439016';
+		const BULTO_2 = '507f1f77bcf86cd799439017';
+		const store = memory_store({
+			pedidos: [
+				{ ...pedido('confirmado'), almacen: ALM_RUTA },
+				{ ...pedido('confirmado'), _id: PEDIDO_2, almacen: ALM_RUTA },
+			],
+			products: [{ _id: TORNILLO, name: 'Tornillo', existencia: 55, existenciaApartada: 4 }],
+			'inventory-internal-location': [
+				{ _id: ALM_RUTA, name: 'Ruta', tipo: 'almacen' },
+				{ _id: ALM_GENERAL, name: 'General', tipo: 'almacen' },
+			],
+			'inventory-stock-quant': [
+				{
+					_id: 'q-ruta',
+					producto: TORNILLO,
+					ubicacion: ALM_RUTA,
+					cantidad: 5,
+					cantidad_apartada: 0,
+					cantidad_disponible: 5,
+				},
+				{
+					_id: 'q-gen',
+					producto: TORNILLO,
+					ubicacion: ALM_GENERAL,
+					cantidad: 50,
+					cantidad_apartada: 0,
+					cantidad_disponible: 50,
+				},
+			],
+			'delivery-package': [
+				{
+					_id: BULTO_2,
+					pedido: PEDIDO_2,
+					estado: 'pendiente',
+					contenido: [{ product: TORNILLO, quantity: 3 }],
+				},
+			],
+			'inventory-movement': [
+				{
+					documento_tipo: 'pedido',
+					documento_id: PEDIDO,
+					tipo_movimiento: 'apartado_logistica',
+					producto: TORNILLO,
+					cantidad: 4,
+				},
+			],
+		});
+		await expect(sync_order_logistics_reservation(store, PEDIDO_2)).rejects.toThrow(
+			'No hay inventario suficiente para apartar 3 de Tornillo',
+		);
+		expect(store.data.products[0].existenciaApartada).toBe(4);
+	});
+
+	test('sin filas por ubicación, un almacén que no es el general no tiene existencia', async () => {
+		const ALM_RUTA = '507f1f77bcf86cd799439021';
+		const store = memory_store({
+			pedidos: [{ ...pedido('confirmado'), almacen: ALM_RUTA }],
+			products: [{ _id: TORNILLO, name: 'Tornillo', existencia: 10, existenciaApartada: 0 }],
+			'inventory-internal-location': [
+				{ _id: ALM_RUTA, name: 'Ruta', tipo: 'almacen' },
+				{
+					_id: '507f1f77bcf86cd799439022',
+					name: 'General',
+					tipo: 'almacen',
+					_ref: 'inventory-internal-location-warehouse',
+				},
+			],
+			'inventory-stock-quant': [],
+			'delivery-package': [
+				{
+					_id: BULTO,
+					pedido: PEDIDO,
+					estado: 'pendiente',
+					contenido: [{ product: TORNILLO, quantity: 1 }],
+				},
+			],
+			'inventory-movement': [],
+		});
+		await expect(sync_order_logistics_reservation(store, PEDIDO)).rejects.toThrow(
+			'No hay inventario suficiente para apartar 1 de Tornillo',
+		);
+	});
+
+	test('sin almacén en el pedido el apartado sigue con la existencia global', async () => {
+		const store = memory_store({
+			pedidos: [pedido('confirmado')],
+			products: [{ _id: TORNILLO, name: 'Tornillo', existencia: 5, existenciaApartada: 1 }],
+			'delivery-package': [
+				{
+					_id: BULTO,
+					pedido: PEDIDO,
+					estado: 'pendiente',
+					contenido: [{ product: TORNILLO, quantity: 4 }],
+				},
+			],
+			'inventory-movement': [],
+		});
+		await sync_order_logistics_reservation(store, PEDIDO);
+		expect(store.data.products[0].existenciaApartada).toBe(5);
+	});
+
 	test('sin la marca, editar sigue rechazando el faltante', async () => {
 		const bulto = {
 			_id: BULTO,

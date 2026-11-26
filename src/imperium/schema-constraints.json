@@ -370,7 +370,6 @@
       "name"
     ],
     "patient": [
-      "numero_expediente",
       "nombre_completo",
       "fecha_nacimiento",
       "edad",
