@@ -6485,7 +6485,7 @@ export class ImperiumStore {
 			values,
 		);
 		const created = this.flatten(inserted[0] as Record<string, unknown>, resource)!;
-		await this.sync_search(resource, created);
+		void SearchEngine.in_background(() => this.sync_search(resource, created));
 		await record_document_history(this, resource, null, created).catch(() => undefined);
 		return created;
 	}
@@ -6529,7 +6529,7 @@ export class ImperiumStore {
 			values,
 		);
 		const saved = this.flatten((updated[0] as Record<string, unknown>) ?? null, resource);
-		if (saved) await this.sync_search(resource, saved);
+		if (saved) void SearchEngine.in_background(() => this.sync_search(resource, saved));
 		if (saved) await record_document_history(this, resource, existing, saved).catch(() => undefined);
 		return saved;
 	}

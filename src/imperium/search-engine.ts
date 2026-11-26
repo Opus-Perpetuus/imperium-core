@@ -21,6 +21,7 @@ class SearchEngineService {
 	private availability_checked_at = 0;
 	private ensured = new Set<string>();
 	private error_logged = false;
+	private background: Promise<void> = Promise.resolve();
 
 	is_enabled() {
 		return Boolean(meili_url());
@@ -84,6 +85,17 @@ class SearchEngineService {
 		}
 	}
 
+	in_background(task: () => Promise<void>): Promise<void> {
+		this.background = this.background
+			.then(() => (this.failed_recently() ? undefined : task()))
+			.catch(() => undefined);
+		return this.background;
+	}
+
+	private failed_recently() {
+		return !this.available && Date.now() - this.availability_checked_at < AVAILABILITY_TTL_MS;
+	}
+
 	async delete_documents(collection: string, ids: string[]) {
 		if (!ids.length || !this.is_enabled()) return;
 		try {
@@ -94,6 +106,7 @@ class SearchEngineService {
 				);
 			}
 		} catch (error) {
+			this.mark_available(false);
 			this.log_error(error);
 		}
 	}
