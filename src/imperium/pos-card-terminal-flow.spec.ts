@@ -10,6 +10,7 @@ import {
 	read_card_terminal,
 	read_mercadopago_gateway,
 	read_terminal_charge,
+	sql_charge_repo,
 	sql_gateway_source,
 	terminal_external_reference,
 	verify_mp_signature,
@@ -101,6 +102,29 @@ describe('pasarela de la tienda como fuente del token', () => {
 		expect(String(calls[0][0])).toContain('FROM "subject_tienda"."payment_gateways" WHERE slug = $1');
 		expect(await sql_gateway_source(sql, null)('mercadopago')).toBeNull();
 		expect(calls).toHaveLength(1);
+	});
+
+	test('tabla de cobros: crea y migra refunded_amount y refunds antes del INSERT', async () => {
+		const queries: string[] = [];
+		const sql = { unsafe: async (q: string) => (queries.push(q), []) };
+		const table = 'public.pos_card_terminal_charge';
+		await sql_charge_repo(sql, table).save({
+			id: 'c1',
+			idempotency_key: 'k1',
+			pos_session: 's1',
+			adapter: 'simulado',
+			external_reference: 'ref1',
+			amount: 10,
+			status: 'approved',
+			provider_status: 'processed',
+		});
+		const create = queries.find((q) => q.startsWith(`CREATE TABLE IF NOT EXISTS ${table}`));
+		expect(create).toContain('refunded_amount NUMERIC(14,2) DEFAULT 0');
+		expect(create).toContain("refunds JSONB DEFAULT '[]'");
+		const alter = queries.find((q) => q.startsWith(`ALTER TABLE ${table}`));
+		expect(alter).toContain('ADD COLUMN IF NOT EXISTS refunded_amount');
+		expect(alter).toContain('ADD COLUMN IF NOT EXISTS refunds');
+		expect(queries.findIndex((q) => q.startsWith('INSERT'))).toBeGreaterThan(queries.indexOf(alter!));
 	});
 });
 

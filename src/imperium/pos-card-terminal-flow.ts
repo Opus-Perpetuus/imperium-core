@@ -337,8 +337,13 @@ export function sql_charge_repo(sql: SqlLike, table: string): TerminalChargeRepo
 			provider_status TEXT,
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
+			refunded_amount NUMERIC(14,2) DEFAULT 0,
+			refunds JSONB DEFAULT '[]',
 			${FEATURE_MAP_TEST_COLUMN_DDL}
 		)`);
+		await sql.unsafe(
+			`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS refunded_amount NUMERIC(14,2) DEFAULT 0, ADD COLUMN IF NOT EXISTS refunds JSONB DEFAULT '[]'`,
+		);
 		ensured_tables.add(table);
 	};
 	const one = async (where: string, value: string) => {
