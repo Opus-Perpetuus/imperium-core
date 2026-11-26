@@ -1293,6 +1293,7 @@ const SESSION_SCOPED_EXTRAS = new Set([
 	'pos-session:cancel_open_session',
 	'pos-session:bulk_close_sessions',
 	'ticketing-system-turn:take_next_turn',
+	'ticketing-system-turn:take_turn',
 	'ticketing-system-turn:notify_turn',
 	'ticketing-system-turn:end_attending_turn',
 	'ticketing-system-turn:attending_turn_for_box',

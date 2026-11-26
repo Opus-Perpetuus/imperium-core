@@ -297,26 +297,46 @@ async function licencias_first(
 	return [...first, ...rest];
 }
 
-async function box_turns_summary(store: ImperiumStore, box: ImperiumDoc) {
+export function allows_other_box_turns(box: ImperiumDoc): boolean {
+	return box.allow_take_other_box_turns !== false;
+}
+
+async function box_own_turns(
+	store: ImperiumStore,
+	box: ImperiumDoc,
+	waiting: ImperiumDoc[],
+): Promise<ImperiumDoc[]> {
 	const allowed_services = as_id_list(box.allowed_services);
 	const allowed_types = as_id_list(box.allowed_customer_types);
+	const matching = waiting.filter(
+		(turn) =>
+			as_id_list(turn.services).every((id) => allowed_services.includes(id)) &&
+			allowed_types.includes(ref_id(turn.customer_type)),
+	);
+	if (matching.length) return matching;
+	return apoyo_turns(store, box, waiting);
+}
+
+function take_patch(box_id: string): ImperiumDoc {
+	const stamp = new Date().toISOString();
+	return {
+		status: 'en_atencion',
+		estado: 'en_atencion',
+		assigned_box: box_id,
+		fecha_inicio: stamp,
+		time_box: [stamp],
+	};
+}
+
+async function box_turns_summary(store: ImperiumStore, box: ImperiumDoc) {
 	const waiting = await pending_turns(store);
-	const matching: ImperiumDoc[] = [];
-	for (const turn of waiting) {
-		const services = as_id_list(turn.services);
-		const type_id = ref_id(turn.customer_type);
-		const services_ok = services.every((id) => allowed_services.includes(id));
-		const type_ok = allowed_types.includes(type_id);
-		if (services_ok && type_ok) matching.push(turn);
-	}
 	// #300: la pantalla muestra lo mismo que tomará «Tomar siguiente turno».
-	if (!matching.length) matching.push(...(await apoyo_turns(store, box, waiting)));
+	const matching = await box_own_turns(store, box, waiting);
 	// La pantalla de caja muestra customer_type.name y services[].name;
 	// sin populate llegan ids crudos (ObjectId) y el front los pinta tal cual.
-	const pending_queue = await populate_turns(
-		store,
-		await licencias_first(store, box, await sort_pending(store, matching)),
-	);
+	const pending_queue = (
+		await populate_turns(store, await licencias_first(store, box, await sort_pending(store, matching)))
+	).map((turn) => ({ ...turn, puede_tomar: true }));
 	// #373: las vistas por servicio y por tipo de usuario muestran también los
 	// pendientes de otras cajas, marcados con `de_otra_caja: true`. La cola de
 	// «Pendientes» y «Tomar siguiente turno» siguen siendo solo los de esta caja.
@@ -324,7 +344,7 @@ async function box_turns_summary(store: ImperiumStore, box: ImperiumDoc) {
 	const others = await populate_turns(
 		store,
 		(await sort_pending(store, waiting.filter((turn) => !own_ids.has(ref_id(turn))))).map(
-			(turn) => ({ ...turn, de_otra_caja: true }),
+			(turn) => ({ ...turn, de_otra_caja: true, puede_tomar: allows_other_box_turns(box) }),
 		),
 	);
 	const turns_by_service: Record<string, ImperiumDoc[]> = {};
@@ -456,15 +476,7 @@ export async function take_next_turn(
 	const waiting = await pending_turns(store);
 	// Fila vacía: aviso 200 sin turno (mismo contrato que el backend Mongo).
 	if (!waiting.length) return { turn: null, waiting: 0 };
-	const matching: ImperiumDoc[] = [];
-	for (const turn of waiting) {
-		const services = as_id_list(turn.services);
-		const type_id = ref_id(turn.customer_type);
-		if (services.every((id) => allowed_services.includes(id)) && allowed_types.includes(type_id)) {
-			matching.push(turn);
-		}
-	}
-	if (!matching.length) matching.push(...(await apoyo_turns(store, box, waiting)));
+	const matching = await box_own_turns(store, box, waiting);
 	if (!matching.length) {
 		const missing_services = new Set<string>();
 		const missing_types = new Set<string>();
@@ -502,25 +514,47 @@ export async function take_next_turn(
 	}
 	const ordered = await licencias_first(store, box, await sort_pending(store, matching));
 	for (const next of ordered) {
-		const stamp = new Date().toISOString();
-		const updated = await store.update(
-			'ticketing-system-turn',
-			String(next._id),
-			{
-				status: 'en_atencion',
-				estado: 'en_atencion',
-				assigned_box: box_id,
-				fecha_inicio: stamp,
-				time_box: [stamp],
-			},
-			{ only_if_status: 'pendiente' },
-		);
+		const updated = await store.update('ticketing-system-turn', String(next._id), take_patch(box_id), {
+			only_if_status: 'pendiente',
+		});
 		if (!updated) continue;
 		await notify_ticketing_rooms(store);
 		const [populated] = await populate_turns(store, [updated]);
 		return { turn: populated ?? updated, waiting: waiting.length };
 	}
 	return { turn: null, waiting: 0 };
+}
+
+export const TURN_ALREADY_TAKEN = 'Ese turno ya lo tomó otra caja';
+export const BOX_CANNOT_TAKE_OTHERS = 'Esta caja no puede tomar turnos de otras cajas';
+
+export async function take_turn_by_id(
+	store: ImperiumStore,
+	box_config_id: string,
+	raw_turn_id: unknown,
+): Promise<{ turn: ImperiumDoc | null; message: string }> {
+	const box_id = text(box_config_id);
+	if (!box_id) throw new Error('Se necesita una caja para tomar el turno');
+	const turn_id = turn_id_from_body(raw_turn_id);
+	if (!turn_id) throw new Error('Se necesita un id de turno para tomarlo');
+	const box = await store.find_id('ticketing-system-box-config', box_id);
+	if (!box || box.is_active === false) throw new Error('No se encontró la configuración de la caja');
+	const turn = await store.find_id('ticketing-system-turn', turn_id);
+	if (!turn || turn.is_active === false) throw new Error('No se encontró el turno');
+	if (!is_pending(turn)) return { turn: null, message: TURN_ALREADY_TAKEN };
+	if (!allows_other_box_turns(box)) {
+		const own = await box_own_turns(store, box, await pending_turns(store));
+		if (!own.some((row) => ref_id(row) === turn_id)) {
+			return { turn: null, message: BOX_CANNOT_TAKE_OTHERS };
+		}
+	}
+	const updated = await store.update('ticketing-system-turn', turn_id, take_patch(box_id), {
+		only_if_status: 'pendiente',
+	});
+	if (!updated) return { turn: null, message: TURN_ALREADY_TAKEN };
+	await notify_ticketing_rooms(store);
+	const [populated] = await populate_turns(store, [updated]);
+	return { turn: populated ?? updated, message: 'Turno tomado' };
 }
 
 export async function notify_turn(store: ImperiumStore, raw_id: unknown): Promise<ImperiumDoc> {

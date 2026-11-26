@@ -13824,6 +13824,14 @@
               "crud": "boolean",
               "component": "input-checkbox",
               "label": "exclusive"
+            },
+            {
+              "name": "allow_take_other_box_turns",
+              "mongo": "allow_take_other_box_turns",
+              "pg": "boolean",
+              "crud": "boolean",
+              "component": "input-checkbox",
+              "label": "allow take other box turns"
             }
           ]
         },

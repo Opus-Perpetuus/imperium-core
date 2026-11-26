@@ -703,3 +703,109 @@ describe('apoyo entre cajas y licencias primero (#300)', () => {
 		expect(apoyo_minutos(0)).toBe(0);
 	});
 });
+
+describe('tomar un turno específico de la tabla (take-turn, #375)', () => {
+	function two_boxes(allow?: boolean): Record<string, Row[]> {
+		const seed = desk();
+		seed['ticketing-system-service-type']!.push({ _id: 'svc-2', name: 'Agua', priority_level: 1, is_active: true });
+		seed['ticketing-system-box-config']!.push({
+			_id: 'box-agua',
+			name: 'Caja Agua',
+			is_active: true,
+			allowed_services: ['svc-2'],
+			allowed_customer_types: ['type-1'],
+		});
+		if (allow !== undefined) seed['ticketing-system-box-config']![0]!.allow_take_other_box_turns = allow;
+		seed['ticketing-system-turn']!.push({
+			_id: 'turn-agua',
+			name: 'B001',
+			status: 'pendiente',
+			estado: 'pendiente',
+			services: ['svc-2'],
+			customer_type: 'type-1',
+			priority_level: 1,
+			createdAt: '2026-01-01T00:02:00.000Z',
+			is_active: true,
+		});
+		return seed;
+	}
+
+	test('con el interruptor encendido, la caja toma un turno de otra caja', async () => {
+		const res = await call(memory_store(two_boxes(true)), 'take_turn', {
+			box_config_id: 'box-1',
+			turn_id: 'turn-agua',
+		});
+		expect(res.status).toBe(200);
+		expect(res.message).toBe('Turno tomado');
+		expect(res.data.map((row) => String(row._id))).toEqual(['turn-agua']);
+		expect(res.data[0]?.status).toBe('en_atencion');
+		expect(assigned_box_id(res.data[0]!)).toBe('box-1');
+	});
+
+	test('con el campo ausente cuenta como encendido', async () => {
+		const res = await call(memory_store(two_boxes()), 'take_turn', {
+			box_config_id: 'box-1',
+			turn_id: 'turn-agua',
+		});
+		expect(res.data.map((row) => String(row._id))).toEqual(['turn-agua']);
+	});
+
+	test('con el interruptor apagado, rechaza el de otra caja y deja tomar el propio', async () => {
+		const store = memory_store(two_boxes(false));
+		const other = await call(store, 'take_turn', { box_config_id: 'box-1', turn_id: 'turn-agua' });
+		expect(other.status).toBe(200);
+		expect(other.data).toEqual([]);
+		expect(other.message).toBe('Esta caja no puede tomar turnos de otras cajas');
+		expect((await store.find_id('ticketing-system-turn', 'turn-agua'))?.status).toBe('pendiente');
+		const own = await call(store, 'take_turn', { box_config_id: 'box-1', turn_id: 'turn-waiting' });
+		expect(own.data.map((row) => String(row._id))).toEqual(['turn-waiting']);
+	});
+
+	test('dos tomas simultáneas del mismo turno: una lo recibe y la otra no', async () => {
+		const store = memory_store(two_boxes());
+		const results = await Promise.all(
+			['box-1', 'box-agua'].map((box) => call(store, 'take_turn', { box_config_id: box, turn_id: 'turn-agua' })),
+		);
+		const winners = results.filter((res) => res.data.length === 1);
+		const losers = results.filter((res) => res.data.length === 0);
+		expect(winners).toHaveLength(1);
+		expect(losers).toHaveLength(1);
+		expect(losers[0]?.message).toBe('Ese turno ya lo tomó otra caja');
+	});
+
+	test('un turno que ya no está pendiente responde sin turno', async () => {
+		const seed = two_boxes();
+		seed['ticketing-system-turn']![1]!.status = 'en_atencion';
+		seed['ticketing-system-turn']![1]!.estado = 'en_atencion';
+		const res = await call(memory_store(seed), 'take_turn', { box_config_id: 'box-1', turn_id: 'turn-agua' });
+		expect(res.status).toBe(200);
+		expect(res.data).toEqual([]);
+		expect(res.message).toBe('Ese turno ya lo tomó otra caja');
+	});
+
+	test('puede_tomar en el resumen depende del interruptor de la caja', async () => {
+		const flags = async (allow?: boolean) => {
+			const res = await call(memory_store(two_boxes(allow)), 'box_turns_summary', { box_config_id: 'box-1' });
+			const by_type = (res.data[0] as Row).turns_by_user_type as Record<string, Row[]>;
+			return by_type['General']!.map((row) => [row._id, row.puede_tomar]);
+		};
+		expect(await flags()).toEqual([
+			['turn-waiting', true],
+			['turn-agua', true],
+		]);
+		expect(await flags(false)).toEqual([
+			['turn-waiting', true],
+			['turn-agua', false],
+		]);
+	});
+
+	test('la ruta está declarada en extra-routes', async () => {
+		const routes = (await import('./extra-routes.json')).default as Array<Record<string, string>>;
+		expect(routes).toContainEqual({
+			resource: 'ticketing-system-turn',
+			method: 'post',
+			path: '/take-turn',
+			action: 'take_turn',
+		});
+	});
+});

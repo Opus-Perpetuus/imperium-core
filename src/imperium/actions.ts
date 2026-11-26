@@ -411,6 +411,7 @@ import {
 	end_attending_turn as end_ticketing_turn,
 	notify_turn as notify_ticketing_turn,
 	take_next_turn as take_ticketing_turn,
+	take_turn_by_id as take_ticketing_turn_by_id,
 } from './ticketing-turn-flow.ts';
 import {
 	assert_pos_runtime_writable,
@@ -1220,6 +1221,8 @@ async function dispatch(ctx: Ctx): Promise<unknown | Response> {
 			return medical_for_doctor(ctx);
 		case 'ticketing-system-turn:take_next_turn':
 			return take_next_turn(ctx);
+		case 'ticketing-system-turn:take_turn':
+			return take_turn(ctx);
 		case 'ticketing-system-turn:notify_turn':
 			return notify_turn(ctx);
 		case 'ticketing-system-turn:end_attending_turn':
@@ -6665,6 +6668,16 @@ async function take_next_turn(ctx: Ctx) {
 		return ok([], 'Sin turnos a la espera', 0);
 	}
 	return ok([taken.turn], 'Turno tomado', taken.waiting);
+}
+
+async function take_turn(ctx: Ctx) {
+	const taken = await take_ticketing_turn_by_id(
+		ctx.store,
+		String(ctx.body.box_config_id ?? ctx.body.box ?? ctx.body.caja ?? ''),
+		ctx.body.turn_id ?? ctx.body.id ?? ctx.body._id,
+	);
+	if (!taken.turn) return ok([], taken.message, 0);
+	return ok([taken.turn], taken.message);
 }
 
 async function notify_turn(ctx: Ctx) {
