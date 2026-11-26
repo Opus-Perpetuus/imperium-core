@@ -38,6 +38,7 @@ import {
 import { mongo_match_to_sql } from './record-rules.ts';
 import { products_inventory_cost } from './products-flow.ts';
 import { vehicle_by_status } from './vehicle-flow.ts';
+import { with_box_service_letters } from './ticketing-turn-flow.ts';
 import { delivery_package_by_status } from './delivery-package-flow.ts';
 import { pedidos_sales_stats } from './pedidos-flow.ts';
 import { ensure_pedido_fecha, is_pedido_resource } from './pedidos-fecha.ts';
@@ -6695,9 +6696,33 @@ export class ImperiumStore {
 			}
 			return out;
 		});
+		if (resource === 'ticketing-system-box-config') return this.with_box_letters(populated);
 		return resource === 'purchase-order'
 			? with_purchase_order_supplier_name(populated)
 			: populated;
+	}
+
+	/** Administrador de cajas: la letra de cada servicio permitido (la del folio del turno). */
+	private async with_box_letters(boxes: ImperiumDoc[]): Promise<ImperiumDoc[]> {
+		if (!this.has('ticketing-system-service-type')) return boxes;
+		const ids = new Set<string>();
+		for (const box of boxes) {
+			for (const entry of as_array(box.allowed_services)) {
+				const id = String(
+					typeof entry === 'object' && entry !== null ? (entry as { _id?: unknown })._id ?? '' : entry ?? '',
+				).trim();
+				if (id) ids.add(id);
+			}
+		}
+		if (!ids.size) return with_box_service_letters(boxes, new Map());
+		const { rows } = await this.find_many('ticketing-system-service-type', {
+			ids: [...ids],
+			take: ids.size,
+			include_inactive: true,
+			populate: false,
+			skip_total: true,
+		});
+		return with_box_service_letters(boxes, new Map(rows.map((r) => [String(r._id), r])));
 	}
 
 	/**

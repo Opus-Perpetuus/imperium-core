@@ -33,6 +33,31 @@ export function turn_code_prefix(value: unknown, fallback = 'M'): string {
 	return letters.slice(0, TURN_PREFIX_MAX_LETTERS) || fallback;
 }
 
+/**
+ * Administrador de cajas: junta a cada servicio permitido su letra (la misma que
+ * lleva el folio del turno) y arma `services_letters` («Agua Potable (AP), General (G)»).
+ */
+export function with_box_service_letters(
+	boxes: ImperiumDoc[],
+	services_by_id: Map<string, ImperiumDoc>,
+): ImperiumDoc[] {
+	return boxes.map((box) => {
+		const entries = as_array(box.allowed_services);
+		if (!entries.length) return { ...box, services_letters: '' };
+		const labels: string[] = [];
+		const allowed = entries.map((entry) => {
+			const id = ref_id(entry);
+			const own = as_object(entry);
+			const full = services_by_id.get(id);
+			const name = text(own.name) || text(full?.name);
+			const letter = turn_code_prefix(full?.letter ?? own.letter);
+			labels.push(name ? `${name} (${letter})` : letter);
+			return typeof entry === 'object' && entry !== null ? { ...own, letter } : entry;
+		});
+		return { ...box, allowed_services: allowed, services_letters: labels.join(', ') };
+	});
+}
+
 /** Código visible del turno: prefijo + consecutivo con ceros (AP001, G014). */
 export function format_turn_code(prefix: string, consecutive: number): string {
 	return `${prefix}${String(consecutive).padStart(TURN_NUMBER_DIGITS, '0')}`;
@@ -332,9 +357,19 @@ async function box_turns_summary(store: ImperiumStore, box: ImperiumDoc) {
 		store,
 		await licencias_first(store, box, await sort_pending(store, matching)),
 	);
+	// #373: las vistas por servicio y por tipo de usuario muestran también los
+	// pendientes de otras cajas, marcados con `de_otra_caja: true`. La cola de
+	// «Pendientes» y «Tomar siguiente turno» siguen siendo solo los de esta caja.
+	const own_ids = new Set(pending_queue.map((turn) => ref_id(turn)));
+	const others = await populate_turns(
+		store,
+		(await sort_pending(store, waiting.filter((turn) => !own_ids.has(ref_id(turn))))).map(
+			(turn) => ({ ...turn, de_otra_caja: true }),
+		),
+	);
 	const turns_by_service: Record<string, ImperiumDoc[]> = {};
 	const turns_by_user_type: Record<string, ImperiumDoc[]> = {};
-	for (const turn of pending_queue) {
+	for (const turn of [...pending_queue, ...others]) {
 		for (const raw of as_array(turn.services)) {
 			const id = ref_id(raw) || text(raw);
 			const service =

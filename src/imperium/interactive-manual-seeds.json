@@ -2712,7 +2712,7 @@
   {
     "_ref": "interactive-manual-flow-turnos-turnos-kiosko",
     "name": "Asistentes de turnos",
-    "description": "En el kiosko o ventanilla, el ciudadano elige su tipo de atención, sigue a los servicios con Siguiente y confirma para obtener su folio. Esta guía no pulsa Confirmar para no crear turnos de prueba.",
+    "description": "En el kiosko o ventanilla, el ciudadano elige su tipo de atención (queda resaltado y la pantalla pasa sola a los servicios), elige sus servicios con Siguiente y confirma para obtener su folio. Esta guía no pulsa Confirmar para no crear turnos de prueba.",
     "icon": "fa-ticket",
     "module_model_id": "TicketingSystemTurn",
     "is_default_for_module": true,
@@ -2722,7 +2722,7 @@
         "order": 1,
         "step_id": "turnos-kiosko-paso-1",
         "title": "Revisa esta parte de la pantalla",
-        "body": "El primer paso muestra los tipos de ciudadano (por ejemplo general o 3a edad). Elige uno para poder seguir.",
+        "body": "El primer paso muestra los tipos de ciudadano (por ejemplo general o 3a edad). Al elegir uno queda resaltado y la pantalla avanza sola a los servicios, sin botón Siguiente (con teclado, Tab y Enter o Espacio; el lector de pantalla anuncia el tipo y el foco pasa al título del paso).",
         "route": "/internal/ticketing-system-turn/turn-wizard",
         "route_kind": "inicio",
         "anchor_attr": "turn-wizard-customer-type",
@@ -2733,10 +2733,10 @@
         "order": 2,
         "step_id": "turnos-kiosko-paso-2",
         "title": "Revisa esta parte de la pantalla",
-        "body": "Con Siguiente pasas a elegir el servicio y luego a Confirmar, donde sale el folio. No pulses Confirmar en una corrida que no deba crear un turno.",
+        "body": "Anterior regresa al paso previo. Tras elegir el tipo, los servicios usan Siguiente y luego Confirmar, donde sale el folio. No pulses Confirmar en una corrida que no deba crear un turno.",
         "route": "/internal/ticketing-system-turn/turn-wizard",
         "route_kind": "confirmada",
-        "anchor_attr": "turn-wizard-next",
+        "anchor_attr": "turn-wizard-prev",
         "action_hint": "observe",
         "placement": "auto"
       }

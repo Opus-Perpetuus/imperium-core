@@ -438,6 +438,35 @@ describe('turno en atención de la caja (#185, PR 459)', () => {
 		expect(res.total_elementos).toBe(0);
 	});
 
+	test('#373: por servicio y por tipo de usuario salen también los turnos de otras cajas, marcados', async () => {
+		const seed = desk();
+		seed['ticketing-system-service-type']!.push({ _id: 'svc-2', name: 'Agua', priority_level: 1, is_active: true });
+		seed['ticketing-system-turn']!.push({
+			_id: 'turn-otra',
+			name: 'B002',
+			status: 'pendiente',
+			estado: 'pendiente',
+			services: ['svc-2'],
+			customer_type: 'type-1',
+			priority_level: 1,
+			createdAt: '2026-01-01T00:01:00.000Z',
+			is_active: true,
+		});
+		const res = await call(memory_store(seed), 'box_turns_summary', { box_config_id: 'box-1' });
+		const summary = res.data[0] as Row;
+		// «Pendientes» y «Tomar siguiente turno» siguen siendo solo de esta caja.
+		expect((summary.pending_queue as Row[]).map((row) => row._id)).toEqual(['turn-waiting']);
+		const by_service = summary.turns_by_service as Record<string, Row[]>;
+		expect(Object.keys(by_service)).toEqual(['Trámite', 'Agua']);
+		expect(by_service['Trámite']!.map((row) => row.de_otra_caja)).toEqual([undefined]);
+		expect(by_service['Agua']!.map((row) => [row._id, row.de_otra_caja])).toEqual([['turn-otra', true]]);
+		const by_type = summary.turns_by_user_type as Record<string, Row[]>;
+		expect(by_type['General']!.map((row) => [row._id, row.de_otra_caja ?? false])).toEqual([
+			['turn-waiting', false],
+			['turn-otra', true],
+		]);
+	});
+
 	test('la ruta está declarada en extra-routes', async () => {
 		const routes = (await import('./extra-routes.json')).default as Array<Record<string, string>>;
 		expect(routes).toContainEqual({

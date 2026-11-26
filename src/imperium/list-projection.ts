@@ -751,6 +751,7 @@ const LIST_PROJECTIONS: Record<string, ListProjection> = {
 			'exclusive',
 			'allowed_customer_types',
 			'allowed_services',
+			'services_letters',
 		],
 	},
 	'ticketing-system-customer-type': {
