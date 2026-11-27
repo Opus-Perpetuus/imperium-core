@@ -72,7 +72,6 @@ export async function handle_mcp(store: ImperiumStore, req: Request, url: URL): 
 			'401',
 		);
 	}
-	audit.token = plaintext.startsWith('isic_') ? plaintext.slice(0, 12) : '-';
 	if (!plaintext.startsWith('isic_')) {
 		return finish(
 			http_error(401, 'invalid_token', 'Token MCP inválido, revocado o expirado. Genera uno nuevo en tu perfil.'),
@@ -81,9 +80,12 @@ export async function handle_mcp(store: ImperiumStore, req: Request, url: URL): 
 	}
 
 	const auth = await authenticate_isic_token(store, plaintext);
-	if (auth instanceof Response) return finish(auth, '401');
+	if (auth instanceof Response) {
+		audit.token = createHash('sha256').update(plaintext, 'utf8').digest('hex').slice(0, 8);
+		return finish(auth, '401');
+	}
 	audit.usuario = String(auth.user._id ?? '-');
-	audit.token = auth.token_prefix || audit.token;
+	audit.token = auth.token_prefix || '-';
 
 	const limited = take_token(rate_key(plaintext, request_ip(req)), MCP_RATE);
 	if (!limited.ok) return finish(rate_limited_response(limited.retry_after_s), '429');

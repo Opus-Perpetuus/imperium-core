@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { remember_socket_ip } from './auth-rate-limit.ts';
 import type { ImperiumDoc } from './envelope.ts';
 import { handle_mcp, MCP_RATE } from './mcp-server.ts';
@@ -397,5 +397,40 @@ describe('POST /api/mcp', () => {
 		expect(line).toContain('herramienta=imperium_quien_soy');
 		expect(line).toContain('resultado=ok');
 		expect(line).not.toContain(tok.slice(12));
+	});
+
+	test('un token inválido no deja ningún fragmento en la bitácora', async () => {
+		const tok = `isic_${'Q'.repeat(48)}`;
+		const logs: ImperiumDoc[] = [];
+		const { store } = world(token_of('ajeno'), { logs });
+		const printed: string[] = [];
+		const spy = spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+			printed.push(args.map(String).join(' '));
+		});
+		try {
+			const res = await rpc(store, tok, 'ping');
+			expect(res.status).toBe(401);
+			expect(res.body?.error).toBe('invalid_token');
+			const logged = [
+				...logs.flatMap((row) => [row.message, row.name, row.formatted_message, row.search_field]),
+				...printed,
+			]
+				.map((part) => String(part ?? ''))
+				.join('\n')
+				.toLowerCase();
+			expect(logged).toContain('resultado=401');
+			const etiquetas = ['resultado', 'herramienta', 'usuario', 'metodo', 'modelo', 'token', 'mcp', 'ids', 'info'];
+			let texto = logged;
+			for (const etiqueta of etiquetas) texto = texto.replaceAll(etiqueta, '\n');
+			const secret = tok.toLowerCase();
+			for (let size = 1; size <= secret.length; size++) {
+				for (let at = 0; at + size <= secret.length; at++) {
+					const piece = secret.slice(at, at + size);
+					expect(texto.includes(piece) ? piece : '').toBe('');
+				}
+			}
+		} finally {
+			spy.mockRestore();
+		}
 	});
 });

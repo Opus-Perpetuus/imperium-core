@@ -29,6 +29,7 @@ import {
 } from './email.ts';
 import { read_public_registration } from './public-registration.ts';
 import { ensure_auth_attempts_table } from './auth-attempts.ts';
+import { ensure_user_device_table } from './user-device.ts';
 import { BADGE_SESSION, authenticate_badge } from './badge.ts';
 import { share_binding_of } from './share-binding.ts';
 import {
@@ -123,6 +124,7 @@ export function ensure_session_table(sql: Bun.SQL): Promise<void> {
 			`CREATE INDEX IF NOT EXISTS imperium_sessions_user_id_idx ON public.imperium_sessions ((payload->>'_id'))`,
 		);
 		await ensure_auth_attempts_table(sql);
+		await ensure_user_device_table(sql);
 	})().catch((err) => {
 		session_tables_ready = null;
 		throw err;
