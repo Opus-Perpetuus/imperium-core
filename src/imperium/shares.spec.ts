@@ -147,7 +147,7 @@ describe('alcance de un enlace', () => {
 	});
 
 	test('rutas que un enlace nunca alcanza', () => {
-		for (const path of ['/api/auth', '/api/auth/menus', '/api/compartir/bloqueos', '/api/subjects', '/api/mcp-agent/x', '/api/db-admin/sql']) {
+		for (const path of ['/api/auth', '/api/auth/menus', '/api/compartir/bloqueos', '/api/subjects', '/api/mcp', '/api/mcp-agent/x', '/api/db-admin/sql']) {
 			expect(is_denied_path(path)).toBe(true);
 		}
 		expect(is_denied_path('/api/employee')).toBe(false);

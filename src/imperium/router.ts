@@ -40,6 +40,7 @@ import {
 } from './app-registry.ts';
 import { start_registry_cold_sync } from './app-registry-boot.ts';
 import { handle_mcp_agent, seed_mcp_access } from './mcp-agent.ts';
+import { handle_mcp } from './mcp-server.ts';
 import { handle_cli_token, seed_cli_access, authenticate_cli_user, is_cli_token_resource } from './cli-token.ts';
 import { BADGE_RESOURCE } from './badge.ts';
 import { ChatError, media_token_actor } from './chat-access.ts';
@@ -400,6 +401,23 @@ async function dispatch(
 				mcp_url.pathname = path;
 				try {
 					return add_cors(req, await handle_mcp_agent(store, sql, req, mcp_url));
+				} catch (err) {
+					const mapped = caught_http_error(err);
+					debug_error(err instanceof Error ? err.message : String(err));
+					return add_cors(
+						req,
+						Response.json(
+							{ ok: false, error: mapped.code ?? 'error', message: mapped.message },
+							{ status: mapped.status },
+						),
+					);
+				}
+			}
+			if (path === '/mcp' || path === '/mcp/') {
+				const mcp_url = new URL(req.url);
+				mcp_url.pathname = path;
+				try {
+					return add_cors(req, await handle_mcp(store, req, mcp_url));
 				} catch (err) {
 					const mapped = caught_http_error(err);
 					debug_error(err instanceof Error ? err.message : String(err));
@@ -952,6 +970,7 @@ function looks_imperium(path: string, store: ImperiumStore): boolean {
 	if (p === '/auth' || p.startsWith('/auth/')) return true;
 	if (p === '/media' || p.startsWith('/media/')) return true;
 	if (p === '/mcp-agent' || p.startsWith('/mcp-agent/')) return true;
+	if (p === '/mcp' || p === '/mcp/') return true;
 	if (p === '/cli' || p.startsWith('/cli/')) return true;
 	if (p === '/subjects' || p.startsWith('/subjects/')) return true;
 	if (is_app_registry_path(p)) return true;

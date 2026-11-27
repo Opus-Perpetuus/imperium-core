@@ -38,6 +38,7 @@ const FREE_KEYS = new Set([
 const DENIED_PREFIXES = [
 	'/api/auth',
 	'/api/compartir',
+	'/api/mcp',
 	'/api/mcp-agent',
 	'/api/subjects',
 	'/api/kirlets',

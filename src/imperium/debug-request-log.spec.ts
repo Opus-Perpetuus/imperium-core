@@ -5,6 +5,7 @@ import {
 	format_console_log,
 	is_noisy_path,
 	persist_app_log,
+	logged_request_target,
 	persist_request_log,
 	request_result,
 	should_read_response_body,
@@ -105,6 +106,26 @@ describe('request_result', () => {
 		expect(request_result(404, 'attachment_bytes_missing')).toBe('warning');
 		expect(request_result(404, 'attachment_not_found')).toBe('warning');
 		expect(request_result(404, '')).toBe('error');
+	});
+});
+
+describe('bitácora de /api/mcp', () => {
+	test('no guarda el token aunque venga en la query', async () => {
+		const rows: ImperiumDoc[] = [];
+		const store = {
+			has: (resource: string) => resource === 'debug-log',
+			insert: async (_resource: string, doc: ImperiumDoc) => {
+				rows.push(doc);
+				return { ...doc, _id: 'log-mcp' };
+			},
+		} as unknown as ImperiumStore;
+		const secret = 'isic_no-loguear-este-valor';
+		const req = new Request(`http://imperium.test/api/mcp?tk=${secret}&token=${secret}`);
+		await persist_request_log(store, req, Response.json({ ok: false, error: 'token_in_url' }), null, Date.now());
+		const dumped = JSON.stringify(rows);
+		expect(dumped).toContain('/api/mcp');
+		expect(dumped).not.toContain(secret);
+		expect(logged_request_target(new URL('http://imperium.test/api/products?q=1')).route).toBe('/api/products?q=1');
 	});
 });
 

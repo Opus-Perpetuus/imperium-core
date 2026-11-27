@@ -242,7 +242,7 @@ function deny(status: number, code: string, message: string): never {
 	throw error;
 }
 
-async function has_mcp_gate(store: ImperiumStore, user: ImperiumDoc): Promise<boolean> {
+export async function has_mcp_gate(store: ImperiumStore, user: ImperiumDoc): Promise<boolean> {
 	const access = await build_access(store, user);
 	if (access.has_full_access) return true;
 	const perms = access.permissions_by_model?.[MODEL_ID];
@@ -402,6 +402,15 @@ async function authenticate_token(
 			'Falta el token MCP. Envía Authorization: Bearer <token> o el header X-Imperium-Sic-Token.',
 		);
 	}
+	const auth = await authenticate_isic_token(store, plaintext);
+	if (auth instanceof Response) return auth;
+	return { user: auth.user };
+}
+
+export async function authenticate_isic_token(
+	store: ImperiumStore,
+	plaintext: string,
+): Promise<{ user: ImperiumDoc; token_prefix: string } | Response> {
 	const token_hash = hash_token(plaintext);
 	let token_doc: ImperiumDoc | undefined;
 	const consider = (row: ImperiumDoc) => {
@@ -448,7 +457,9 @@ async function authenticate_token(
 			last_used_at: new Date().toISOString(),
 		});
 	}
-	return { user };
+	const stored_prefix = String(token_doc.token_prefix ?? '');
+	const token_prefix = (stored_prefix || plaintext).slice(0, 12);
+	return { user, token_prefix };
 }
 
 function resolve_resource(store: ImperiumStore, model_id: string): string {
@@ -478,6 +489,10 @@ function operable(resource: string): string {
 		deny(403, 'model_forbidden', 'Ese modelo no es operable por el agente MCP.');
 	}
 	return resource;
+}
+
+export function mcp_can_read(access: Access, resource: string): boolean {
+	return can(access, resource, 'read');
 }
 
 function can(access: Access, resource: string, op: 'read' | 'create' | 'update') {
@@ -523,7 +538,7 @@ function writable(resource: string, values: Record<string, unknown>) {
 	return clean;
 }
 
-async function capabilities(store: ImperiumStore, access: Access) {
+export async function capabilities(store: ImperiumStore, access: Access) {
 	const modules: ImperiumDoc[] = [];
 	if (store.has('module-management')) {
 		for await (const page of store.scan('module-management', {
@@ -816,7 +831,7 @@ async function prepare_create(
 	);
 }
 
-async function search_records(
+export async function search_records(
 	store: ImperiumStore,
 	access: Access,
 	user: ImperiumDoc,

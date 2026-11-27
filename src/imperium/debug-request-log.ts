@@ -253,6 +253,14 @@ export async function persist_app_log(
 	}
 }
 
+/** La query de /api/mcp puede traer el token; la bitácora se queda solo con la ruta. */
+export function logged_request_target(url: URL): { route: string; href: string } {
+	if (url.pathname === '/api/mcp' || url.pathname === '/mcp') {
+		return { route: url.pathname, href: `${url.origin}${url.pathname}` };
+	}
+	return { route: `${url.pathname}${url.search}`, href: url.href };
+}
+
 export async function persist_request_log(
 	store: ImperiumStore,
 	req: Request,
@@ -263,7 +271,8 @@ export async function persist_request_log(
 	if (req.method === 'OPTIONS') return;
 	if (!store.has('debug-log')) return;
 	const url = new URL(req.url);
-	const stored_route = `${url.pathname}${url.search}`.slice(0, 1024);
+	const logged = logged_request_target(url);
+	const stored_route = logged.route.slice(0, 1024);
 	if (is_noisy_path(url.pathname + url.search)) return;
 	const status_code = res.status;
 	let response_message = '';
@@ -302,7 +311,7 @@ export async function persist_request_log(
 	const request_context = {
 		method: req.method,
 		label: req.method,
-		url: url.href,
+		url: logged.href,
 		route: stored_route,
 		origin: req.headers.get('origin') || undefined,
 		ip: req.headers.get('x-forwarded-for') || undefined,
